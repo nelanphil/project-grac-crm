@@ -140,6 +140,151 @@ export async function getUsers(token: string): Promise<{ users: UserListItem[] }
   });
 }
 
+export interface CustomerListItem {
+  _id: string;
+  legacyId: number;
+  first: string;
+  last: string;
+  email: string;
+  phone: string;
+  city: string;
+  state: string;
+  zip: string;
+  generatorModel: string;
+  lastSvc: string | null;
+}
+
+export async function getCustomers(token: string): Promise<{ customers: CustomerListItem[] }> {
+  return authRequest<{ customers: CustomerListItem[] }>("/customers", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface CustomerDetail {
+  _id: string;
+  legacyId: number;
+  first: string;
+  last: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone: string;
+  email: string;
+  atsSerial: string;
+  serial: string;
+  generatorModel: string;
+  lastSvc: string | null;
+  exday: string;
+  extime: string;
+}
+
+export async function getCustomer(
+  token: string,
+  id: string
+): Promise<{ customer: CustomerDetail }> {
+  return authRequest<{ customer: CustomerDetail }>(`/customers/${id}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface WorkOrderListItem {
+  _id: string;
+  legacyId: number;
+  date: string | null;
+  descPerform: string;
+  descPerformed: string;
+  tech: string;
+  total: number;
+  paid: boolean;
+  completed: boolean;
+}
+
+export async function getWorkOrdersForCustomer(
+  token: string,
+  legacyId: number
+): Promise<WorkOrderListItem[]> {
+  return authRequest<WorkOrderListItem[]>(`/work-orders?customerId=${legacyId}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface ContractListItem {
+  _id: string;
+  customerId: number;
+  contractDate: string | null;
+  description: string;
+  customer: { _id: string; first: string; last: string } | null;
+}
+
+export async function getContracts(
+  token: string
+): Promise<{ contracts: ContractListItem[] }> {
+  return authRequest<{ contracts: ContractListItem[] }>("/contracts", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getContractsForCustomer(
+  token: string,
+  legacyId: number
+): Promise<{ contracts: ContractListItem[] }> {
+  return authRequest<{ contracts: ContractListItem[] }>(
+    `/contracts?customerId=${legacyId}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+}
+
+export async function getContract(
+  token: string,
+  id: string
+): Promise<{ contract: ContractListItem }> {
+  return authRequest<{ contract: ContractListItem }>(`/contracts/${id}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createContract(
+  token: string,
+  data: { customerId: number; contractDate?: string | null; description?: string }
+): Promise<{ contract: ContractListItem }> {
+  return authRequest<{ contract: ContractListItem }>("/contracts", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateContract(
+  token: string,
+  id: string,
+  data: { contractDate?: string | null; description?: string }
+): Promise<{ contract: ContractListItem }> {
+  return authRequest<{ contract: ContractListItem }>(`/contracts/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteContract(
+  token: string,
+  id: string
+): Promise<void> {
+  await authRequest<void>(`/contracts/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export async function updateUserRole(
   token: string,
   id: string,
