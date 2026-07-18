@@ -1,0 +1,50 @@
+services:
+  # Backend API (Express + TypeScript)
+  - type: web
+    name: grac-crm-server
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Public URL of the deployed frontend, used for CORS
+      - key: CLIENT_URL
+        sync: false
+      # Set the secret values below in the Render dashboard (never commit them)
+      - key: MONGODB_URI_PRODUCTION
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: CREDENTIALS_ENCRYPTION_KEY
+        sync: false
+      - key: MYSQL_HOST
+        sync: false
+      - key: MYSQL_PORT
+        value: "3306"
+      - key: MYSQL_USER
+        sync: false
+      - key: MYSQL_PASSWORD
+        sync: false
+      - key: MYSQL_DATABASE
+        sync: false
+
+  # Frontend (Next.js) — MUST be a web service, not a static site,
+  # because it has server-rendered (dynamic) routes.
+  - type: web
+    name: grac-crm-client
+    runtime: node
+    rootDir: client
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # URL of the deployed backend API
+      - key: NEXT_PUBLIC_API_URL
+        sync: false

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
+import PasswordInput from "@/components/ui/PasswordInput";
 import {
   ApiError,
   createTwilioAccount,
@@ -272,8 +273,7 @@ export default function TwilioAccountsCard() {
               <span className="text-xs font-medium text-neutral-600">
                 Auth token{editingId ? " (leave blank to keep current)" : ""}
               </span>
-              <input
-                type="password"
+              <PasswordInput
                 required={!editingId}
                 value={form.authToken}
                 onChange={(e) => field("authToken", e.target.value)}
@@ -288,8 +288,7 @@ export default function TwilioAccountsCard() {
                 Test auth token
                 {editingId ? " (leave blank to keep)" : " (optional)"}
               </span>
-              <input
-                type="password"
+              <PasswordInput
                 value={form.testAuthToken}
                 onChange={(e) => field("testAuthToken", e.target.value)}
                 autoComplete="new-password"

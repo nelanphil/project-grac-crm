@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/useAuthStore";
 import { authLogin, ApiError } from "@/lib/api";
+import PasswordInput from "@/components/ui/PasswordInput";
 
 export default function LoginForm() {
   const router = useRouter();
@@ -72,10 +73,9 @@ export default function LoginForm() {
         >
           Password
         </label>
-        <input
+        <PasswordInput
           id="password"
           name="password"
-          type="password"
           required
           autoComplete="current-password"
           value={password}
@@ -85,7 +85,11 @@ export default function LoginForm() {
         />
       </div>
 
-      <button type="submit" disabled={loading} className="btn-primary w-full disabled:opacity-60">
+      <button
+        type="submit"
+        disabled={loading}
+        className="btn-primary w-full disabled:opacity-60"
+      >
         {loading ? "Signing in…" : "Sign In"}
       </button>
     </form>

@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useAuthStore } from "@/store/useAuthStore";
 import { updatePassword, ApiError } from "@/lib/api";
+import PasswordInput from "@/components/ui/PasswordInput";
 
 export default function PasswordTab() {
   const token = useAuthStore((s) => s.token);
@@ -59,9 +60,8 @@ export default function PasswordTab() {
           <label htmlFor="currentPassword" className="block text-sm font-medium text-brand-dark">
             Current Password
           </label>
-          <input
+          <PasswordInput
             id="currentPassword"
-            type="password"
             required
             autoComplete="current-password"
             value={currentPassword}
@@ -74,9 +74,8 @@ export default function PasswordTab() {
           <label htmlFor="newPassword" className="block text-sm font-medium text-brand-dark">
             New Password
           </label>
-          <input
+          <PasswordInput
             id="newPassword"
-            type="password"
             required
             autoComplete="new-password"
             minLength={8}
@@ -91,9 +90,8 @@ export default function PasswordTab() {
           <label htmlFor="confirmPassword" className="block text-sm font-medium text-brand-dark">
             Confirm New Password
           </label>
-          <input
+          <PasswordInput
             id="confirmPassword"
-            type="password"
             required
             autoComplete="new-password"
             value={confirmPassword}

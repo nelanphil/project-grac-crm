@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authRegister, ApiError } from "@/lib/api";
+import PasswordInput from "@/components/ui/PasswordInput";
 
 export default function SignupForm() {
   const router = useRouter();
@@ -122,10 +123,9 @@ export default function SignupForm() {
         >
           Password
         </label>
-        <input
+        <PasswordInput
           id="password"
           name="password"
-          type="password"
           required
           autoComplete="new-password"
           value={password}
@@ -142,10 +142,9 @@ export default function SignupForm() {
         >
           Confirm Password
         </label>
-        <input
+        <PasswordInput
           id="confirmPassword"
           name="confirmPassword"
-          type="password"
           required
           autoComplete="new-password"
           value={confirmPassword}
