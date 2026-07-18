@@ -37,7 +37,7 @@ const CITY_ALIASES: Record<string, string> = {
   "st. augustine": "St. Augustine",
   pc: "Palm Coast",
   "palm cst": "Palm Coast",
-  "palmcoast": "Palm Coast",
+  palmcoast: "Palm Coast",
   nsb: "New Smyrna Beach",
   "new smyrna": "New Smyrna Beach",
   "new smyrna bch": "New Smyrna Beach",
@@ -53,7 +53,6 @@ const CITY_ALIASES: Record<string, string> = {
   "palm coast": "Palm Coast",
   "ormond beach": "Ormond Beach",
   "new smyrna beach": "New Smyrna Beach",
-  "flagler beach": "Flagler Beach",
 };
 
 function normalizeKey(value: string): string {
@@ -70,7 +69,10 @@ function stripCityFromStreet(address: string, city: string): string {
   let street = address.trim();
   if (!street.includes(",")) return street;
 
-  const parts = street.split(",").map((p) => p.trim()).filter(Boolean);
+  const parts = street
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
   if (parts.length < 2) return street;
 
   const cityKey = normalizeKey(city);
@@ -80,7 +82,9 @@ function stripCityFromStreet(address: string, city: string): string {
   // Trailing segment is the city (exact or alias-equivalent)
   const lastAsCity = normalizeCity(last);
   if (
-    (cityKey && (lastKey === cityKey || normalizeKey(lastAsCity) === normalizeKey(normalizeCity(city)))) ||
+    (cityKey &&
+      (lastKey === cityKey ||
+        normalizeKey(lastAsCity) === normalizeKey(normalizeCity(city)))) ||
     (CITY_ALIASES[lastKey] && !cityKey) ||
     (cityKey && lastKey.startsWith(cityKey)) ||
     (cityKey && cityKey.startsWith(lastKey) && lastKey.length >= 3)
@@ -108,7 +112,9 @@ type CustomerRow = {
   zip: string;
 };
 
-function buildCsv(rows: Array<{ street: string; city: string; state: string }>): string {
+function buildCsv(
+  rows: Array<{ street: string; city: string; state: string }>,
+): string {
   return rows
     .map((c, i) => {
       const street = c.street.replace(/"/g, "").trim();
@@ -201,15 +207,15 @@ async function geocodeBatch(
   const res = await fetch(CENSUS_BATCH_URL, { method: "POST", body: form });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Census batch failed (${res.status}): ${body.slice(0, 300)}`);
+    throw new Error(
+      `Census batch failed (${res.status}): ${body.slice(0, 300)}`,
+    );
   }
   return parseBatchResponse(await res.text());
 }
 
 function toTitleCase(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/\b([a-z])/g, (c) => c.toUpperCase());
+  return value.toLowerCase().replace(/\b([a-z])/g, (c) => c.toUpperCase());
 }
 
 async function main(): Promise<void> {
@@ -234,14 +240,25 @@ async function main(): Promise<void> {
   for (const c of toClean) {
     const originalAddress = c.address ?? "";
     const originalCity = c.city ?? "";
-    const nextCity = normalizeCity(originalCity) || normalizeCity(
-      originalAddress.includes(",")
-        ? originalAddress.split(",").map((p: string) => p.trim()).at(-1) ?? ""
-        : "",
+    const nextCity =
+      normalizeCity(originalCity) ||
+      normalizeCity(
+        originalAddress.includes(",")
+          ? (originalAddress
+              .split(",")
+              .map((p: string) => p.trim())
+              .at(-1) ?? "")
+          : "",
+      );
+    const nextAddress = stripCityFromStreet(
+      originalAddress,
+      nextCity || originalCity,
     );
-    const nextAddress = stripCityFromStreet(originalAddress, nextCity || originalCity);
 
-    if (nextAddress === originalAddress.trim() && nextCity === originalCity.trim()) {
+    if (
+      nextAddress === originalAddress.trim() &&
+      nextCity === originalCity.trim()
+    ) {
       continue;
     }
 
@@ -286,13 +303,21 @@ async function main(): Promise<void> {
     const batch = missing.slice(offset, offset + BATCH_SIZE);
     const batchNum = Math.floor(offset / BATCH_SIZE) + 1;
     const totalBatches = Math.ceil(missing.length / BATCH_SIZE);
-    console.log(`Geocoding batch ${batchNum}/${totalBatches} (${batch.length})…`);
+    console.log(
+      `Geocoding batch ${batchNum}/${totalBatches} (${batch.length})…`,
+    );
 
     const prepared = batch.map((c) => {
       const city = normalizeCity(c.city);
       const street = stripCityFromStreet(c.address, city || c.city);
-      const state = (c.state?.trim().toUpperCase() === "F" ? "FL" : c.state?.trim()) || "FL";
-      return { street, city: city || c.city.trim(), state: state.toUpperCase() };
+      const state =
+        (c.state?.trim().toUpperCase() === "F" ? "FL" : c.state?.trim()) ||
+        "FL";
+      return {
+        street,
+        city: city || c.city.trim(),
+        state: state.toUpperCase(),
+      };
     });
 
     const geo = await geocodeBatch(prepared);
@@ -320,7 +345,10 @@ async function main(): Promise<void> {
       }
 
       await Customer.updateOne(
-        { _id: batch[i]._id, $or: [{ zip: null }, { zip: "" }, { zip: { $exists: false } }] },
+        {
+          _id: batch[i]._id,
+          $or: [{ zip: null }, { zip: "" }, { zip: { $exists: false } }],
+        },
         { $set: set },
       );
       updated++;

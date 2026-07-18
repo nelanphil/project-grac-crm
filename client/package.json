@@ -6,7 +6,7 @@
     "dev:client": "next dev -p 3009",
     "dev": "npm run dev:client",
     "build": "next build",
-    "start:client": "next start -p 3009",
+    "start:client": "next start",
     "start": "npm run start:client",
     "lint": "eslint"
   },
