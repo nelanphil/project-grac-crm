@@ -27,6 +27,7 @@ const ALL_PERMISSIONS = [
   "permissions:manage",
   "jobs:read", "jobs:write", "jobs:delete",
   "reports:read",
+  "integrations:read", "integrations:write", "integrations:delete",
 ];
 
 const DEFAULT_PERMISSIONS: [UserRole, string][] = [
@@ -53,6 +54,9 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "jobs:write"],
   ["admin", "jobs:delete"],
   ["admin", "reports:read"],
+  ["admin", "integrations:read"],
+  ["admin", "integrations:write"],
+  ["admin", "integrations:delete"],
 
   // owner — same as admin but also permissions management
   ...ALL_PERMISSIONS.map((p): [UserRole, string] => ["owner", p]),
@@ -134,6 +138,29 @@ const CONTRACT_PERMISSIONS: [UserRole, string][] = [
 /** Insert contract permissions for existing deployments (idempotent). */
 export async function ensureContractPermissions(): Promise<void> {
   for (const [role, permission] of CONTRACT_PERMISSIONS) {
+    await RolePermission.updateOne(
+      { role, permission },
+      { $setOnInsert: { role, permission } },
+      { upsert: true },
+    );
+  }
+}
+
+const INTEGRATIONS_PERMISSIONS: [UserRole, string][] = [
+  ["super-admin", "integrations:read"],
+  ["super-admin", "integrations:write"],
+  ["super-admin", "integrations:delete"],
+  ["admin", "integrations:read"],
+  ["admin", "integrations:write"],
+  ["admin", "integrations:delete"],
+  ["owner", "integrations:read"],
+  ["owner", "integrations:write"],
+  ["owner", "integrations:delete"],
+];
+
+/** Insert integrations permissions for existing deployments (idempotent). */
+export async function ensureIntegrationsPermissions(): Promise<void> {
+  for (const [role, permission] of INTEGRATIONS_PERMISSIONS) {
     await RolePermission.updateOne(
       { role, permission },
       { $setOnInsert: { role, permission } },

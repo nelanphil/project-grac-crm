@@ -1,6 +1,7 @@
 "use client";
 
 import AuthGuard from "@/components/auth/AuthGuard";
+import UpcomingRenewalsTable from "@/components/dashboard/UpcomingRenewalsTable";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -22,6 +23,8 @@ const ROLE_COLORS: Record<string, string> = {
   agent: "bg-green-100 text-green-800",
   customer: "bg-neutral-100 text-neutral-700",
 };
+
+const RENEWALS_ROLES = ["super-admin", "admin", "owner", "manager"];
 
 export default function DashboardPage() {
   return (
@@ -56,6 +59,11 @@ function DashboardContent() {
         </div>
       </div>
 
+      {RENEWALS_ROLES.includes(user.role) && (
+        <div className="mt-6">
+          <UpcomingRenewalsTable />
+        </div>
+      )}
     </div>
   );
 }

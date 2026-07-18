@@ -2,52 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ShoppingCart, Wrench, Phone, Users, ScrollText, LucideIcon } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
-
-interface NavItem {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-  excludeRoles?: string[];
-}
-
-interface NavSection {
-  label: string;
-  items: NavItem[];
-}
-
-const NAV_SECTIONS: NavSection[] = [
-  {
-    label: "Admin",
-    items: [
-      { href: "/dashboard/customers", label: "Customers", icon: Users, excludeRoles: ["customer"] },
-      { href: "/dashboard/contracts", label: "Contracts", icon: ScrollText, excludeRoles: ["customer"] },
-    ],
-  },
-  {
-    label: "General",
-    items: [
-      { href: "/dashboard/orders", label: "Orders", icon: ShoppingCart },
-      { href: "/dashboard/services", label: "Services", icon: Wrench },
-      { href: "/dashboard/contact", label: "Contact", icon: Phone },
-    ],
-  },
-];
+import { getVisibleNavSections } from "@/lib/dashboard-nav";
 
 export default function DashboardNav() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
-
-  const visibleSections = NAV_SECTIONS.map((section) => ({
-    ...section,
-    items: section.items.filter(
-      (item) => !item.excludeRoles?.includes(user?.role ?? "")
-    ),
-  })).filter((section) => section.items.length > 0);
+  const visibleSections = getVisibleNavSections(user?.role);
 
   return (
-    <aside className="w-56 shrink-0">
+    <aside className="hidden w-56 shrink-0 md:block">
       <nav className="sticky top-24 flex flex-col gap-6">
         {visibleSections.map((section) => (
           <div key={section.label}>

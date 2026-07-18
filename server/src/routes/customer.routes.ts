@@ -1,51 +1,105 @@
-import { Router, Response } from "express";
-import mongoose from "mongoose";
-import { authenticate, requirePermission, AuthRequest } from "../middleware/auth.middleware";
-import { Customer } from "../models/mongo/Customer";
+import { Router } from "express";
+import { authenticate, requirePermission } from "../middleware/auth.middleware";
+import {
+  createCustomerAddress,
+  createCustomerContact,
+  createEquipment,
+  deleteCustomerAddress,
+  deleteCustomerContact,
+  deleteEquipment,
+  getCustomerAddresses,
+  getCustomerById,
+  getCustomerContacts,
+  getCustomerDuplicates,
+  getMergePreview,
+  listCustomers,
+  mergeCustomers,
+  updateCustomerAddress,
+  updateCustomerContact,
+  updateEquipment,
+} from "../controllers/customer.controller";
+import {
+  getCustomerNotes,
+  createCustomerNote,
+  updateCustomerNote,
+  deleteCustomerNote,
+} from "../controllers/customerNote.controller";
 
 const router = Router();
 
-// GET /customers — list all customers (requires customers:read)
-router.get(
-  "/",
-  authenticate,
+router.use(authenticate);
+
+// List + duplicate discovery (static paths before :id)
+router.get("/", requirePermission("customers:read"), listCustomers);
+router.get("/duplicates", requirePermission("customers:read"), getCustomerDuplicates);
+
+// Notes
+router.get("/:id/notes", requirePermission("customers:read"), getCustomerNotes);
+router.post("/:id/notes", requirePermission("customers:read"), createCustomerNote);
+router.patch(
+  "/:id/notes/:noteId",
   requirePermission("customers:read"),
-  async (_req: AuthRequest, res: Response): Promise<void> => {
-    try {
-      const customers = await Customer.find().lean().sort({ last: 1, first: 1 });
-      res.status(200).json({ customers });
-    } catch (err) {
-      console.error("GET /customers error:", err);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  }
+  updateCustomerNote
+);
+router.delete(
+  "/:id/notes/:noteId",
+  requirePermission("customers:read"),
+  deleteCustomerNote
 );
 
-// GET /customers/:id — single customer by MongoDB _id (requires customers:read)
-router.get(
-  "/:id",
-  authenticate,
-  requirePermission("customers:read"),
-  async (req: AuthRequest, res: Response): Promise<void> => {
-    try {
-      const { id } = req.params;
-      if (!mongoose.Types.ObjectId.isValid(id)) {
-        res.status(400).json({ message: "Invalid customer id" });
-        return;
-      }
-
-      const customer = await Customer.findById(id).lean();
-      if (!customer) {
-        res.status(404).json({ message: "Customer not found" });
-        return;
-      }
-
-      res.status(200).json({ customer });
-    } catch (err) {
-      console.error("GET /customers/:id error:", err);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  }
+// Sites / equipment
+router.get("/:id/addresses", requirePermission("customers:read"), getCustomerAddresses);
+router.post(
+  "/:id/addresses",
+  requirePermission("customers:write"),
+  createCustomerAddress
 );
+router.patch(
+  "/:id/addresses/:addressId",
+  requirePermission("customers:write"),
+  updateCustomerAddress
+);
+router.delete(
+  "/:id/addresses/:addressId",
+  requirePermission("customers:write"),
+  deleteCustomerAddress
+);
+
+router.post("/:id/equipment", requirePermission("customers:write"), createEquipment);
+router.patch(
+  "/:id/equipment/:equipmentId",
+  requirePermission("customers:write"),
+  updateEquipment
+);
+router.delete(
+  "/:id/equipment/:equipmentId",
+  requirePermission("customers:write"),
+  deleteEquipment
+);
+
+// Contacts
+router.get("/:id/contacts", requirePermission("customers:read"), getCustomerContacts);
+router.post(
+  "/:id/contacts",
+  requirePermission("customers:write"),
+  createCustomerContact
+);
+router.patch(
+  "/:id/contacts/:contactId",
+  requirePermission("customers:write"),
+  updateCustomerContact
+);
+router.delete(
+  "/:id/contacts/:contactId",
+  requirePermission("customers:write"),
+  deleteCustomerContact
+);
+
+// Merge
+router.get("/:id/merge-preview", requirePermission("customers:write"), getMergePreview);
+router.post("/:id/merge", requirePermission("customers:write"), mergeCustomers);
+
+// Detail (must be last among /:id routes that are exact)
+router.get("/:id", requirePermission("customers:read"), getCustomerById);
 
 export default router;

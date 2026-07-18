@@ -1,22 +1,27 @@
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, { Schema, Document, Types } from "mongoose";
 
 export interface ICustomer extends Document {
   legacyId: number;
   userId: number;
   first: string;
   last: string;
+  /** Denormalized primary site — kept in sync with primary CustomerAddress. */
   address: string;
   city: string;
   state: string;
   zip: string;
   phone: string;
   email: string;
+  /** Denormalized primary equipment — kept in sync with primary site equipment. */
   atsSerial: string;
   serial: string;
   generatorModel: string;
   lastSvc: Date | null;
   exday: string;
   extime: string;
+  /** Set when this customer was merged into another; excluded from default lists. */
+  mergedIntoRef?: Types.ObjectId | null;
+  mergedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,6 +44,13 @@ const customerSchema = new Schema<ICustomer>(
     lastSvc: { type: Date, default: null },
     exday: { type: String, default: "" },
     extime: { type: String, default: "" },
+    mergedIntoRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Customer",
+      default: null,
+      index: true,
+    },
+    mergedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

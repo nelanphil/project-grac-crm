@@ -34,6 +34,11 @@ export const env = {
     secret: process.env.JWT_SECRET || "dev-secret-change-in-production",
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   },
+  // AES-256 key for encrypting third-party credentials at rest.
+  // Production must set CREDENTIALS_ENCRYPTION_KEY (64-char hex or 32-byte base64).
+  credentialsEncryptionKey:
+    process.env.CREDENTIALS_ENCRYPTION_KEY ||
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   mysql: {
     host: process.env.MYSQL_HOST || "localhost",
     port: parseInt(process.env.MYSQL_PORT || "3306", 10),

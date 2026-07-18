@@ -7,7 +7,9 @@ import userRoutes from "./user.routes";
 import roleRoutes from "./role.routes";
 import workOrderRoutes from "./workOrder.routes";
 import customerRoutes from "./customer.routes";
-import serviceContractRoutes from "./serviceContract.routes";
+import contractRoutes from "./contract.routes";
+import contractTemplateRoutes from "./contractTemplate.routes";
+import twilioAccountRoutes from "./twilioAccount.routes";
 
 const router = Router();
 
@@ -25,6 +27,8 @@ router.use("/users", userRoutes);
 router.use("/roles", roleRoutes);
 router.use("/work-orders", workOrderRoutes);
 router.use("/customers", customerRoutes);
-router.use("/contracts", serviceContractRoutes);
+router.use("/contracts", contractRoutes);
+router.use("/contract-templates", contractTemplateRoutes);
+router.use("/twilio-accounts", twilioAccountRoutes);
 
 export default router;

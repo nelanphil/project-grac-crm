@@ -5,8 +5,9 @@ import {
   getContractById,
   createContract,
   updateContract,
+  renewContract,
   deleteContract,
-} from "../controllers/serviceContract.controller";
+} from "../controllers/contract.controller";
 
 const router = Router();
 
@@ -16,6 +17,7 @@ router.get("/", requirePermission("contracts:read"), getContracts);
 router.get("/:id", requirePermission("contracts:read"), getContractById);
 router.post("/", requirePermission("contracts:write"), createContract);
 router.patch("/:id", requirePermission("contracts:write"), updateContract);
+router.post("/:id/renew", requirePermission("contracts:write"), renewContract);
 router.delete("/:id", requirePermission("contracts:delete"), deleteContract);
 
 export default router;

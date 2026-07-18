@@ -1,8 +1,9 @@
 import app from "./app";
 import { env } from "./config/env";
 import { connectMongoDB, disconnectMongoDB } from "./config/mongodb";
-import { seedDefaultPermissions, revokeCustomerListAccess, ensureContractPermissions } from "./models/mongo/RolePermission";
+import { seedDefaultPermissions, revokeCustomerListAccess, ensureContractPermissions, ensureIntegrationsPermissions } from "./models/mongo/RolePermission";
 import { seedDefaultRoles } from "./models/mongo/Role";
+import { seedContractTemplates } from "./models/mongo/ContractTemplate";
 
 async function bootstrap(): Promise<void> {
   await connectMongoDB();
@@ -10,6 +11,8 @@ async function bootstrap(): Promise<void> {
   await seedDefaultPermissions();
   await revokeCustomerListAccess();
   await ensureContractPermissions();
+  await ensureIntegrationsPermissions();
+  await seedContractTemplates();
 
   const server = app.listen(env.port, () => {
     console.log(`Server running on http://localhost:${env.port}`);

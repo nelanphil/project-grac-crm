@@ -3,14 +3,36 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { Settings, LogOut } from "lucide-react";
+import { Settings, LogOut, Menu, X } from "lucide-react";
 import { NAV_LINKS, COMPANY, ESTIMATE_ROUTE } from "@/lib/constants";
+import { getVisibleNavSections } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
+
+const HEADER_CONTAINER =
+  "mx-auto flex w-full max-w-none items-center justify-between px-4 py-4 sm:px-6 lg:px-10";
+
+const BRAND_LINK_CLASS =
+  "text-lg font-bold tracking-tight transition-colors hover:text-brand-orange sm:text-xl";
+
+function BrandLink({ href }: { href: string }) {
+  return (
+    <Link href={href} className={BRAND_LINK_CLASS}>
+      <span className="md:hidden">
+        G<span className="text-brand-orange">MOF</span>
+      </span>
+      <span className="hidden md:inline">
+        Generator Maintenance
+        <span className="text-brand-orange"> of Florida</span>
+      </span>
+    </Link>
+  );
+}
 
 export default function Header() {
   const pathname = usePathname();
   const router = useRouter();
   const logout = useAuthStore((s) => s.logout);
+  const user = useAuthStore((s) => s.user);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const isDashboard = pathname.startsWith("/dashboard");
@@ -28,21 +50,27 @@ export default function Header() {
 
   // ── Dashboard header ──────────────────────────────────────────────────────
   if (isDashboard) {
+    const visibleSections = getVisibleNavSections(user?.role);
+    const settingsActive = pathname.startsWith("/dashboard/settings");
+
     return (
       <header className="sticky top-0 z-50 bg-brand-dark text-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <Link
-            href="/dashboard"
-            className="text-lg font-bold tracking-tight transition-colors hover:text-brand-orange sm:text-xl"
-          >
-            Generator Maintenance
-            <span className="text-brand-orange"> of Florida</span>
-          </Link>
+        <div className={HEADER_CONTAINER}>
+          <BrandLink href="/dashboard" />
 
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className="rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:hidden"
+              onClick={() => setMobileOpen(!mobileOpen)}
+              aria-label="Toggle menu"
+              aria-expanded={mobileOpen}
+            >
+              {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
             <Link
               href="/dashboard/settings"
-              className="rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange"
+              className="hidden rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:block"
               aria-label="Settings"
             >
               <Settings className="h-5 w-5" />
@@ -50,13 +78,75 @@ export default function Header() {
             <button
               type="button"
               onClick={handleLogout}
-              className="rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange"
+              className="hidden rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:block"
               aria-label="Sign out"
             >
               <LogOut className="h-5 w-5" />
             </button>
           </div>
         </div>
+
+        {mobileOpen && (
+          <div className="border-t border-white/10 px-4 pb-4 md:hidden">
+            <nav className="flex flex-col gap-5 pt-4">
+              {visibleSections.map((section) => (
+                <div key={section.label}>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/50">
+                    {section.label}
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    {section.items.map(({ href, label, icon: Icon }) => {
+                      const active = pathname === href || pathname.startsWith(`${href}/`);
+                      return (
+                        <Link
+                          key={href}
+                          href={href}
+                          className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                            active
+                              ? "bg-brand-orange text-white"
+                              : "text-white/90 hover:bg-white/10"
+                          }`}
+                          onClick={() => setMobileOpen(false)}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          {label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/50">
+                  Account
+                </p>
+                <Link
+                  href="/dashboard/settings"
+                  className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    settingsActive
+                      ? "bg-brand-orange text-white"
+                      : "text-white/90 hover:bg-white/10"
+                  }`}
+                  onClick={() => setMobileOpen(false)}
+                >
+                  <Settings className="h-4 w-4 shrink-0" />
+                  Settings
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    handleLogout();
+                  }}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-white/90 transition-colors hover:bg-white/10"
+                >
+                  <LogOut className="h-4 w-4 shrink-0" />
+                  Sign out
+                </button>
+              </div>
+            </nav>
+          </div>
+        )}
       </header>
     );
   }
@@ -64,14 +154,8 @@ export default function Header() {
   // ── Public / landing header ───────────────────────────────────────────────
   return (
     <header className="sticky top-0 z-50 bg-brand-dark text-white">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-        <Link
-          href="/"
-          className="text-lg font-bold tracking-tight transition-colors hover:text-brand-orange sm:text-xl"
-        >
-          Generator Maintenance
-          <span className="text-brand-orange"> of Florida</span>
-        </Link>
+      <div className={HEADER_CONTAINER}>
+        <BrandLink href="/" />
 
         <nav className="hidden items-center gap-8 md:flex">
           {NAV_LINKS.map((link) => (

@@ -4,20 +4,69 @@ import Link from "next/link";
 import { Pencil } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import { ContractListItem } from "@/lib/api";
+import {
+  STANDING_LABELS,
+  STANDING_STYLES,
+  formatDateOnly,
+} from "@/lib/contractDates";
+import {
+  formatContractCatalogLabel,
+  getContractTypeStyle,
+} from "@/lib/contractTypes";
+import { formatCustomerName } from "@/lib/formatName";
+import LucideIconByName from "@/components/icons/LucideIconByName";
+import { formatAddressLabel } from "@/components/customers/CustomerAddressesPanel";
+import { ContractEquipmentSummary } from "@/lib/api";
 
-function formatDate(date: string | null): string {
-  if (!date) return "—";
-  return new Date(date).toLocaleDateString();
+export function formatEquipmentLabel(
+  equipment: ContractEquipmentSummary | null | undefined
+): string {
+  if (!equipment) return "—";
+  const model = equipment.generatorModel?.trim();
+  const serial = equipment.serial?.trim();
+  if (model && serial) return `${model} · ${serial}`;
+  return model || serial || equipment.atsSerial?.trim() || "Equipment";
 }
 
 interface ContractRowProps {
   contract: ContractListItem;
   showCustomer?: boolean;
+  showAddress?: boolean;
   canEdit: boolean;
   returnTo: string;
 }
 
-function ContractRow({ contract, showCustomer, canEdit, returnTo }: ContractRowProps) {
+function StandingBadge({ contract }: { contract: ContractListItem }) {
+  const standing = contract.standing ?? "expired";
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${STANDING_STYLES[standing]}`}
+    >
+      {STANDING_LABELS[standing]}
+    </span>
+  );
+}
+
+function TypeBadge({ contract }: { contract: ContractListItem }) {
+  const label = formatContractCatalogLabel(contract);
+  const icon = contract.template?.badgeIcon;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${getContractTypeStyle(contract.template?.slug ?? contract.contractType)}`}
+    >
+      {icon ? <LucideIconByName name={icon} className="h-3 w-3" size={12} /> : null}
+      {label}
+    </span>
+  );
+}
+
+function ContractRow({
+  contract,
+  showCustomer,
+  showAddress,
+  canEdit,
+  returnTo,
+}: ContractRowProps) {
   const editHref = `/dashboard/contracts/${contract._id}/edit?returnTo=${encodeURIComponent(returnTo)}`;
 
   return (
@@ -29,15 +78,37 @@ function ContractRow({ contract, showCustomer, canEdit, returnTo }: ContractRowP
               href={`/dashboard/customers/${contract.customer._id}`}
               className="font-medium text-brand-dark hover:text-brand-orange transition-colors"
             >
-              {contract.customer.first} {contract.customer.last}
+              {formatCustomerName(contract.customer.first, contract.customer.last)}
             </Link>
           ) : (
             <span className="text-neutral-400">Unknown customer</span>
           )}
         </td>
       )}
+      {showAddress && (
+        <>
+          <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+            {formatAddressLabel(contract.address)}
+          </td>
+          <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+            {formatEquipmentLabel(contract.equipment)}
+          </td>
+        </>
+      )}
       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-        {formatDate(contract.contractDate)}
+        {formatDateOnly(contract.originalContractDate)}
+      </td>
+      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+        {formatDateOnly(contract.renewalDueDate)}
+      </td>
+      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+        {contract.durationMonths ? `${contract.durationMonths} mo` : "—"}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap">
+        <TypeBadge contract={contract} />
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap">
+        <StandingBadge contract={contract} />
       </td>
       <td className="px-6 py-4 text-neutral-600">{contract.description || "—"}</td>
       {canEdit && (
@@ -58,6 +129,7 @@ function ContractRow({ contract, showCustomer, canEdit, returnTo }: ContractRowP
 interface ServiceContractsTableProps {
   contracts: ContractListItem[];
   showCustomer?: boolean;
+  showAddress?: boolean;
   returnTo?: string;
   emptyMessage?: string;
 }
@@ -65,11 +137,13 @@ interface ServiceContractsTableProps {
 export default function ServiceContractsTable({
   contracts,
   showCustomer = false,
+  showAddress = false,
   returnTo = "/dashboard/contracts",
-  emptyMessage = "No service contracts yet.",
+  emptyMessage = "No contracts yet.",
 }: ServiceContractsTableProps) {
   const canEdit = useAuthStore((s) => s.hasPermission("contracts:write"));
-  const colCount = (showCustomer ? 3 : 2) + (canEdit ? 1 : 0);
+  const colCount =
+    (showCustomer ? 7 : 6) + (showAddress ? 2 : 0) + (canEdit ? 1 : 0);
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
@@ -82,8 +156,30 @@ export default function ServiceContractsTable({
                   Customer
                 </th>
               )}
+              {showAddress && (
+                <>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Address
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Equipment
+                  </th>
+                </>
+              )}
               <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Contract Date
+                Original Date
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Renewal Due
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Duration
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Type
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Standing
               </th>
               <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Description
@@ -108,6 +204,7 @@ export default function ServiceContractsTable({
                   key={contract._id}
                   contract={contract}
                   showCustomer={showCustomer}
+                  showAddress={showAddress}
                   canEdit={canEdit}
                   returnTo={returnTo}
                 />

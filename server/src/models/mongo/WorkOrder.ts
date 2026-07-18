@@ -5,6 +5,8 @@ export interface IWorkOrder extends Document {
   userId: number;
   customerId: number; // references Customer.legacyId
   customerRef?: Types.ObjectId; // resolved Customer _id (optional virtual join)
+  addressRef?: Types.ObjectId | null;
+  equipmentRef?: Types.ObjectId | null;
   descPerform: string;
   paid: boolean;
   runHours: number;
@@ -30,6 +32,18 @@ const workOrderSchema = new Schema<IWorkOrder>(
     userId: { type: Number, index: true },
     customerId: { type: Number, index: true, required: true },
     customerRef: { type: Schema.Types.ObjectId, ref: "Customer" },
+    addressRef: {
+      type: Schema.Types.ObjectId,
+      ref: "CustomerAddress",
+      default: null,
+      index: true,
+    },
+    equipmentRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Equipment",
+      default: null,
+      index: true,
+    },
     descPerform: { type: String, default: "" },
     paid: { type: Boolean, default: false },
     runHours: { type: Number, default: 0 },

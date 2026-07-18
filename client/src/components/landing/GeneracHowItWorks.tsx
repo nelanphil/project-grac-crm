@@ -26,7 +26,7 @@ export default function GeneracHowItWorks() {
               key={step.step}
               type="button"
               onClick={() => setActiveStep(index)}
-              aria-selected={activeStep === index}
+              aria-current={activeStep === index ? "true" : undefined}
               aria-controls={`how-it-works-panel-${index}`}
               id={`how-it-works-tab-${index}`}
               className={`flex items-start gap-3 border-b border-neutral-200 px-5 py-5 text-left transition-colors sm:border-b-0 sm:border-r sm:last:border-r-0 ${

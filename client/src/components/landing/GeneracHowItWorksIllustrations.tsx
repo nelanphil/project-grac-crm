@@ -3,8 +3,6 @@ import type { ReactNode } from "react";
 const STROKE = "#231f20";
 const MUTED = "#737373";
 const ORANGE = "#f36c21";
-const LIGHT = "#fafafa";
-const WINDOW_OFF = "#d4d4d4";
 const WINDOW_ON = "#fef3c7";
 const GLOW = "#fbbf24";
 

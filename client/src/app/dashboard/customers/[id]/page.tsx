@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ClipboardList, ScrollText } from "lucide-react";
+import { ArrowLeft, ClipboardList, GitMerge, ScrollText } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import ContactCard from "@/components/customers/ContactCard";
+import CustomerAddressesPanel, {
+  addressesSectionTitle,
+  formatAddressLabel,
+} from "@/components/customers/CustomerAddressesPanel";
+import MergeCustomersDialog from "@/components/customers/MergeCustomersDialog";
 import ServiceContractsTable from "@/components/contracts/ServiceContractsTable";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
@@ -16,6 +22,7 @@ import {
   ContractListItem,
   ApiError,
 } from "@/lib/api";
+import { formatCustomerName } from "@/lib/formatName";
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -27,15 +34,6 @@ function formatCurrency(amount: number): string {
 function formatDate(date: string | null): string {
   if (!date) return "—";
   return new Date(date).toLocaleDateString();
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs font-medium uppercase tracking-wide text-neutral-400">{label}</dt>
-      <dd className="mt-1 text-sm text-brand-dark">{value || "—"}</dd>
-    </div>
-  );
 }
 
 function StatusBadge({ label, active }: { label: string; active: boolean }) {
@@ -59,12 +57,16 @@ function CustomerDetailContent() {
 
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
+  const canWrite = useAuthStore((s) => s.hasPermission("customers:write"));
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [workOrders, setWorkOrders] = useState<WorkOrderListItem[]>([]);
   const [contracts, setContracts] = useState<ContractListItem[]>([]);
+  const [addressFilter, setAddressFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeToast, setMergeToast] = useState<string | null>(null);
 
   useEffect(() => {
     if (user?.role === "customer") {
@@ -75,12 +77,18 @@ function CustomerDetailContent() {
   useEffect(() => {
     if (!token || !id || user?.role === "customer") return;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
+
     setError(null);
 
     getCustomer(token, id)
       .then(({ customer: c }) => {
-        setCustomer(c);
+        setCustomer({
+          ...c,
+          addresses: c.addresses ?? [],
+          contacts: c.contacts ?? [],
+        });
         return Promise.all([
           getWorkOrdersForCustomer(token, c.legacyId),
           getContractsForCustomer(token, c.legacyId),
@@ -91,15 +99,34 @@ function CustomerDetailContent() {
         setContracts(contractList);
       })
       .catch((err) =>
-        setError(err instanceof ApiError ? err.message : "Failed to load customer.")
+        setError(
+          err instanceof ApiError ? err.message : "Failed to load customer.",
+        ),
       )
       .finally(() => setLoading(false));
   }, [token, id, user]);
 
+  const filteredWorkOrders = useMemo(() => {
+    if (addressFilter === "all") return workOrders;
+    return workOrders.filter(
+      (wo) =>
+        wo.addressRef === addressFilter || wo.address?._id === addressFilter,
+    );
+  }, [workOrders, addressFilter]);
+
+  const filteredContracts = useMemo(() => {
+    if (addressFilter === "all") return contracts;
+    return contracts.filter(
+      (c) => c.addressRef === addressFilter || c.address?._id === addressFilter,
+    );
+  }, [contracts, addressFilter]);
+
   if (!user || user.role === "customer") return null;
 
   if (loading) {
-    return <div className="text-sm text-neutral-500 py-6">Loading customer…</div>;
+    return (
+      <div className="text-sm text-neutral-500 py-6">Loading customer…</div>
+    );
   }
 
   if (error || !customer) {
@@ -119,72 +146,116 @@ function CustomerDetailContent() {
     );
   }
 
-  const fullAddress = [customer.address, customer.city, customer.state, customer.zip]
-    .filter(Boolean)
-    .join(", ");
+  const addresses = customer.addresses ?? [];
+  const addressTitle = addressesSectionTitle();
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link
-          href="/dashboard/customers"
-          className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Customers
-        </Link>
-        <h1 className="mt-4 text-2xl font-bold text-brand-dark">
-          {customer.first} {customer.last}
-        </h1>
-        <p className="mt-1 text-sm text-neutral-500">Customer details and work order history</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <Link
+            href="/dashboard/customers"
+            className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Customers
+          </Link>
+          <h1 className="mt-4 text-2xl font-bold text-brand-dark">
+            {formatCustomerName(customer.first, customer.last)}
+          </h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            Customer details, addresses, and work order history
+          </p>
+        </div>
+        {canWrite ? (
+          <button
+            type="button"
+            onClick={() => setMergeOpen(true)}
+            className="inline-flex items-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange"
+          >
+            <GitMerge className="h-4 w-4" />
+            Merge customer
+          </button>
+        ) : null}
       </div>
 
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-brand-dark mb-4">Contact</h2>
-          <dl className="space-y-4">
-            <InfoRow label="Name" value={`${customer.first} ${customer.last}`} />
-            <InfoRow label="Email" value={customer.email} />
-            <InfoRow label="Phone" value={customer.phone} />
-            <InfoRow label="Address" value={fullAddress} />
-          </dl>
+      {mergeToast ? (
+        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+          {mergeToast}
         </div>
+      ) : null}
 
-        <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-brand-dark mb-4">Equipment</h2>
-          <dl className="space-y-4">
-            <InfoRow label="Generator Model" value={customer.generatorModel} />
-            <InfoRow label="Serial" value={customer.serial} />
-            <InfoRow label="ATS Serial" value={customer.atsSerial} />
-          </dl>
-        </div>
-
-        <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-brand-dark mb-4">Service</h2>
-          <dl className="space-y-4">
-            <InfoRow label="Last Service" value={formatDate(customer.lastSvc)} />
-            <InfoRow label="Extended Day" value={customer.exday} />
-            <InfoRow label="Extended Time" value={customer.extime} />
-          </dl>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <ContactCard
+          customer={customer}
+          token={token!}
+          userId={user.id}
+          canWrite={canWrite}
+          onCustomerChange={setCustomer}
+        />
+        <div className="lg:col-span-2 space-y-3">
+          <h2 className="text-lg font-semibold text-brand-dark">
+            {addressTitle}
+            {addresses.length > 0 ? ` (${addresses.length})` : ""}
+            {addresses.some((a) => a.equipment.length > 0)
+              ? " & equipment"
+              : ""}
+          </h2>
+          <CustomerAddressesPanel
+            customerId={customer._id}
+            token={token!}
+            addresses={addresses}
+            canWrite={canWrite}
+            onAddressesChange={(next) =>
+              setCustomer((prev) =>
+                prev ? { ...prev, addresses: next } : prev,
+              )
+            }
+          />
         </div>
       </div>
+
+      {addresses.length > 1 ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <label
+            htmlFor="address-filter"
+            className="text-sm font-medium text-neutral-600"
+          >
+            Filter by address
+          </label>
+          <select
+            id="address-filter"
+            value={addressFilter}
+            onChange={(e) => setAddressFilter(e.target.value)}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+          >
+            <option value="all">All addresses</option>
+            {addresses.map((addr) => (
+              <option key={addr._id} value={addr._id}>
+                {addr.label || formatAddressLabel(addr)}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
 
       <div className="space-y-4">
         <h2 className="text-lg font-semibold text-brand-dark">
-          Service Contracts ({contracts.length})
+          Contracts ({filteredContracts.length})
         </h2>
 
-        {contracts.length === 0 ? (
+        {filteredContracts.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-12 text-center shadow-sm">
             <ScrollText className="h-10 w-10 text-neutral-300 mb-4" />
-            <p className="text-sm font-medium text-neutral-500">No service contracts</p>
+            <p className="text-sm font-medium text-neutral-500">No contracts</p>
             <p className="mt-1 text-xs text-neutral-400">
-              Service contracts for this customer will appear here.
+              Contracts for this customer will appear here.
             </p>
           </div>
         ) : (
           <ServiceContractsTable
-            contracts={contracts}
+            contracts={filteredContracts}
+            showAddress={addresses.length > 0}
             returnTo={`/dashboard/customers/${id}`}
           />
         )}
@@ -192,13 +263,15 @@ function CustomerDetailContent() {
 
       <div className="space-y-4">
         <h2 className="text-lg font-semibold text-brand-dark">
-          Work Orders ({workOrders.length})
+          Work Orders ({filteredWorkOrders.length})
         </h2>
 
-        {workOrders.length === 0 ? (
+        {filteredWorkOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-16 text-center shadow-sm">
             <ClipboardList className="h-10 w-10 text-neutral-300 mb-4" />
-            <p className="text-sm font-medium text-neutral-500">No work orders yet</p>
+            <p className="text-sm font-medium text-neutral-500">
+              No work orders yet
+            </p>
             <p className="mt-1 text-xs text-neutral-400">
               Work orders for this customer will appear here.
             </p>
@@ -212,6 +285,11 @@ function CustomerDetailContent() {
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Date
                     </th>
+                    {addresses.length > 0 ? (
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Address
+                      </th>
+                    ) : null}
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Description
                     </th>
@@ -227,11 +305,16 @@ function CustomerDetailContent() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100 bg-white">
-                  {workOrders.map((order) => (
+                  {filteredWorkOrders.map((order) => (
                     <tr key={order._id}>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {formatDate(order.date)}
                       </td>
+                      {addresses.length > 0 ? (
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          {formatAddressLabel(order.address)}
+                        </td>
+                      ) : null}
                       <td className="px-6 py-4 text-neutral-600">
                         {order.descPerform || order.descPerformed || "—"}
                       </td>
@@ -244,7 +327,10 @@ function CustomerDetailContent() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex gap-2">
                           <StatusBadge label="Paid" active={order.paid} />
-                          <StatusBadge label="Completed" active={order.completed} />
+                          <StatusBadge
+                            label="Completed"
+                            active={order.completed}
+                          />
                         </div>
                       </td>
                     </tr>
@@ -255,6 +341,31 @@ function CustomerDetailContent() {
           </div>
         )}
       </div>
+
+      <MergeCustomersDialog
+        open={mergeOpen}
+        onClose={() => setMergeOpen(false)}
+        token={token!}
+        survivor={customer}
+        onMerged={(merged) => {
+          setCustomer({
+            ...merged,
+            addresses: merged.addresses ?? [],
+            contacts: merged.contacts ?? [],
+          });
+          setMergeToast(
+            "Customers merged successfully. Related records were moved here.",
+          );
+          setAddressFilter("all");
+          Promise.all([
+            getWorkOrdersForCustomer(token!, merged.legacyId),
+            getContractsForCustomer(token!, merged.legacyId),
+          ]).then(([orders, { contracts: contractList }]) => {
+            setWorkOrders(orders);
+            setContracts(contractList);
+          });
+        }}
+      />
     </div>
   );
 }
