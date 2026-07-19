@@ -28,7 +28,10 @@ export default function PasswordTab() {
     setLoading(true);
 
     try {
-      await updatePassword(token!, { current_password: currentPassword, new_password: newPassword });
+      await updatePassword(token!, {
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
       setSuccess(true);
       setCurrentPassword("");
       setNewPassword("");
@@ -42,7 +45,9 @@ export default function PasswordTab() {
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm">
-      <h2 className="text-lg font-semibold text-brand-dark mb-6">Change Password</h2>
+      <h2 className="text-lg font-semibold text-brand-dark mb-6">
+        Change Password
+      </h2>
 
       {success && (
         <div className="mb-4 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
@@ -57,7 +62,10 @@ export default function PasswordTab() {
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <div>
-          <label htmlFor="currentPassword" className="block text-sm font-medium text-brand-dark">
+          <label
+            htmlFor="currentPassword"
+            className="block text-sm font-medium text-brand-dark"
+          >
             Current Password
           </label>
           <PasswordInput
@@ -71,7 +79,10 @@ export default function PasswordTab() {
         </div>
 
         <div>
-          <label htmlFor="newPassword" className="block text-sm font-medium text-brand-dark">
+          <label
+            htmlFor="newPassword"
+            className="block text-sm font-medium text-brand-dark"
+          >
             New Password
           </label>
           <PasswordInput
@@ -87,7 +98,10 @@ export default function PasswordTab() {
         </div>
 
         <div>
-          <label htmlFor="confirmPassword" className="block text-sm font-medium text-brand-dark">
+          <label
+            htmlFor="confirmPassword"
+            className="block text-sm font-medium text-brand-dark"
+          >
             Confirm New Password
           </label>
           <PasswordInput
@@ -101,7 +115,11 @@ export default function PasswordTab() {
         </div>
 
         <div className="flex justify-end">
-          <button type="submit" disabled={loading} className="btn-primary px-6 py-2.5 text-sm disabled:opacity-60">
+          <button
+            type="submit"
+            disabled={loading}
+            className="btn-primary px-6 py-2.5 text-sm disabled:opacity-60"
+          >
             {loading ? "Updating…" : "Update Password"}
           </button>
         </div>

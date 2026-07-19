@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ClipboardList, GitMerge, ScrollText } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ContactCard from "@/components/customers/ContactCard";
@@ -52,8 +52,8 @@ function StatusBadge({ label, active }: { label: string; active: boolean }) {
 
 function CustomerDetailContent() {
   const router = useRouter();
-  const params = useParams();
-  const id = params.id as string;
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id") ?? "";
 
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
@@ -256,7 +256,7 @@ function CustomerDetailContent() {
           <ServiceContractsTable
             contracts={filteredContracts}
             showAddress={addresses.length > 0}
-            returnTo={`/dashboard/customers/${id}`}
+            returnTo={`/dashboard/customers/detail?id=${id}`}
           />
         )}
       </div>
@@ -373,7 +373,9 @@ function CustomerDetailContent() {
 export default function CustomerDetailPage() {
   return (
     <AuthGuard>
-      <CustomerDetailContent />
+      <Suspense fallback={null}>
+        <CustomerDetailContent />
+      </Suspense>
     </AuthGuard>
   );
 }

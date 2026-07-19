@@ -19,7 +19,7 @@ import { formatAddressLabel } from "@/components/customers/CustomerAddressesPane
 import { ContractEquipmentSummary } from "@/lib/api";
 
 export function formatEquipmentLabel(
-  equipment: ContractEquipmentSummary | null | undefined
+  equipment: ContractEquipmentSummary | null | undefined,
 ): string {
   if (!equipment) return "—";
   const model = equipment.generatorModel?.trim();
@@ -54,7 +54,9 @@ function TypeBadge({ contract }: { contract: ContractListItem }) {
     <span
       className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${getContractTypeStyle(contract.template?.slug ?? contract.contractType)}`}
     >
-      {icon ? <LucideIconByName name={icon} className="h-3 w-3" size={12} /> : null}
+      {icon ? (
+        <LucideIconByName name={icon} className="h-3 w-3" size={12} />
+      ) : null}
       {label}
     </span>
   );
@@ -67,7 +69,7 @@ function ContractRow({
   canEdit,
   returnTo,
 }: ContractRowProps) {
-  const editHref = `/dashboard/contracts/${contract._id}/edit?returnTo=${encodeURIComponent(returnTo)}`;
+  const editHref = `/dashboard/contracts/edit?id=${contract._id}&returnTo=${encodeURIComponent(returnTo)}`;
 
   return (
     <tr className="hover:bg-neutral-50 transition-colors">
@@ -75,10 +77,13 @@ function ContractRow({
         <td className="px-6 py-4 whitespace-nowrap">
           {contract.customer ? (
             <Link
-              href={`/dashboard/customers/${contract.customer._id}`}
+              href={`/dashboard/customers/detail?id=${contract.customer._id}`}
               className="font-medium text-brand-dark hover:text-brand-orange transition-colors"
             >
-              {formatCustomerName(contract.customer.first, contract.customer.last)}
+              {formatCustomerName(
+                contract.customer.first,
+                contract.customer.last,
+              )}
             </Link>
           ) : (
             <span className="text-neutral-400">Unknown customer</span>
@@ -110,7 +115,9 @@ function ContractRow({
       <td className="px-6 py-4 whitespace-nowrap">
         <StandingBadge contract={contract} />
       </td>
-      <td className="px-6 py-4 text-neutral-600">{contract.description || "—"}</td>
+      <td className="px-6 py-4 text-neutral-600">
+        {contract.description || "—"}
+      </td>
       {canEdit && (
         <td className="px-6 py-4 whitespace-nowrap text-right">
           <Link
@@ -194,7 +201,10 @@ export default function ServiceContractsTable({
           <tbody className="divide-y divide-neutral-100 bg-white">
             {contracts.length === 0 ? (
               <tr>
-                <td colSpan={colCount} className="px-6 py-12 text-center text-neutral-500">
+                <td
+                  colSpan={colCount}
+                  className="px-6 py-12 text-center text-neutral-500"
+                >
                   {emptyMessage}
                 </td>
               </tr>

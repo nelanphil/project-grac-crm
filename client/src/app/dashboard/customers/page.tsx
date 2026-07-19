@@ -487,7 +487,9 @@ function CustomersContent() {
                   <tr
                     key={customer._id}
                     onClick={() =>
-                      router.push(`/dashboard/customers/${customer._id}`)
+                      router.push(
+                        `/dashboard/customers/detail?id=${customer._id}`,
+                      )
                     }
                     className="cursor-pointer transition-colors hover:bg-neutral-50"
                   >

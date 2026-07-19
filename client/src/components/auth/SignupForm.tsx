@@ -154,7 +154,11 @@ export default function SignupForm() {
         />
       </div>
 
-      <button type="submit" disabled={loading} className="btn-primary w-full disabled:opacity-60">
+      <button
+        type="submit"
+        disabled={loading}
+        className="btn-primary w-full disabled:opacity-60"
+      >
         {loading ? "Creating account…" : "Create Account"}
       </button>
     </form>

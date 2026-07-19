@@ -371,7 +371,7 @@ export default function UpcomingRenewalsTable() {
                       onClick={() =>
                         contract.customer &&
                         router.push(
-                          `/dashboard/customers/${contract.customer._id}`,
+                          `/dashboard/customers/detail?id=${contract.customer._id}`,
                         )
                       }
                       className="cursor-pointer transition-colors hover:bg-neutral-50"

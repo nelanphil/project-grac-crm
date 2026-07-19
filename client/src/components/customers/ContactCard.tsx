@@ -49,7 +49,7 @@ const emptyForm: ContactFormState = {
 
 function applyPrimaryToCustomer(
   customer: CustomerDetail,
-  contacts: CustomerContact[]
+  contacts: CustomerContact[],
 ): CustomerDetail {
   const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
   return {
@@ -71,7 +71,7 @@ export default function ContactCard({
 }: ContactCardProps) {
   const [view, setView] = useState<ViewMode>("contact");
   const [contacts, setContacts] = useState<CustomerContact[]>(
-    customer.contacts ?? []
+    customer.contacts ?? [],
   );
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -86,7 +86,12 @@ export default function ContactCard({
   const primaryAddress =
     customer.addresses?.find((a) => a.isPrimary) ?? customer.addresses?.[0];
   const fullAddress = primaryAddress
-    ? [primaryAddress.address, primaryAddress.city, primaryAddress.state, primaryAddress.zip]
+    ? [
+        primaryAddress.address,
+        primaryAddress.city,
+        primaryAddress.state,
+        primaryAddress.zip,
+      ]
         .filter(Boolean)
         .join(", ")
     : [customer.address, customer.city, customer.state, customer.zip]
@@ -135,7 +140,7 @@ export default function ContactCard({
           token,
           customer._id,
           editingId,
-          form
+          form,
         );
         const next = contacts.map((c) => (c._id === contact._id ? contact : c));
         publishContacts(next);
@@ -148,7 +153,9 @@ export default function ContactCard({
       }
       cancelForm();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to save contact.");
+      setError(
+        err instanceof ApiError ? err.message : "Failed to save contact.",
+      );
     } finally {
       setSaving(false);
     }
@@ -162,7 +169,7 @@ export default function ContactCard({
         token,
         customer._id,
         contactId,
-        { isPrimary: true }
+        { isPrimary: true },
       );
       const next = contacts.map((c) => ({
         ...(c._id === contact._id ? contact : c),
@@ -171,7 +178,9 @@ export default function ContactCard({
       publishContacts(next);
     } catch (err) {
       setError(
-        err instanceof ApiError ? err.message : "Failed to set primary contact."
+        err instanceof ApiError
+          ? err.message
+          : "Failed to set primary contact.",
       );
     } finally {
       setSaving(false);
@@ -199,7 +208,7 @@ export default function ContactCard({
       if (editingId === contactId) cancelForm();
     } catch (err) {
       setError(
-        err instanceof ApiError ? err.message : "Failed to delete contact."
+        err instanceof ApiError ? err.message : "Failed to delete contact.",
       );
     } finally {
       setSaving(false);
@@ -306,7 +315,9 @@ export default function ContactCard({
             <dt className="text-xs font-medium uppercase tracking-wide text-neutral-400">
               Primary address
             </dt>
-            <dd className="mt-1 text-sm text-brand-dark">{fullAddress || "—"}</dd>
+            <dd className="mt-1 text-sm text-brand-dark">
+              {fullAddress || "—"}
+            </dd>
           </div>
 
           {canWrite && !adding && !editingId ? (
@@ -378,7 +389,9 @@ export default function ContactCard({
                   disabled={saving}
                   className="inline-flex items-center gap-1.5 rounded-md bg-brand-orange px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-orange/90 disabled:opacity-50"
                 >
-                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : null}
                   Save
                 </button>
               </div>
@@ -391,7 +404,7 @@ export default function ContactCard({
           customerId={customer._id}
           userId={userId}
           limit={1}
-          viewAllHref={`/dashboard/customers/${customer._id}/notes`}
+          viewAllHref={`/dashboard/customers/notes?id=${customer._id}`}
           enabled={view === "notes"}
           newNoteInputId="contactCardNewNote"
         />

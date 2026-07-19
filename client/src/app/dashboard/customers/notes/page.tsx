@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import CustomerNotesPanel from "@/components/customers/CustomerNotesPanel";
@@ -11,8 +11,8 @@ import { ApiError, CustomerDetail, getCustomer } from "@/lib/api";
 
 function CustomerNotesContent() {
   const router = useRouter();
-  const params = useParams();
-  const id = params.id as string;
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id") ?? "";
 
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
@@ -55,7 +55,7 @@ function CustomerNotesContent() {
     return (
       <div className="space-y-4">
         <Link
-          href={`/dashboard/customers/${id}`}
+          href={`/dashboard/customers/detail?id=${id}`}
           className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -72,7 +72,7 @@ function CustomerNotesContent() {
     <div className="space-y-6">
       <div>
         <Link
-          href={`/dashboard/customers/${customer._id}`}
+          href={`/dashboard/customers/detail?id=${customer._id}`}
           className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -101,7 +101,9 @@ function CustomerNotesContent() {
 export default function CustomerNotesPage() {
   return (
     <AuthGuard>
-      <CustomerNotesContent />
+      <Suspense fallback={null}>
+        <CustomerNotesContent />
+      </Suspense>
     </AuthGuard>
   );
 }

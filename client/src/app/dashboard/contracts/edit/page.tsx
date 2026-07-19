@@ -1,8 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -39,9 +39,8 @@ function safeReturnTo(value: string | null): string {
 
 function EditContractContent() {
   const router = useRouter();
-  const params = useParams();
   const searchParams = useSearchParams();
-  const id = params.id as string;
+  const id = searchParams.get("id") ?? "";
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
 
   const token = useAuthStore((s) => s.token);
@@ -284,7 +283,7 @@ function EditContractContent() {
           Update contract details for{" "}
           {contract.customer ? (
             <Link
-              href={`/dashboard/customers/${contract.customer._id}`}
+              href={`/dashboard/customers/detail?id=${contract.customer._id}`}
               className="text-brand-orange hover:underline"
             >
               {customerName}
@@ -631,7 +630,9 @@ function EditContractContent() {
 export default function EditContractPage() {
   return (
     <AuthGuard>
-      <EditContractContent />
+      <Suspense fallback={null}>
+        <EditContractContent />
+      </Suspense>
     </AuthGuard>
   );
 }

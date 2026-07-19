@@ -6,13 +6,14 @@ let isConnected = false;
 export async function connectMongoDB(): Promise<void> {
   try {
     await mongoose.connect(env.mongodbUri, {
-      serverSelectionTimeoutMS: 3000,
+      serverSelectionTimeoutMS: 10000,
     });
     isConnected = true;
     console.log("MongoDB connected");
   } catch (error) {
     isConnected = false;
-    console.warn("MongoDB connection failed:", (error as Error).message);
+    console.error("MongoDB connection failed:", (error as Error).message);
+    throw error;
   }
 }
 

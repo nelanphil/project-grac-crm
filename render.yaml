@@ -33,18 +33,17 @@ services:
       - key: MYSQL_DATABASE
         sync: false
 
-  # Frontend (Next.js) — MUST be a web service, not a static site,
-  # because it has server-rendered (dynamic) routes.
+  # Frontend (Next.js) — static export (`output: 'export'` in next.config.ts).
+  # Every route is a client-rendered SPA page (data loaded from the API at
+  # runtime), so it deploys as a static site. Record pages use query params
+  # (e.g. /dashboard/customers/detail?id=...) instead of dynamic segments.
   - type: web
     name: grac-crm-client
-    runtime: node
+    runtime: static
     rootDir: client
-    plan: free
     buildCommand: npm install && npm run build
-    startCommand: npm start
+    staticPublishPath: out
     envVars:
-      - key: NODE_ENV
-        value: production
-      # URL of the deployed backend API
+      # URL of the deployed backend API (baked into the bundle at build time)
       - key: NEXT_PUBLIC_API_URL
         sync: false
