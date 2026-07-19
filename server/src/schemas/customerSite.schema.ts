@@ -35,7 +35,15 @@ export const createCustomerContactSchema = z.object({
   first: z.string().trim().max(120).optional().default(""),
   last: z.string().trim().max(120).optional().default(""),
   phone: z.string().trim().max(40).optional().default(""),
-  email: z.string().trim().max(200).optional().default(""),
+  email: z
+    .string()
+    .trim()
+    .max(200)
+    .optional()
+    .default("")
+    .refine((v) => v === "" || z.string().email().safeParse(v).success, {
+      message: "Invalid email address",
+    }),
   label: z.string().trim().max(120).optional().default(""),
   isPrimary: z.boolean().optional(),
 });

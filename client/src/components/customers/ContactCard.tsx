@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 import { Loader2, Plus, UserRound } from "lucide-react";
 import {
   ApiError,
@@ -62,7 +62,11 @@ function applyPrimaryToCustomer(
   };
 }
 
-export default function ContactCard({
+export default function ContactCard(props: ContactCardProps) {
+  return <ContactCardContent key={props.customer._id} {...props} />;
+}
+
+function ContactCardContent({
   customer,
   token,
   userId,
@@ -78,10 +82,6 @@ export default function ContactCard({
   const [form, setForm] = useState<ContactFormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setContacts(customer.contacts ?? []);
-  }, [customer.contacts]);
 
   const primaryAddress =
     customer.addresses?.find((a) => a.isPrimary) ?? customer.addresses?.[0];

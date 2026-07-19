@@ -21,6 +21,7 @@ import {
   ensureCustomerContactFromFlat,
   syncCustomerPrimaryContactFields,
 } from "../utils/customerContacts";
+import { ensureCustomerUser } from "../utils/ensureCustomerUser";
 import {
   customerHasSiteData,
   ensureCustomerSiteFromFlat,
@@ -103,6 +104,7 @@ function formatContact(doc: {
   email?: string;
   label?: string;
   isPrimary?: boolean;
+  userRef?: mongoose.Types.ObjectId | null;
   legacyCustomerId?: number | null;
   createdAt: Date;
   updatedAt: Date;
@@ -116,6 +118,7 @@ function formatContact(doc: {
     email: doc.email ?? "",
     label: doc.label ?? "",
     isPrimary: Boolean(doc.isPrimary),
+    userRef: doc.userRef ? doc.userRef.toString() : null,
     legacyCustomerId: doc.legacyCustomerId ?? null,
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
@@ -838,9 +841,13 @@ export async function createCustomerContact(
       legacyCustomerId: null,
     });
 
+    await ensureCustomerUser(contact);
+    const refreshed = await CustomerContact.findById(contact._id);
     await syncCustomerPrimaryContactFields(customer._id);
 
-    res.status(201).json({ contact: formatContact(contact.toObject()) });
+    res.status(201).json({
+      contact: formatContact((refreshed ?? contact).toObject()),
+    });
   } catch (err) {
     console.error("POST /customers/:id/contacts error:", err);
     res.status(500).json({ message: "Internal server error" });
@@ -914,9 +921,13 @@ export async function updateCustomerContact(
     }
 
     await contact.save();
+    await ensureCustomerUser(contact);
+    const refreshed = await CustomerContact.findById(contact._id);
     await syncCustomerPrimaryContactFields(customer._id);
 
-    res.status(200).json({ contact: formatContact(contact.toObject()) });
+    res.status(200).json({
+      contact: formatContact((refreshed ?? contact).toObject()),
+    });
   } catch (err) {
     console.error("PATCH /customers/:id/contacts/:contactId error:", err);
     res.status(500).json({ message: "Internal server error" });

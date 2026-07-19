@@ -2,6 +2,7 @@
 
 import AuthGuard from "@/components/auth/AuthGuard";
 import UpcomingRenewalsTable from "@/components/dashboard/UpcomingRenewalsTable";
+import UsernameDisplay from "@/components/ui/UsernameDisplay";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -50,6 +51,15 @@ function DashboardContent() {
               {user.first_name} {user.last_name}
             </h2>
             <p className="mt-1 text-sm text-neutral-500">{user.email}</p>
+            {user.username && (
+              <p className="mt-1 text-sm text-neutral-500">
+                <UsernameDisplay
+                  username={user.username}
+                  usernameNumber={user.usernameNumber}
+                  className="text-neutral-600"
+                />
+              </p>
+            )}
           </div>
           <span
             className={`rounded-full px-3 py-1 text-xs font-semibold ${ROLE_COLORS[user.role] ?? "bg-neutral-100 text-neutral-700"}`}

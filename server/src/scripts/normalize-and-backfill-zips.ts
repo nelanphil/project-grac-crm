@@ -66,7 +66,7 @@ function normalizeCity(city: string): string {
 }
 
 function stripCityFromStreet(address: string, city: string): string {
-  let street = address.trim();
+  const street = address.trim();
   if (!street.includes(",")) return street;
 
   const parts = street

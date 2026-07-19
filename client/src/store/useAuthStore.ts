@@ -10,6 +10,9 @@ export interface AuthUser {
   permissions: string[];
   first_name: string;
   last_name: string;
+  username: string | null;
+  /** Numeric suffix from backend key (doc1 → 1). Shown subtly in UI. */
+  usernameNumber: number | null;
 }
 
 interface AuthStore {

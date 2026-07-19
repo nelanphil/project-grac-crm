@@ -13,6 +13,7 @@ import fs from "fs";
 import { connectMongoDB, disconnectMongoDB } from "../config/mongodb";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { Customer } from "../models/mongo/Customer";
+import mongoose from "mongoose";
 
 const DUMP_PATH = path.resolve(__dirname, "database_dump/work_orders.sql");
 
@@ -175,9 +176,7 @@ async function main() {
   const docs = rows.map((row) => ({
     ...row,
     customerRef: customerMap.get(row.customerId)
-      ? new (require("mongoose").Types.ObjectId)(
-          customerMap.get(row.customerId),
-        )
+      ? new mongoose.Types.ObjectId(customerMap.get(row.customerId))
       : undefined,
   }));
 

@@ -73,12 +73,12 @@ async function authRequest<T>(
 }
 
 export async function authLogin(
-  email: string,
+  identifier: string,
   password: string
 ): Promise<LoginResponse> {
   return authRequest<LoginResponse>("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ identifier, password }),
   });
 }
 
@@ -104,12 +104,37 @@ export async function authGetMe(token: string): Promise<{ user: AuthUser }> {
 
 export async function updateProfile(
   token: string,
-  data: { first_name?: string; last_name?: string; email?: string }
+  data: {
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+    username?: string | null;
+  }
 ): Promise<{ user: AuthUser }> {
   return authRequest<{ user: AuthUser }>("/auth/me", {
     method: "PATCH",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
+  });
+}
+
+export interface UsernameCheckResult {
+  valid: boolean;
+  message?: string;
+  username: string | null;
+  usernameNumber: number | null;
+  isShared: boolean;
+  signInAs: string | null;
+}
+
+export async function checkUsernameAvailability(
+  token: string,
+  username: string
+): Promise<UsernameCheckResult> {
+  const q = encodeURIComponent(username);
+  return authRequest<UsernameCheckResult>(`/auth/username-check?username=${q}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
   });
 }
 
@@ -124,18 +149,87 @@ export async function updatePassword(
   });
 }
 
+export async function authForgotPassword(
+  email: string
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function authResetPassword(
+  token: string,
+  password: string
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
+}
+
 export interface UserListItem {
   _id: string;
   email: string;
   first_name: string;
   last_name: string;
   role: AuthUser["role"];
+  username: string | null;
+  usernameNumber: number | null;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export async function getUsers(token: string): Promise<{ users: UserListItem[] }> {
   return authRequest<{ users: UserListItem[] }>("/users", {
     method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createUser(
+  token: string,
+  data: {
+    email: string;
+    password?: string;
+    first_name: string;
+    last_name: string;
+    role: string;
+    username?: string | null;
+  }
+): Promise<{ user: UserListItem; temporaryPassword?: string }> {
+  return authRequest<{ user: UserListItem; temporaryPassword?: string }>("/users", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateUser(
+  token: string,
+  id: string,
+  data: {
+    email?: string;
+    first_name?: string;
+    last_name?: string;
+    role?: string;
+    username?: string | null;
+    password?: string;
+  }
+): Promise<{ user: UserListItem }> {
+  return authRequest<{ user: UserListItem }>(`/users/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteUser(
+  token: string,
+  id: string
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>(`/users/${id}`, {
+    method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
 }
@@ -188,6 +282,7 @@ export interface CustomerContact {
   email: string;
   label: string;
   isPrimary: boolean;
+  userRef: string | null;
   legacyCustomerId: number | null;
   createdAt: string;
   updatedAt: string;

@@ -1,33 +1,37 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { useAuthStore } from "@/store/useAuthStore";
-import { authLogin, ApiError } from "@/lib/api";
+import { useRouter, useSearchParams } from "next/navigation";
+import { authResetPassword, ApiError } from "@/lib/api";
 import PasswordInput from "@/components/ui/PasswordInput";
 
-export default function LoginForm() {
+export default function ResetPasswordForm() {
   const router = useRouter();
-  const { login, redirectAfterAuth, setRedirectAfterAuth } = useAuthStore();
+  const searchParams = useSearchParams();
+  const token = searchParams.get("token") ?? "";
 
-  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+
+    if (!token) {
+      setError("Missing reset token. Use the link from your email.");
+      return;
+    }
+    if (password !== confirm) {
+      setError("Passwords do not match.");
+      return;
+    }
+
     setLoading(true);
-
     try {
-      const { token, user } = await authLogin(identifier, password);
-      login(token, user);
-
-      const destination = redirectAfterAuth ?? "/dashboard";
-      setRedirectAfterAuth(null);
-      router.push(destination);
+      await authResetPassword(token, password);
+      router.push("/auth/login");
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
@@ -47,63 +51,59 @@ export default function LoginForm() {
         </div>
       )}
 
-      <div>
-        <label
-          htmlFor="identifier"
-          className="block text-sm font-medium text-brand-dark"
-        >
-          Email or username
-        </label>
-        <input
-          id="identifier"
-          name="identifier"
-          type="text"
-          required
-          autoComplete="username"
-          value={identifier}
-          onChange={(e) => setIdentifier(e.target.value)}
-          className="mt-1 block w-full rounded-md border border-neutral-200 px-4 py-2.5 text-brand-dark outline-none transition-colors focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
-          placeholder="you@company.com or username"
-        />
-        <p className="mt-1.5 text-xs text-neutral-500">
-          Most users sign in with just their username. If yours is shared,
-          include your number (e.g. doc1).
-        </p>
-      </div>
+      {!token && (
+        <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+          No reset token found in the URL. Request a new link from the forgot
+          password page.
+        </div>
+      )}
 
       <div>
         <label
           htmlFor="password"
           className="block text-sm font-medium text-brand-dark"
         >
-          Password
+          New password
         </label>
         <PasswordInput
           id="password"
           name="password"
           required
-          autoComplete="current-password"
+          minLength={8}
+          autoComplete="new-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           className="mt-1 block w-full rounded-md border border-neutral-200 px-4 py-2.5 text-brand-dark outline-none transition-colors focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
-          placeholder="Enter your password"
+          placeholder="At least 8 characters"
         />
-        <div className="mt-1.5 text-right">
-          <Link
-            href="/auth/forgot-password"
-            className="text-sm font-medium text-brand-orange hover:underline"
-          >
-            Forgot password?
-          </Link>
-        </div>
+      </div>
+
+      <div>
+        <label
+          htmlFor="confirm"
+          className="block text-sm font-medium text-brand-dark"
+        >
+          Confirm password
+        </label>
+        <PasswordInput
+          id="confirm"
+          name="confirm"
+          required
+          minLength={8}
+          autoComplete="new-password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          className="mt-1 block w-full rounded-md border border-neutral-200 px-4 py-2.5 text-brand-dark outline-none transition-colors focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+          placeholder="Re-enter password"
+        />
       </div>
 
       <button
         type="submit"
-        disabled={loading}
+        disabled={loading || !token}
         className="btn-primary w-full disabled:opacity-60"
       >
-        {loading ? "Signing in…" : "Sign In"}
+        {loading ? "Resetting…" : "Reset password"}
       </button>
     </form>
   );

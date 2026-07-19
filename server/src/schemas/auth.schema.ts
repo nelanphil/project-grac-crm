@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const loginSchema = z.object({
-  email: z.string().email("Invalid email address"),
+  identifier: z.string().min(1, "Email or username is required").max(200),
   password: z.string().min(1, "Password is required"),
 });
 
@@ -16,10 +16,26 @@ export const registerSchema = z.object({
   role: z.string().min(1).optional().default("agent"),
 });
 
+const usernameField = z
+  .union([
+    z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(
+        /^[a-z][a-z0-9_]{2,29}$/,
+        "Username must be 3–30 characters, start with a letter, and contain only letters, numbers, or underscores"
+      ),
+    z.literal(""),
+    z.null(),
+  ])
+  .optional();
+
 export const updateProfileSchema = z.object({
   first_name: z.string().min(1).max(100).optional(),
   last_name: z.string().min(1).max(100).optional(),
   email: z.string().email("Invalid email address").optional(),
+  username: usernameField,
 });
 
 export const updatePasswordSchema = z.object({

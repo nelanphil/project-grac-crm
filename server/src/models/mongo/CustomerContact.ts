@@ -8,6 +8,8 @@ export interface ICustomerContact extends Document {
   email: string;
   label: string;
   isPrimary: boolean;
+  /** Linked auth user (provisioned from contact email). */
+  userRef?: Types.ObjectId | null;
   /** Legacy customer id this contact originated from (migration/merge). */
   legacyCustomerId?: number | null;
   createdAt: Date;
@@ -28,6 +30,12 @@ const customerContactSchema = new Schema<ICustomerContact>(
     email: { type: String, default: "" },
     label: { type: String, default: "" },
     isPrimary: { type: Boolean, default: false, index: true },
+    userRef: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
     legacyCustomerId: { type: Number, default: null, index: true },
   },
   { timestamps: true }

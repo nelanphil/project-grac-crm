@@ -145,7 +145,7 @@ export async function createWorkOrder(
       return;
     }
 
-    let addressRef = rawAddressRef ?? null;
+    const addressRef = rawAddressRef ?? null;
     if (addressRef) {
       if (!mongoose.Types.ObjectId.isValid(String(addressRef))) {
         res.status(400).json({ message: "Invalid addressRef" });
@@ -156,7 +156,9 @@ export async function createWorkOrder(
         customerRef: customer._id,
       }).lean();
       if (!site) {
-        res.status(400).json({ message: "addressRef must belong to the customer" });
+        res
+          .status(400)
+          .json({ message: "addressRef must belong to the customer" });
         return;
       }
     }

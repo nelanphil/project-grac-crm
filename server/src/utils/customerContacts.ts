@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import { Customer, ICustomer } from "../models/mongo/Customer";
 import { CustomerContact } from "../models/mongo/CustomerContact";
+import { ensureCustomerUser } from "./ensureCustomerUser";
 
 export function customerHasContactData(customer: {
   first?: string;
@@ -77,6 +78,7 @@ export async function ensureCustomerContactFromFlat(
     .lean();
 
   if (existing) {
+    await ensureCustomerUser(existing);
     return { contactId: existing._id as Types.ObjectId, created: false };
   }
 
@@ -90,6 +92,8 @@ export async function ensureCustomerContactFromFlat(
     isPrimary: true,
     legacyCustomerId: customer.legacyId ?? null,
   });
+
+  await ensureCustomerUser(contactDoc);
 
   return { contactId: contactDoc._id as Types.ObjectId, created: true };
 }
