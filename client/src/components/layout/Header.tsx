@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
-import { Settings, LogOut, Menu, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Home, Settings, LogOut, Menu, X } from "lucide-react";
 import { NAV_LINKS, COMPANY, ESTIMATE_ROUTE } from "@/lib/constants";
 import { getVisibleNavSections } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -14,9 +14,9 @@ const HEADER_CONTAINER =
 const BRAND_LINK_CLASS =
   "text-lg font-bold tracking-tight transition-colors hover:text-brand-orange sm:text-xl";
 
-function BrandLink({ href }: { href: string }) {
+function BrandLink() {
   return (
-    <Link href={href} className={BRAND_LINK_CLASS}>
+    <Link href="/" className={BRAND_LINK_CLASS}>
       <span className="md:hidden">
         G<span className="text-brand-orange">MOF</span>
       </span>
@@ -33,9 +33,18 @@ export default function Header() {
   const router = useRouter();
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [hydrated, setHydrated] = useState(
+    () => useAuthStore.persist?.hasHydrated() ?? false,
+  );
 
   const isDashboard = pathname.startsWith("/dashboard");
+  const showAuthedActions = hydrated && isAuthenticated;
+
+  useEffect(() => {
+    return useAuthStore.persist?.onFinishHydration(() => setHydrated(true));
+  }, []);
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
@@ -56,7 +65,7 @@ export default function Header() {
     return (
       <header className="sticky top-0 z-50 bg-brand-dark text-white">
         <div className={HEADER_CONTAINER}>
-          <BrandLink href="/dashboard" />
+          <BrandLink />
 
           <div className="flex items-center gap-1">
             <button
@@ -66,8 +75,19 @@ export default function Header() {
               aria-label="Toggle menu"
               aria-expanded={mobileOpen}
             >
-              {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+              {mobileOpen ? (
+                <X className="h-5 w-5" />
+              ) : (
+                <Menu className="h-5 w-5" />
+              )}
             </button>
+            <Link
+              href="/dashboard"
+              className="hidden rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:block"
+              aria-label="Go to dashboard"
+            >
+              <Home className="h-5 w-5" />
+            </Link>
             <Link
               href="/dashboard/settings"
               className="hidden rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:block"
@@ -96,7 +116,8 @@ export default function Header() {
                   </p>
                   <div className="flex flex-col gap-1">
                     {section.items.map(({ href, label, icon: Icon }) => {
-                      const active = pathname === href || pathname.startsWith(`${href}/`);
+                      const active =
+                        pathname === href || pathname.startsWith(`${href}/`);
                       return (
                         <Link
                           key={href}
@@ -120,6 +141,18 @@ export default function Header() {
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/50">
                   Account
                 </p>
+                <Link
+                  href="/dashboard"
+                  className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    pathname === "/dashboard"
+                      ? "bg-brand-orange text-white"
+                      : "text-white/90 hover:bg-white/10"
+                  }`}
+                  onClick={() => setMobileOpen(false)}
+                >
+                  <Home className="h-4 w-4 shrink-0" />
+                  Dashboard
+                </Link>
                 <Link
                   href="/dashboard/settings"
                   className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
@@ -155,7 +188,7 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-50 bg-brand-dark text-white">
       <div className={HEADER_CONTAINER}>
-        <BrandLink href="/" />
+        <BrandLink />
 
         <nav className="hidden items-center gap-8 md:flex">
           {NAV_LINKS.map((link) => (
@@ -178,17 +211,47 @@ export default function Header() {
           >
             {COMPANY.phone}
           </a>
-          <Link
-            href="/auth/login"
-            className={`text-sm font-medium transition-colors hover:text-brand-orange ${
-              pathname === "/auth/login" ? "text-brand-orange" : "text-white/90"
-            }`}
-          >
-            Login
-          </Link>
+          {!showAuthedActions && (
+            <Link
+              href="/auth/login"
+              className={`text-sm font-medium transition-colors hover:text-brand-orange ${
+                pathname === "/auth/login"
+                  ? "text-brand-orange"
+                  : "text-white/90"
+              }`}
+            >
+              Login
+            </Link>
+          )}
           <Link href={ESTIMATE_ROUTE} className="btn-primary px-5 py-2 text-sm">
             Get Your Estimate
           </Link>
+          {showAuthedActions && (
+            <div className="flex items-center gap-1">
+              <Link
+                href="/dashboard"
+                className="rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange"
+                aria-label="Go to dashboard"
+              >
+                <Home className="h-5 w-5" />
+              </Link>
+              <Link
+                href="/dashboard/settings"
+                className="rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange"
+                aria-label="Settings"
+              >
+                <Settings className="h-5 w-5" />
+              </Link>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange"
+                aria-label="Sign out"
+              >
+                <LogOut className="h-5 w-5" />
+              </button>
+            </div>
+          )}
         </div>
 
         <button
@@ -243,17 +306,49 @@ export default function Header() {
             >
               {COMPANY.phone}
             </a>
-            <Link
-              href="/auth/login"
-              className={`text-sm font-medium ${
-                pathname === "/auth/login"
-                  ? "text-brand-orange"
-                  : "text-white/90"
-              }`}
-              onClick={() => setMobileOpen(false)}
-            >
-              Login
-            </Link>
+            {showAuthedActions ? (
+              <>
+                <Link
+                  href="/dashboard"
+                  className="flex items-center gap-3 text-sm font-medium text-white/90"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  <Home className="h-4 w-4 shrink-0" />
+                  Dashboard
+                </Link>
+                <Link
+                  href="/dashboard/settings"
+                  className="flex items-center gap-3 text-sm font-medium text-white/90"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  <Settings className="h-4 w-4 shrink-0" />
+                  Settings
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    handleLogout();
+                  }}
+                  className="flex items-center gap-3 text-sm font-medium text-white/90"
+                >
+                  <LogOut className="h-4 w-4 shrink-0" />
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <Link
+                href="/auth/login"
+                className={`text-sm font-medium ${
+                  pathname === "/auth/login"
+                    ? "text-brand-orange"
+                    : "text-white/90"
+                }`}
+                onClick={() => setMobileOpen(false)}
+              >
+                Login
+              </Link>
+            )}
             <Link
               href={ESTIMATE_ROUTE}
               className="btn-primary w-fit px-5 py-2 text-sm"

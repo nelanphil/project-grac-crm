@@ -363,7 +363,7 @@ async function enrichContract(
   return enriched;
 }
 
-// GET /contracts?customerId=<legacyId>&addressId=<ObjectId>&standing=active|due_soon|expired
+// GET /contracts?customerId=<legacyId>&addressId=<ObjectId>&standing=active|due_soon|expired&year=2026&month=7
 export async function getContracts(
   req: AuthRequest,
   res: Response,
@@ -396,6 +396,34 @@ export async function getContracts(
         return;
       }
       filter.equipmentRef = equipmentId;
+    }
+
+    const yearRaw = req.query.year as string | undefined;
+    const monthRaw = req.query.month as string | undefined;
+    if (yearRaw !== undefined || monthRaw !== undefined) {
+      if (yearRaw === undefined || monthRaw === undefined) {
+        res.status(400).json({
+          message: "Both year and month are required when filtering by month",
+        });
+        return;
+      }
+      const year = parseInt(yearRaw, 10);
+      const month = parseInt(monthRaw, 10);
+      if (
+        Number.isNaN(year) ||
+        Number.isNaN(month) ||
+        month < 1 ||
+        month > 12 ||
+        year < 1970 ||
+        year > 2100
+      ) {
+        res.status(400).json({ message: "Invalid year or month" });
+        return;
+      }
+      filter.renewalDueDate = {
+        $gte: new Date(Date.UTC(year, month - 1, 1)),
+        $lt: new Date(Date.UTC(year, month, 1)),
+      };
     }
 
     const contracts = await Contract.find(filter)

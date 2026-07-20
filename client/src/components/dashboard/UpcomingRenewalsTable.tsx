@@ -2,9 +2,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpDown,
+} from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import { getContracts, ContractListItem, ApiError } from "@/lib/api";
+import {
+  STANDING_LABELS,
+  STANDING_STYLES,
+  type ContractStanding,
+} from "@/lib/contractDates";
 import { formatContractCatalogLabel } from "@/lib/contractTypes";
 import {
   formatCustomerName,
@@ -15,6 +26,21 @@ import LucideIconByName from "@/components/icons/LucideIconByName";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200] as const;
 type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
+
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+] as const;
 
 type SortKey =
   | "customer"
@@ -117,6 +143,16 @@ function SortHeader({
   );
 }
 
+function StandingBadge({ standing }: { standing: ContractStanding }) {
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold ${STANDING_STYLES[standing]}`}
+    >
+      {STANDING_LABELS[standing]}
+    </span>
+  );
+}
+
 function RenewalsPagination({
   rangeStart,
   rangeEnd,
@@ -197,7 +233,11 @@ function RenewalsPagination({
 export default function UpcomingRenewalsTable() {
   const router = useRouter();
   const token = useAuthStore((s) => s.token);
+  const now = new Date();
+  const currentYear = now.getFullYear();
 
+  const [viewMonth, setViewMonth] = useState(now.getMonth());
+  const [viewYear, setViewYear] = useState(currentYear);
   const [renewals, setRenewals] = useState<ContractListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -205,6 +245,20 @@ export default function UpcomingRenewalsTable() {
   const [pageSize, setPageSize] = useState<PageSize>(10);
   const [sortKey, setSortKey] = useState<SortKey>("renewalDue");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const yearOptions = useMemo(() => {
+    const years: number[] = [];
+    for (let y = currentYear - 5; y <= currentYear + 2; y++) {
+      years.push(y);
+    }
+    if (!years.includes(viewYear)) {
+      years.push(viewYear);
+      years.sort((a, b) => a - b);
+    }
+    return years;
+  }, [currentYear, viewYear]);
+
+  const monthLabel = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
 
   const sortedRenewals = useMemo(
     () => [...renewals].sort((a, b) => compareRenewals(a, b, sortKey, sortDir)),
@@ -233,10 +287,42 @@ export default function UpcomingRenewalsTable() {
     setPage(1);
   }
 
+  function goToPrevMonth() {
+    if (viewMonth === 0) {
+      setViewMonth(11);
+      setViewYear((y) => y - 1);
+    } else {
+      setViewMonth((m) => m - 1);
+    }
+    setPage(1);
+  }
+
+  function goToNextMonth() {
+    if (viewMonth === 11) {
+      setViewMonth(0);
+      setViewYear((y) => y + 1);
+    } else {
+      setViewMonth((m) => m + 1);
+    }
+    setPage(1);
+  }
+
+  function handleYearChange(year: number) {
+    setViewYear(year);
+    setPage(1);
+  }
+
   useEffect(() => {
     if (!token) return;
 
-    getContracts(token, "due_soon")
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    setError(null);
+
+    getContracts(token, undefined, {
+      year: viewYear,
+      month: viewMonth + 1,
+    })
       .then(({ contracts }) => setRenewals(contracts))
       .catch((err) =>
         setError(
@@ -246,17 +332,55 @@ export default function UpcomingRenewalsTable() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, viewMonth, viewYear]);
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
       <div className="px-6 py-4 border-b border-neutral-100">
-        <h2 className="text-base font-semibold text-brand-dark">
-          Upcoming Renewals
-        </h2>
-        <p className="mt-0.5 text-xs text-neutral-500">
-          Service contracts due for renewal soon
-        </p>
+        <div>
+          <h2 className="text-base font-semibold text-brand-dark">
+            Upcoming Renewals
+          </h2>
+          <p className="mt-0.5 text-xs text-neutral-500">
+            Service contracts with renewal due in this month
+          </p>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={goToPrevMonth}
+            aria-label="Previous month"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 text-brand-dark transition-colors hover:bg-neutral-50"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <span className="min-w-[8.5rem] text-center text-sm font-medium text-brand-dark">
+            {MONTH_NAMES[viewMonth]}
+          </span>
+          <button
+            type="button"
+            onClick={goToNextMonth}
+            aria-label="Next month"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 text-brand-dark transition-colors hover:bg-neutral-50"
+          >
+            <ArrowRight className="h-4 w-4" />
+          </button>
+          <label className="sr-only" htmlFor="renewals-year">
+            Year
+          </label>
+          <select
+            id="renewals-year"
+            value={viewYear}
+            onChange={(e) => handleYearChange(Number(e.target.value))}
+            className="rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue"
+          >
+            {yearOptions.map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {loading ? (
@@ -361,7 +485,7 @@ export default function UpcomingRenewalsTable() {
                       colSpan={9}
                       className="px-6 py-12 text-center text-neutral-500"
                     >
-                      No upcoming renewals at this time.
+                      No renewals due in {monthLabel}.
                     </td>
                   </tr>
                 ) : (
@@ -423,9 +547,9 @@ export default function UpcomingRenewalsTable() {
                           : "—"}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-                          Due Soon
-                        </span>
+                        <StandingBadge
+                          standing={contract.standing ?? "expired"}
+                        />
                       </td>
                     </tr>
                   ))

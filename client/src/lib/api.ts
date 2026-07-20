@@ -754,13 +754,21 @@ export interface ContractListItem {
 
 export async function getContracts(
   token: string,
-  standing?: ContractStanding | "all"
+  standing?: ContractStanding | "all",
+  opts?: { year?: number; month?: number }
 ): Promise<{ contracts: ContractListItem[] }> {
-  const params = standing && standing !== "all" ? `?standing=${standing}` : "";
-  return authRequest<{ contracts: ContractListItem[] }>(`/contracts${params}`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const params = new URLSearchParams();
+  if (standing && standing !== "all") params.set("standing", standing);
+  if (opts?.year !== undefined) params.set("year", String(opts.year));
+  if (opts?.month !== undefined) params.set("month", String(opts.month));
+  const qs = params.toString();
+  return authRequest<{ contracts: ContractListItem[] }>(
+    `/contracts${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
 }
 
 export async function getContractsForCustomer(
