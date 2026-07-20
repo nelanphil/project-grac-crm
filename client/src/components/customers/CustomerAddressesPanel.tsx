@@ -6,6 +6,8 @@ import {
   ApiError,
   CustomerAddress,
   CustomerEquipment,
+  SerialConflict,
+  checkEquipmentSerial,
   createCustomerAddress,
   createCustomerEquipment,
 } from "@/lib/api";
@@ -16,7 +18,11 @@ function formatDate(date: string | null): string {
 }
 
 function formatAddressLine(addr: CustomerAddress): string {
-  return [addr.address, addr.city, addr.state, addr.zip].filter(Boolean).join(", ") || "—";
+  return (
+    [addr.address, addr.city, addr.state, addr.zip]
+      .filter(Boolean)
+      .join(", ") || "—"
+  );
 }
 
 export function addressesSectionTitle(): string {
@@ -39,7 +45,9 @@ export default function CustomerAddressesPanel({
   onAddressesChange,
 }: CustomerAddressesPanelProps) {
   const [addingAddress, setAddingAddress] = useState(false);
-  const [addingEquipmentFor, setAddingEquipmentFor] = useState<string | null>(null);
+  const [addingEquipmentFor, setAddingEquipmentFor] = useState<string | null>(
+    null,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,6 +67,40 @@ export default function CustomerAddressesPanel({
     extime: "",
   });
 
+  const [serialCheck, setSerialCheck] = useState<{
+    blocking: SerialConflict[];
+    warnings: SerialConflict[];
+  }>({ blocking: [], warnings: [] });
+  const [checkingSerial, setCheckingSerial] = useState(false);
+
+  async function runSerialCheck(next: { serial: string; atsSerial: string }) {
+    const serial = next.serial.trim();
+    const atsSerial = next.atsSerial.trim();
+    if (!serial && !atsSerial) {
+      setSerialCheck({ blocking: [], warnings: [] });
+      return;
+    }
+    setCheckingSerial(true);
+    try {
+      const res = await checkEquipmentSerial(token, customerId, {
+        serial,
+        atsSerial,
+      });
+      setSerialCheck(res);
+    } catch {
+      // Non-fatal: the server still enforces uniqueness on submit.
+      setSerialCheck({ blocking: [], warnings: [] });
+    } finally {
+      setCheckingSerial(false);
+    }
+  }
+
+  function openEquipmentForm(addressId: string | null) {
+    setAddingEquipmentFor(addressId);
+    setSerialCheck({ blocking: [], warnings: [] });
+    setError(null);
+  }
+
   async function handleAddAddress(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -68,11 +110,16 @@ export default function CustomerAddressesPanel({
         ...addrForm,
         isPrimary: addresses.length === 0,
       });
-      onAddressesChange([...addresses, { ...address, equipment: address.equipment ?? [] }]);
+      onAddressesChange([
+        ...addresses,
+        { ...address, equipment: address.equipment ?? [] },
+      ]);
       setAddrForm({ label: "", address: "", city: "", state: "", zip: "" });
       setAddingAddress(false);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to add address.");
+      setError(
+        err instanceof ApiError ? err.message : "Failed to add address.",
+      );
     } finally {
       setSaving(false);
     }
@@ -91,8 +138,8 @@ export default function CustomerAddressesPanel({
         addresses.map((addr) =>
           addr._id === addressId
             ? { ...addr, equipment: [...addr.equipment, equipment] }
-            : addr
-        )
+            : addr,
+        ),
       );
       setEqForm({
         generatorModel: "",
@@ -101,9 +148,12 @@ export default function CustomerAddressesPanel({
         exday: "",
         extime: "",
       });
+      setSerialCheck({ blocking: [], warnings: [] });
       setAddingEquipmentFor(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to add equipment.");
+      setError(
+        err instanceof ApiError ? err.message : "Failed to add equipment.",
+      );
     } finally {
       setSaving(false);
     }
@@ -119,7 +169,9 @@ export default function CustomerAddressesPanel({
         ) : null}
         <div className="rounded-xl border border-dashed border-neutral-300 bg-white py-10 text-center shadow-sm">
           <MapPin className="mx-auto mb-3 h-8 w-8 text-neutral-300" />
-          <p className="text-sm font-medium text-neutral-500">No addresses yet</p>
+          <p className="text-sm font-medium text-neutral-500">
+            No addresses yet
+          </p>
           <p className="mt-1 text-xs text-neutral-400">
             Add an address to attach equipment for this customer.
           </p>
@@ -164,17 +216,18 @@ export default function CustomerAddressesPanel({
                   </span>
                 ) : null}
               </div>
-              <p className="mt-1 text-sm text-neutral-600">{formatAddressLine(addr)}</p>
+              <p className="mt-1 text-sm text-neutral-600">
+                {formatAddressLine(addr)}
+              </p>
             </div>
             {canWrite ? (
               <button
                 type="button"
-                onClick={() => {
-                  setAddingEquipmentFor(
-                    addingEquipmentFor === addr._id ? null : addr._id
-                  );
-                  setError(null);
-                }}
+                onClick={() =>
+                  openEquipmentForm(
+                    addingEquipmentFor === addr._id ? null : addr._id,
+                  )
+                }
                 className="inline-flex items-center gap-1 text-xs font-medium text-brand-orange hover:underline"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -184,14 +237,21 @@ export default function CustomerAddressesPanel({
           </div>
 
           {addr.equipment.length === 0 && addingEquipmentFor !== addr._id ? (
-            <p className="text-xs text-neutral-400">No equipment at this address.</p>
-          ) : (
-            <ul className="space-y-3">
-              {addr.equipment.map((eq) => (
-                <EquipmentCard key={eq._id} equipment={eq} />
-              ))}
-            </ul>
-          )}
+            <p className="text-xs text-neutral-400">
+              No equipment at this address.
+            </p>
+          ) : addr.equipment.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                Equipment ({addr.equipment.length})
+              </p>
+              <ul className="space-y-3">
+                {addr.equipment.map((eq) => (
+                  <EquipmentCard key={eq._id} equipment={eq} />
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {addingEquipmentFor === addr._id ? (
             <form
@@ -205,17 +265,21 @@ export default function CustomerAddressesPanel({
                 <Field
                   label="Generator model"
                   value={eqForm.generatorModel}
-                  onChange={(v) => setEqForm((f) => ({ ...f, generatorModel: v }))}
+                  onChange={(v) =>
+                    setEqForm((f) => ({ ...f, generatorModel: v }))
+                  }
                 />
                 <Field
                   label="Serial"
                   value={eqForm.serial}
                   onChange={(v) => setEqForm((f) => ({ ...f, serial: v }))}
+                  onBlur={() => runSerialCheck(eqForm)}
                 />
                 <Field
                   label="ATS serial"
                   value={eqForm.atsSerial}
                   onChange={(v) => setEqForm((f) => ({ ...f, atsSerial: v }))}
+                  onBlur={() => runSerialCheck(eqForm)}
                 />
                 <Field
                   label="Exercise day"
@@ -228,20 +292,56 @@ export default function CustomerAddressesPanel({
                   onChange={(v) => setEqForm((f) => ({ ...f, extime: v }))}
                 />
               </div>
+
+              {serialCheck.blocking.length > 0 ? (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {serialCheck.blocking.map((c, i) => (
+                    <p key={`${c.equipmentId}-${c.field}-${i}`}>
+                      {c.field === "atsSerial" ? "ATS serial" : "Serial"}{" "}
+                      &ldquo;
+                      {c.value}&rdquo; is already on{" "}
+                      {c.addressLabel
+                        ? `“${c.addressLabel}”`
+                        : "another address"}{" "}
+                      for this customer. A serial can only be used on one
+                      address.
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+
+              {serialCheck.warnings.length > 0 ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {serialCheck.warnings.map((c, i) => (
+                    <p key={`${c.equipmentId}-${c.field}-${i}`}>
+                      Possible duplicate:{" "}
+                      {c.field === "atsSerial" ? "ATS serial" : "Serial"}{" "}
+                      &ldquo;
+                      {c.value}&rdquo; is also used by{" "}
+                      {c.customerName ?? "another customer"}.
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setAddingEquipmentFor(null)}
+                  onClick={() => openEquipmentForm(null)}
                   className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-white"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={saving}
+                  disabled={
+                    saving || checkingSerial || serialCheck.blocking.length > 0
+                  }
                   className="inline-flex items-center gap-1.5 rounded-md bg-brand-orange px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-orange/90 disabled:opacity-50"
                 >
-                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : null}
                   Save equipment
                 </button>
               </div>
@@ -328,23 +428,33 @@ function EquipmentCard({ equipment: eq }: { equipment: CustomerEquipment }) {
       </div>
       <dl className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-400">Serial</dt>
+          <dt className="text-xs uppercase tracking-wide text-neutral-400">
+            Serial
+          </dt>
           <dd className="text-neutral-700">{eq.serial || "—"}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-400">ATS Serial</dt>
+          <dt className="text-xs uppercase tracking-wide text-neutral-400">
+            ATS Serial
+          </dt>
           <dd className="text-neutral-700">{eq.atsSerial || "—"}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-400">Last Service</dt>
+          <dt className="text-xs uppercase tracking-wide text-neutral-400">
+            Last Service
+          </dt>
           <dd className="text-neutral-700">{formatDate(eq.lastSvc)}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-400">Exercise Day</dt>
+          <dt className="text-xs uppercase tracking-wide text-neutral-400">
+            Exercise Day
+          </dt>
           <dd className="text-neutral-700">{eq.exday || "—"}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-neutral-400">Exercise Time</dt>
+          <dt className="text-xs uppercase tracking-wide text-neutral-400">
+            Exercise Time
+          </dt>
           <dd className="text-neutral-700">{eq.extime || "—"}</dd>
         </div>
       </dl>
@@ -356,11 +466,13 @@ function Field({
   label,
   value,
   onChange,
+  onBlur,
   placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   placeholder?: string;
 }) {
   return (
@@ -371,21 +483,29 @@ function Field({
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         className="w-full rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
       />
     </label>
   );
 }
 
-export function formatAddressLabel(addr: {
-  label?: string;
-  address?: string;
-  city?: string;
-  state?: string;
-  zip?: string;
-} | null | undefined): string {
+export function formatAddressLabel(
+  addr:
+    | {
+        label?: string;
+        address?: string;
+        city?: string;
+        state?: string;
+        zip?: string;
+      }
+    | null
+    | undefined,
+): string {
   if (!addr) return "—";
   if (addr.label?.trim()) return addr.label.trim();
-  const line = [addr.address, addr.city, addr.state, addr.zip].filter(Boolean).join(", ");
+  const line = [addr.address, addr.city, addr.state, addr.zip]
+    .filter(Boolean)
+    .join(", ");
   return line || "—";
 }

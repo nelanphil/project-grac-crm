@@ -39,6 +39,114 @@ function parseLastSvc(value: unknown): Date | null | undefined {
   return date;
 }
 
+export interface SerialConflict {
+  field: "serial" | "atsSerial";
+  value: string;
+  equipmentId: string;
+  addressId: string | null;
+  addressLabel: string | null;
+  customerId: string;
+  customerName: string | null;
+}
+
+/**
+ * Finds equipment whose serial / atsSerial matches the provided values.
+ * Conflicts on the SAME customer are "blocking" (a serial can live on only one
+ * address per customer); conflicts on OTHER customers are non-blocking "warnings".
+ * Blank serials are ignored.
+ */
+async function findSerialConflicts(
+  customerId: mongoose.Types.ObjectId,
+  input: { serial?: string; atsSerial?: string; excludeEquipmentId?: string },
+): Promise<{ blocking: SerialConflict[]; warnings: SerialConflict[] }> {
+  const serial = (input.serial ?? "").trim();
+  const atsSerial = (input.atsSerial ?? "").trim();
+
+  const orClauses: Record<string, unknown>[] = [];
+  if (serial) {
+    orClauses.push({ serial });
+  }
+  if (atsSerial) {
+    orClauses.push({ atsSerial });
+  }
+  if (orClauses.length === 0) return { blocking: [], warnings: [] };
+
+  const query: Record<string, unknown> = { $or: orClauses };
+  if (
+    input.excludeEquipmentId &&
+    mongoose.Types.ObjectId.isValid(input.excludeEquipmentId)
+  ) {
+    query._id = { $ne: new mongoose.Types.ObjectId(input.excludeEquipmentId) };
+  }
+
+  const matches = await Equipment.find(query)
+    .select("serial atsSerial addressRef customerRef")
+    .lean();
+  if (matches.length === 0) return { blocking: [], warnings: [] };
+
+  const addressIds = [
+    ...new Set(matches.map((m) => String(m.addressRef)).filter(Boolean)),
+  ];
+  const customerIds = [
+    ...new Set(matches.map((m) => String(m.customerRef)).filter(Boolean)),
+  ];
+  const [addresses, customers] = await Promise.all([
+    CustomerAddress.find({ _id: { $in: addressIds } })
+      .select("label address city")
+      .lean(),
+    Customer.find({ _id: { $in: customerIds } })
+      .select("first last")
+      .lean(),
+  ]);
+  const addrMap = new Map(addresses.map((a) => [String(a._id), a]));
+  const custMap = new Map(customers.map((c) => [String(c._id), c]));
+
+  const blocking: SerialConflict[] = [];
+  const warnings: SerialConflict[] = [];
+  const currentCustomerId = String(customerId);
+
+  for (const m of matches) {
+    const addr = addrMap.get(String(m.addressRef));
+    const cust = custMap.get(String(m.customerRef));
+    const addressLabel = addr
+      ? addr.label?.trim() ||
+        [addr.address, addr.city].filter(Boolean).join(", ") ||
+        null
+      : null;
+    const customerName = cust
+      ? [cust.first, cust.last].filter(Boolean).join(" ").trim() || null
+      : null;
+    const base = {
+      equipmentId: String(m._id),
+      addressId: m.addressRef ? String(m.addressRef) : null,
+      addressLabel,
+      customerId: String(m.customerRef),
+      customerName,
+    };
+    const bucket =
+      String(m.customerRef) === currentCustomerId ? blocking : warnings;
+
+    if (serial && String(m.serial).trim() === serial) {
+      bucket.push({ ...base, field: "serial", value: serial });
+    }
+    if (atsSerial && String(m.atsSerial).trim() === atsSerial) {
+      bucket.push({ ...base, field: "atsSerial", value: atsSerial });
+    }
+  }
+
+  return { blocking, warnings };
+}
+
+function serialConflictMessage(conflicts: SerialConflict[]): string {
+  const c = conflicts[0];
+  if (!c) return "This serial number is already in use for this customer.";
+  const fieldLabel = c.field === "atsSerial" ? "ATS serial" : "Serial";
+  const where = c.addressLabel
+    ? ` (already on "${c.addressLabel}")`
+    : " (already on another address)";
+  return `${fieldLabel} "${c.value}" is already assigned to equipment for this customer${where}. A serial can only be used on one address.`;
+}
+
 function formatAddress(doc: {
   _id: mongoose.Types.ObjectId;
   customerRef: mongoose.Types.ObjectId;
@@ -127,7 +235,7 @@ function formatContact(doc: {
 
 async function findActiveCustomerOr404(
   customerId: string,
-  res: Response
+  res: Response,
 ): Promise<{
   _id: mongoose.Types.ObjectId;
   legacyId: number;
@@ -169,7 +277,10 @@ async function loadSitesForCustomer(customerId: mongoose.Types.ObjectId) {
     .sort({ createdAt: 1 })
     .lean();
 
-  const equipmentByAddress = new Map<string, ReturnType<typeof formatEquipment>[]>();
+  const equipmentByAddress = new Map<
+    string,
+    ReturnType<typeof formatEquipment>[]
+  >();
   for (const item of equipment) {
     const key = item.addressRef.toString();
     const list = equipmentByAddress.get(key) ?? [];
@@ -192,7 +303,7 @@ async function loadContactsForCustomer(customerId: mongoose.Types.ObjectId) {
 
 async function clearOtherPrimary(
   customerId: mongoose.Types.ObjectId,
-  keepAddressId?: mongoose.Types.ObjectId
+  keepAddressId?: mongoose.Types.ObjectId,
 ): Promise<void> {
   const filter: Record<string, unknown> = { customerRef: customerId };
   if (keepAddressId) {
@@ -203,7 +314,7 @@ async function clearOtherPrimary(
 
 async function clearOtherPrimaryContacts(
   customerId: mongoose.Types.ObjectId,
-  keepContactId?: mongoose.Types.ObjectId
+  keepContactId?: mongoose.Types.ObjectId,
 ): Promise<void> {
   const filter: Record<string, unknown> = { customerRef: customerId };
   if (keepContactId) {
@@ -213,7 +324,10 @@ async function clearOtherPrimaryContacts(
 }
 
 // GET /customers — exclude merged
-export async function listCustomers(req: AuthRequest, res: Response): Promise<void> {
+export async function listCustomers(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
   try {
     const customers = await Customer.find({
       $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
@@ -279,12 +393,14 @@ export async function listCustomers(req: AuthRequest, res: Response): Promise<vo
 // GET /customers/duplicates?phone=
 export async function getCustomerDuplicates(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     const phone = normalizePhoneDigits(String(req.query.phone ?? ""));
     if (phone.length < 7) {
-      res.status(400).json({ message: "phone query with at least 7 digits is required" });
+      res
+        .status(400)
+        .json({ message: "phone query with at least 7 digits is required" });
       return;
     }
 
@@ -343,7 +459,10 @@ export async function getCustomerDuplicates(
 }
 
 // GET /customers/:id — enriched with sites
-export async function getCustomerById(req: AuthRequest, res: Response): Promise<void> {
+export async function getCustomerById(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
     if (!customer) return;
@@ -362,7 +481,9 @@ export async function getCustomerById(req: AuthRequest, res: Response): Promise<
     if (existingSites === 0 && customerHasSiteData(customer)) {
       await ensureCustomerSiteFromFlat(customer);
       const addressId = (
-        await CustomerAddress.findOne({ customerRef: customer._id }).select("_id").lean()
+        await CustomerAddress.findOne({ customerRef: customer._id })
+          .select("_id")
+          .lean()
       )?._id;
       if (addressId) {
         await WorkOrder.updateMany(
@@ -370,14 +491,14 @@ export async function getCustomerById(req: AuthRequest, res: Response): Promise<
             customerId: customer.legacyId,
             $or: [{ addressRef: null }, { addressRef: { $exists: false } }],
           },
-          { $set: { addressRef: addressId, customerRef: customer._id } }
+          { $set: { addressRef: addressId, customerRef: customer._id } },
         );
         await Contract.updateMany(
           {
             customerId: customer.legacyId,
             $or: [{ addressRef: null }, { addressRef: { $exists: false } }],
           },
-          { $set: { addressRef: addressId, customerRef: customer._id } }
+          { $set: { addressRef: addressId, customerRef: customer._id } },
         );
       }
     }
@@ -408,7 +529,7 @@ export async function getCustomerById(req: AuthRequest, res: Response): Promise<
 // GET /customers/:id/addresses
 export async function getCustomerAddresses(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
@@ -429,7 +550,7 @@ export async function getCustomerAddresses(
 // POST /customers/:id/addresses
 export async function createCustomerAddress(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
@@ -441,7 +562,9 @@ export async function createCustomerAddress(
 
     const parsed = createCustomerAddressSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
       return;
     }
 
@@ -482,7 +605,7 @@ export async function createCustomerAddress(
 // PATCH /customers/:id/addresses/:addressId
 export async function updateCustomerAddress(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
@@ -500,7 +623,9 @@ export async function updateCustomerAddress(
 
     const parsed = updateCustomerAddressSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
       return;
     }
 
@@ -514,13 +639,17 @@ export async function updateCustomerAddress(
     }
 
     if (parsed.data.label !== undefined) address.label = parsed.data.label;
-    if (parsed.data.address !== undefined) address.address = parsed.data.address;
+    if (parsed.data.address !== undefined)
+      address.address = parsed.data.address;
     if (parsed.data.city !== undefined) address.city = parsed.data.city;
     if (parsed.data.state !== undefined) address.state = parsed.data.state;
     if (parsed.data.zip !== undefined) address.zip = parsed.data.zip;
 
     if (parsed.data.isPrimary === true) {
-      await clearOtherPrimary(customer._id, address._id as mongoose.Types.ObjectId);
+      await clearOtherPrimary(
+        customer._id,
+        address._id as mongoose.Types.ObjectId,
+      );
       address.isPrimary = true;
     } else if (parsed.data.isPrimary === false && address.isPrimary) {
       // Keep at least one primary if this is the only address
@@ -562,7 +691,7 @@ export async function updateCustomerAddress(
 // DELETE /customers/:id/addresses/:addressId
 export async function deleteCustomerAddress(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
@@ -588,7 +717,9 @@ export async function deleteCustomerAddress(
     }
 
     const woCount = await WorkOrder.countDocuments({ addressRef: address._id });
-    const contractCount = await Contract.countDocuments({ addressRef: address._id });
+    const contractCount = await Contract.countDocuments({
+      addressRef: address._id,
+    });
     if (woCount > 0 || contractCount > 0) {
       res.status(409).json({
         message:
@@ -604,7 +735,9 @@ export async function deleteCustomerAddress(
     await address.deleteOne();
 
     if (wasPrimary) {
-      const next = await CustomerAddress.findOne({ customerRef: customer._id }).sort({
+      const next = await CustomerAddress.findOne({
+        customerRef: customer._id,
+      }).sort({
         createdAt: 1,
       });
       if (next) {
@@ -621,8 +754,44 @@ export async function deleteCustomerAddress(
   }
 }
 
+// GET /customers/:id/equipment/check-serial
+export async function checkEquipmentSerial(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    if (!customer) return;
+    if (customer.mergedIntoRef) {
+      res.status(404).json({ message: "Customer not found" });
+      return;
+    }
+
+    const serial = typeof req.query.serial === "string" ? req.query.serial : "";
+    const atsSerial =
+      typeof req.query.atsSerial === "string" ? req.query.atsSerial : "";
+    const excludeEquipmentId =
+      typeof req.query.excludeEquipmentId === "string"
+        ? req.query.excludeEquipmentId
+        : undefined;
+
+    const { blocking, warnings } = await findSerialConflicts(customer._id, {
+      serial,
+      atsSerial,
+      excludeEquipmentId,
+    });
+    res.status(200).json({ blocking, warnings });
+  } catch (err) {
+    console.error("GET /customers/:id/equipment/check-serial error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
 // POST /customers/:id/equipment
-export async function createEquipment(req: AuthRequest, res: Response): Promise<void> {
+export async function createEquipment(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
     if (!customer) return;
@@ -633,7 +802,9 @@ export async function createEquipment(req: AuthRequest, res: Response): Promise<
 
     const parsed = createEquipmentSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
       return;
     }
 
@@ -648,6 +819,20 @@ export async function createEquipment(req: AuthRequest, res: Response): Promise<
     }).lean();
     if (!address) {
       res.status(404).json({ message: "Address not found for this customer" });
+      return;
+    }
+
+    const { blocking } = await findSerialConflicts(customer._id, {
+      serial: parsed.data.serial,
+      atsSerial: parsed.data.atsSerial,
+    });
+    if (blocking.length > 0) {
+      res
+        .status(409)
+        .json({
+          message: serialConflictMessage(blocking),
+          conflicts: blocking,
+        });
       return;
     }
 
@@ -671,7 +856,10 @@ export async function createEquipment(req: AuthRequest, res: Response): Promise<
 }
 
 // PATCH /customers/:id/equipment/:equipmentId
-export async function updateEquipment(req: AuthRequest, res: Response): Promise<void> {
+export async function updateEquipment(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
     if (!customer) return;
@@ -688,7 +876,9 @@ export async function updateEquipment(req: AuthRequest, res: Response): Promise<
 
     const parsed = updateEquipmentSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
       return;
     }
 
@@ -698,6 +888,27 @@ export async function updateEquipment(req: AuthRequest, res: Response): Promise<
     });
     if (!equipment) {
       res.status(404).json({ message: "Equipment not found" });
+      return;
+    }
+
+    const effectiveSerial =
+      parsed.data.serial !== undefined ? parsed.data.serial : equipment.serial;
+    const effectiveAtsSerial =
+      parsed.data.atsSerial !== undefined
+        ? parsed.data.atsSerial
+        : equipment.atsSerial;
+    const { blocking } = await findSerialConflicts(customer._id, {
+      serial: effectiveSerial,
+      atsSerial: effectiveAtsSerial,
+      excludeEquipmentId: equipmentId,
+    });
+    if (blocking.length > 0) {
+      res
+        .status(409)
+        .json({
+          message: serialConflictMessage(blocking),
+          conflicts: blocking,
+        });
       return;
     }
 
@@ -711,7 +922,9 @@ export async function updateEquipment(req: AuthRequest, res: Response): Promise<
         customerRef: customer._id,
       }).lean();
       if (!address) {
-        res.status(404).json({ message: "Address not found for this customer" });
+        res
+          .status(404)
+          .json({ message: "Address not found for this customer" });
         return;
       }
       equipment.addressRef = address._id as mongoose.Types.ObjectId;
@@ -721,7 +934,8 @@ export async function updateEquipment(req: AuthRequest, res: Response): Promise<
       equipment.generatorModel = parsed.data.generatorModel;
     }
     if (parsed.data.serial !== undefined) equipment.serial = parsed.data.serial;
-    if (parsed.data.atsSerial !== undefined) equipment.atsSerial = parsed.data.atsSerial;
+    if (parsed.data.atsSerial !== undefined)
+      equipment.atsSerial = parsed.data.atsSerial;
     if (parsed.data.lastSvc !== undefined) {
       equipment.lastSvc = parseLastSvc(parsed.data.lastSvc) ?? null;
     }
@@ -738,7 +952,10 @@ export async function updateEquipment(req: AuthRequest, res: Response): Promise<
 }
 
 // DELETE /customers/:id/equipment/:equipmentId
-export async function deleteEquipment(req: AuthRequest, res: Response): Promise<void> {
+export async function deleteEquipment(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
     if (!customer) return;
@@ -762,10 +979,13 @@ export async function deleteEquipment(req: AuthRequest, res: Response): Promise<
       return;
     }
 
-    const woCount = await WorkOrder.countDocuments({ equipmentRef: equipment._id });
+    const woCount = await WorkOrder.countDocuments({
+      equipmentRef: equipment._id,
+    });
     if (woCount > 0) {
       res.status(409).json({
-        message: "Cannot delete equipment linked to work orders. Reassign them first.",
+        message:
+          "Cannot delete equipment linked to work orders. Reassign them first.",
         workOrderCount: woCount,
       });
       return;
@@ -783,7 +1003,7 @@ export async function deleteEquipment(req: AuthRequest, res: Response): Promise<
 // GET /customers/:id/contacts
 export async function getCustomerContacts(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
@@ -805,7 +1025,7 @@ export async function getCustomerContacts(
 // POST /customers/:id/contacts
 export async function createCustomerContact(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
@@ -817,7 +1037,9 @@ export async function createCustomerContact(
 
     const parsed = createCustomerContactSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
       return;
     }
 
@@ -857,7 +1079,7 @@ export async function createCustomerContact(
 // PATCH /customers/:id/contacts/:contactId
 export async function updateCustomerContact(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
@@ -875,7 +1097,9 @@ export async function updateCustomerContact(
 
     const parsed = updateCustomerContactSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
       return;
     }
 
@@ -897,7 +1121,7 @@ export async function updateCustomerContact(
     if (parsed.data.isPrimary === true) {
       await clearOtherPrimaryContacts(
         customer._id,
-        contact._id as mongoose.Types.ObjectId
+        contact._id as mongoose.Types.ObjectId,
       );
       contact.isPrimary = true;
     } else if (parsed.data.isPrimary === false && contact.isPrimary) {
@@ -937,7 +1161,7 @@ export async function updateCustomerContact(
 // DELETE /customers/:id/contacts/:contactId
 export async function deleteCustomerContact(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   try {
     const customer = await findActiveCustomerOr404(String(req.params.id), res);
@@ -994,7 +1218,10 @@ export async function deleteCustomerContact(
 }
 
 // GET /customers/:id/merge-preview?sourceCustomerId=
-export async function getMergePreview(req: AuthRequest, res: Response): Promise<void> {
+export async function getMergePreview(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
   try {
     const survivor = await findActiveCustomerOr404(String(req.params.id), res);
     if (!survivor) return;
@@ -1035,19 +1262,35 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
       survivorNoteCount,
       sourceNoteCount,
     ] = await Promise.all([
-      CustomerAddress.find({ customerRef: survivor._id }).sort({ isPrimary: -1, createdAt: 1 }).lean(),
-      CustomerAddress.find({ customerRef: source._id }).sort({ isPrimary: -1, createdAt: 1 }).lean(),
+      CustomerAddress.find({ customerRef: survivor._id })
+        .sort({ isPrimary: -1, createdAt: 1 })
+        .lean(),
+      CustomerAddress.find({ customerRef: source._id })
+        .sort({ isPrimary: -1, createdAt: 1 })
+        .lean(),
       Equipment.find({ customerRef: survivor._id }).lean(),
       Equipment.find({ customerRef: source._id }).lean(),
-      CustomerContact.find({ customerRef: survivor._id }).sort({ isPrimary: -1, createdAt: 1 }).lean(),
-      CustomerContact.find({ customerRef: source._id }).sort({ isPrimary: -1, createdAt: 1 }).lean(),
-      WorkOrder.find({ customerId: survivor.legacyId }).select("_id addressRef").lean(),
-      WorkOrder.find({ customerId: source.legacyId }).select("_id addressRef").lean(),
+      CustomerContact.find({ customerRef: survivor._id })
+        .sort({ isPrimary: -1, createdAt: 1 })
+        .lean(),
+      CustomerContact.find({ customerRef: source._id })
+        .sort({ isPrimary: -1, createdAt: 1 })
+        .lean(),
+      WorkOrder.find({ customerId: survivor.legacyId })
+        .select("_id addressRef")
+        .lean(),
+      WorkOrder.find({ customerId: source.legacyId })
+        .select("_id addressRef")
+        .lean(),
       Contract.find({ customerId: survivor.legacyId })
-        .select("_id description contractType templateId renewalDueDate addressRef equipmentRef")
+        .select(
+          "_id description contractType templateId renewalDueDate addressRef equipmentRef",
+        )
         .lean(),
       Contract.find({ customerId: source.legacyId })
-        .select("_id description contractType templateId renewalDueDate addressRef equipmentRef")
+        .select(
+          "_id description contractType templateId renewalDueDate addressRef equipmentRef",
+        )
         .lean(),
       CustomerNote.countDocuments({ customerRef: survivor._id }),
       CustomerNote.countDocuments({ customerRef: source._id }),
@@ -1057,7 +1300,7 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
       ...new Set(
         [...survivorContracts, ...sourceContracts]
           .map((c) => c.templateId?.toString())
-          .filter(Boolean) as string[]
+          .filter(Boolean) as string[],
       ),
     ];
     const templates =
@@ -1070,10 +1313,13 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
       templates.map((t) => [
         t._id.toString(),
         { label: t.label, slug: t.slug },
-      ])
+      ]),
     );
 
-    const equipmentByAddress = new Map<string, ReturnType<typeof formatEquipment>[]>();
+    const equipmentByAddress = new Map<
+      string,
+      ReturnType<typeof formatEquipment>[]
+    >();
     for (const eq of [...survivorEquipment, ...sourceEquipment]) {
       const key = eq.addressRef.toString();
       const list = equipmentByAddress.get(key) ?? [];
@@ -1097,12 +1343,13 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
       const equipment =
         c.equipmentRef != null
           ? [...survivorEquipment, ...sourceEquipment].find(
-              (e) => e._id.toString() === c.equipmentRef!.toString()
+              (e) => e._id.toString() === c.equipmentRef!.toString(),
             )
           : null;
       const equipmentLabel = equipment
-        ? [equipment.generatorModel, equipment.serial].filter(Boolean).join(" · ") ||
-          "Equipment"
+        ? [equipment.generatorModel, equipment.serial]
+            .filter(Boolean)
+            .join(" · ") || "Equipment"
         : null;
 
       return {
@@ -1123,10 +1370,10 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
       addressId: mongoose.Types.ObjectId,
       wos: Array<{ addressRef?: mongoose.Types.ObjectId | null }>,
       allAddressesForCustomer: unknown[],
-      nullAddressWos: number
+      nullAddressWos: number,
     ): number {
       const tagged = wos.filter(
-        (w) => w.addressRef?.toString() === addressId.toString()
+        (w) => w.addressRef?.toString() === addressId.toString(),
       ).length;
       // Merge tags null-address WOs onto the sole address when customer has exactly one
       if (allAddressesForCustomer.length === 1) {
@@ -1139,10 +1386,10 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
       addressId: mongoose.Types.ObjectId,
       contracts: typeof survivorContracts,
       allAddressesForCustomer: unknown[],
-      nullAddressContracts: typeof survivorContracts
+      nullAddressContracts: typeof survivorContracts,
     ) {
       const tagged = contracts.filter(
-        (c) => c.addressRef?.toString() === addressId.toString()
+        (c) => c.addressRef?.toString() === addressId.toString(),
       );
       if (allAddressesForCustomer.length === 1) {
         return [...tagged, ...nullAddressContracts].map(formatContractSummary);
@@ -1152,7 +1399,9 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
 
     const survivorNullWos = survivorWos.filter((w) => !w.addressRef).length;
     const sourceNullWos = sourceWos.filter((w) => !w.addressRef).length;
-    const survivorNullContracts = survivorContracts.filter((c) => !c.addressRef);
+    const survivorNullContracts = survivorContracts.filter(
+      (c) => !c.addressRef,
+    );
     const sourceNullContracts = sourceContracts.filter((c) => !c.addressRef);
 
     const allocation = [
@@ -1171,13 +1420,13 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
           addr._id as mongoose.Types.ObjectId,
           survivorWos,
           survivorAddresses,
-          survivorNullWos
+          survivorNullWos,
         ),
         contracts: contractsForAddress(
           addr._id as mongoose.Types.ObjectId,
           survivorContracts,
           survivorAddresses,
-          survivorNullContracts
+          survivorNullContracts,
         ),
       })),
       ...sourceAddresses.map((addr) => ({
@@ -1195,13 +1444,13 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
           addr._id as mongoose.Types.ObjectId,
           sourceWos,
           sourceAddresses,
-          sourceNullWos
+          sourceNullWos,
         ),
         contracts: contractsForAddress(
           addr._id as mongoose.Types.ObjectId,
           sourceContracts,
           sourceAddresses,
-          sourceNullContracts
+          sourceNullContracts,
         ),
       })),
     ];
@@ -1209,8 +1458,7 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
     // Unassigned only when null-address records won't be auto-tagged (multi-address side)
     const unassigned = {
       survivor: {
-        workOrderCount:
-          survivorAddresses.length === 1 ? 0 : survivorNullWos,
+        workOrderCount: survivorAddresses.length === 1 ? 0 : survivorNullWos,
         contracts:
           survivorAddresses.length === 1
             ? []
@@ -1287,7 +1535,10 @@ export async function getMergePreview(req: AuthRequest, res: Response): Promise<
 }
 
 // POST /customers/:id/merge
-export async function mergeCustomers(req: AuthRequest, res: Response): Promise<void> {
+export async function mergeCustomers(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
   try {
     const survivorId = String(req.params.id);
     if (!mongoose.Types.ObjectId.isValid(survivorId)) {
@@ -1297,7 +1548,9 @@ export async function mergeCustomers(req: AuthRequest, res: Response): Promise<v
 
     const parsed = mergeCustomersSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
       return;
     }
 
@@ -1329,7 +1582,9 @@ export async function mergeCustomers(req: AuthRequest, res: Response): Promise<v
     }
 
     if (survivor.mergedIntoRef || source.mergedIntoRef) {
-      res.status(400).json({ message: "One of the customers was already merged" });
+      res
+        .status(400)
+        .json({ message: "One of the customers was already merged" });
       return;
     }
 
@@ -1347,7 +1602,8 @@ export async function mergeCustomers(req: AuthRequest, res: Response): Promise<v
         .lean();
       if (!chosen) {
         res.status(400).json({
-          message: "primaryContactId must belong to the survivor or source customer",
+          message:
+            "primaryContactId must belong to the survivor or source customer",
         });
         return;
       }
@@ -1384,26 +1640,26 @@ export async function mergeCustomers(req: AuthRequest, res: Response): Promise<v
           customerId: source.legacyId,
           $or: [{ addressRef: null }, { addressRef: { $exists: false } }],
         },
-        { $set: tagFields }
+        { $set: tagFields },
       );
       await Contract.updateMany(
         {
           customerId: source.legacyId,
           $or: [{ addressRef: null }, { addressRef: { $exists: false } }],
         },
-        { $set: tagFields }
+        { $set: tagFields },
       );
     }
 
     // Source addresses become non-primary on survivor (survivor keeps its primary)
     await CustomerAddress.updateMany(
       { customerRef: source._id },
-      { $set: { customerRef: survivor._id, isPrimary: false } }
+      { $set: { customerRef: survivor._id, isPrimary: false } },
     );
 
     await Equipment.updateMany(
       { customerRef: source._id },
-      { $set: { customerRef: survivor._id } }
+      { $set: { customerRef: survivor._id } },
     );
 
     await WorkOrder.updateMany(
@@ -1413,7 +1669,7 @@ export async function mergeCustomers(req: AuthRequest, res: Response): Promise<v
           customerId: survivor.legacyId,
           customerRef: survivor._id,
         },
-      }
+      },
     );
 
     await Contract.updateMany(
@@ -1423,28 +1679,28 @@ export async function mergeCustomers(req: AuthRequest, res: Response): Promise<v
           customerId: survivor.legacyId,
           customerRef: survivor._id,
         },
-      }
+      },
     );
 
     await CustomerNote.updateMany(
       { customerRef: source._id },
-      { $set: { customerRef: survivor._id } }
+      { $set: { customerRef: survivor._id } },
     );
 
     // Source contacts move onto survivor; primaries cleared until we set one.
     await CustomerContact.updateMany(
       { customerRef: source._id },
-      { $set: { customerRef: survivor._id, isPrimary: false } }
+      { $set: { customerRef: survivor._id, isPrimary: false } },
     );
 
     if (primaryContactId) {
       await clearOtherPrimaryContacts(
         survivor._id as mongoose.Types.ObjectId,
-        new mongoose.Types.ObjectId(primaryContactId)
+        new mongoose.Types.ObjectId(primaryContactId),
       );
       await CustomerContact.updateOne(
         { _id: primaryContactId, customerRef: survivor._id },
-        { $set: { isPrimary: true } }
+        { $set: { isPrimary: true } },
       );
     }
 

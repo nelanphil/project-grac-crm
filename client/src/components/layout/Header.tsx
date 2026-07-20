@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Home, Settings, LogOut, Menu, X } from "lucide-react";
 import { NAV_LINKS, COMPANY, ESTIMATE_ROUTE } from "@/lib/constants";
 import { getVisibleNavSections } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useHasHydrated } from "@/store/useHasHydrated";
 
 const HEADER_CONTAINER =
   "mx-auto flex w-full max-w-none items-center justify-between px-4 py-4 sm:px-6 lg:px-10";
@@ -35,16 +36,10 @@ export default function Header() {
   const user = useAuthStore((s) => s.user);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [hydrated, setHydrated] = useState(
-    () => useAuthStore.persist?.hasHydrated() ?? false,
-  );
+  const hydrated = useHasHydrated();
 
   const isDashboard = pathname.startsWith("/dashboard");
   const showAuthedActions = hydrated && isAuthenticated;
-
-  useEffect(() => {
-    return useAuthStore.persist?.onFinishHydration(() => setHydrated(true));
-  }, []);
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";

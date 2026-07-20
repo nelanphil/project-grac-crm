@@ -7,7 +7,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public errors?: Record<string, string[]>
+    public errors?: Record<string, string[]>,
   ) {
     super(message);
     this.name = "ApiError";
@@ -15,7 +15,7 @@ export class ApiError extends Error {
 }
 
 export async function submitLead(
-  data: EstimatePayload
+  data: EstimatePayload,
 ): Promise<{ id: string; message: string }> {
   const res = await fetch(`${API_URL}/leads`, {
     method: "POST",
@@ -29,7 +29,7 @@ export async function submitLead(
     throw new ApiError(
       body.message ?? "Something went wrong. Please try again.",
       res.status,
-      body.errors
+      body.errors,
     );
   }
 
@@ -52,7 +52,7 @@ export interface RegisterResponse {
 
 async function authRequest<T>(
   endpoint: string,
-  options: RequestInit
+  options: RequestInit,
 ): Promise<T> {
   const res = await fetch(`${API_URL}${endpoint}`, {
     ...options,
@@ -65,7 +65,7 @@ async function authRequest<T>(
     throw new ApiError(
       body.message ?? "Something went wrong. Please try again.",
       res.status,
-      body.errors
+      body.errors,
     );
   }
 
@@ -74,7 +74,7 @@ async function authRequest<T>(
 
 export async function authLogin(
   identifier: string,
-  password: string
+  password: string,
 ): Promise<LoginResponse> {
   return authRequest<LoginResponse>("/auth/login", {
     method: "POST",
@@ -109,7 +109,7 @@ export async function updateProfile(
     last_name?: string;
     email?: string;
     username?: string | null;
-  }
+  },
 ): Promise<{ user: AuthUser }> {
   return authRequest<{ user: AuthUser }>("/auth/me", {
     method: "PATCH",
@@ -129,18 +129,21 @@ export interface UsernameCheckResult {
 
 export async function checkUsernameAvailability(
   token: string,
-  username: string
+  username: string,
 ): Promise<UsernameCheckResult> {
   const q = encodeURIComponent(username);
-  return authRequest<UsernameCheckResult>(`/auth/username-check?username=${q}`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  return authRequest<UsernameCheckResult>(
+    `/auth/username-check?username=${q}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function updatePassword(
   token: string,
-  data: { current_password: string; new_password: string }
+  data: { current_password: string; new_password: string },
 ): Promise<{ message: string }> {
   return authRequest<{ message: string }>("/auth/me/password", {
     method: "PATCH",
@@ -150,7 +153,7 @@ export async function updatePassword(
 }
 
 export async function authForgotPassword(
-  email: string
+  email: string,
 ): Promise<{ message: string }> {
   return authRequest<{ message: string }>("/auth/forgot-password", {
     method: "POST",
@@ -160,7 +163,7 @@ export async function authForgotPassword(
 
 export async function authResetPassword(
   token: string,
-  password: string
+  password: string,
 ): Promise<{ message: string }> {
   return authRequest<{ message: string }>("/auth/reset-password", {
     method: "POST",
@@ -180,7 +183,9 @@ export interface UserListItem {
   updatedAt?: string;
 }
 
-export async function getUsers(token: string): Promise<{ users: UserListItem[] }> {
+export async function getUsers(
+  token: string,
+): Promise<{ users: UserListItem[] }> {
   return authRequest<{ users: UserListItem[] }>("/users", {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
@@ -196,13 +201,16 @@ export async function createUser(
     last_name: string;
     role: string;
     username?: string | null;
-  }
+  },
 ): Promise<{ user: UserListItem; temporaryPassword?: string }> {
-  return authRequest<{ user: UserListItem; temporaryPassword?: string }>("/users", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(data),
-  });
+  return authRequest<{ user: UserListItem; temporaryPassword?: string }>(
+    "/users",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
 }
 
 export async function updateUser(
@@ -215,7 +223,7 @@ export async function updateUser(
     role?: string;
     username?: string | null;
     password?: string;
-  }
+  },
 ): Promise<{ user: UserListItem }> {
   return authRequest<{ user: UserListItem }>(`/users/${id}`, {
     method: "PATCH",
@@ -226,7 +234,7 @@ export async function updateUser(
 
 export async function deleteUser(
   token: string,
-  id: string
+  id: string,
 ): Promise<{ message: string }> {
   return authRequest<{ message: string }>(`/users/${id}`, {
     method: "DELETE",
@@ -305,7 +313,9 @@ export interface CustomerListItem {
   duplicateCount?: number;
 }
 
-export async function getCustomers(token: string): Promise<{ customers: CustomerListItem[] }> {
+export async function getCustomers(
+  token: string,
+): Promise<{ customers: CustomerListItem[] }> {
   return authRequest<{ customers: CustomerListItem[] }>("/customers", {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
@@ -336,7 +346,7 @@ export interface CustomerDetail {
 
 export async function getCustomer(
   token: string,
-  id: string
+  id: string,
 ): Promise<{ customer: CustomerDetail }> {
   return authRequest<{ customer: CustomerDetail }>(`/customers/${id}`, {
     method: "GET",
@@ -360,7 +370,7 @@ export interface CustomerDuplicateMatch {
 export async function getCustomerDuplicates(
   token: string,
   phone: string,
-  excludeId?: string
+  excludeId?: string,
 ): Promise<{ phone: string; customers: CustomerDuplicateMatch[] }> {
   const params = new URLSearchParams({ phone });
   if (excludeId) params.set("excludeId", excludeId);
@@ -369,7 +379,7 @@ export async function getCustomerDuplicates(
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
-    }
+    },
   );
 }
 
@@ -450,7 +460,7 @@ export interface MergePreview {
 export async function getMergePreview(
   token: string,
   survivorId: string,
-  sourceCustomerId: string
+  sourceCustomerId: string,
 ): Promise<MergePreview> {
   const params = new URLSearchParams({ sourceCustomerId });
   return authRequest<MergePreview>(
@@ -458,7 +468,7 @@ export async function getMergePreview(
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
-    }
+    },
   );
 }
 
@@ -466,7 +476,7 @@ export async function mergeCustomers(
   token: string,
   survivorId: string,
   sourceCustomerId: string,
-  options?: { primaryContactId?: string }
+  options?: { primaryContactId?: string },
 ): Promise<{ customer: CustomerDetail; mergedSourceId: string }> {
   return authRequest<{ customer: CustomerDetail; mergedSourceId: string }>(
     `/customers/${survivorId}/merge`,
@@ -479,20 +489,20 @@ export async function mergeCustomers(
           ? { primaryContactId: options.primaryContactId }
           : {}),
       }),
-    }
+    },
   );
 }
 
 export async function getCustomerContacts(
   token: string,
-  customerId: string
+  customerId: string,
 ): Promise<{ contacts: CustomerContact[] }> {
   return authRequest<{ contacts: CustomerContact[] }>(
     `/customers/${customerId}/contacts`,
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
-    }
+    },
   );
 }
 
@@ -506,7 +516,7 @@ export async function createCustomerContact(
     email?: string;
     label?: string;
     isPrimary?: boolean;
-  }
+  },
 ): Promise<{ contact: CustomerContact }> {
   return authRequest<{ contact: CustomerContact }>(
     `/customers/${customerId}/contacts`,
@@ -514,7 +524,7 @@ export async function createCustomerContact(
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(data),
-    }
+    },
   );
 }
 
@@ -529,7 +539,7 @@ export async function updateCustomerContact(
     email?: string;
     label?: string;
     isPrimary?: boolean;
-  }
+  },
 ): Promise<{ contact: CustomerContact }> {
   return authRequest<{ contact: CustomerContact }>(
     `/customers/${customerId}/contacts/${contactId}`,
@@ -537,14 +547,14 @@ export async function updateCustomerContact(
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(data),
-    }
+    },
   );
 }
 
 export async function deleteCustomerContact(
   token: string,
   customerId: string,
-  contactId: string
+  contactId: string,
 ): Promise<void> {
   await authRequest<void>(`/customers/${customerId}/contacts/${contactId}`, {
     method: "DELETE",
@@ -562,7 +572,7 @@ export async function createCustomerAddress(
     state?: string;
     zip?: string;
     isPrimary?: boolean;
-  }
+  },
 ): Promise<{ address: CustomerAddress }> {
   return authRequest<{ address: CustomerAddress }>(
     `/customers/${customerId}/addresses`,
@@ -570,7 +580,7 @@ export async function createCustomerAddress(
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(data),
-    }
+    },
   );
 }
 
@@ -585,7 +595,7 @@ export async function createCustomerEquipment(
     lastSvc?: string | null;
     exday?: string;
     extime?: string;
-  }
+  },
 ): Promise<{ equipment: CustomerEquipment }> {
   return authRequest<{ equipment: CustomerEquipment }>(
     `/customers/${customerId}/equipment`,
@@ -593,8 +603,37 @@ export async function createCustomerEquipment(
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(data),
-    }
+    },
   );
+}
+
+export interface SerialConflict {
+  field: "serial" | "atsSerial";
+  value: string;
+  equipmentId: string;
+  addressId: string | null;
+  addressLabel: string | null;
+  customerId: string;
+  customerName: string | null;
+}
+
+export async function checkEquipmentSerial(
+  token: string,
+  customerId: string,
+  params: { serial?: string; atsSerial?: string; excludeEquipmentId?: string },
+): Promise<{ blocking: SerialConflict[]; warnings: SerialConflict[] }> {
+  const query = new URLSearchParams();
+  if (params.serial) query.set("serial", params.serial);
+  if (params.atsSerial) query.set("atsSerial", params.atsSerial);
+  if (params.excludeEquipmentId)
+    query.set("excludeEquipmentId", params.excludeEquipmentId);
+  return authRequest<{
+    blocking: SerialConflict[];
+    warnings: SerialConflict[];
+  }>(`/customers/${customerId}/equipment/check-serial?${query.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 export interface CustomerNoteAuthor {
@@ -614,18 +653,21 @@ export interface CustomerNote {
 
 export async function getCustomerNotes(
   token: string,
-  customerId: string
+  customerId: string,
 ): Promise<{ notes: CustomerNote[] }> {
-  return authRequest<{ notes: CustomerNote[] }>(`/customers/${customerId}/notes`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  return authRequest<{ notes: CustomerNote[] }>(
+    `/customers/${customerId}/notes`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function createCustomerNote(
   token: string,
   customerId: string,
-  content: string
+  content: string,
 ): Promise<{ note: CustomerNote }> {
   return authRequest<{ note: CustomerNote }>(`/customers/${customerId}/notes`, {
     method: "POST",
@@ -638,7 +680,7 @@ export async function updateCustomerNote(
   token: string,
   customerId: string,
   noteId: string,
-  content: string
+  content: string,
 ): Promise<{ note: CustomerNote }> {
   return authRequest<{ note: CustomerNote }>(
     `/customers/${customerId}/notes/${noteId}`,
@@ -646,21 +688,21 @@ export async function updateCustomerNote(
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ content }),
-    }
+    },
   );
 }
 
 export async function deleteCustomerNote(
   token: string,
   customerId: string,
-  noteId: string
+  noteId: string,
 ): Promise<void> {
   await authRequest<Record<string, never>>(
     `/customers/${customerId}/notes/${noteId}`,
     {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
-    }
+    },
   );
 }
 
@@ -681,7 +723,7 @@ export interface WorkOrderListItem {
 export async function getWorkOrdersForCustomer(
   token: string,
   legacyId: number,
-  addressId?: string
+  addressId?: string,
 ): Promise<WorkOrderListItem[]> {
   const params = new URLSearchParams({ customerId: String(legacyId) });
   if (addressId) params.set("addressId", addressId);
@@ -755,7 +797,7 @@ export interface ContractListItem {
 export async function getContracts(
   token: string,
   standing?: ContractStanding | "all",
-  opts?: { year?: number; month?: number }
+  opts?: { year?: number; month?: number },
 ): Promise<{ contracts: ContractListItem[] }> {
   const params = new URLSearchParams();
   if (standing && standing !== "all") params.set("standing", standing);
@@ -767,14 +809,14 @@ export async function getContracts(
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
-    }
+    },
   );
 }
 
 export async function getContractsForCustomer(
   token: string,
   legacyId: number,
-  addressId?: string
+  addressId?: string,
 ): Promise<{ contracts: ContractListItem[] }> {
   const params = new URLSearchParams({ customerId: String(legacyId) });
   if (addressId) params.set("addressId", addressId);
@@ -783,13 +825,13 @@ export async function getContractsForCustomer(
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
-    }
+    },
   );
 }
 
 export async function getContract(
   token: string,
-  id: string
+  id: string,
 ): Promise<{ contract: ContractListItem }> {
   return authRequest<{ contract: ContractListItem }>(`/contracts/${id}`, {
     method: "GET",
@@ -807,7 +849,7 @@ export async function createContract(
     templateId?: string | null;
     addressRef?: string | null;
     equipmentRef?: string | null;
-  }
+  },
 ): Promise<{ contract: ContractListItem }> {
   return authRequest<{ contract: ContractListItem }>("/contracts", {
     method: "POST",
@@ -827,7 +869,7 @@ export async function updateContract(
     templateId?: string | null;
     addressRef?: string | null;
     equipmentRef?: string | null;
-  }
+  },
 ): Promise<{ contract: ContractListItem }> {
   return authRequest<{ contract: ContractListItem }>(`/contracts/${id}`, {
     method: "PATCH",
@@ -844,7 +886,7 @@ export async function renewContract(
     durationMonths?: number;
     notes?: string;
     workOrderRef?: string;
-  }
+  },
 ): Promise<{ contract: ContractListItem }> {
   return authRequest<{ contract: ContractListItem }>(`/contracts/${id}/renew`, {
     method: "POST",
@@ -853,10 +895,7 @@ export async function renewContract(
   });
 }
 
-export async function deleteContract(
-  token: string,
-  id: string
-): Promise<void> {
+export async function deleteContract(token: string, id: string): Promise<void> {
   await authRequest<void>(`/contracts/${id}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
@@ -866,7 +905,7 @@ export async function deleteContract(
 export async function updateUserRole(
   token: string,
   id: string,
-  role: AuthUser["role"]
+  role: AuthUser["role"],
 ): Promise<{ user: UserListItem }> {
   return authRequest<{ user: UserListItem }>(`/users/${id}/role`, {
     method: "PATCH",
@@ -876,12 +915,15 @@ export async function updateUserRole(
 }
 
 export async function getRolePermissions(
-  token: string
+  token: string,
 ): Promise<{ roles: Record<string, string[]> }> {
-  return authRequest<{ roles: Record<string, string[]> }>("/roles/permissions", {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  return authRequest<{ roles: Record<string, string[]> }>(
+    "/roles/permissions",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export interface RoleItem {
@@ -902,7 +944,7 @@ export async function getRoles(token: string): Promise<{ roles: RoleItem[] }> {
 
 export async function createRole(
   token: string,
-  label: string
+  label: string,
 ): Promise<{ role: RoleItem }> {
   return authRequest<{ role: RoleItem }>("/roles", {
     method: "POST",
@@ -914,7 +956,7 @@ export async function createRole(
 export async function updateRoleLabel(
   token: string,
   slug: string,
-  label: string
+  label: string,
 ): Promise<{ role: RoleItem }> {
   return authRequest<{ role: RoleItem }>(`/roles/${slug}/label`, {
     method: "PATCH",
@@ -926,18 +968,21 @@ export async function updateRoleLabel(
 export async function renameRole(
   token: string,
   slug: string,
-  data: { slug: string; label: string }
+  data: { slug: string; label: string },
 ): Promise<{ role: RoleItem; oldSlug: string }> {
-  return authRequest<{ role: RoleItem; oldSlug: string }>(`/roles/${slug}/rename`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(data),
-  });
+  return authRequest<{ role: RoleItem; oldSlug: string }>(
+    `/roles/${slug}/rename`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
 }
 
 export async function deleteRole(
   token: string,
-  slug: string
+  slug: string,
 ): Promise<{ message: string }> {
   return authRequest<{ message: string }>(`/roles/${slug}`, {
     method: "DELETE",
@@ -948,13 +993,16 @@ export async function deleteRole(
 export async function updateRolePermissions(
   token: string,
   role: string,
-  permissions: string[]
+  permissions: string[],
 ): Promise<{ role: string; permissions: string[] }> {
-  return authRequest<{ role: string; permissions: string[] }>(`/roles/${role}/permissions`, {
-    method: "PUT",
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ permissions }),
-  });
+  return authRequest<{ role: string; permissions: string[] }>(
+    `/roles/${role}/permissions`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ permissions }),
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -983,7 +1031,7 @@ export interface TwilioAccountInput {
 }
 
 export async function getTwilioAccounts(
-  token: string
+  token: string,
 ): Promise<{ accounts: TwilioAccountItem[] }> {
   return authRequest<{ accounts: TwilioAccountItem[] }>("/twilio-accounts", {
     method: "GET",
@@ -993,7 +1041,7 @@ export async function getTwilioAccounts(
 
 export async function createTwilioAccount(
   token: string,
-  data: TwilioAccountInput
+  data: TwilioAccountInput,
 ): Promise<{ account: TwilioAccountItem }> {
   return authRequest<{ account: TwilioAccountItem }>("/twilio-accounts", {
     method: "POST",
@@ -1005,7 +1053,7 @@ export async function createTwilioAccount(
 export async function updateTwilioAccount(
   token: string,
   id: string,
-  data: Partial<TwilioAccountInput>
+  data: Partial<TwilioAccountInput>,
 ): Promise<{ account: TwilioAccountItem }> {
   return authRequest<{ account: TwilioAccountItem }>(`/twilio-accounts/${id}`, {
     method: "PATCH",
@@ -1016,7 +1064,7 @@ export async function updateTwilioAccount(
 
 export async function deleteTwilioAccount(
   token: string,
-  id: string
+  id: string,
 ): Promise<{ message: string }> {
   return authRequest<{ message: string }>(`/twilio-accounts/${id}`, {
     method: "DELETE",
@@ -1050,7 +1098,7 @@ export interface ContractTemplateInput {
 
 export async function getContractTemplates(
   token: string,
-  options?: { includeDeleted?: boolean }
+  options?: { includeDeleted?: boolean },
 ): Promise<{ templates: ContractTemplateItem[] }> {
   const params = options?.includeDeleted ? "?includeDeleted=1" : "";
   return authRequest<{ templates: ContractTemplateItem[] }>(
@@ -1058,25 +1106,28 @@ export async function getContractTemplates(
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
-    }
+    },
   );
 }
 
 export async function createContractTemplate(
   token: string,
-  data: ContractTemplateInput
+  data: ContractTemplateInput,
 ): Promise<{ template: ContractTemplateItem }> {
-  return authRequest<{ template: ContractTemplateItem }>("/contract-templates", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(data),
-  });
+  return authRequest<{ template: ContractTemplateItem }>(
+    "/contract-templates",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
 }
 
 export async function updateContractTemplate(
   token: string,
   id: string,
-  data: Partial<ContractTemplateInput>
+  data: Partial<ContractTemplateInput>,
 ): Promise<{ template: ContractTemplateItem }> {
   return authRequest<{ template: ContractTemplateItem }>(
     `/contract-templates/${id}`,
@@ -1084,32 +1135,32 @@ export async function updateContractTemplate(
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(data),
-    }
+    },
   );
 }
 
 export async function duplicateContractTemplate(
   token: string,
-  id: string
+  id: string,
 ): Promise<{ template: ContractTemplateItem }> {
   return authRequest<{ template: ContractTemplateItem }>(
     `/contract-templates/${id}/duplicate`,
     {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
-    }
+    },
   );
 }
 
 export async function deleteContractTemplate(
   token: string,
-  id: string
+  id: string,
 ): Promise<{ template: ContractTemplateItem; message: string }> {
   return authRequest<{ template: ContractTemplateItem; message: string }>(
     `/contract-templates/${id}`,
     {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
-    }
+    },
   );
 }

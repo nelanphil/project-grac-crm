@@ -34,9 +34,14 @@ const equipmentSchema = new Schema<IEquipment>(
     exday: { type: String, default: "" },
     extime: { type: String, default: "" },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 equipmentSchema.index({ customerRef: 1, addressRef: 1 });
+equipmentSchema.index({ serial: 1 });
+equipmentSchema.index({ atsSerial: 1 });
 
-export const Equipment = mongoose.model<IEquipment>("Equipment", equipmentSchema);
+export const Equipment = mongoose.model<IEquipment>(
+  "Equipment",
+  equipmentSchema,
+);

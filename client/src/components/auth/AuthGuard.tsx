@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useHasHydrated } from "@/store/useHasHydrated";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -18,13 +19,7 @@ interface AuthGuardProps {
 export default function AuthGuard({ children }: AuthGuardProps) {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const [hydrated, setHydrated] = useState(
-    () => useAuthStore.persist?.hasHydrated() ?? false,
-  );
-
-  useEffect(() => {
-    return useAuthStore.persist?.onFinishHydration(() => setHydrated(true));
-  }, []);
+  const hydrated = useHasHydrated();
 
   useEffect(() => {
     if (hydrated && !isAuthenticated) {
