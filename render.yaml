@@ -6,6 +6,11 @@ services:
     rootDir: server
     plan: free
     buildCommand: npm install && npm run build
+    # Runs after build, before the new version goes live. Applies any pending
+    # database migrations (see server/src/migrations/). Aborts the deploy on
+    # failure. NOTE: preDeployCommand requires a paid Render instance type;
+    # on the free plan run `npm run migrate` manually (or via deploy.sh).
+    preDeployCommand: npm run migrate
     startCommand: npm start
     envVars:
       - key: NODE_ENV

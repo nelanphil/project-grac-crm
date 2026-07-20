@@ -1,9 +1,21 @@
 import { z } from "zod";
 
-export const loginSchema = z.object({
-  identifier: z.string().min(1, "Email or username is required").max(200),
-  password: z.string().min(1, "Password is required"),
-});
+export const loginSchema = z
+  .object({
+    // Accept `identifier` (current client) or `email` (legacy client) so that
+    // stale deployed frontends can still authenticate.
+    identifier: z.string().min(1).max(200).optional(),
+    email: z.string().min(1).max(200).optional(),
+    password: z.string().min(1, "Password is required"),
+  })
+  .transform((data) => ({
+    identifier: (data.identifier ?? data.email ?? "").trim(),
+    password: data.password,
+  }))
+  .refine((data) => data.identifier.length > 0, {
+    message: "Email or username is required",
+    path: ["identifier"],
+  });
 
 export const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -24,7 +36,7 @@ const usernameField = z
       .toLowerCase()
       .regex(
         /^[a-z][a-z0-9_]{2,29}$/,
-        "Username must be 3–30 characters, start with a letter, and contain only letters, numbers, or underscores"
+        "Username must be 3–30 characters, start with a letter, and contain only letters, numbers, or underscores",
       ),
     z.literal(""),
     z.null(),
