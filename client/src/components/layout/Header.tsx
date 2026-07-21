@@ -8,6 +8,7 @@ import { NAV_LINKS, COMPANY, ESTIMATE_ROUTE } from "@/lib/constants";
 import { getVisibleNavSections } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
+import NotificationBell from "@/components/notifications/NotificationBell";
 
 const HEADER_CONTAINER =
   "mx-auto flex w-full max-w-none items-center justify-between px-4 py-4 sm:px-6 lg:px-10";
@@ -25,6 +26,18 @@ function BrandLink() {
         Generator Maintenance
         <span className="text-brand-orange"> of Florida</span>
       </span>
+    </Link>
+  );
+}
+
+function DashboardHomeLink() {
+  return (
+    <Link
+      href="/dashboard"
+      className="hidden rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:block"
+      aria-label="Go to dashboard"
+    >
+      <Home className="h-5 w-5" />
     </Link>
   );
 }
@@ -60,7 +73,10 @@ export default function Header() {
     return (
       <header className="sticky top-0 z-50 bg-brand-dark text-white">
         <div className={HEADER_CONTAINER}>
-          <BrandLink />
+          <div className="flex items-center">
+            <BrandLink />
+            <DashboardHomeLink />
+          </div>
 
           <div className="flex items-center gap-1">
             <button
@@ -76,13 +92,7 @@ export default function Header() {
                 <Menu className="h-5 w-5" />
               )}
             </button>
-            <Link
-              href="/dashboard"
-              className="hidden rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:block"
-              aria-label="Go to dashboard"
-            >
-              <Home className="h-5 w-5" />
-            </Link>
+            <NotificationBell />
             <Link
               href="/dashboard/settings"
               className="hidden rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:block"
@@ -183,7 +193,10 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-50 bg-brand-dark text-white">
       <div className={HEADER_CONTAINER}>
-        <BrandLink />
+        <div className="flex items-center">
+          <BrandLink />
+          {showAuthedActions && <DashboardHomeLink />}
+        </div>
 
         <nav className="hidden items-center gap-8 md:flex">
           {NAV_LINKS.map((link) => (
@@ -223,13 +236,7 @@ export default function Header() {
           </Link>
           {showAuthedActions && (
             <div className="flex items-center gap-1">
-              <Link
-                href="/dashboard"
-                className="rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange"
-                aria-label="Go to dashboard"
-              >
-                <Home className="h-5 w-5" />
-              </Link>
+              <NotificationBell />
               <Link
                 href="/dashboard/settings"
                 className="rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange"
@@ -249,34 +256,37 @@ export default function Header() {
           )}
         </div>
 
-        <button
-          type="button"
-          className="inline-flex items-center justify-center rounded-md p-2 text-white md:hidden"
-          onClick={() => setMobileOpen(!mobileOpen)}
-          aria-label="Toggle menu"
-        >
-          <svg
-            className="h-6 w-6"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.5}
-            stroke="currentColor"
+        <div className="flex items-center gap-1 md:hidden">
+          {showAuthedActions && <NotificationBell />}
+          <button
+            type="button"
+            className="inline-flex items-center justify-center rounded-md p-2 text-white"
+            onClick={() => setMobileOpen(!mobileOpen)}
+            aria-label="Toggle menu"
           >
-            {mobileOpen ? (
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M6 18L18 6M6 6l12 12"
-              />
-            ) : (
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
-              />
-            )}
-          </svg>
-        </button>
+            <svg
+              className="h-6 w-6"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+            >
+              {mobileOpen ? (
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              ) : (
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
+                />
+              )}
+            </svg>
+          </button>
+        </div>
       </div>
 
       {mobileOpen && (

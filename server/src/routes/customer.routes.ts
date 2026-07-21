@@ -1,7 +1,12 @@
 import { Router } from "express";
-import { authenticate, requirePermission } from "../middleware/auth.middleware";
+import {
+  authenticate,
+  requirePermission,
+  requireRole,
+} from "../middleware/auth.middleware";
 import {
   checkEquipmentSerial,
+  createCustomer,
   createCustomerAddress,
   createCustomerContact,
   createEquipment,
@@ -15,9 +20,12 @@ import {
   getMergePreview,
   listCustomers,
   mergeCustomers,
+  restoreCustomer,
+  softDeleteCustomer,
   updateCustomerAddress,
   updateCustomerContact,
   updateEquipment,
+  validateCustomerAddress,
 } from "../controllers/customer.controller";
 import {
   getCustomerNotes,
@@ -28,10 +36,14 @@ import {
 
 const router = Router();
 
+const adminRoles = requireRole("admin", "super-admin", "owner");
+
 router.use(authenticate);
 
 // List + duplicate discovery (static paths before :id)
 router.get("/", requirePermission("customers:read"), listCustomers);
+router.post("/", adminRoles, createCustomer);
+router.post("/validate-address", adminRoles, validateCustomerAddress);
 router.get(
   "/duplicates",
   requirePermission("customers:read"),
@@ -128,6 +140,10 @@ router.get(
   getMergePreview,
 );
 router.post("/:id/merge", requirePermission("customers:write"), mergeCustomers);
+
+// Soft delete / restore (admin roles)
+router.post("/:id/restore", adminRoles, restoreCustomer);
+router.delete("/:id", adminRoles, softDeleteCustomer);
 
 // Detail (must be last among /:id routes that are exact)
 router.get("/:id", requirePermission("customers:read"), getCustomerById);

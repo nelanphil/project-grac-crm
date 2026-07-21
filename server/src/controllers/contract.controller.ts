@@ -18,6 +18,11 @@ import {
   isInGoodStanding,
   parseDateOnly,
 } from "../utils/contractDates";
+import {
+  actorFromRequest,
+  customerDisplayName,
+  logNotificationAsync,
+} from "../services/notification.service";
 import { inferContractType } from "../utils/contractTypes";
 
 async function enrichWithCustomer(
@@ -545,6 +550,18 @@ export async function createContract(
     const enriched = await enrichContract(
       contract.toObject() as unknown as Record<string, unknown>,
     );
+
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "contract",
+      action: "created",
+      entityId: String(contract._id),
+      customerRef: customer._id,
+      summary: `Contract created for ${custName}`,
+      metadata: { customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(201).json({ contract: enriched });
   } catch {
     res.status(500).json({ message: "Failed to create contract" });
@@ -705,6 +722,16 @@ export async function updateContract(
     }
 
     const enriched = await enrichContract(contract);
+
+    logNotificationAsync({
+      entityType: "contract",
+      action: "updated",
+      entityId: String(contract._id),
+      customerRef: existing.customerRef ?? null,
+      summary: "Contract updated",
+      ...actorFromRequest(req.user),
+    });
+
     res.json({ contract: enriched });
   } catch {
     res.status(500).json({ message: "Failed to update contract" });
@@ -787,6 +814,16 @@ export async function renewContract(
     const enriched = await enrichContract(
       existing.toObject() as unknown as Record<string, unknown>,
     );
+
+    logNotificationAsync({
+      entityType: "contract",
+      action: "renewed",
+      entityId: String(existing._id),
+      customerRef: existing.customerRef ?? null,
+      summary: "Contract renewed",
+      ...actorFromRequest(req.user),
+    });
+
     res.json({ contract: enriched });
   } catch {
     res.status(500).json({ message: "Failed to record renewal" });
@@ -804,6 +841,16 @@ export async function deleteContract(
       res.status(404).json({ message: "Contract not found" });
       return;
     }
+
+    logNotificationAsync({
+      entityType: "contract",
+      action: "deleted",
+      entityId: String(contract._id),
+      customerRef: contract.customerRef ?? null,
+      summary: "Contract deleted",
+      ...actorFromRequest(req.user),
+    });
+
     res.status(204).send();
   } catch {
     res.status(500).json({ message: "Failed to delete contract" });

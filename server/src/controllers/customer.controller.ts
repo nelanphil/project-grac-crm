@@ -1,7 +1,7 @@
 import { Response } from "express";
 import mongoose from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { Customer } from "../models/mongo/Customer";
+import { activeCustomerFilter, Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { CustomerNote } from "../models/mongo/CustomerNote";
@@ -30,6 +30,12 @@ import {
 } from "../utils/customerSites";
 import { getContractStanding } from "../utils/contractDates";
 import { ContractTemplate } from "../models/mongo/ContractTemplate";
+import {
+  actorFromRequest,
+  customerDisplayName,
+  logNotificationAsync,
+} from "../services/notification.service";
+import { geocodeAddress } from "../utils/censusGeocoder";
 
 function parseLastSvc(value: unknown): Date | null | undefined {
   if (value === undefined) return undefined;
@@ -254,19 +260,33 @@ async function findActiveCustomerOr404(
   exday: string;
   extime: string;
   mergedIntoRef?: mongoose.Types.ObjectId | null;
+  deletedAt?: Date | null;
 } | null> {
   if (!mongoose.Types.ObjectId.isValid(customerId)) {
     res.status(400).json({ message: "Invalid customer id" });
     return null;
   }
 
-  const customer = await Customer.findById(customerId).lean();
+  const customer = await Customer.findOne({
+    _id: customerId,
+    ...activeCustomerFilter,
+  }).lean();
   if (!customer) {
     res.status(404).json({ message: "Customer not found" });
     return null;
   }
 
   return customer;
+}
+
+const notMergedFilter: {
+  $or: Array<{ mergedIntoRef: null } | { mergedIntoRef: { $exists: false } }>;
+} = {
+  $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
+};
+
+function trimStr(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 async function loadSitesForCustomer(customerId: mongoose.Types.ObjectId) {
@@ -323,14 +343,19 @@ async function clearOtherPrimaryContacts(
   await CustomerContact.updateMany(filter, { $set: { isPrimary: false } });
 }
 
-// GET /customers — exclude merged
+// GET /customers — exclude merged; ?deleted=1 for soft-deleted only
 export async function listCustomers(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
   try {
+    const deletedOnly =
+      req.query.deleted === "1" || req.query.deleted === "true";
     const customers = await Customer.find({
-      $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
+      ...notMergedFilter,
+      ...(deletedOnly
+        ? { deletedAt: { $ne: null } }
+        : activeCustomerFilter),
     })
       .lean()
       .sort({ last: 1, first: 1 });
@@ -380,12 +405,248 @@ export async function listCustomers(
 
         return {
           ...c,
+          deletedAt: c.deletedAt ? c.deletedAt.toISOString() : null,
           duplicateCount: maxPeers,
         };
       }),
     });
   } catch (err) {
     console.error("GET /customers error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// POST /customers/validate-address — Census geocode check
+export async function validateCustomerAddress(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const result = await geocodeAddress({
+      street: trimStr(req.body?.address ?? req.body?.street),
+      city: trimStr(req.body?.city),
+      state: trimStr(req.body?.state),
+      zip: trimStr(req.body?.zip),
+    });
+
+    if (!result.ok) {
+      res.status(200).json({
+        valid: false,
+        message: result.message,
+      });
+      return;
+    }
+
+    res.status(200).json({
+      valid: true,
+      matchedAddress: result.match.matchedAddress,
+      address: result.match.normalized,
+      coordinates: result.match.coordinates,
+    });
+  } catch (err) {
+    console.error("POST /customers/validate-address error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// POST /customers — admin create
+export async function createCustomer(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const first = trimStr(req.body?.first);
+    const last = trimStr(req.body?.last);
+    if (!first && !last) {
+      res.status(400).json({ message: "First or last name is required" });
+      return;
+    }
+
+    const phone = trimStr(req.body?.phone);
+    const email = trimStr(req.body?.email).toLowerCase();
+    const addressInput = trimStr(req.body?.address);
+    const cityInput = trimStr(req.body?.city);
+    const stateInput = trimStr(req.body?.state);
+    const zipInput = trimStr(req.body?.zip);
+
+    if (!addressInput) {
+      res.status(400).json({ message: "Street address is required" });
+      return;
+    }
+
+    const geocode = await geocodeAddress({
+      street: addressInput,
+      city: cityInput,
+      state: stateInput,
+      zip: zipInput,
+    });
+    if (!geocode.ok) {
+      const status =
+        geocode.reason === "incomplete"
+          ? 400
+          : geocode.reason === "upstream_error"
+            ? 502
+            : 422;
+      res.status(status).json({ message: geocode.message });
+      return;
+    }
+
+    const { address, city, state, zip } = geocode.match.normalized;
+
+    const maxLegacy = await Customer.findOne()
+      .sort({ legacyId: -1 })
+      .select("legacyId")
+      .lean();
+    const legacyId = (maxLegacy?.legacyId ?? 0) + 1;
+
+    const customer = await Customer.create({
+      legacyId,
+      userId: 0,
+      first,
+      last,
+      phone,
+      email,
+      address,
+      city,
+      state,
+      zip,
+      deletedAt: null,
+      mergedIntoRef: null,
+      mergedAt: null,
+    });
+
+    await ensureCustomerSiteFromFlat(customer);
+    await ensureCustomerContactFromFlat(customer);
+
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "customer",
+      action: "created",
+      entityId: String(customer._id),
+      customerRef: customer._id,
+      summary: `Customer ${custName} created`,
+      metadata: { customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
+    res.status(201).json({
+      customer: {
+        _id: customer._id.toString(),
+        legacyId: customer.legacyId,
+        first: customer.first,
+        last: customer.last,
+        email: customer.email,
+        phone: customer.phone,
+        address: customer.address,
+        city: customer.city,
+        state: customer.state,
+        zip: customer.zip,
+        generatorModel: customer.generatorModel ?? "",
+        lastSvc: customer.lastSvc ? customer.lastSvc.toISOString() : null,
+        deletedAt: null,
+        duplicateCount: 0,
+      },
+    });
+  } catch (err) {
+    console.error("POST /customers error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// DELETE /customers/:id — soft delete
+export async function softDeleteCustomer(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const id = String(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      res.status(400).json({ message: "Invalid customer id" });
+      return;
+    }
+
+    const customer = await Customer.findOne({
+      _id: id,
+      ...activeCustomerFilter,
+      ...notMergedFilter,
+    });
+    if (!customer) {
+      res.status(404).json({ message: "Customer not found" });
+      return;
+    }
+
+    customer.deletedAt = new Date();
+    await customer.save();
+
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "customer",
+      action: "deleted",
+      entityId: String(customer._id),
+      customerRef: customer._id,
+      summary: `Customer ${custName} deleted`,
+      metadata: { customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
+    res.status(200).json({
+      message: "Customer deleted",
+      customer: {
+        _id: customer._id.toString(),
+        deletedAt: customer.deletedAt.toISOString(),
+      },
+    });
+  } catch (err) {
+    console.error("DELETE /customers/:id error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// POST /customers/:id/restore
+export async function restoreCustomer(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const id = String(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      res.status(400).json({ message: "Invalid customer id" });
+      return;
+    }
+
+    const customer = await Customer.findOne({
+      _id: id,
+      deletedAt: { $ne: null },
+      ...notMergedFilter,
+    });
+    if (!customer) {
+      res.status(404).json({ message: "Customer not found" });
+      return;
+    }
+
+    customer.deletedAt = null;
+    await customer.save();
+
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "customer",
+      action: "updated",
+      entityId: String(customer._id),
+      customerRef: customer._id,
+      summary: `Customer ${custName} restored`,
+      metadata: { customerName: custName, restored: true },
+      ...actorFromRequest(req.user),
+    });
+
+    res.status(200).json({
+      message: "Customer restored",
+      customer: {
+        _id: customer._id.toString(),
+        deletedAt: null,
+      },
+    });
+  } catch (err) {
+    console.error("POST /customers/:id/restore error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }
@@ -409,7 +670,8 @@ export async function getCustomerDuplicates(
       : undefined;
 
     const customers = await Customer.find({
-      $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
+      ...notMergedFilter,
+      ...activeCustomerFilter,
     })
       .select("_id legacyId first last phone email address city state zip")
       .lean();
@@ -590,6 +852,17 @@ export async function createCustomerAddress(
 
     await syncCustomerPrimaryFields(customer._id);
 
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "address",
+      action: "created",
+      entityId: String(address._id),
+      customerRef: customer._id,
+      summary: `Address created for ${custName}`,
+      metadata: { label: address.label, customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(201).json({
       address: {
         ...formatAddress(address.toObject()),
@@ -675,6 +948,17 @@ export async function updateCustomerAddress(
     await address.save();
     await syncCustomerPrimaryFields(customer._id);
 
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "address",
+      action: "updated",
+      entityId: String(address._id),
+      customerRef: customer._id,
+      summary: `Address updated for ${custName}`,
+      metadata: { label: address.label, customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
     const equipment = await Equipment.find({ addressRef: address._id }).lean();
     res.status(200).json({
       address: {
@@ -747,6 +1031,18 @@ export async function deleteCustomerAddress(
     }
 
     await syncCustomerPrimaryFields(customer._id);
+
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "address",
+      action: "deleted",
+      entityId: addressId,
+      customerRef: customer._id,
+      summary: `Address deleted for ${custName}`,
+      metadata: { customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(204).send();
   } catch (err) {
     console.error("DELETE /customers/:id/addresses/:addressId error:", err);
@@ -848,6 +1144,21 @@ export async function createEquipment(
     });
 
     await syncCustomerPrimaryFields(customer._id);
+
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "equipment",
+      action: "created",
+      entityId: String(equipment._id),
+      customerRef: customer._id,
+      summary: `Equipment created for ${custName}`,
+      metadata: {
+        customerName: custName,
+        generatorModel: equipment.generatorModel,
+      },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(201).json({ equipment: formatEquipment(equipment.toObject()) });
   } catch (err) {
     console.error("POST /customers/:id/equipment error:", err);
@@ -944,6 +1255,21 @@ export async function updateEquipment(
 
     await equipment.save();
     await syncCustomerPrimaryFields(customer._id);
+
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "equipment",
+      action: "updated",
+      entityId: String(equipment._id),
+      customerRef: customer._id,
+      summary: `Equipment updated for ${custName}`,
+      metadata: {
+        customerName: custName,
+        generatorModel: equipment.generatorModel,
+      },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(200).json({ equipment: formatEquipment(equipment.toObject()) });
   } catch (err) {
     console.error("PATCH /customers/:id/equipment/:equipmentId error:", err);
@@ -993,6 +1319,18 @@ export async function deleteEquipment(
 
     await equipment.deleteOne();
     await syncCustomerPrimaryFields(customer._id);
+
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "equipment",
+      action: "deleted",
+      entityId: equipmentId,
+      customerRef: customer._id,
+      summary: `Equipment deleted for ${custName}`,
+      metadata: { customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(204).send();
   } catch (err) {
     console.error("DELETE /customers/:id/equipment/:equipmentId error:", err);
@@ -1066,6 +1404,19 @@ export async function createCustomerContact(
     await ensureCustomerUser(contact);
     const refreshed = await CustomerContact.findById(contact._id);
     await syncCustomerPrimaryContactFields(customer._id);
+
+    const custName = customerDisplayName(customer);
+    const contactName =
+      `${contact.first} ${contact.last}`.trim() || "Contact";
+    logNotificationAsync({
+      entityType: "contact",
+      action: "created",
+      entityId: String(contact._id),
+      customerRef: customer._id,
+      summary: `Contact ${contactName} created for ${custName}`,
+      metadata: { customerName: custName, contactName },
+      ...actorFromRequest(req.user),
+    });
 
     res.status(201).json({
       contact: formatContact((refreshed ?? contact).toObject()),
@@ -1149,6 +1500,19 @@ export async function updateCustomerContact(
     const refreshed = await CustomerContact.findById(contact._id);
     await syncCustomerPrimaryContactFields(customer._id);
 
+    const custName = customerDisplayName(customer);
+    const contactName =
+      `${contact.first} ${contact.last}`.trim() || "Contact";
+    logNotificationAsync({
+      entityType: "contact",
+      action: "updated",
+      entityId: String(contact._id),
+      customerRef: customer._id,
+      summary: `Contact ${contactName} updated for ${custName}`,
+      metadata: { customerName: custName, contactName },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(200).json({
       contact: formatContact((refreshed ?? contact).toObject()),
     });
@@ -1210,6 +1574,18 @@ export async function deleteCustomerContact(
     }
 
     await syncCustomerPrimaryContactFields(customer._id);
+
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "contact",
+      action: "deleted",
+      entityId: contactId,
+      customerRef: customer._id,
+      summary: `Contact deleted for ${custName}`,
+      metadata: { customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(204).send();
   } catch (err) {
     console.error("DELETE /customers/:id/contacts/:contactId error:", err);
@@ -1716,6 +2092,22 @@ export async function mergeCustomers(
       loadContactsForCustomer(survivor._id as mongoose.Types.ObjectId),
       Customer.findById(survivor._id).lean(),
     ]);
+
+    const survivorName = customerDisplayName(survivor);
+    const sourceName = customerDisplayName(source);
+    logNotificationAsync({
+      entityType: "customer",
+      action: "merged",
+      entityId: String(survivor._id),
+      customerRef: survivor._id,
+      summary: `Customer ${sourceName} merged into ${survivorName}`,
+      metadata: {
+        customerName: survivorName,
+        sourceCustomerId: String(source._id),
+        sourceCustomerName: sourceName,
+      },
+      ...actorFromRequest(req.user),
+    });
 
     res.status(200).json({
       customer: {

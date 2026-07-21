@@ -10,6 +10,7 @@ import customerRoutes from "./customer.routes";
 import contractRoutes from "./contract.routes";
 import contractTemplateRoutes from "./contractTemplate.routes";
 import twilioAccountRoutes from "./twilioAccount.routes";
+import notificationRoutes from "./notification.routes";
 
 const router = Router();
 
@@ -30,5 +31,6 @@ router.use("/customers", customerRoutes);
 router.use("/contracts", contractRoutes);
 router.use("/contract-templates", contractTemplateRoutes);
 router.use("/twilio-accounts", twilioAccountRoutes);
+router.use("/notifications", notificationRoutes);
 
 export default router;

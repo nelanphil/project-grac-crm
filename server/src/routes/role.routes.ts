@@ -4,6 +4,10 @@ import { authenticate, requireRole, AuthRequest } from "../middleware/auth.middl
 import { RolePermission } from "../models/mongo/RolePermission";
 import { Role } from "../models/mongo/Role";
 import { User } from "../models/mongo/User";
+import {
+  actorFromRequest,
+  logNotificationAsync,
+} from "../services/notification.service";
 
 const router = Router();
 
@@ -67,6 +71,16 @@ router.post(
           existing.deletedAt = null;
           existing.label = label;
           await existing.save();
+
+          logNotificationAsync({
+            entityType: "role",
+            action: "updated",
+            entityId: String(existing._id),
+            summary: `Role ${existing.slug} restored`,
+            metadata: { slug: existing.slug, label: existing.label },
+            ...actorFromRequest(req.user),
+          });
+
           res.status(200).json({ role: existing });
         } else {
           res.status(409).json({ message: "A role with that name already exists" });
@@ -75,6 +89,16 @@ router.post(
       }
 
       const role = await Role.create({ slug, label, isSystem: false });
+
+      logNotificationAsync({
+        entityType: "role",
+        action: "created",
+        entityId: String(role._id),
+        summary: `Role ${role.slug} created`,
+        metadata: { slug: role.slug, label: role.label },
+        ...actorFromRequest(req.user),
+      });
+
       res.status(201).json({ role });
     } catch (err) {
       console.error("POST /roles error:", err);
@@ -126,6 +150,15 @@ router.patch(
       role.label = label;
       await role.save();
 
+      logNotificationAsync({
+        entityType: "role",
+        action: "updated",
+        entityId: String(role._id),
+        summary: `Role renamed to ${role.slug}`,
+        metadata: { slug: role.slug, label: role.label, oldSlug },
+        ...actorFromRequest(req.user),
+      });
+
       res.status(200).json({ role, oldSlug });
     } catch (err) {
       console.error("PATCH /roles/:slug/rename error:", err);
@@ -156,6 +189,16 @@ router.patch(
         res.status(404).json({ message: "Role not found" });
         return;
       }
+
+      logNotificationAsync({
+        entityType: "role",
+        action: "updated",
+        entityId: String(role._id),
+        summary: `Role ${role.slug} label updated`,
+        metadata: { slug: role.slug, label: role.label },
+        ...actorFromRequest(req.user),
+      });
+
       res.status(200).json({ role });
     } catch (err) {
       console.error("PATCH /roles/:slug/label error:", err);
@@ -182,6 +225,16 @@ router.delete(
       }
       role.deletedAt = new Date();
       await role.save();
+
+      logNotificationAsync({
+        entityType: "role",
+        action: "deleted",
+        entityId: String(role._id),
+        summary: `Role ${role.slug} deleted`,
+        metadata: { slug: role.slug, label: role.label },
+        ...actorFromRequest(req.user),
+      });
+
       res.status(200).json({ message: "Role deleted" });
     } catch (err) {
       console.error("DELETE /roles/:slug error:", err);
@@ -223,13 +276,26 @@ router.put(
       return;
     }
     const { role } = req.params;
+    const roleSlug = Array.isArray(role) ? role[0] : role;
     const { permissions } = parsed.data;
     try {
-      await RolePermission.deleteMany({ role });
+      await RolePermission.deleteMany({ role: roleSlug });
       if (permissions.length > 0) {
-        await RolePermission.insertMany(permissions.map((permission) => ({ role, permission })));
+        await RolePermission.insertMany(
+          permissions.map((permission) => ({ role: roleSlug, permission }))
+        );
       }
-      res.status(200).json({ role, permissions });
+
+      logNotificationAsync({
+        entityType: "role",
+        action: "updated",
+        entityId: roleSlug,
+        summary: `Permissions updated for role ${roleSlug}`,
+        metadata: { slug: roleSlug, permissionCount: permissions.length },
+        ...actorFromRequest(req.user),
+      });
+
+      res.status(200).json({ role: roleSlug, permissions });
     } catch (err) {
       console.error("PUT /roles/:role/permissions error:", err);
       res.status(500).json({ message: "Internal server error" });

@@ -6,6 +6,10 @@ import {
   updateTwilioAccountSchema,
 } from "../schemas/twilioAccount.schema";
 import { encryptCredential } from "../utils/credentialsCrypto";
+import {
+  actorFromRequest,
+  logNotificationAsync,
+} from "../services/notification.service";
 
 function emptyToUndefined(value: string | undefined | null): string | undefined {
   if (value == null || value.trim() === "") return undefined;
@@ -69,6 +73,15 @@ export async function createTwilioAccount(
     isActive: data.isActive ?? true,
   });
 
+  logNotificationAsync({
+    entityType: "twilio_account",
+    action: "created",
+    entityId: String(account._id),
+    summary: `Twilio account ${data.friendlyName} created`,
+    metadata: { friendlyName: data.friendlyName },
+    ...actorFromRequest(req.user),
+  });
+
   res.status(201).json({ account: toPublic(account) });
 }
 
@@ -125,6 +138,16 @@ export async function updateTwilioAccount(
   }
 
   await account.save();
+
+  logNotificationAsync({
+    entityType: "twilio_account",
+    action: "updated",
+    entityId: String(account._id),
+    summary: `Twilio account ${account.friendlyName} updated`,
+    metadata: { friendlyName: account.friendlyName },
+    ...actorFromRequest(req.user),
+  });
+
   res.json({ account: toPublic(account) });
 }
 
@@ -137,5 +160,15 @@ export async function deleteTwilioAccount(
     res.status(404).json({ message: "Twilio account not found" });
     return;
   }
+
+  logNotificationAsync({
+    entityType: "twilio_account",
+    action: "deleted",
+    entityId: String(account._id),
+    summary: `Twilio account ${account.friendlyName} deleted`,
+    metadata: { friendlyName: account.friendlyName },
+    ...actorFromRequest(req.user),
+  });
+
   res.json({ message: "Twilio account deleted" });
 }

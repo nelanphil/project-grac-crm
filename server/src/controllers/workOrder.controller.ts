@@ -4,6 +4,11 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
+import {
+  actorFromRequest,
+  customerDisplayName,
+  logNotificationAsync,
+} from "../services/notification.service";
 
 async function enrichWithAddress(
   workOrders: Array<Record<string, unknown>>,
@@ -171,6 +176,17 @@ export async function createWorkOrder(
       ...rest,
     });
 
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "work_order",
+      action: "created",
+      entityId: String(workOrder._id),
+      customerRef: customer._id,
+      summary: `Work order created for ${custName}`,
+      metadata: { customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(201).json(workOrder);
   } catch {
     res.status(500).json({ message: "Failed to create work order" });
@@ -194,6 +210,15 @@ export async function updateWorkOrder(
       return;
     }
 
+    logNotificationAsync({
+      entityType: "work_order",
+      action: "updated",
+      entityId: String(workOrder._id),
+      customerRef: workOrder.customerRef ?? null,
+      summary: "Work order updated",
+      ...actorFromRequest(req.user),
+    });
+
     res.json(workOrder);
   } catch {
     res.status(500).json({ message: "Failed to update work order" });
@@ -211,6 +236,16 @@ export async function deleteWorkOrder(
       res.status(404).json({ message: "Work order not found" });
       return;
     }
+
+    logNotificationAsync({
+      entityType: "work_order",
+      action: "deleted",
+      entityId: String(workOrder._id),
+      customerRef: workOrder.customerRef ?? null,
+      summary: "Work order deleted",
+      ...actorFromRequest(req.user),
+    });
+
     res.status(204).send();
   } catch {
     res.status(500).json({ message: "Failed to delete work order" });

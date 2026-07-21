@@ -22,6 +22,8 @@ export interface ICustomer extends Document {
   /** Set when this customer was merged into another; excluded from default lists. */
   mergedIntoRef?: Types.ObjectId | null;
   mergedAt?: Date | null;
+  /** Soft delete — excluded from default lists when set. */
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -51,8 +53,12 @@ const customerSchema = new Schema<ICustomer>(
       index: true,
     },
     mergedAt: { type: Date, default: null },
+    deletedAt: { type: Date, default: null, index: true },
   },
   { timestamps: true }
 );
 
 export const Customer = mongoose.model<ICustomer>("Customer", customerSchema);
+
+/** Active (non–soft-deleted) customers only. */
+export const activeCustomerFilter = { deletedAt: null } as const;

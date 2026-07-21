@@ -7,6 +7,11 @@ import {
   createCustomerNoteSchema,
   updateCustomerNoteSchema,
 } from "../schemas/customerNote.schema";
+import {
+  actorFromRequest,
+  customerDisplayName,
+  logNotificationAsync,
+} from "../services/notification.service";
 
 type PopulatedAuthor = {
   _id: mongoose.Types.ObjectId;
@@ -43,13 +48,15 @@ function formatNote(note: {
 async function findCustomerOr404(
   customerId: string,
   res: Response
-): Promise<{ _id: mongoose.Types.ObjectId } | null> {
+): Promise<{ _id: mongoose.Types.ObjectId; first: string; last: string } | null> {
   if (!mongoose.Types.ObjectId.isValid(customerId)) {
     res.status(400).json({ message: "Invalid customer id" });
     return null;
   }
 
-  const customer = await Customer.findById(customerId).select("_id").lean();
+  const customer = await Customer.findById(customerId)
+    .select("_id first last")
+    .lean();
   if (!customer) {
     res.status(404).json({ message: "Customer not found" });
     return null;
@@ -123,6 +130,17 @@ export async function createCustomerNote(req: AuthRequest, res: Response): Promi
       return;
     }
 
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "customer_note",
+      action: "created",
+      entityId: String(note._id),
+      customerRef: customer._id,
+      summary: `Note added for ${custName}`,
+      metadata: { customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(201).json({
       note: formatNote({
         ...populated,
@@ -193,6 +211,17 @@ export async function updateCustomerNote(req: AuthRequest, res: Response): Promi
       return;
     }
 
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "customer_note",
+      action: "updated",
+      entityId: String(note._id),
+      customerRef: customer._id,
+      summary: `Note updated for ${custName}`,
+      metadata: { customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(200).json({
       note: formatNote({
         ...populated,
@@ -243,6 +272,18 @@ export async function deleteCustomerNote(req: AuthRequest, res: Response): Promi
     }
 
     await note.deleteOne();
+
+    const custName = customerDisplayName(customer);
+    logNotificationAsync({
+      entityType: "customer_note",
+      action: "deleted",
+      entityId: noteId,
+      customerRef: customer._id,
+      summary: `Note deleted for ${custName}`,
+      metadata: { customerName: custName },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(204).send();
   } catch (err) {
     console.error("DELETE /customers/:id/notes/:noteId error:", err);

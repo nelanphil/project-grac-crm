@@ -10,6 +10,10 @@ import {
   createContractTemplateSchema,
   updateContractTemplateSchema,
 } from "../schemas/contractTemplate.schema";
+import {
+  actorFromRequest,
+  logNotificationAsync,
+} from "../services/notification.service";
 
 function toPublic(doc: IContractTemplate | Record<string, unknown>) {
   const d =
@@ -79,6 +83,16 @@ export async function createContractTemplate(
         existing.cost = data.cost ?? 0;
         existing.badgeIcon = data.badgeIcon ?? "scroll-text";
         await existing.save();
+
+        logNotificationAsync({
+          entityType: "contract_template",
+          action: "updated",
+          entityId: String(existing._id),
+          summary: `Contract template ${existing.label} restored`,
+          metadata: { label: existing.label },
+          ...actorFromRequest(req.user),
+        });
+
         res.status(200).json({ template: toPublic(existing) });
         return;
       }
@@ -93,6 +107,15 @@ export async function createContractTemplate(
       cost: data.cost ?? 0,
       badgeIcon: data.badgeIcon ?? "scroll-text",
       deletedAt: null,
+    });
+
+    logNotificationAsync({
+      entityType: "contract_template",
+      action: "created",
+      entityId: String(template._id),
+      summary: `Contract template ${template.label} created`,
+      metadata: { label: template.label },
+      ...actorFromRequest(req.user),
     });
 
     res.status(201).json({ template: toPublic(template) });
@@ -130,6 +153,16 @@ export async function updateContractTemplate(
     if (data.badgeIcon !== undefined) template.badgeIcon = data.badgeIcon;
 
     await template.save();
+
+    logNotificationAsync({
+      entityType: "contract_template",
+      action: "updated",
+      entityId: String(template._id),
+      summary: `Contract template ${template.label} updated`,
+      metadata: { label: template.label },
+      ...actorFromRequest(req.user),
+    });
+
     res.json({ template: toPublic(template) });
   } catch (err) {
     console.error("PATCH /contract-templates error:", err);
@@ -161,6 +194,15 @@ export async function duplicateContractTemplate(
       deletedAt: null,
     });
 
+    logNotificationAsync({
+      entityType: "contract_template",
+      action: "created",
+      entityId: String(template._id),
+      summary: `Contract template ${template.label} created`,
+      metadata: { label: template.label, duplicatedFrom: String(source._id) },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(201).json({ template: toPublic(template) });
   } catch (err) {
     console.error("POST /contract-templates/:id/duplicate error:", err);
@@ -187,6 +229,16 @@ export async function deleteContractTemplate(
 
     template.deletedAt = new Date();
     await template.save();
+
+    logNotificationAsync({
+      entityType: "contract_template",
+      action: "deleted",
+      entityId: String(template._id),
+      summary: `Contract template ${template.label} deleted`,
+      metadata: { label: template.label },
+      ...actorFromRequest(req.user),
+    });
+
     res.json({ template: toPublic(template), message: "Contract template deleted" });
   } catch (err) {
     console.error("DELETE /contract-templates error:", err);

@@ -11,6 +11,10 @@ import {
   rebalanceUsernameGroup,
   usernameNumberFromKey,
 } from "../utils/username";
+import {
+  actorFromRequest,
+  logNotificationAsync,
+} from "../services/notification.service";
 
 function generateTempPassword(): string {
   return crypto.randomBytes(12).toString("base64url");
@@ -141,6 +145,15 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       user: formatUser(user),
       ...(passwordWasGenerated ? { temporaryPassword: plainPassword } : {}),
     });
+
+    logNotificationAsync({
+      entityType: "user",
+      action: "created",
+      entityId: String(user._id),
+      summary: `User ${user.email} created`,
+      metadata: { email: user.email, role: user.role },
+      ...actorFromRequest(req.user),
+    });
   } catch (err) {
     console.error("POST /users error:", err);
     res.status(500).json({ message: "Internal server error" });
@@ -210,6 +223,16 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     await user.save();
 
     const fresh = await User.findById(user._id).lean();
+
+    logNotificationAsync({
+      entityType: "user",
+      action: "updated",
+      entityId: String(user._id),
+      summary: `User ${user.email} updated`,
+      metadata: { email: user.email, role: user.role },
+      ...actorFromRequest(req.user),
+    });
+
     res.status(200).json({ user: formatUser(fresh ?? user) });
   } catch (err) {
     console.error("PATCH /users/:id error:", err);
@@ -246,6 +269,15 @@ export async function updateUserRole(
       res.status(404).json({ message: "User not found" });
       return;
     }
+
+    logNotificationAsync({
+      entityType: "user",
+      action: "updated",
+      entityId: String(user._id),
+      summary: `User role changed to ${parsed.data.role}`,
+      metadata: { email: user.email, role: user.role },
+      ...actorFromRequest(req.user),
+    });
 
     res.status(200).json({ user: formatUser(user) });
   } catch (err) {
@@ -295,6 +327,15 @@ export async function softDeleteUser(
         await rebalanceUsernameGroup(previousUsername, remaining[0]._id);
       }
     }
+
+    logNotificationAsync({
+      entityType: "user",
+      action: "deleted",
+      entityId: String(user._id),
+      summary: `User ${user.email} deleted`,
+      metadata: { email: user.email },
+      ...actorFromRequest(req.user),
+    });
 
     res.status(200).json({ message: "User deleted", user: formatUser(user) });
   } catch (err) {

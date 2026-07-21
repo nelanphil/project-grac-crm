@@ -309,15 +309,103 @@ export interface CustomerListItem {
   zip: string;
   generatorModel: string;
   lastSvc: string | null;
+  deletedAt?: string | null;
   /** Other open customers sharing this phone (from list API). */
   duplicateCount?: number;
 }
 
+export interface CreateCustomerInput {
+  first: string;
+  last: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+}
+
 export async function getCustomers(
   token: string,
+  options?: { deletedOnly?: boolean },
 ): Promise<{ customers: CustomerListItem[] }> {
-  return authRequest<{ customers: CustomerListItem[] }>("/customers", {
+  const params = options?.deletedOnly ? "?deleted=1" : "";
+  return authRequest<{ customers: CustomerListItem[] }>(`/customers${params}`, {
     method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createCustomer(
+  token: string,
+  body: CreateCustomerInput,
+): Promise<{ customer: CustomerListItem }> {
+  return authRequest<{ customer: CustomerListItem }>("/customers", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+}
+
+export interface ValidatedAddress {
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+}
+
+export interface ValidateCustomerAddressResult {
+  valid: boolean;
+  matchedAddress?: string;
+  address?: ValidatedAddress;
+  coordinates?: { lng: number; lat: number } | null;
+  message?: string;
+}
+
+export async function validateCustomerAddress(
+  token: string,
+  body: {
+    address: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+  },
+): Promise<ValidateCustomerAddressResult> {
+  return authRequest<ValidateCustomerAddressResult>(
+    "/customers/validate-address",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function softDeleteCustomer(
+  token: string,
+  id: string,
+): Promise<{ message: string; customer: { _id: string; deletedAt: string } }> {
+  return authRequest<{
+    message: string;
+    customer: { _id: string; deletedAt: string };
+  }>(`/customers/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function restoreCustomer(
+  token: string,
+  id: string,
+): Promise<{
+  message: string;
+  customer: { _id: string; deletedAt: null };
+}> {
+  return authRequest<{
+    message: string;
+    customer: { _id: string; deletedAt: null };
+  }>(`/customers/${id}/restore`, {
+    method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
 }
@@ -1163,4 +1251,89 @@ export async function deleteContractTemplate(
       headers: { Authorization: `Bearer ${token}` },
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+export type NotificationEntityType =
+  | "customer"
+  | "contact"
+  | "address"
+  | "equipment"
+  | "work_order"
+  | "contract"
+  | "customer_note"
+  | "user"
+  | "role"
+  | "twilio_account"
+  | "contract_template"
+  | "lead";
+
+export type NotificationAction =
+  | "created"
+  | "updated"
+  | "deleted"
+  | "merged"
+  | "renewed";
+
+export interface NotificationItem {
+  id: string;
+  entityType: NotificationEntityType;
+  action: NotificationAction;
+  actorType: "user" | "system";
+  actorUserId: string | null;
+  actorName: string;
+  customerRef: string | null;
+  entityId: string;
+  summary: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  read: boolean;
+}
+
+export async function getNotifications(
+  token: string,
+  opts: { limit?: number; before?: string } = {},
+): Promise<{ items: NotificationItem[]; nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (opts.limit != null) params.set("limit", String(opts.limit));
+  if (opts.before) params.set("before", opts.before);
+  const qs = params.toString();
+  return authRequest<{ items: NotificationItem[]; nextCursor: string | null }>(
+    `/notifications${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function getNotificationUnreadCount(
+  token: string,
+): Promise<{ count: number }> {
+  return authRequest<{ count: number }>("/notifications/unread-count", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function markNotificationRead(
+  token: string,
+  id: string,
+): Promise<{ ok: boolean }> {
+  return authRequest<{ ok: boolean }>(`/notifications/${id}/read`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function markAllNotificationsRead(
+  token: string,
+): Promise<{ marked: number }> {
+  return authRequest<{ marked: number }>("/notifications/read-all", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
