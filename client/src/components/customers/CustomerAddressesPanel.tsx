@@ -57,6 +57,7 @@ export default function CustomerAddressesPanel({
     city: "",
     state: "",
     zip: "",
+    propertyType: "residential" as "residential" | "commercial",
   });
 
   const [eqForm, setEqForm] = useState({
@@ -114,7 +115,14 @@ export default function CustomerAddressesPanel({
         ...addresses,
         { ...address, equipment: address.equipment ?? [] },
       ]);
-      setAddrForm({ label: "", address: "", city: "", state: "", zip: "" });
+      setAddrForm({
+        label: "",
+        address: "",
+        city: "",
+        state: "",
+        zip: "",
+        propertyType: "residential",
+      });
       setAddingAddress(false);
     } catch (err) {
       setError(
@@ -215,6 +223,17 @@ export default function CustomerAddressesPanel({
                     Primary
                   </span>
                 ) : null}
+                <span
+                  className={
+                    addr.propertyType === "commercial"
+                      ? "rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-200"
+                      : "rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200"
+                  }
+                >
+                  {addr.propertyType === "commercial"
+                    ? "Commercial"
+                    : "Residential"}
+                </span>
               </div>
               <p className="mt-1 text-sm text-neutral-600">
                 {formatAddressLine(addr)}
@@ -356,6 +375,39 @@ export default function CustomerAddressesPanel({
           className="space-y-3 rounded-xl border border-neutral-200 bg-white p-5 shadow-sm"
         >
           <p className="text-sm font-semibold text-brand-dark">New address</p>
+          <div>
+            <span className="mb-1 block text-xs font-medium text-neutral-500">
+              Property type
+            </span>
+            <div className="inline-flex rounded-md border border-neutral-300 p-0.5">
+              <button
+                type="button"
+                onClick={() =>
+                  setAddrForm((f) => ({ ...f, propertyType: "residential" }))
+                }
+                className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                  addrForm.propertyType === "residential"
+                    ? "bg-brand-dark text-white"
+                    : "text-neutral-600 hover:bg-white"
+                }`}
+              >
+                Residential
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setAddrForm((f) => ({ ...f, propertyType: "commercial" }))
+                }
+                className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                  addrForm.propertyType === "commercial"
+                    ? "bg-brand-dark text-white"
+                    : "text-neutral-600 hover:bg-white"
+                }`}
+              >
+                Commercial
+              </button>
+            </div>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field
               label="Label"

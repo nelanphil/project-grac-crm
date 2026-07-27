@@ -10,7 +10,10 @@ import customerRoutes from "./customer.routes";
 import contractRoutes from "./contract.routes";
 import contractTemplateRoutes from "./contractTemplate.routes";
 import twilioAccountRoutes from "./twilioAccount.routes";
+import googleCredentialsRoutes from "./googleCredentials.routes";
 import notificationRoutes from "./notification.routes";
+import messageTemplateRoutes from "./messageTemplate.routes";
+import messagingRoutes from "./messaging.routes";
 
 const router = Router();
 
@@ -31,6 +34,9 @@ router.use("/customers", customerRoutes);
 router.use("/contracts", contractRoutes);
 router.use("/contract-templates", contractTemplateRoutes);
 router.use("/twilio-accounts", twilioAccountRoutes);
+router.use("/google-credentials", googleCredentialsRoutes);
+router.use("/message-templates", messageTemplateRoutes);
+router.use("/messaging", messagingRoutes);
 router.use("/notifications", notificationRoutes);
 
 export default router;

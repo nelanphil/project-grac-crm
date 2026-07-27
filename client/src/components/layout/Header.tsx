@@ -9,6 +9,7 @@ import { getVisibleNavSections } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
 import NotificationBell from "@/components/notifications/NotificationBell";
+import NavItemGroup from "@/components/dashboard/NavItemGroup";
 
 const HEADER_CONTAINER =
   "mx-auto flex w-full max-w-none items-center justify-between px-4 py-4 sm:px-6 lg:px-10";
@@ -120,25 +121,15 @@ export default function Header() {
                     {section.label}
                   </p>
                   <div className="flex flex-col gap-1">
-                    {section.items.map(({ href, label, icon: Icon }) => {
-                      const active =
-                        pathname === href || pathname.startsWith(`${href}/`);
-                      return (
-                        <Link
-                          key={href}
-                          href={href}
-                          className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                            active
-                              ? "bg-brand-orange text-white"
-                              : "text-white/90 hover:bg-white/10"
-                          }`}
-                          onClick={() => setMobileOpen(false)}
-                        >
-                          <Icon className="h-4 w-4 shrink-0" />
-                          {label}
-                        </Link>
-                      );
-                    })}
+                    {section.items.map((item) => (
+                      <NavItemGroup
+                        key={item.href}
+                        item={item}
+                        pathname={pathname}
+                        variant="mobile"
+                        onNavigate={() => setMobileOpen(false)}
+                      />
+                    ))}
                   </div>
                 </div>
               ))}

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
@@ -16,18 +16,18 @@ import LucideIconByName from "@/components/icons/LucideIconByName";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   getCustomers,
-  getContracts,
   createCustomer,
   softDeleteCustomer,
   restoreCustomer,
   validateCustomerAddress,
   CustomerListItem,
-  ContractListItem,
+  CustomerContractBadge,
   CreateCustomerInput,
+  ValidatedAddress,
   ApiError,
 } from "@/lib/api";
 import { STANDING_STYLES } from "@/lib/contractDates";
-import { formatContractCatalogLabel } from "@/lib/contractTypes";
+import { formatContractType } from "@/lib/contractTypes";
 import {
   formatCustomerName,
   formatCustomerState,
@@ -50,6 +50,7 @@ const EMPTY_CREATE_FORM: CreateCustomerInput = {
   city: "",
   state: "",
   zip: "",
+  propertyType: "residential",
 };
 
 function formatPhone(phone: string): string {
@@ -61,94 +62,18 @@ function formatPhone(phone: string): string {
   return phone;
 }
 
-function matchesSearch(
-  customer: CustomerListItem,
-  query: string,
-  contracts: ContractListItem[],
-): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-
-  const name = `${customer.first} ${customer.last}`.toLowerCase();
-  const street = (customer.address ?? "").toLowerCase();
-  const location = [customer.city, customer.state, customer.zip]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const phone = customer.phone.replace(/\D/g, "");
-  const qDigits = q.replace(/\D/g, "");
-  const contractMatch = contracts.some((c) =>
-    formatContractCatalogLabel(c).toLowerCase().includes(q),
-  );
-
-  return (
-    name.includes(q) ||
-    street.includes(q) ||
-    location.includes(q) ||
-    customer.phone.toLowerCase().includes(q) ||
-    (qDigits.length > 0 && phone.includes(qDigits)) ||
-    contractMatch
-  );
-}
-
-function normalizeSortText(value: string | null | undefined): string {
-  return (value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function sortValue(customer: CustomerListItem, key: SortKey): string {
-  switch (key) {
-    case "customer":
-      // Match displayed "First Last" order so A–Z tracks what users see.
-      return [
-        normalizeSortText(customer.first),
-        normalizeSortText(customer.last),
-      ]
-        .filter(Boolean)
-        .join(" ");
-    case "phone":
-      return customer.phone.replace(/\D/g, "") || "";
-    case "street":
-      return normalizeSortText(customer.address);
-    case "city":
-      return normalizeSortText(customer.city);
-    case "state":
-      return normalizeSortText(customer.state);
-    case "zip":
-      return normalizeSortText(customer.zip);
-    default:
-      return "";
-  }
-}
-
-function compareCustomers(
-  a: CustomerListItem,
-  b: CustomerListItem,
-  key: SortKey,
-  dir: SortDir,
-): number {
-  const cmp = sortValue(a, key).localeCompare(sortValue(b, key), undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-  if (cmp !== 0) return dir === "asc" ? cmp : -cmp;
-
-  // Stable tie-breaker for identical primary keys (esp. same first name).
-  if (key === "customer") {
-    const byLast = normalizeSortText(a.last).localeCompare(
-      normalizeSortText(b.last),
-      undefined,
-      { sensitivity: "base" },
-    );
-    if (byLast !== 0) return dir === "asc" ? byLast : -byLast;
-  }
-
-  return 0;
+function formatPhoneInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 10);
+  if (digits.length === 0) return "";
+  if (digits.length < 4) return `(${digits}`;
+  if (digits.length < 7) return `(${digits.slice(0, 3)})${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)})${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
 function CustomerContractBadges({
   contracts,
 }: {
-  contracts: ContractListItem[];
+  contracts: CustomerContractBadge[];
 }) {
   if (contracts.length === 0) return null;
 
@@ -157,7 +82,8 @@ function CustomerContractBadges({
       {contracts.map((contract) => {
         const standing = contract.standing ?? "expired";
         const isActive = standing === "active";
-        const label = formatContractCatalogLabel(contract);
+        const label =
+          contract.template?.label || formatContractType(contract.contractType);
         const icon = contract.template?.badgeIcon ?? "scroll-text";
 
         return (
@@ -301,10 +227,9 @@ function CustomersContent() {
   );
 
   const [customers, setCustomers] = useState<CustomerListItem[]>([]);
-  const [contractsByCustomerId, setContractsByCustomerId] = useState<
-    Map<number, ContractListItem[]>
-  >(() => new Map());
+  const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [listView, setListView] = useState<ListView>("active");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -313,6 +238,7 @@ function CustomersContent() {
   const [pageSize, setPageSize] = useState<PageSize>(25);
   const [sortKey, setSortKey] = useState<SortKey>("customer");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [refreshKey, setRefreshKey] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] =
     useState<CreateCustomerInput>(EMPTY_CREATE_FORM);
@@ -323,36 +249,18 @@ function CustomersContent() {
   const [addressValidationMsg, setAddressValidationMsg] = useState<
     string | null
   >(null);
+  const [suggestedAddress, setSuggestedAddress] = useState<{
+    address: ValidatedAddress;
+    matchedAddress?: string;
+  } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
 
-  const filteredCustomers = useMemo(
-    () =>
-      customers.filter((c) =>
-        matchesSearch(c, search, contractsByCustomerId.get(c.legacyId) ?? []),
-      ),
-    [customers, search, contractsByCustomerId],
-  );
-
-  const sortedCustomers = useMemo(
-    () =>
-      [...filteredCustomers].sort((a, b) =>
-        compareCustomers(a, b, sortKey, sortDir),
-      ),
-    [filteredCustomers, sortKey, sortDir],
-  );
-
-  const totalPages = Math.max(1, Math.ceil(sortedCustomers.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, totalPages);
 
-  const pagedCustomers = useMemo(() => {
-    const start = (safePage - 1) * pageSize;
-    return sortedCustomers.slice(start, start + pageSize);
-  }, [sortedCustomers, safePage, pageSize]);
-
-  const rangeStart =
-    sortedCustomers.length === 0 ? 0 : (safePage - 1) * pageSize + 1;
-  const rangeEnd = Math.min(safePage * pageSize, sortedCustomers.length);
+  const rangeStart = total === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const rangeEnd = Math.min(safePage * pageSize, total);
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -371,46 +279,69 @@ function CustomersContent() {
   }, [user, router]);
 
   useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
     if (!token || user?.role === "customer") return;
+
+    let cancelled = false;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-
     setError(null);
 
     const deletedOnly = canManageCustomers && listView === "deleted";
-    const customersPromise = getCustomers(token, { deletedOnly });
-    const contractsPromise = canReadContracts
-      ? getContracts(token).catch(() => ({
-          contracts: [] as ContractListItem[],
-        }))
-      : Promise.resolve({ contracts: [] as ContractListItem[] });
 
-    Promise.all([customersPromise, contractsPromise])
-      .then(([{ customers: list }, { contracts }]) => {
+    getCustomers(token, {
+      deletedOnly,
+      page,
+      pageSize,
+      search: debouncedSearch,
+      sortKey,
+      sortDir,
+    })
+      .then(({ customers: list, total: totalCount }) => {
+        if (cancelled) return;
         setCustomers(list);
-
-        const byCustomer = new Map<number, ContractListItem[]>();
-        for (const contract of contracts) {
-          const existing = byCustomer.get(contract.customerId) ?? [];
-          existing.push(contract);
-          byCustomer.set(contract.customerId, existing);
-        }
-        setContractsByCustomerId(byCustomer);
+        setTotal(totalCount);
       })
-      .catch((err) =>
+      .catch((err) => {
+        if (cancelled) return;
         setError(
           err instanceof ApiError ? err.message : "Failed to load customers.",
-        ),
-      )
-      .finally(() => setLoading(false));
-  }, [token, user, canReadContracts, canManageCustomers, listView]);
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    token,
+    user,
+    canManageCustomers,
+    listView,
+    page,
+    pageSize,
+    sortKey,
+    sortDir,
+    debouncedSearch,
+    refreshKey,
+  ]);
 
   function openCreate() {
     setCreateForm(EMPTY_CREATE_FORM);
     setCreateError(null);
     setAddressValidated(false);
     setAddressValidationMsg(null);
+    setSuggestedAddress(null);
     setCreateOpen(true);
   }
 
@@ -420,6 +351,7 @@ function CustomersContent() {
     setCreateError(null);
     setAddressValidated(false);
     setAddressValidationMsg(null);
+    setSuggestedAddress(null);
   }
 
   function updateCreateAddressField<K extends keyof CreateCustomerInput>(
@@ -427,9 +359,10 @@ function CustomersContent() {
     value: CreateCustomerInput[K],
   ) {
     setCreateForm((f) => ({ ...f, [key]: value }));
-    if (addressValidated || addressValidationMsg) {
+    if (addressValidated || addressValidationMsg || suggestedAddress) {
       setAddressValidated(false);
       setAddressValidationMsg(null);
+      setSuggestedAddress(null);
     }
   }
 
@@ -438,43 +371,55 @@ function CustomersContent() {
     const street = createForm.address?.trim() || "";
     if (!street) {
       setAddressValidated(false);
-      setAddressValidationMsg("Enter a street address to validate.");
+      setSuggestedAddress(null);
+      setAddressValidationMsg(null);
       return;
     }
 
+    const cityEntered = createForm.city?.trim() || "";
+    const stateEntered = createForm.state?.trim() || "";
+    const zipEntered = createForm.zip?.trim() || "";
+
     setValidatingAddress(true);
     setAddressValidationMsg(null);
-    setAddressValidated(false);
     try {
       const result = await validateCustomerAddress(token, {
         address: street,
-        city: createForm.city?.trim() || "",
-        state: createForm.state?.trim() || "",
-        zip: createForm.zip?.trim() || "",
+        city: cityEntered,
+        state: stateEntered,
+        zip: zipEntered,
       });
       if (!result.valid || !result.address) {
         setAddressValidated(false);
+        setSuggestedAddress(null);
         setAddressValidationMsg(
           result.message || "Address could not be validated.",
         );
         return;
       }
 
-      setCreateForm((f) => ({
-        ...f,
-        address: result.address!.address,
-        city: result.address!.city,
-        state: result.address!.state,
-        zip: result.address!.zip,
-      }));
-      setAddressValidated(true);
-      setAddressValidationMsg(
-        result.matchedAddress
-          ? `Matched: ${result.matchedAddress}`
-          : "Address validated.",
-      );
+      const matched = result.address;
+      const matchesEntered =
+        matched.address.trim().toLowerCase() === street.toLowerCase() &&
+        matched.city.trim().toLowerCase() === cityEntered.toLowerCase() &&
+        matched.state.trim().toLowerCase() === stateEntered.toLowerCase() &&
+        matched.zip.trim() === zipEntered;
+
+      if (matchesEntered) {
+        setAddressValidated(true);
+        setSuggestedAddress(null);
+        setAddressValidationMsg("Address verified.");
+      } else {
+        setAddressValidated(false);
+        setSuggestedAddress({
+          address: matched,
+          matchedAddress: result.matchedAddress,
+        });
+        setAddressValidationMsg(null);
+      }
     } catch (err) {
       setAddressValidated(false);
+      setSuggestedAddress(null);
       setAddressValidationMsg(
         err instanceof ApiError
           ? err.message
@@ -484,6 +429,51 @@ function CustomersContent() {
       setValidatingAddress(false);
     }
   }
+
+  function acceptSuggestedAddress() {
+    if (!suggestedAddress) return;
+    const { address } = suggestedAddress;
+    setCreateForm((f) => ({
+      ...f,
+      address: address.address,
+      city: address.city,
+      state: address.state,
+      zip: address.zip,
+    }));
+    setAddressValidated(true);
+    setAddressValidationMsg(
+      suggestedAddress.matchedAddress
+        ? `Matched: ${suggestedAddress.matchedAddress}`
+        : "Address validated.",
+    );
+    setSuggestedAddress(null);
+  }
+
+  function dismissSuggestedAddress() {
+    setAddressValidated(true);
+    setAddressValidationMsg("Using address as entered.");
+    setSuggestedAddress(null);
+  }
+
+  useEffect(() => {
+    if (!createOpen || !token) return;
+    const street = createForm.address?.trim() || "";
+    if (!street) return;
+    if (addressValidated || suggestedAddress) return;
+
+    const timer = setTimeout(() => {
+      void handleValidateAddress();
+    }, 700);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    createOpen,
+    token,
+    createForm.address,
+    createForm.city,
+    createForm.state,
+    createForm.zip,
+  ]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -511,6 +501,7 @@ function CustomersContent() {
         city: createForm.city?.trim() || "",
         state: createForm.state?.trim() || "",
         zip: createForm.zip?.trim() || "",
+        propertyType: createForm.propertyType ?? "residential",
       });
       setCreateOpen(false);
       setCreateForm(EMPTY_CREATE_FORM);
@@ -518,10 +509,9 @@ function CustomersContent() {
       setAddressValidationMsg(null);
       if (listView === "deleted") {
         setListView("active");
-      } else {
-        setCustomers((prev) => [customer, ...prev]);
       }
       setPage(1);
+      setRefreshKey((k) => k + 1);
       router.push(`/dashboard/customers/detail?id=${customer._id}`);
     } catch (err) {
       setCreateError(
@@ -547,7 +537,7 @@ function CustomersContent() {
     setActionError(null);
     try {
       await softDeleteCustomer(token, customer._id);
-      setCustomers((prev) => prev.filter((c) => c._id !== customer._id));
+      setRefreshKey((k) => k + 1);
     } catch (err) {
       setActionError(
         err instanceof ApiError ? err.message : "Failed to delete customer.",
@@ -563,7 +553,7 @@ function CustomersContent() {
     setActionError(null);
     try {
       await restoreCustomer(token, customer._id);
-      setCustomers((prev) => prev.filter((c) => c._id !== customer._id));
+      setRefreshKey((k) => k + 1);
     } catch (err) {
       setActionError(
         err instanceof ApiError ? err.message : "Failed to restore customer.",
@@ -575,7 +565,7 @@ function CustomersContent() {
 
   if (!user || user.role === "customer") return null;
 
-  if (loading)
+  if (loading && customers.length === 0)
     return (
       <div className="text-sm text-neutral-500 py-6">Loading customers…</div>
     );
@@ -596,9 +586,9 @@ function CustomersContent() {
         <div>
           <h1 className="text-2xl font-bold text-brand-dark">Customers</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            {search.trim()
-              ? `${sortedCustomers.length} of ${customers.length} ${showingDeleted ? "deleted " : ""}customers`
-              : `${customers.length} ${showingDeleted ? "deleted" : "total"}`}
+            {debouncedSearch
+              ? `${total} ${showingDeleted ? "deleted " : ""}match${total === 1 ? "" : "es"}`
+              : `${total} ${showingDeleted ? "deleted" : "total"}`}
           </p>
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
@@ -609,7 +599,6 @@ function CustomersContent() {
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
-                setPage(1);
               }}
               placeholder="Search by name, location, or phone…"
               className="w-full rounded-lg border border-neutral-200 bg-white py-2 pl-9 pr-3 text-sm text-brand-dark outline-none transition-colors placeholder:text-neutral-400 focus:border-brand-orange"
@@ -669,11 +658,11 @@ function CustomersContent() {
       ) : null}
 
       <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-        {sortedCustomers.length > 0 && (
+        {total > 0 && (
           <CustomersPagination
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
-            total={sortedCustomers.length}
+            total={total}
             pageSize={pageSize}
             safePage={safePage}
             totalPages={totalPages}
@@ -741,13 +730,13 @@ function CustomersContent() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100 bg-white">
-              {sortedCustomers.length === 0 ? (
+              {customers.length === 0 ? (
                 <tr>
                   <td
                     colSpan={colCount}
                     className="px-6 py-12 text-center text-neutral-500"
                   >
-                    {search.trim()
+                    {debouncedSearch
                       ? "No customers match your search."
                       : showingDeleted
                         ? "No deleted customers."
@@ -755,7 +744,7 @@ function CustomersContent() {
                   </td>
                 </tr>
               ) : (
-                pagedCustomers.map((customer) => {
+                customers.map((customer) => {
                   const isDeleted = showingDeleted;
                   return (
                     <tr
@@ -788,12 +777,9 @@ function CustomersContent() {
                               Possible duplicate
                             </span>
                           ) : null}
-                          {!isDeleted ? (
+                          {!isDeleted && canReadContracts ? (
                             <CustomerContractBadges
-                              contracts={
-                                contractsByCustomerId.get(customer.legacyId) ??
-                                []
-                              }
+                              contracts={customer.contracts ?? []}
                             />
                           ) : null}
                         </span>
@@ -857,11 +843,11 @@ function CustomersContent() {
           </table>
         </div>
 
-        {sortedCustomers.length > 0 && (
+        {total > 0 && (
           <CustomersPagination
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
-            total={sortedCustomers.length}
+            total={total}
             pageSize={pageSize}
             safePage={safePage}
             totalPages={totalPages}
@@ -927,8 +913,13 @@ function CustomersContent() {
                     type="tel"
                     value={createForm.phone}
                     onChange={(e) =>
-                      setCreateForm((f) => ({ ...f, phone: e.target.value }))
+                      setCreateForm((f) => ({
+                        ...f,
+                        phone: formatPhoneInput(e.target.value),
+                      }))
                     }
+                    maxLength={14}
+                    placeholder="(386)555-0123"
                     className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
                   />
                 </div>
@@ -944,6 +935,47 @@ function CustomersContent() {
                     }
                     className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
                   />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-brand-dark">
+                  Property type
+                </label>
+                <div className="mt-1 inline-flex rounded-md border border-neutral-200 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCreateForm((f) => ({
+                        ...f,
+                        propertyType: "residential",
+                      }))
+                    }
+                    className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                      (createForm.propertyType ?? "residential") ===
+                      "residential"
+                        ? "bg-brand-dark text-white"
+                        : "text-neutral-600 hover:bg-neutral-50"
+                    }`}
+                  >
+                    Residential
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCreateForm((f) => ({
+                        ...f,
+                        propertyType: "commercial",
+                      }))
+                    }
+                    className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                      createForm.propertyType === "commercial"
+                        ? "bg-brand-dark text-white"
+                        : "text-neutral-600 hover:bg-neutral-50"
+                    }`}
+                  >
+                    Commercial
+                  </button>
                 </div>
               </div>
 
@@ -1001,22 +1033,43 @@ function CustomersContent() {
               </div>
 
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleValidateAddress()}
-                    disabled={validatingAddress || creating}
-                    className="rounded-md border border-neutral-200 px-3 py-2 text-sm font-medium text-brand-dark hover:bg-neutral-50 disabled:opacity-60"
-                  >
-                    {validatingAddress ? "Validating…" : "Validate address"}
-                  </button>
-                  {addressValidated ? (
-                    <span className="text-xs font-medium text-emerald-700">
-                      Address verified
-                    </span>
-                  ) : null}
-                </div>
-                {addressValidationMsg ? (
+                {addressValidated && !suggestedAddress ? (
+                  <span className="inline-flex text-xs font-medium text-emerald-700">
+                    Address verified
+                  </span>
+                ) : null}
+
+                {suggestedAddress ? (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm">
+                    <p className="font-medium text-amber-800">
+                      We found a close match
+                    </p>
+                    <p className="mt-1 text-amber-900">
+                      {suggestedAddress.matchedAddress ||
+                        `${suggestedAddress.address.address}, ${suggestedAddress.address.city}, ${suggestedAddress.address.state} ${suggestedAddress.address.zip}`}
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={acceptSuggestedAddress}
+                        className="rounded-md bg-brand-orange px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+                      >
+                        Use this address
+                      </button>
+                      <button
+                        type="button"
+                        onClick={dismissSuggestedAddress}
+                        className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                      >
+                        Keep as entered
+                      </button>
+                    </div>
+                  </div>
+                ) : validatingAddress ? (
+                  <p className="text-xs text-neutral-500">
+                    Checking address…
+                  </p>
+                ) : addressValidationMsg ? (
                   <p
                     className={`text-xs ${
                       addressValidated ? "text-emerald-700" : "text-red-600"
@@ -1026,8 +1079,7 @@ function CustomersContent() {
                   </p>
                 ) : (
                   <p className="text-xs text-neutral-500">
-                    Validate the address before creating. Fields update to the
-                    matched US Census address.
+                    We&apos;ll check this address automatically as you type.
                   </p>
                 )}
               </div>

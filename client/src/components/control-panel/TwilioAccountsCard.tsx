@@ -8,7 +8,9 @@ import {
   ApiError,
   createTwilioAccount,
   deleteTwilioAccount,
+  getMessagingWebhookInfo,
   getTwilioAccounts,
+  MessagingWebhookInfo,
   TwilioAccountItem,
   updateTwilioAccount,
 } from "@/lib/api";
@@ -47,6 +49,9 @@ export default function TwilioAccountsCard() {
   const token = useAuthStore((s) => s.token);
 
   const [accounts, setAccounts] = useState<TwilioAccountItem[]>([]);
+  const [webhookInfo, setWebhookInfo] = useState<MessagingWebhookInfo | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -62,8 +67,11 @@ export default function TwilioAccountsCard() {
     setLoading(true);
 
     setError(null);
-    getTwilioAccounts(token)
-      .then(({ accounts: list }) => setAccounts(list))
+    Promise.all([getTwilioAccounts(token), getMessagingWebhookInfo(token)])
+      .then(([{ accounts: list }, hooks]) => {
+        setAccounts(list);
+        setWebhookInfo(hooks);
+      })
       .catch((err) =>
         setError(
           err instanceof ApiError
@@ -195,8 +203,9 @@ export default function TwilioAccountsCard() {
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">Twilio</h2>
           <p className="text-sm text-neutral-500 mt-0.5">
-            Configure Twilio accounts for future SMS, MMS, and phone calls.
-            Accounts are keyed by Account SID.
+            Configure Twilio accounts for SMS, MMS, and phone calls. Accounts are
+            keyed by Account SID. Point each Twilio number&apos;s webhooks at the
+            URLs below so inbound traffic is attributed to the correct account.
           </p>
         </div>
         {!formOpen && (
@@ -216,6 +225,25 @@ export default function TwilioAccountsCard() {
           {error}
         </div>
       )}
+
+      {webhookInfo ? (
+        <div className="mx-6 mt-4 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-xs text-neutral-600 space-y-2">
+          <p className="font-semibold text-brand-dark">Webhook URLs</p>
+          <div>
+            <span className="font-medium">Messaging (inbound SMS/MMS):</span>{" "}
+            <code className="break-all">{webhookInfo.messageWebhookUrl}</code>
+          </div>
+          <div>
+            <span className="font-medium">Status callbacks:</span>{" "}
+            <code className="break-all">{webhookInfo.statusWebhookUrl}</code>
+          </div>
+          <p className="text-neutral-500">
+            Optional per-account URLs include{" "}
+            <code>?accountSid=AC…</code> for unambiguous routing when multiple
+            Twilio accounts share this CRM.
+          </p>
+        </div>
+      ) : null}
 
       {formOpen && (
         <form

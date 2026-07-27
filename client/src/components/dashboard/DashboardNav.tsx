@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/useAuthStore";
 import { getVisibleNavSections } from "@/lib/dashboard-nav";
+import NavItemGroup from "./NavItemGroup";
 
 export default function DashboardNav() {
   const pathname = usePathname();
@@ -19,23 +19,14 @@ export default function DashboardNav() {
               {section.label}
             </p>
             <div className="flex flex-col gap-1">
-              {section.items.map(({ href, label, icon: Icon }) => {
-                const active = pathname === href || pathname.startsWith(`${href}/`);
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    className={`flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
-                      active
-                        ? "bg-brand-dark text-white"
-                        : "text-neutral-600 hover:bg-neutral-100"
-                    }`}
-                  >
-                    <Icon className="h-4 w-4 shrink-0" />
-                    {label}
-                  </Link>
-                );
-              })}
+              {section.items.map((item) => (
+                <NavItemGroup
+                  key={item.href}
+                  item={item}
+                  pathname={pathname}
+                  variant="sidebar"
+                />
+              ))}
             </div>
           </div>
         ))}

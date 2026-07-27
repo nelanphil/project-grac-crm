@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const propertyTypeSchema = z.enum(["residential", "commercial"]);
+
 export const createCustomerAddressSchema = z.object({
   label: z.string().trim().max(120).optional().default(""),
   address: z.string().trim().max(300).optional().default(""),
@@ -7,6 +9,7 @@ export const createCustomerAddressSchema = z.object({
   state: z.string().trim().max(40).optional().default(""),
   zip: z.string().trim().max(20).optional().default(""),
   isPrimary: z.boolean().optional(),
+  propertyType: propertyTypeSchema.optional().default("residential"),
 });
 
 export const updateCustomerAddressSchema = createCustomerAddressSchema.partial();

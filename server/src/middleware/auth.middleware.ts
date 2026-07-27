@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
+import { getPermissionsForRole } from "../models/mongo/RolePermission";
 
 export interface AuthTokenPayload {
   sub: string;
@@ -13,11 +14,11 @@ export interface AuthRequest extends Request {
   user?: AuthTokenPayload & { id: string };
 }
 
-export function authenticate(
+export async function authenticate(
   req: AuthRequest,
   res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     res.status(401).json({ message: "Missing or invalid authorization header" });
@@ -28,7 +29,10 @@ export function authenticate(
 
   try {
     const decoded = jwt.verify(token, env.jwt.secret) as unknown as AuthTokenPayload;
-    req.user = { ...decoded, id: decoded.sub };
+    // Always load current role permissions from DB so newly seeded grants
+    // (e.g. messages:*) apply without forcing users to log in again.
+    const permissions = await getPermissionsForRole(decoded.role);
+    req.user = { ...decoded, id: decoded.sub, permissions };
     next();
   } catch {
     res.status(401).json({ message: "Invalid or expired token" });

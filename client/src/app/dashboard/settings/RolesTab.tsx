@@ -43,6 +43,8 @@ const ALL_PERMISSIONS = [
   "jobs:write",
   "jobs:delete",
   "reports:read",
+  "messages:read",
+  "messages:write",
 ].sort();
 
 const ACTION_ORDER = ["read", "write", "delete", "manage"];

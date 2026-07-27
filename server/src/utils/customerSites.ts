@@ -1,6 +1,9 @@
 import { Types } from "mongoose";
 import { Customer, ICustomer } from "../models/mongo/Customer";
-import { CustomerAddress } from "../models/mongo/CustomerAddress";
+import {
+  CustomerAddress,
+  CustomerAddressPropertyType,
+} from "../models/mongo/CustomerAddress";
 import { Equipment } from "../models/mongo/Equipment";
 
 export function normalizePhoneDigits(phone: string | null | undefined): string {
@@ -135,7 +138,8 @@ export async function ensureCustomerSiteFromFlat(
     | "lastSvc"
     | "exday"
     | "extime"
-  >
+  >,
+  options?: { propertyType?: CustomerAddressPropertyType }
 ): Promise<{ addressId: Types.ObjectId; created: boolean }> {
   const existing = await CustomerAddress.findOne({
     customerRef: customer._id,
@@ -147,6 +151,8 @@ export async function ensureCustomerSiteFromFlat(
     return { addressId: existing._id as Types.ObjectId, created: false };
   }
 
+  const propertyType = options?.propertyType ?? "residential";
+
   if (!customerHasSiteData(customer)) {
     const addressDoc = await CustomerAddress.create({
       customerRef: customer._id,
@@ -156,6 +162,7 @@ export async function ensureCustomerSiteFromFlat(
       state: "",
       zip: "",
       isPrimary: true,
+      propertyType,
       legacyCustomerId: customer.legacyId ?? null,
     });
     return { addressId: addressDoc._id as Types.ObjectId, created: true };
@@ -169,6 +176,7 @@ export async function ensureCustomerSiteFromFlat(
     state: customer.state ?? "",
     zip: customer.zip ?? "",
     isPrimary: true,
+    propertyType,
     legacyCustomerId: customer.legacyId ?? null,
   });
 

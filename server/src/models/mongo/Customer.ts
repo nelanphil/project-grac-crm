@@ -11,6 +11,8 @@ export interface ICustomer extends Document {
   state: string;
   zip: string;
   phone: string;
+  /** Denormalized digits-only phone for indexed duplicate detection. */
+  phoneDigits: string;
   email: string;
   /** Denormalized primary equipment — kept in sync with primary site equipment. */
   atsSerial: string;
@@ -39,6 +41,7 @@ const customerSchema = new Schema<ICustomer>(
     state: { type: String, default: "" },
     zip: { type: String, default: "" },
     phone: { type: String, default: "" },
+    phoneDigits: { type: String, default: "", index: true },
     email: { type: String, default: "", index: true },
     atsSerial: { type: String, default: "" },
     serial: { type: String, default: "" },
@@ -55,8 +58,17 @@ const customerSchema = new Schema<ICustomer>(
     mergedAt: { type: Date, default: null },
     deletedAt: { type: Date, default: null, index: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
+
+// Indexes to support server-side sorting/searching of the customer list.
+customerSchema.index({ last: 1, first: 1 });
+customerSchema.index({ first: 1, last: 1 });
+customerSchema.index({ address: 1 });
+customerSchema.index({ city: 1 });
+customerSchema.index({ state: 1 });
+customerSchema.index({ zip: 1 });
+customerSchema.index({ phone: 1 });
 
 export const Customer = mongoose.model<ICustomer>("Customer", customerSchema);
 

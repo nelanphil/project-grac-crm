@@ -2,7 +2,10 @@ import { Response } from "express";
 import mongoose from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { activeCustomerFilter, Customer } from "../models/mongo/Customer";
-import { CustomerAddress } from "../models/mongo/CustomerAddress";
+import {
+  CustomerAddress,
+  CustomerAddressPropertyType,
+} from "../models/mongo/CustomerAddress";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { CustomerNote } from "../models/mongo/CustomerNote";
 import { Contract } from "../models/mongo/Contract";
@@ -35,7 +38,11 @@ import {
   customerDisplayName,
   logNotificationAsync,
 } from "../services/notification.service";
-import { geocodeAddress } from "../utils/censusGeocoder";
+import { geocodeAddress, GeocodeResult } from "../utils/censusGeocoder";
+import {
+  geocodeAddressGoogle,
+  getActiveGoogleApiKey,
+} from "../utils/googleAddressValidator";
 
 function parseLastSvc(value: unknown): Date | null | undefined {
   if (value === undefined) return undefined;
@@ -162,6 +169,7 @@ function formatAddress(doc: {
   state?: string;
   zip?: string;
   isPrimary?: boolean;
+  propertyType?: CustomerAddressPropertyType;
   legacyCustomerId?: number | null;
   createdAt: Date;
   updatedAt: Date;
@@ -175,6 +183,7 @@ function formatAddress(doc: {
     state: doc.state ?? "",
     zip: doc.zip ?? "",
     isPrimary: Boolean(doc.isPrimary),
+    propertyType: doc.propertyType ?? "residential",
     legacyCustomerId: doc.legacyCustomerId ?? null,
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
@@ -343,7 +352,53 @@ async function clearOtherPrimaryContacts(
   await CustomerContact.updateMany(filter, { $set: { isPrimary: false } });
 }
 
-// GET /customers — exclude merged; ?deleted=1 for soft-deleted only
+// GET /customers — exclude merged; ?deleted=1 for soft-deleted only.
+// Server-side pagination, search and sort for scalability.
+const CUSTOMER_PAGE_SIZES = [25, 50, 150, 250, 500];
+const CUSTOMER_SORT_KEYS = new Set([
+  "customer",
+  "phone",
+  "street",
+  "city",
+  "state",
+  "zip",
+]);
+
+/** Case-insensitive trim of a possibly-missing string field for sorting. */
+function trimFieldExpr(field: string): Record<string, unknown> {
+  return { $trim: { input: { $ifNull: [field, ""] } } };
+}
+
+/** Aggregation expression for the active sort column's normalized sort key. */
+function buildSortKeyExpr(sortKey: string): Record<string, unknown> {
+  switch (sortKey) {
+    case "phone":
+      return { $ifNull: ["$phoneDigits", ""] };
+    case "street":
+      return trimFieldExpr("$address");
+    case "city":
+      return trimFieldExpr("$city");
+    case "state":
+      return trimFieldExpr("$state");
+    case "zip":
+      return trimFieldExpr("$zip");
+    case "customer":
+    default:
+      // Mirror the displayed "First Last" name so ordering matches the UI.
+      return {
+        $trim: {
+          input: {
+            $concat: [trimFieldExpr("$first"), " ", trimFieldExpr("$last")],
+          },
+        },
+      };
+  }
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export async function listCustomers(
   req: AuthRequest,
   res: Response,
@@ -351,64 +406,150 @@ export async function listCustomers(
   try {
     const deletedOnly =
       req.query.deleted === "1" || req.query.deleted === "true";
-    const customers = await Customer.find({
+
+    const pageRaw = parseInt(String(req.query.page ?? "1"), 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "25"), 10);
+    const pageSize = CUSTOMER_PAGE_SIZES.includes(pageSizeRaw)
+      ? pageSizeRaw
+      : 25;
+
+    const sortDir = req.query.sortDir === "desc" ? -1 : 1;
+    const sortKeyRaw = String(req.query.sortKey ?? "customer");
+    const sortKey = CUSTOMER_SORT_KEYS.has(sortKeyRaw)
+      ? sortKeyRaw
+      : "customer";
+
+    const baseFilter: Record<string, unknown> = {
       ...notMergedFilter,
-      ...(deletedOnly
-        ? { deletedAt: { $ne: null } }
-        : activeCustomerFilter),
-    })
-      .lean()
-      .sort({ last: 1, first: 1 });
+      ...(deletedOnly ? { deletedAt: { $ne: null } } : activeCustomerFilter),
+    };
 
-    const contacts = await CustomerContact.find({
-      customerRef: { $in: customers.map((c) => c._id) },
-    })
-      .select("customerRef phone")
-      .lean();
-
-    const phonesByCustomer = new Map<string, Set<string>>();
-    for (const contact of contacts) {
-      const digits = normalizePhoneDigits(contact.phone);
-      if (digits.length < 7) continue;
-      const key = contact.customerRef.toString();
-      const set = phonesByCustomer.get(key) ?? new Set<string>();
-      set.add(digits);
-      phonesByCustomer.set(key, set);
+    const search = trimStr(req.query.search);
+    let filter: Record<string, unknown> = baseFilter;
+    if (search) {
+      const rx = new RegExp(escapeRegex(search), "i");
+      const or: Array<Record<string, unknown>> = [
+        { first: rx },
+        { last: rx },
+        { address: rx },
+        { city: rx },
+        { state: rx },
+        { zip: rx },
+        { phone: rx },
+      ];
+      const digits = normalizePhoneDigits(search);
+      if (digits.length > 0) {
+        or.push({ phoneDigits: new RegExp(escapeRegex(digits)) });
+      }
+      filter = { $and: [baseFilter, { $or: or }] };
     }
 
-    // Count how many customers share each phone (any contact or denormalized).
-    const phoneToCustomerIds = new Map<string, Set<string>>();
-    for (const c of customers) {
-      const key = c._id.toString();
-      const phones = new Set(phonesByCustomer.get(key) ?? []);
-      const denorm = normalizePhoneDigits(c.phone);
-      if (denorm.length >= 7) phones.add(denorm);
-      for (const digits of phones) {
-        const set = phoneToCustomerIds.get(digits) ?? new Set<string>();
-        set.add(key);
-        phoneToCustomerIds.set(digits, set);
+    const total = await Customer.countDocuments(filter);
+
+    // Sort on a normalized key (trimmed, mirrors the displayed name) so the
+    // order is a true digits-then-A–Z alphabetical sort of what users see.
+    const customers = await Customer.aggregate([
+      { $match: filter },
+      { $addFields: { __sortKey: buildSortKeyExpr(sortKey) } },
+      { $sort: { __sortKey: sortDir, _id: 1 } },
+      { $skip: (page - 1) * pageSize },
+      { $limit: pageSize },
+      { $project: { __sortKey: 0 } },
+    ]).collation({ locale: "en", strength: 2 });
+
+    // Duplicate detection scoped to the current page: count how many customers
+    // in the same list share each page phone (indexed phoneDigits lookup).
+    const pageDigits = [
+      ...new Set(
+        customers
+          .map((c) => normalizePhoneDigits(c.phone))
+          .filter((d) => d.length >= 7),
+      ),
+    ];
+    const duplicateByDigits = new Map<string, number>();
+    if (pageDigits.length > 0) {
+      const grouped = await Customer.aggregate<{ _id: string; count: number }>([
+        { $match: { ...baseFilter, phoneDigits: { $in: pageDigits } } },
+        { $group: { _id: "$phoneDigits", count: { $sum: 1 } } },
+      ]);
+      for (const g of grouped) duplicateByDigits.set(g._id, g.count);
+    }
+
+    // Contract badges for the visible page only.
+    const legacyIds = customers.map((c) => c.legacyId);
+    const contractsByCustomer = new Map<
+      number,
+      Array<{
+        _id: string;
+        standing: string;
+        contractType: string | null;
+        template: { label: string; badgeIcon: string } | null;
+      }>
+    >();
+    if (legacyIds.length > 0) {
+      const contracts = await Contract.find({
+        customerId: { $in: legacyIds },
+      })
+        .select("customerId renewalDueDate templateId contractType")
+        .lean();
+
+      const templateIds = [
+        ...new Set(
+          contracts
+            .map((c) => c.templateId?.toString())
+            .filter((v): v is string => Boolean(v)),
+        ),
+      ];
+      const templateById = new Map<
+        string,
+        { label: string; badgeIcon: string }
+      >();
+      if (templateIds.length > 0) {
+        const templates = await ContractTemplate.find({
+          _id: { $in: templateIds },
+        })
+          .select("_id label badgeIcon")
+          .lean();
+        for (const t of templates) {
+          templateById.set(t._id.toString(), {
+            label: t.label ?? "",
+            badgeIcon: t.badgeIcon ?? "scroll-text",
+          });
+        }
+      }
+
+      for (const c of contracts) {
+        const list = contractsByCustomer.get(c.customerId) ?? [];
+        list.push({
+          _id: (c._id as mongoose.Types.ObjectId).toString(),
+          standing: getContractStanding(c.renewalDueDate ?? null),
+          contractType: c.contractType ?? null,
+          template: c.templateId
+            ? (templateById.get(c.templateId.toString()) ?? null)
+            : null,
+        });
+        contractsByCustomer.set(c.customerId, list);
       }
     }
 
     res.status(200).json({
       customers: customers.map((c) => {
-        const key = c._id.toString();
-        const phones = new Set(phonesByCustomer.get(key) ?? []);
-        const denorm = normalizePhoneDigits(c.phone);
-        if (denorm.length >= 7) phones.add(denorm);
-
-        let maxPeers = 0;
-        for (const digits of phones) {
-          const peers = (phoneToCustomerIds.get(digits)?.size ?? 1) - 1;
-          if (peers > maxPeers) maxPeers = peers;
-        }
-
+        const digits = normalizePhoneDigits(c.phone);
+        const peers =
+          digits.length >= 7
+            ? Math.max(0, (duplicateByDigits.get(digits) ?? 1) - 1)
+            : 0;
         return {
           ...c,
           deletedAt: c.deletedAt ? c.deletedAt.toISOString() : null,
-          duplicateCount: maxPeers,
+          duplicateCount: peers,
+          contracts: contractsByCustomer.get(c.legacyId) ?? [],
         };
       }),
+      total,
+      page,
+      pageSize,
     });
   } catch (err) {
     console.error("GET /customers error:", err);
@@ -416,18 +557,39 @@ export async function listCustomers(
   }
 }
 
-// POST /customers/validate-address — Census geocode check
+// POST /customers/validate-address — Google Address Validation, falling back to Census geocode
 export async function validateCustomerAddress(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
   try {
-    const result = await geocodeAddress({
+    const input = {
       street: trimStr(req.body?.address ?? req.body?.street),
       city: trimStr(req.body?.city),
       state: trimStr(req.body?.state),
       zip: trimStr(req.body?.zip),
-    });
+    };
+
+    let result: GeocodeResult | null = null;
+
+    const googleApiKey = await getActiveGoogleApiKey();
+    if (googleApiKey) {
+      try {
+        result = await geocodeAddressGoogle(input, googleApiKey);
+      } catch (err) {
+        console.error("Google address validation error:", err);
+        result = null;
+      }
+    }
+
+    if (!result || !result.ok) {
+      const censusResult = await geocodeAddress(input);
+      // Prefer a successful Census match; otherwise keep whichever failure
+      // message is more informative (Google's, if it was actually attempted).
+      if (censusResult.ok || !result) {
+        result = censusResult;
+      }
+    }
 
     if (!result.ok) {
       res.status(200).json({
@@ -468,6 +630,8 @@ export async function createCustomer(
     const cityInput = trimStr(req.body?.city);
     const stateInput = trimStr(req.body?.state);
     const zipInput = trimStr(req.body?.zip);
+    const propertyType: CustomerAddressPropertyType =
+      req.body?.propertyType === "commercial" ? "commercial" : "residential";
 
     if (!addressInput) {
       res.status(400).json({ message: "Street address is required" });
@@ -505,6 +669,7 @@ export async function createCustomer(
       first,
       last,
       phone,
+      phoneDigits: normalizePhoneDigits(phone),
       email,
       address,
       city,
@@ -515,7 +680,7 @@ export async function createCustomer(
       mergedAt: null,
     });
 
-    await ensureCustomerSiteFromFlat(customer);
+    await ensureCustomerSiteFromFlat(customer, { propertyType });
     await ensureCustomerContactFromFlat(customer);
 
     const custName = customerDisplayName(customer);
@@ -847,6 +1012,7 @@ export async function createCustomerAddress(
       state: parsed.data.state,
       zip: parsed.data.zip,
       isPrimary: makePrimary,
+      propertyType: parsed.data.propertyType,
       legacyCustomerId: null,
     });
 
@@ -917,6 +1083,8 @@ export async function updateCustomerAddress(
     if (parsed.data.city !== undefined) address.city = parsed.data.city;
     if (parsed.data.state !== undefined) address.state = parsed.data.state;
     if (parsed.data.zip !== undefined) address.zip = parsed.data.zip;
+    if (parsed.data.propertyType !== undefined)
+      address.propertyType = parsed.data.propertyType;
 
     if (parsed.data.isPrimary === true) {
       await clearOtherPrimary(
@@ -1123,12 +1291,10 @@ export async function createEquipment(
       atsSerial: parsed.data.atsSerial,
     });
     if (blocking.length > 0) {
-      res
-        .status(409)
-        .json({
-          message: serialConflictMessage(blocking),
-          conflicts: blocking,
-        });
+      res.status(409).json({
+        message: serialConflictMessage(blocking),
+        conflicts: blocking,
+      });
       return;
     }
 
@@ -1214,12 +1380,10 @@ export async function updateEquipment(
       excludeEquipmentId: equipmentId,
     });
     if (blocking.length > 0) {
-      res
-        .status(409)
-        .json({
-          message: serialConflictMessage(blocking),
-          conflicts: blocking,
-        });
+      res.status(409).json({
+        message: serialConflictMessage(blocking),
+        conflicts: blocking,
+      });
       return;
     }
 
@@ -1406,8 +1570,7 @@ export async function createCustomerContact(
     await syncCustomerPrimaryContactFields(customer._id);
 
     const custName = customerDisplayName(customer);
-    const contactName =
-      `${contact.first} ${contact.last}`.trim() || "Contact";
+    const contactName = `${contact.first} ${contact.last}`.trim() || "Contact";
     logNotificationAsync({
       entityType: "contact",
       action: "created",
@@ -1501,8 +1664,7 @@ export async function updateCustomerContact(
     await syncCustomerPrimaryContactFields(customer._id);
 
     const custName = customerDisplayName(customer);
-    const contactName =
-      `${contact.first} ${contact.last}`.trim() || "Contact";
+    const contactName = `${contact.first} ${contact.last}`.trim() || "Contact";
     logNotificationAsync({
       entityType: "contact",
       action: "updated",

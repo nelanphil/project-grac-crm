@@ -1,5 +1,7 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
 
+export type CustomerAddressPropertyType = "residential" | "commercial";
+
 export interface ICustomerAddress extends Document {
   customerRef: Types.ObjectId;
   label: string;
@@ -8,6 +10,7 @@ export interface ICustomerAddress extends Document {
   state: string;
   zip: string;
   isPrimary: boolean;
+  propertyType: CustomerAddressPropertyType;
   /** Legacy customer id this site originated from (migration/merge). */
   legacyCustomerId?: number | null;
   createdAt: Date;
@@ -28,6 +31,11 @@ const customerAddressSchema = new Schema<ICustomerAddress>(
     state: { type: String, default: "" },
     zip: { type: String, default: "" },
     isPrimary: { type: Boolean, default: false, index: true },
+    propertyType: {
+      type: String,
+      enum: ["residential", "commercial"],
+      default: "residential",
+    },
     legacyCustomerId: { type: Number, default: null, index: true },
   },
   { timestamps: true }

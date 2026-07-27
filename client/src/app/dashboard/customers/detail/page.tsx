@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ClipboardList, GitMerge, ScrollText } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ContactCard from "@/components/customers/ContactCard";
+import CommunicationHistoryPanel from "@/components/customers/CommunicationHistoryPanel";
 import CustomerAddressesPanel, {
   addressesSectionTitle,
   formatAddressLabel,
@@ -214,6 +215,12 @@ function CustomerDetailContent() {
           />
         </div>
       </div>
+
+      <CommunicationHistoryPanel
+        customerId={customer._id}
+        contacts={customer.contacts ?? []}
+        token={token!}
+      />
 
       {addresses.length > 1 ? (
         <div className="flex flex-wrap items-center gap-3">

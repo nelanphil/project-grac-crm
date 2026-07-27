@@ -13,6 +13,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "twilio_account",
   "contract_template",
   "lead",
+  "google_credentials",
 ] as const;
 
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPES)[number];

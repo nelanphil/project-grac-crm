@@ -20,6 +20,7 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.9.3",
     "mysql2": "^3.12.0",
+    "twilio": "^6.0.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -33,7 +34,7 @@
     "globals": "^16.3.0",
     "nodemon": "^3.1.14",
     "tsx": "^4.19.2",
-    "typescript-eslint": "^8.37.0",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.37.0"
   }
 }

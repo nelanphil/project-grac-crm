@@ -266,6 +266,8 @@ export interface CustomerEquipment {
   updatedAt: string;
 }
 
+export type CustomerAddressPropertyType = "residential" | "commercial";
+
 export interface CustomerAddress {
   _id: string;
   customerRef: string;
@@ -275,6 +277,7 @@ export interface CustomerAddress {
   state: string;
   zip: string;
   isPrimary: boolean;
+  propertyType: CustomerAddressPropertyType;
   legacyCustomerId: number | null;
   createdAt: string;
   updatedAt: string;
@@ -296,6 +299,13 @@ export interface CustomerContact {
   updatedAt: string;
 }
 
+export interface CustomerContractBadge {
+  _id: string;
+  standing: ContractStanding;
+  contractType: string | null;
+  template: { label: string; badgeIcon: string } | null;
+}
+
 export interface CustomerListItem {
   _id: string;
   legacyId: number;
@@ -312,6 +322,8 @@ export interface CustomerListItem {
   deletedAt?: string | null;
   /** Other open customers sharing this phone (from list API). */
   duplicateCount?: number;
+  /** Lightweight contract badges for the customer (from list API). */
+  contracts?: CustomerContractBadge[];
 }
 
 export interface CreateCustomerInput {
@@ -323,14 +335,48 @@ export interface CreateCustomerInput {
   city?: string;
   state?: string;
   zip?: string;
+  propertyType?: CustomerAddressPropertyType;
+}
+
+export type CustomerSortKey =
+  | "customer"
+  | "phone"
+  | "street"
+  | "city"
+  | "state"
+  | "zip";
+export type CustomerSortDir = "asc" | "desc";
+
+export interface GetCustomersParams {
+  deletedOnly?: boolean;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  sortKey?: CustomerSortKey;
+  sortDir?: CustomerSortDir;
+}
+
+export interface CustomersResponse {
+  customers: CustomerListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export async function getCustomers(
   token: string,
-  options?: { deletedOnly?: boolean },
-): Promise<{ customers: CustomerListItem[] }> {
-  const params = options?.deletedOnly ? "?deleted=1" : "";
-  return authRequest<{ customers: CustomerListItem[] }>(`/customers${params}`, {
+  options?: GetCustomersParams,
+): Promise<CustomersResponse> {
+  const params = new URLSearchParams();
+  if (options?.deletedOnly) params.set("deleted", "1");
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined)
+    params.set("pageSize", String(options.pageSize));
+  if (options?.search) params.set("search", options.search);
+  if (options?.sortKey) params.set("sortKey", options.sortKey);
+  if (options?.sortDir) params.set("sortDir", options.sortDir);
+  const qs = params.toString();
+  return authRequest<CustomersResponse>(`/customers${qs ? `?${qs}` : ""}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -660,6 +706,7 @@ export async function createCustomerAddress(
     state?: string;
     zip?: string;
     isPrimary?: boolean;
+    propertyType?: CustomerAddressPropertyType;
   },
 ): Promise<{ address: CustomerAddress }> {
   return authRequest<{ address: CustomerAddress }>(
@@ -1161,6 +1208,452 @@ export async function deleteTwilioAccount(
 }
 
 // ---------------------------------------------------------------------------
+// Google credentials (Control Panel)
+// ---------------------------------------------------------------------------
+
+export interface GoogleCredentialsItem {
+  _id: string;
+  label: string;
+  projectId: string;
+  isActive: boolean;
+  hasApiKey: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GoogleCredentialsInput {
+  label?: string;
+  apiKey?: string;
+  projectId?: string;
+  isActive?: boolean;
+}
+
+export async function getGoogleCredentials(
+  token: string,
+): Promise<{ credentials: GoogleCredentialsItem | null }> {
+  return authRequest<{ credentials: GoogleCredentialsItem | null }>(
+    "/google-credentials",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function saveGoogleCredentials(
+  token: string,
+  data: GoogleCredentialsInput,
+): Promise<{ credentials: GoogleCredentialsItem }> {
+  return authRequest<{ credentials: GoogleCredentialsItem }>(
+    "/google-credentials",
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deleteGoogleCredentials(
+  token: string,
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>("/google-credentials", {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Messaging (templates, contacts, send)
+// ---------------------------------------------------------------------------
+
+export interface MessageTemplateItem {
+  _id: string;
+  name: string;
+  slug: string;
+  body: string;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MessageTemplateInput {
+  name: string;
+  body?: string;
+  slug?: string;
+}
+
+export interface MergeFieldItem {
+  key: string;
+  label: string;
+  description: string;
+}
+
+export interface MessagingContactItem {
+  _id: string;
+  first: string;
+  last: string;
+  phone: string;
+  email: string;
+  label: string;
+  isPrimary: boolean;
+  customerRef: string;
+  customer: {
+    _id: string;
+    first: string;
+    last: string;
+    address: string;
+    city: string;
+    state: string;
+    zip: string;
+    phone: string;
+  };
+  renewalDueDate: string | null;
+  contractType: string | null;
+}
+
+export interface MessagingPreviewResult {
+  rendered: string;
+  context: Record<string, string>;
+  sample: boolean;
+}
+
+export interface MessagingSendResultItem {
+  contactId: string;
+  status: "sent" | "failed";
+  twilioSid?: string;
+  error?: string;
+}
+
+export interface MessagingSendResponse {
+  results: MessagingSendResultItem[];
+  summary: { total: number; sent: number; failed: number };
+  fromNumber: string;
+  twilioAccountId: string;
+  accountSid?: string;
+  channel?: "sms" | "mms";
+}
+
+export type CommunicationChannel = "sms" | "mms" | "voice";
+export type CommunicationDirection = "outbound" | "inbound";
+
+export interface TwilioCommunicationItem {
+  _id: string;
+  twilioAccountRef: string | null;
+  accountSid: string;
+  accountFriendlyName: string | null;
+  channel: CommunicationChannel;
+  direction: CommunicationDirection;
+  status: string;
+  fromNumber: string;
+  toNumber: string;
+  body: string;
+  mediaUrls: string[];
+  durationSeconds: number | null;
+  twilioSid: string | null;
+  customerRef: string | null;
+  contactRef: string | null;
+  templateRef: string | null;
+  createdByUserRef: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MessagingConversationItem {
+  contactId: string;
+  contact: {
+    _id: string;
+    first: string;
+    last: string;
+    phone: string;
+    label: string;
+    customerRef: string;
+  };
+  customer: { _id: string; first: string; last: string } | null;
+  lastMessage: TwilioCommunicationItem;
+  messageCount: number;
+}
+
+export interface MessagingWebhookInfo {
+  messageWebhookUrl: string;
+  statusWebhookUrl: string;
+  accounts: Array<{
+    _id: string;
+    friendlyName: string;
+    accountSid: string;
+    isActive: boolean;
+    messageWebhookUrl: string;
+    statusWebhookUrl: string;
+  }>;
+}
+
+export async function getMessageTemplates(
+  token: string,
+  options?: { includeDeleted?: boolean },
+): Promise<{ templates: MessageTemplateItem[] }> {
+  const params = options?.includeDeleted ? "?includeDeleted=1" : "";
+  return authRequest<{ templates: MessageTemplateItem[] }>(
+    `/message-templates${params}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function createMessageTemplate(
+  token: string,
+  data: MessageTemplateInput,
+): Promise<{ template: MessageTemplateItem }> {
+  return authRequest<{ template: MessageTemplateItem }>("/message-templates", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateMessageTemplate(
+  token: string,
+  id: string,
+  data: Partial<MessageTemplateInput>,
+): Promise<{ template: MessageTemplateItem }> {
+  return authRequest<{ template: MessageTemplateItem }>(
+    `/message-templates/${id}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deleteMessageTemplate(
+  token: string,
+  id: string,
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>(`/message-templates/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getMessagingMergeFields(
+  token: string,
+): Promise<{ fields: MergeFieldItem[] }> {
+  return authRequest<{ fields: MergeFieldItem[] }>("/messaging/merge-fields", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function searchMessagingContacts(
+  token: string,
+  options?: {
+    search?: string;
+    year?: number;
+    month?: number;
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  contacts: MessagingContactItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (options?.search) params.set("search", options.search);
+  if (options?.year !== undefined) params.set("year", String(options.year));
+  if (options?.month !== undefined) params.set("month", String(options.month));
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
+  const qs = params.toString();
+  return authRequest<{
+    contacts: MessagingContactItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/messaging/contacts${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function previewMessagingMessage(
+  token: string,
+  data: {
+    body: string;
+    contactId?: string;
+    renewalYear?: number;
+    renewalMonth?: number;
+  },
+): Promise<MessagingPreviewResult> {
+  return authRequest<MessagingPreviewResult>("/messaging/preview", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function sendMessagingMessages(
+  token: string,
+  data: {
+    contactIds: string[];
+    body?: string;
+    templateId?: string;
+    twilioAccountId?: string;
+    fromNumber?: string;
+    mediaUrls?: string[];
+    renewalYear?: number;
+    renewalMonth?: number;
+  },
+): Promise<MessagingSendResponse> {
+  return authRequest<MessagingSendResponse>("/messaging/send", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function placeMessagingCall(
+  token: string,
+  data: {
+    contactId: string;
+    twilioAccountId?: string;
+    fromNumber?: string;
+    sayText?: string;
+  },
+): Promise<{ communication: TwilioCommunicationItem }> {
+  return authRequest<{ communication: TwilioCommunicationItem }>(
+    "/messaging/calls",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function getMessagingCommunications(
+  token: string,
+  options?: {
+    twilioAccountId?: string;
+    accountSid?: string;
+    customerId?: string;
+    contactId?: string;
+    channel?: CommunicationChannel | "all";
+    direction?: CommunicationDirection;
+    unmatched?: boolean;
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  communications: TwilioCommunicationItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (options?.twilioAccountId) {
+    params.set("twilioAccountId", options.twilioAccountId);
+  }
+  if (options?.accountSid) params.set("accountSid", options.accountSid);
+  if (options?.customerId) params.set("customerId", options.customerId);
+  if (options?.contactId) params.set("contactId", options.contactId);
+  if (options?.channel && options.channel !== "all") {
+    params.set("channel", options.channel);
+  }
+  if (options?.direction) params.set("direction", options.direction);
+  if (options?.unmatched) params.set("unmatched", "1");
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
+  const qs = params.toString();
+  return authRequest<{
+    communications: TwilioCommunicationItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/messaging/communications${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getMessagingConversations(
+  token: string,
+  options?: { twilioAccountId?: string },
+): Promise<{ conversations: MessagingConversationItem[] }> {
+  const params = new URLSearchParams();
+  if (options?.twilioAccountId) {
+    params.set("twilioAccountId", options.twilioAccountId);
+  }
+  const qs = params.toString();
+  return authRequest<{ conversations: MessagingConversationItem[] }>(
+    `/messaging/conversations${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function getMessagingConversationThread(
+  token: string,
+  contactId: string,
+  options?: { twilioAccountId?: string },
+): Promise<{
+  contact: {
+    _id: string;
+    first: string;
+    last: string;
+    phone: string;
+    email: string;
+    label: string;
+    isPrimary: boolean;
+    customerRef: string;
+  };
+  customer: { _id: string; first: string; last: string } | null;
+  messages: TwilioCommunicationItem[];
+}> {
+  const params = new URLSearchParams();
+  if (options?.twilioAccountId) {
+    params.set("twilioAccountId", options.twilioAccountId);
+  }
+  const qs = params.toString();
+  return authRequest<{
+    contact: {
+      _id: string;
+      first: string;
+      last: string;
+      phone: string;
+      email: string;
+      label: string;
+      isPrimary: boolean;
+      customerRef: string;
+    };
+    customer: { _id: string; first: string; last: string } | null;
+    messages: TwilioCommunicationItem[];
+  }>(`/messaging/conversations/${contactId}${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getMessagingWebhookInfo(
+  token: string,
+): Promise<MessagingWebhookInfo> {
+  return authRequest<MessagingWebhookInfo>("/messaging/webhook-info", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Contract templates (Control Panel catalog)
 // ---------------------------------------------------------------------------
 
@@ -1269,7 +1762,8 @@ export type NotificationEntityType =
   | "role"
   | "twilio_account"
   | "contract_template"
-  | "lead";
+  | "lead"
+  | "google_credentials";
 
 export type NotificationAction =
   | "created"

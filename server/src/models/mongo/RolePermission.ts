@@ -28,6 +28,7 @@ const ALL_PERMISSIONS = [
   "jobs:read", "jobs:write", "jobs:delete",
   "reports:read",
   "integrations:read", "integrations:write", "integrations:delete",
+  "messages:read", "messages:write",
 ];
 
 const DEFAULT_PERMISSIONS: [UserRole, string][] = [
@@ -57,6 +58,8 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "integrations:read"],
   ["admin", "integrations:write"],
   ["admin", "integrations:delete"],
+  ["admin", "messages:read"],
+  ["admin", "messages:write"],
 
   // owner — same as admin but also permissions management
   ...ALL_PERMISSIONS.map((p): [UserRole, string] => ["owner", p]),
@@ -161,6 +164,26 @@ const INTEGRATIONS_PERMISSIONS: [UserRole, string][] = [
 /** Insert integrations permissions for existing deployments (idempotent). */
 export async function ensureIntegrationsPermissions(): Promise<void> {
   for (const [role, permission] of INTEGRATIONS_PERMISSIONS) {
+    await RolePermission.updateOne(
+      { role, permission },
+      { $setOnInsert: { role, permission } },
+      { upsert: true },
+    );
+  }
+}
+
+const MESSAGES_PERMISSIONS: [UserRole, string][] = [
+  ["super-admin", "messages:read"],
+  ["super-admin", "messages:write"],
+  ["admin", "messages:read"],
+  ["admin", "messages:write"],
+  ["owner", "messages:read"],
+  ["owner", "messages:write"],
+];
+
+/** Insert messaging permissions for existing deployments (idempotent). */
+export async function ensureMessagesPermissions(): Promise<void> {
+  for (const [role, permission] of MESSAGES_PERMISSIONS) {
     await RolePermission.updateOne(
       { role, permission },
       { $setOnInsert: { role, permission } },

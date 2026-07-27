@@ -1,24 +1,22 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
-import ContractsCard from "@/components/control-panel/ContractsCard";
-import TwilioAccountsCard from "@/components/control-panel/TwilioAccountsCard";
-import GoogleCredentialsCard from "@/components/control-panel/GoogleCredentialsCard";
+import MessagingHub from "@/components/messaging/MessagingHub";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const ADMIN_ROLES = ["admin", "super-admin", "owner"];
 
-export default function ControlPanelPage() {
+export default function MessagingPage() {
   return (
     <AuthGuard>
-      <ControlPanelContent />
+      <MessagingPageContent />
     </AuthGuard>
   );
 }
 
-function ControlPanelContent() {
+function MessagingPageContent() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
 
@@ -35,15 +33,19 @@ function ControlPanelContent() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-brand-dark">Control Panel</h1>
+        <h1 className="text-2xl font-bold text-brand-dark">Messaging</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Manage integrations and system configuration.
+          Build SMS templates, preview messages, and send to customer contacts via Twilio.
         </p>
       </div>
 
-      <ContractsCard />
-      <TwilioAccountsCard />
-      <GoogleCredentialsCard />
+      <Suspense
+        fallback={
+          <div className="text-sm text-neutral-500">Loading messaging…</div>
+        }
+      >
+        <MessagingHub />
+      </Suspense>
     </div>
   );
 }

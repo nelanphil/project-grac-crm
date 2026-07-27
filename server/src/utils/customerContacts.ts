@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import { Customer, ICustomer } from "../models/mongo/Customer";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { ensureCustomerUser } from "./ensureCustomerUser";
+import { normalizePhoneDigits } from "./customerSites";
 
 export function customerHasContactData(customer: {
   first?: string;
@@ -11,15 +12,15 @@ export function customerHasContactData(customer: {
 }): boolean {
   return Boolean(
     customer.first?.trim() ||
-      customer.last?.trim() ||
-      customer.phone?.trim() ||
-      customer.email?.trim()
+    customer.last?.trim() ||
+    customer.phone?.trim() ||
+    customer.email?.trim(),
   );
 }
 
 /** Refresh denormalized primary contact fields on the customer. */
 export async function syncCustomerPrimaryContactFields(
-  customerId: Types.ObjectId | string
+  customerId: Types.ObjectId | string,
 ): Promise<void> {
   const primaryContact = await CustomerContact.findOne({
     customerRef: customerId,
@@ -38,6 +39,7 @@ export async function syncCustomerPrimaryContactFields(
         first: "",
         last: "",
         phone: "",
+        phoneDigits: "",
         email: "",
       },
     });
@@ -47,7 +49,7 @@ export async function syncCustomerPrimaryContactFields(
   if (!contact.isPrimary) {
     await CustomerContact.updateOne(
       { _id: contact._id },
-      { $set: { isPrimary: true } }
+      { $set: { isPrimary: true } },
     );
   }
 
@@ -56,6 +58,7 @@ export async function syncCustomerPrimaryContactFields(
       first: contact.first ?? "",
       last: contact.last ?? "",
       phone: contact.phone ?? "",
+      phoneDigits: normalizePhoneDigits(contact.phone),
       email: contact.email ?? "",
     },
   });
@@ -69,7 +72,7 @@ export async function ensureCustomerContactFromFlat(
   customer: Pick<
     ICustomer,
     "_id" | "legacyId" | "first" | "last" | "phone" | "email"
-  >
+  >,
 ): Promise<{ contactId: Types.ObjectId; created: boolean }> {
   const existing = await CustomerContact.findOne({
     customerRef: customer._id,

@@ -13,6 +13,7 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   twilio_account: "Twilio",
   contract_template: "Template",
   lead: "Lead",
+  google_credentials: "Google",
 };
 
 export function notificationEntityLabel(type: NotificationEntityType): string {
@@ -34,6 +35,7 @@ export function notificationHref(item: NotificationItem): string | null {
       return "/dashboard/settings";
     case "contract_template":
     case "twilio_account":
+    case "google_credentials":
       return "/dashboard/control-panel";
     case "lead":
       return "/dashboard";

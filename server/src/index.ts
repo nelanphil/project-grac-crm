@@ -1,7 +1,7 @@
 import app from "./app";
 import { env } from "./config/env";
 import { connectMongoDB, disconnectMongoDB } from "./config/mongodb";
-import { seedDefaultPermissions, revokeCustomerListAccess, ensureContractPermissions, ensureIntegrationsPermissions } from "./models/mongo/RolePermission";
+import { seedDefaultPermissions, revokeCustomerListAccess, ensureContractPermissions, ensureIntegrationsPermissions, ensureMessagesPermissions } from "./models/mongo/RolePermission";
 import { seedDefaultRoles } from "./models/mongo/Role";
 import { seedContractTemplates } from "./models/mongo/ContractTemplate";
 
@@ -12,6 +12,7 @@ async function bootstrap(): Promise<void> {
   await revokeCustomerListAccess();
   await ensureContractPermissions();
   await ensureIntegrationsPermissions();
+  await ensureMessagesPermissions();
   await seedContractTemplates();
 
   const server = app.listen(env.port, () => {
