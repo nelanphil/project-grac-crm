@@ -11,15 +11,18 @@ import {
   logNotificationAsync,
 } from "../services/notification.service";
 
-function emptyToUndefined(value: string | undefined | null): string | undefined {
+function emptyToUndefined(
+  value: string | undefined | null,
+): string | undefined {
   if (value == null || value.trim() === "") return undefined;
   return value.trim();
 }
 
 function toPublic(doc: ITwilioAccount | Record<string, unknown>) {
-  const d = "toObject" in doc && typeof doc.toObject === "function"
-    ? (doc as ITwilioAccount).toObject()
-    : (doc as Record<string, unknown>);
+  const d =
+    "toObject" in doc && typeof doc.toObject === "function"
+      ? (doc as ITwilioAccount).toObject()
+      : (doc as Record<string, unknown>);
 
   return {
     _id: d._id,
@@ -28,6 +31,7 @@ function toPublic(doc: ITwilioAccount | Record<string, unknown>) {
     phoneNumbers: d.phoneNumbers ?? [],
     isActive: d.isActive ?? true,
     hasAuthToken: Boolean(d.authTokenEncrypted),
+    testAccountSid: d.testAccountSid ?? null,
     hasTestAuthToken: Boolean(d.testAuthTokenEncrypted),
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
@@ -36,7 +40,7 @@ function toPublic(doc: ITwilioAccount | Record<string, unknown>) {
 
 export async function getTwilioAccounts(
   _req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   const accounts = await TwilioAccount.find().sort({ friendlyName: 1 }).lean();
   res.json({ accounts: accounts.map(toPublic) });
@@ -44,7 +48,7 @@ export async function getTwilioAccounts(
 
 export async function createTwilioAccount(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   const parsed = createTwilioAccountSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -58,17 +62,25 @@ export async function createTwilioAccount(
   const data = parsed.data;
   const existing = await TwilioAccount.findOne({ accountSid: data.accountSid });
   if (existing) {
-    res.status(409).json({ message: "A Twilio account with this Account SID already exists" });
+    res
+      .status(409)
+      .json({
+        message: "A Twilio account with this Account SID already exists",
+      });
     return;
   }
 
   const testAuthToken = emptyToUndefined(data.testAuthToken);
+  const testAccountSid = emptyToUndefined(data.testAccountSid);
 
   const account = await TwilioAccount.create({
     accountSid: data.accountSid,
     friendlyName: data.friendlyName,
     authTokenEncrypted: encryptCredential(data.authToken),
-    testAuthTokenEncrypted: testAuthToken ? encryptCredential(testAuthToken) : undefined,
+    testAccountSid,
+    testAuthTokenEncrypted: testAuthToken
+      ? encryptCredential(testAuthToken)
+      : undefined,
     phoneNumbers: data.phoneNumbers ?? [],
     isActive: data.isActive ?? true,
   });
@@ -87,7 +99,7 @@ export async function createTwilioAccount(
 
 export async function updateTwilioAccount(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   const parsed = updateTwilioAccountSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -107,9 +119,15 @@ export async function updateTwilioAccount(
   const data = parsed.data;
 
   if (data.accountSid && data.accountSid !== account.accountSid) {
-    const conflict = await TwilioAccount.findOne({ accountSid: data.accountSid });
+    const conflict = await TwilioAccount.findOne({
+      accountSid: data.accountSid,
+    });
     if (conflict) {
-      res.status(409).json({ message: "A Twilio account with this Account SID already exists" });
+      res
+        .status(409)
+        .json({
+          message: "A Twilio account with this Account SID already exists",
+        });
       return;
     }
     account.accountSid = data.accountSid;
@@ -127,6 +145,10 @@ export async function updateTwilioAccount(
   const testAuthToken = emptyToUndefined(data.testAuthToken);
   if (testAuthToken) {
     account.testAuthTokenEncrypted = encryptCredential(testAuthToken);
+  }
+
+  if (data.testAccountSid !== undefined) {
+    account.testAccountSid = emptyToUndefined(data.testAccountSid);
   }
 
   if (data.phoneNumbers !== undefined) {
@@ -153,7 +175,7 @@ export async function updateTwilioAccount(
 
 export async function deleteTwilioAccount(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   const account = await TwilioAccount.findByIdAndDelete(req.params.id);
   if (!account) {

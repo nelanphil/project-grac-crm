@@ -4,6 +4,7 @@ export interface ITwilioAccount extends Document {
   accountSid: string;
   friendlyName: string;
   authTokenEncrypted: string;
+  testAccountSid?: string;
   testAuthTokenEncrypted?: string;
   phoneNumbers: string[];
   isActive: boolean;
@@ -28,6 +29,11 @@ const twilioAccountSchema = new Schema<ITwilioAccount>(
       type: String,
       required: true,
     },
+    testAccountSid: {
+      type: String,
+      trim: true,
+      default: undefined,
+    },
     testAuthTokenEncrypted: {
       type: String,
       default: undefined,
@@ -41,10 +47,10 @@ const twilioAccountSchema = new Schema<ITwilioAccount>(
       default: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export const TwilioAccount = mongoose.model<ITwilioAccount>(
   "TwilioAccount",
-  twilioAccountSchema
+  twilioAccountSchema,
 );

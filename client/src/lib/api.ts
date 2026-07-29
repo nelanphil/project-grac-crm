@@ -1343,6 +1343,7 @@ export interface TwilioAccountItem {
   phoneNumbers: string[];
   isActive: boolean;
   hasAuthToken: boolean;
+  testAccountSid: string | null;
   hasTestAuthToken: boolean;
   createdAt: string;
   updatedAt: string;
@@ -1352,6 +1353,7 @@ export interface TwilioAccountInput {
   accountSid: string;
   friendlyName: string;
   authToken?: string;
+  testAccountSid?: string;
   testAuthToken?: string;
   phoneNumbers?: string[];
   isActive?: boolean;
@@ -1444,9 +1446,7 @@ export interface PaymentProviderAccountInput {
   webhookId?: string;
 }
 
-export async function getPaymentProviderAccounts(
-  token: string,
-): Promise<{
+export async function getPaymentProviderAccounts(token: string): Promise<{
   accounts: PaymentProviderAccountItem[];
   webhooks: Record<string, string>;
 }> {
@@ -1492,13 +1492,10 @@ export async function deletePaymentProviderAccount(
   token: string,
   id: string,
 ): Promise<{ message: string }> {
-  return authRequest<{ message: string }>(
-    `/payment-provider-accounts/${id}`,
-    {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    },
-  );
+  return authRequest<{ message: string }>(`/payment-provider-accounts/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1685,7 +1682,12 @@ export interface MessageThreadItem {
     label: string;
     customerRef: string;
   } | null;
-  customer: { _id: string; accountName?: string; first: string; last: string } | null;
+  customer: {
+    _id: string;
+    accountName?: string;
+    first: string;
+    last: string;
+  } | null;
   createdAt: string;
   updatedAt: string;
 }

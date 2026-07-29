@@ -19,6 +19,7 @@ type FormState = {
   friendlyName: string;
   accountSid: string;
   authToken: string;
+  testAccountSid: string;
   testAuthToken: string;
   phoneNumbers: string;
   isActive: boolean;
@@ -28,6 +29,7 @@ const EMPTY_FORM: FormState = {
   friendlyName: "",
   accountSid: "",
   authToken: "",
+  testAccountSid: "",
   testAuthToken: "",
   phoneNumbers: "",
   isActive: true,
@@ -95,6 +97,7 @@ export default function TwilioAccountsCard() {
       friendlyName: account.friendlyName,
       accountSid: account.accountSid,
       authToken: "",
+      testAccountSid: account.testAccountSid ?? "",
       testAuthToken: "",
       phoneNumbers: account.phoneNumbers.join(", "),
       isActive: account.isActive,
@@ -121,6 +124,7 @@ export default function TwilioAccountsCard() {
       friendlyName: form.friendlyName.trim(),
       accountSid: form.accountSid.trim(),
       authToken: form.authToken.trim() || undefined,
+      testAccountSid: form.testAccountSid.trim(),
       testAuthToken: form.testAuthToken.trim() || undefined,
       phoneNumbers: parsePhoneNumbers(form.phoneNumbers),
       isActive: form.isActive,
@@ -203,9 +207,10 @@ export default function TwilioAccountsCard() {
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">Twilio</h2>
           <p className="text-sm text-neutral-500 mt-0.5">
-            Configure Twilio accounts for SMS, MMS, and phone calls. Accounts are
-            keyed by Account SID. Point each Twilio number&apos;s webhooks at the
-            URLs below so inbound traffic is attributed to the correct account.
+            Configure Twilio accounts for SMS, MMS, and phone calls. Accounts
+            are keyed by Account SID. Point each Twilio number&apos;s webhooks
+            at the URLs below so inbound traffic is attributed to the correct
+            account.
           </p>
         </div>
         {!formOpen && (
@@ -238,9 +243,8 @@ export default function TwilioAccountsCard() {
             <code className="break-all">{webhookInfo.statusWebhookUrl}</code>
           </div>
           <p className="text-neutral-500">
-            Optional per-account URLs include{" "}
-            <code>?accountSid=AC…</code> for unambiguous routing when multiple
-            Twilio accounts share this CRM.
+            Optional per-account URLs include <code>?accountSid=AC…</code> for
+            unambiguous routing when multiple Twilio accounts share this CRM.
           </p>
         </div>
       ) : null}
@@ -309,6 +313,23 @@ export default function TwilioAccountsCard() {
                 className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
                 placeholder={editingId ? "••••••••" : "Live auth token"}
               />
+            </label>
+
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-600">
+                Test account SID (optional)
+              </span>
+              <input
+                value={form.testAccountSid}
+                onChange={(e) => field("testAccountSid", e.target.value)}
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              />
+              <span className="mt-1 block text-[11px] text-neutral-500">
+                Twilio&apos;s special Test Account SID (found on the Twilio
+                console). Must be paired with the test auth token below — a test
+                auth token alone will NOT work and will fail to authenticate.
+              </span>
             </label>
 
             <label className="block">
@@ -406,7 +427,11 @@ export default function TwilioAccountsCard() {
                       {account.hasAuthToken
                         ? "Auth token set"
                         : "Missing auth token"}
-                      {account.hasTestAuthToken ? " · Test token set" : ""}
+                      {account.hasTestAuthToken
+                        ? account.testAccountSid
+                          ? " · Test credentials set"
+                          : " · Test token set (missing test SID — will NOT work)"
+                        : ""}
                     </div>
                   </td>
                   <td className="px-6 py-4 font-mono text-neutral-600 whitespace-nowrap">

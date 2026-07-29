@@ -11,19 +11,46 @@ export class TwilioServiceError extends Error {
 }
 
 function resolveAuthToken(account: ITwilioAccount): string {
-  const useTest =
-    process.env.NODE_ENV !== "production" &&
-    Boolean(account.testAuthTokenEncrypted);
-
-  const encrypted = useTest
-    ? account.testAuthTokenEncrypted!
-    : account.authTokenEncrypted;
+  const encrypted = account.authTokenEncrypted;
 
   if (!encrypted) {
     throw new TwilioServiceError("Twilio account is missing an auth token");
   }
 
   return decryptCredential(encrypted);
+}
+
+/**
+ * Resolves the Account SID + Auth Token pair to use for real Twilio API calls.
+ *
+ * Twilio requires the Account SID and Auth Token to belong to the same
+ * credential set — a live Account SID can never be authenticated with a Test
+ * Auth Token (and vice versa), otherwise Twilio responds with a 401
+ * "Authenticate" error (code 20003). Test credentials are only used when a
+ * matching `testAccountSid` + `testAuthTokenEncrypted` pair is fully
+ * configured for the account; otherwise we always fall back to the live
+ * pair so sending never silently breaks.
+ */
+function resolveCredentials(account: ITwilioAccount): {
+  accountSid: string;
+  authToken: string;
+} {
+  const useTest =
+    process.env.NODE_ENV !== "production" &&
+    Boolean(account.testAccountSid) &&
+    Boolean(account.testAuthTokenEncrypted);
+
+  if (useTest) {
+    return {
+      accountSid: account.testAccountSid!,
+      authToken: decryptCredential(account.testAuthTokenEncrypted!),
+    };
+  }
+
+  return {
+    accountSid: account.accountSid,
+    authToken: resolveAuthToken(account),
+  };
 }
 
 export function getAccountAuthToken(account: ITwilioAccount): string {
@@ -88,8 +115,8 @@ export async function sendSms(params: {
   body: string;
   mediaUrls?: string[];
 }): Promise<{ sid: string }> {
-  const authToken = resolveAuthToken(params.account);
-  const client = twilio(params.account.accountSid, authToken);
+  const { accountSid, authToken } = resolveCredentials(params.account);
+  const client = twilio(accountSid, authToken);
 
   try {
     const mediaUrl =
@@ -118,8 +145,8 @@ export async function createOutboundCall(params: {
   sayText: string;
   statusCallbackUrl?: string;
 }): Promise<{ sid: string }> {
-  const authToken = resolveAuthToken(params.account);
-  const client = twilio(params.account.accountSid, authToken);
+  const { accountSid, authToken } = resolveCredentials(params.account);
+  const client = twilio(accountSid, authToken);
 
   const escaped = params.sayText
     .replace(/&/g, "&amp;")
@@ -181,8 +208,10 @@ export async function resolveAccountFromWebhook(params: {
 
   for (const account of candidates) {
     try {
-      const token = resolveAuthToken(account);
-      if (validateRequest(token, params.signature, params.url, params.params)) {
+      const { authToken } = resolveCredentials(account);
+      if (
+        validateRequest(authToken, params.signature, params.url, params.params)
+      ) {
         return account;
       }
     } catch {
