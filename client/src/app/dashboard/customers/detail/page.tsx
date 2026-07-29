@@ -3,10 +3,11 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ClipboardList, GitMerge, ScrollText } from "lucide-react";
+import { ArrowLeft, Check, ClipboardList, GitMerge, Loader2, Pencil, ScrollText, X } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ContactCard from "@/components/customers/ContactCard";
 import CommunicationHistoryPanel from "@/components/customers/CommunicationHistoryPanel";
+import CustomerThreadsPanel from "@/components/customers/CustomerThreadsPanel";
 import CustomerAddressesPanel, {
   addressesSectionTitle,
   formatAddressLabel,
@@ -18,12 +19,15 @@ import {
   getCustomer,
   getWorkOrdersForCustomer,
   getContractsForCustomer,
+  createInvoice,
+  createInvoicePayLink,
+  updateCustomer,
   CustomerDetail,
   WorkOrderListItem,
   ContractListItem,
   ApiError,
 } from "@/lib/api";
-import { formatCustomerName } from "@/lib/formatName";
+import { formatCustomerRecordName } from "@/lib/formatName";
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -35,6 +39,71 @@ function formatCurrency(amount: number): string {
 function formatDate(date: string | null): string {
   if (!date) return "—";
   return new Date(date).toLocaleDateString();
+}
+
+function WorkOrderInvoiceButton({
+  token,
+  workOrderId,
+}: {
+  token: string;
+  workOrderId: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function handleClick() {
+    setBusy(true);
+    setMessage(null);
+    try {
+      let invoiceId: string;
+      try {
+        const { invoice } = await createInvoice(token, {
+          sourceType: "work_order",
+          workOrderRef: workOrderId,
+        });
+        invoiceId = invoice._id;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          const { getInvoices } = await import("@/lib/api");
+          const { invoices } = await getInvoices(token, {
+            workOrderRef: workOrderId,
+            status: "open",
+          });
+          if (!invoices[0]) throw err;
+          invoiceId = invoices[0]._id;
+        } else {
+          throw err;
+        }
+      }
+      const { payUrl } = await createInvoicePayLink(token, invoiceId);
+      await navigator.clipboard?.writeText(payUrl);
+      setMessage("Pay link copied");
+    } catch (err) {
+      setMessage(
+        err instanceof ApiError ? err.message : "Failed to create invoice",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="text-right">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={handleClick}
+        className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
+      >
+        {busy ? "…" : "Invoice & link"}
+      </button>
+      {message ? (
+        <div className="mt-1 text-[10px] text-neutral-500 max-w-[10rem] truncate">
+          {message}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function StatusBadge({ label, active }: { label: string; active: boolean }) {
@@ -68,6 +137,10 @@ function CustomerDetailContent() {
   const [error, setError] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeToast, setMergeToast] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user?.role === "customer") {
@@ -162,8 +235,95 @@ function CustomerDetailContent() {
             Back to Customers
           </Link>
           <h1 className="mt-4 text-2xl font-bold text-brand-dark">
-            {formatCustomerName(customer.first, customer.last)}
+            {editingName ? (
+              <span className="flex flex-wrap items-center gap-2">
+                <input
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  className="rounded-md border border-neutral-200 px-3 py-1.5 text-xl font-bold outline-none focus:border-brand-orange"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  disabled={savingName}
+                  onClick={async () => {
+                    if (!token || !customer) return;
+                    setSavingName(true);
+                    setNameError(null);
+                    try {
+                      const { customer: updated } = await updateCustomer(
+                        token,
+                        customer._id,
+                        { accountName: nameDraft.trim() },
+                      );
+                      setCustomer((c) =>
+                        c
+                          ? {
+                              ...c,
+                              accountName: updated.accountName ?? nameDraft.trim(),
+                            }
+                          : c,
+                      );
+                      setEditingName(false);
+                    } catch (err) {
+                      setNameError(
+                        err instanceof ApiError
+                          ? err.message
+                          : "Failed to update account name.",
+                      );
+                    } finally {
+                      setSavingName(false);
+                    }
+                  }}
+                  className="rounded-md bg-brand-dark p-1.5 text-white hover:bg-brand-dark/90 disabled:opacity-60"
+                  aria-label="Save account name"
+                >
+                  {savingName ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="h-4 w-4" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  disabled={savingName}
+                  onClick={() => {
+                    setEditingName(false);
+                    setNameError(null);
+                  }}
+                  className="rounded-md border border-neutral-200 p-1.5 text-neutral-600 hover:bg-neutral-50"
+                  aria-label="Cancel"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-2">
+                {formatCustomerRecordName(customer)}
+                {canWrite ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNameDraft(
+                        customer.accountName?.trim() ||
+                          formatCustomerRecordName(customer),
+                      );
+                      setEditingName(true);
+                      setNameError(null);
+                    }}
+                    className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark"
+                    aria-label="Edit account name"
+                    title="Edit account name"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                ) : null}
+              </span>
+            )}
           </h1>
+          {nameError ? (
+            <p className="mt-1 text-sm text-red-600">{nameError}</p>
+          ) : null}
           <p className="mt-1 text-sm text-neutral-500">
             Customer details, addresses, and work order history
           </p>
@@ -215,6 +375,12 @@ function CustomerDetailContent() {
           />
         </div>
       </div>
+
+      <CustomerThreadsPanel
+        customerId={customer._id}
+        contacts={customer.contacts ?? []}
+        token={token!}
+      />
 
       <CommunicationHistoryPanel
         customerId={customer._id}
@@ -309,6 +475,9 @@ function CustomerDetailContent() {
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Status
                     </th>
+                    <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Billing
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100 bg-white">
@@ -339,6 +508,16 @@ function CustomerDetailContent() {
                             active={order.completed}
                           />
                         </div>
+                      </td>
+                      <td className="px-6 py-4 text-right whitespace-nowrap">
+                        {!order.paid && order.total > 0 && token ? (
+                          <WorkOrderInvoiceButton
+                            token={token}
+                            workOrderId={order._id}
+                          />
+                        ) : (
+                          <span className="text-xs text-neutral-400">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}

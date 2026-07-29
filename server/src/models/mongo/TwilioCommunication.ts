@@ -29,6 +29,7 @@ export interface ITwilioCommunication extends Document {
   twilioSid?: string | null;
   customerRef?: Types.ObjectId | null;
   contactRef?: Types.ObjectId | null;
+  threadRef?: Types.ObjectId | null;
   templateRef?: Types.ObjectId | null;
   createdByUserRef?: Types.ObjectId | null;
   errorMessage?: string | null;
@@ -99,6 +100,11 @@ const twilioCommunicationSchema = new Schema<ITwilioCommunication>(
       default: null,
       index: true,
     },
+    threadRef: {
+      type: Schema.Types.ObjectId,
+      ref: "MessageThread",
+      default: null,
+    },
     templateRef: {
       type: Schema.Types.ObjectId,
       ref: "MessageTemplate",
@@ -128,6 +134,7 @@ twilioCommunicationSchema.index(
 twilioCommunicationSchema.index({ customerRef: 1, createdAt: -1 });
 twilioCommunicationSchema.index({ contactRef: 1, createdAt: -1 });
 twilioCommunicationSchema.index({ fromNumber: 1, toNumber: 1, createdAt: -1 });
+twilioCommunicationSchema.index({ threadRef: 1, createdAt: 1 });
 
 export const TwilioCommunication = mongoose.model<ITwilioCommunication>(
   "TwilioCommunication",

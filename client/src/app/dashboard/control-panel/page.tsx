@@ -3,9 +3,9 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
-import ContractsCard from "@/components/control-panel/ContractsCard";
 import TwilioAccountsCard from "@/components/control-panel/TwilioAccountsCard";
 import GoogleCredentialsCard from "@/components/control-panel/GoogleCredentialsCard";
+import PaymentProvidersCard from "@/components/control-panel/PaymentProvidersCard";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const ADMIN_ROLES = ["admin", "super-admin", "owner"];
@@ -41,7 +41,7 @@ function ControlPanelContent() {
         </p>
       </div>
 
-      <ContractsCard />
+      <PaymentProvidersCard />
       <TwilioAccountsCard />
       <GoogleCredentialsCard />
     </div>

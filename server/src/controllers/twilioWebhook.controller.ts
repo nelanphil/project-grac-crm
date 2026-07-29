@@ -6,6 +6,8 @@ import {
   mapTwilioMessageStatus,
 } from "../utils/communicationFormat";
 import { resolveAccountFromWebhook } from "../services/twilio.service";
+import { resolveThreadForInbound, touchThreadAfterMessage } from "../utils/messageThreads";
+import { toE164 } from "../utils/messagingContext";
 
 function asStringRecord(body: unknown): Record<string, string> {
   const out: Record<string, string> = {};
@@ -76,7 +78,20 @@ export async function inboundMessageWebhook(
     const channel = mediaUrls.length > 0 ? "mms" : "sms";
     const matched = fromNumber ? await findContactByPhone(fromNumber) : null;
 
-    await TwilioCommunication.findOneAndUpdate(
+    let threadRef = null;
+    if (matched) {
+      const ourNumber = toE164(toNumber) ?? toNumber;
+      const thread = await resolveThreadForInbound({
+        contactRef: matched.contactRef,
+        customerRef: matched.customerRef,
+        twilioAccountRef: account._id,
+        accountSid: account.accountSid,
+        ourNumber,
+      });
+      threadRef = thread._id;
+    }
+
+    const doc = await TwilioCommunication.findOneAndUpdate(
       { accountSid: account.accountSid, twilioSid },
       {
         $set: {
@@ -91,6 +106,7 @@ export async function inboundMessageWebhook(
           mediaUrls,
           customerRef: matched?.customerRef ?? null,
           contactRef: matched?.contactRef ?? null,
+          threadRef,
           rawStatus: params.SmsStatus || params.MessageStatus || "received",
         },
         $setOnInsert: {
@@ -99,6 +115,15 @@ export async function inboundMessageWebhook(
       },
       { upsert: true, new: true },
     );
+
+    if (threadRef) {
+      await touchThreadAfterMessage(threadRef, {
+        direction: "inbound",
+        channel,
+        body,
+        at: doc?.createdAt ?? new Date(),
+      });
+    }
 
     res.status(200).type("text/xml").send(EMPTY_TWIML);
   } catch (err) {

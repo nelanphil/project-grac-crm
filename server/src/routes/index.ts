@@ -14,6 +14,9 @@ import googleCredentialsRoutes from "./googleCredentials.routes";
 import notificationRoutes from "./notification.routes";
 import messageTemplateRoutes from "./messageTemplate.routes";
 import messagingRoutes from "./messaging.routes";
+import paymentProviderAccountRoutes from "./paymentProviderAccount.routes";
+import invoiceRoutes from "./invoice.routes";
+import payLinkRoutes from "./payLink.routes";
 
 const router = Router();
 
@@ -38,5 +41,8 @@ router.use("/google-credentials", googleCredentialsRoutes);
 router.use("/message-templates", messageTemplateRoutes);
 router.use("/messaging", messagingRoutes);
 router.use("/notifications", notificationRoutes);
+router.use("/payment-provider-accounts", paymentProviderAccountRoutes);
+router.use("/invoices", invoiceRoutes);
+router.use("/pay", payLinkRoutes);
 
 export default router;

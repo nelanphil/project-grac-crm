@@ -3,6 +3,8 @@ import mongoose, { Schema, Document, Types } from "mongoose";
 export interface ICustomer extends Document {
   legacyId: number;
   userId: number;
+  /** Durable customer record name; independent of primary-contact sync. */
+  accountName: string;
   first: string;
   last: string;
   /** Denormalized primary site — kept in sync with primary CustomerAddress. */
@@ -34,6 +36,7 @@ const customerSchema = new Schema<ICustomer>(
   {
     legacyId: { type: Number, index: true },
     userId: { type: Number, index: true },
+    accountName: { type: String, default: "", index: true },
     first: { type: String, default: "" },
     last: { type: String, default: "" },
     address: { type: String, default: "" },

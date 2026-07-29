@@ -7,6 +7,7 @@ import { ArrowLeft } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import CustomerNotesPanel from "@/components/customers/CustomerNotesPanel";
 import { useAuthStore } from "@/store/useAuthStore";
+import { formatCustomerRecordName } from "@/lib/formatName";
 import { ApiError, CustomerDetail, getCustomer } from "@/lib/api";
 
 function CustomerNotesContent() {
@@ -76,13 +77,13 @@ function CustomerNotesContent() {
           className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to {customer.first} {customer.last}
+          Back to {formatCustomerRecordName(customer) || "Customer"}
         </Link>
         <h1 className="mt-4 text-2xl font-bold text-brand-dark">
           Customer Notes
         </h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Notes for {customer.first} {customer.last}
+          Notes for {formatCustomerRecordName(customer) || "Customer"}
         </p>
       </div>
 

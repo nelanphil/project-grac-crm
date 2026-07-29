@@ -309,6 +309,7 @@ export interface CustomerContractBadge {
 export interface CustomerListItem {
   _id: string;
   legacyId: number;
+  accountName?: string;
   first: string;
   last: string;
   email: string;
@@ -326,9 +327,42 @@ export interface CustomerListItem {
   contracts?: CustomerContractBadge[];
 }
 
+export interface CreateCustomerContactInput {
+  first?: string;
+  last?: string;
+  phone?: string;
+  email?: string;
+  label?: string;
+  isPrimary?: boolean;
+}
+
+export interface CreateCustomerEquipmentInput {
+  generatorModel?: string;
+  serial?: string;
+  atsSerial?: string;
+  lastSvc?: string | null;
+  exday?: string;
+  extime?: string;
+}
+
+export interface CreateCustomerAddressInput {
+  label?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  isPrimary?: boolean;
+  propertyType?: CustomerAddressPropertyType;
+  equipment?: CreateCustomerEquipmentInput[];
+}
+
 export interface CreateCustomerInput {
-  first: string;
-  last: string;
+  accountName?: string;
+  contacts: CreateCustomerContactInput[];
+  addresses?: CreateCustomerAddressInput[];
+  /** @deprecated Flat-shape fields — server still accepts them for compat. */
+  first?: string;
+  last?: string;
   phone?: string;
   email?: string;
   address?: string;
@@ -388,6 +422,18 @@ export async function createCustomer(
 ): Promise<{ customer: CustomerListItem }> {
   return authRequest<{ customer: CustomerListItem }>("/customers", {
     method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateCustomer(
+  token: string,
+  id: string,
+  body: { accountName: string },
+): Promise<{ customer: CustomerListItem }> {
+  return authRequest<{ customer: CustomerListItem }>(`/customers/${id}`, {
+    method: "PATCH",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
@@ -459,6 +505,7 @@ export async function restoreCustomer(
 export interface CustomerDetail {
   _id: string;
   legacyId: number;
+  accountName?: string;
   first: string;
   last: string;
   address: string;
@@ -491,6 +538,7 @@ export async function getCustomer(
 export interface CustomerDuplicateMatch {
   _id: string;
   legacyId: number;
+  accountName?: string;
   first: string;
   last: string;
   phone: string;
@@ -560,6 +608,7 @@ export interface MergePreview {
   survivor: {
     _id: string;
     legacyId: number;
+    accountName?: string;
     first: string;
     last: string;
     phone: string;
@@ -568,6 +617,7 @@ export interface MergePreview {
   source: {
     _id: string;
     legacyId: number;
+    accountName?: string;
     first: string;
     last: string;
     phone: string;
@@ -919,6 +969,7 @@ export interface ContractListItem {
   equipment?: ContractEquipmentSummary | null;
   customer: {
     _id: string;
+    accountName?: string;
     first: string;
     last: string;
     address: string;
@@ -1035,6 +1086,147 @@ export async function deleteContract(token: string, id: string): Promise<void> {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Invoices
+// ---------------------------------------------------------------------------
+
+export type InvoiceSourceType =
+  | "contract_renewal"
+  | "contract_initial"
+  | "work_order";
+
+export type InvoiceStatus = "draft" | "open" | "paid" | "void" | "failed";
+
+export interface InvoiceLineItem {
+  description: string;
+  amountCents: number;
+}
+
+export interface InvoiceItem {
+  _id: string;
+  number: string;
+  customerId: number;
+  customerRef: string | null;
+  sourceType: InvoiceSourceType;
+  contractRef: string | null;
+  workOrderRef: string | null;
+  templateRef: string | null;
+  lineItems: InvoiceLineItem[];
+  amountCents: number;
+  currency: string;
+  status: InvoiceStatus;
+  dueDate: string | null;
+  issuedAt: string;
+  paidAt: string | null;
+  paymentProvider: "square" | "stripe" | "paypal" | null;
+  providerCheckoutId: string | null;
+  providerOrderId: string | null;
+  providerPaymentId: string | null;
+  hasPayLink: boolean;
+  payTokenExpiresAt: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateInvoiceInput {
+  sourceType: InvoiceSourceType;
+  contractRef?: string;
+  workOrderRef?: string;
+  amountCents?: number;
+  description?: string;
+  dueDate?: string;
+}
+
+export async function getInvoices(
+  token: string,
+  params?: {
+    status?: string;
+    customerRef?: string;
+    contractRef?: string;
+    workOrderRef?: string;
+  },
+): Promise<{ invoices: InvoiceItem[] }> {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.customerRef) qs.set("customerRef", params.customerRef);
+  if (params?.contractRef) qs.set("contractRef", params.contractRef);
+  if (params?.workOrderRef) qs.set("workOrderRef", params.workOrderRef);
+  const q = qs.toString();
+  return authRequest<{ invoices: InvoiceItem[] }>(
+    `/invoices${q ? `?${q}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function getInvoice(
+  token: string,
+  id: string,
+): Promise<{ invoice: InvoiceItem }> {
+  return authRequest<{ invoice: InvoiceItem }>(`/invoices/${id}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createInvoice(
+  token: string,
+  data: CreateInvoiceInput,
+): Promise<{ invoice: InvoiceItem }> {
+  return authRequest<{ invoice: InvoiceItem }>("/invoices", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function startInvoiceCheckout(
+  token: string,
+  id: string,
+): Promise<{ url: string; invoice: InvoiceItem }> {
+  return authRequest<{ url: string; invoice: InvoiceItem }>(
+    `/invoices/${id}/checkout`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function createInvoicePayLink(
+  token: string,
+  id: string,
+): Promise<{ payUrl: string; expiresAt: string; invoice: InvoiceItem }> {
+  return authRequest<{
+    payUrl: string;
+    expiresAt: string;
+    invoice: InvoiceItem;
+  }>(`/invoices/${id}/pay-link`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getInvoiceByPayToken(
+  token: string,
+): Promise<{ invoice: InvoiceItem }> {
+  return authRequest<{ invoice: InvoiceItem }>(`/pay/${token}`, {
+    method: "GET",
+  });
+}
+
+export async function startCheckoutByPayToken(
+  token: string,
+): Promise<{ url: string; invoice: InvoiceItem }> {
+  return authRequest<{ url: string; invoice: InvoiceItem }>(
+    `/pay/${token}/checkout`,
+    { method: "POST" },
+  );
 }
 
 export async function updateUserRole(
@@ -1208,6 +1400,108 @@ export async function deleteTwilioAccount(
 }
 
 // ---------------------------------------------------------------------------
+// Payment provider accounts (Control Panel)
+// ---------------------------------------------------------------------------
+
+export type PaymentProviderName = "square" | "stripe" | "paypal";
+
+export interface PaymentProviderAccountItem {
+  _id: string;
+  provider: PaymentProviderName;
+  friendlyName: string;
+  environment: "sandbox" | "production";
+  isActive: boolean;
+  isDefault: boolean;
+  applicationId: string | null;
+  locationId: string | null;
+  publishableKey: string | null;
+  clientId: string | null;
+  hasAccessToken: boolean;
+  hasWebhookSignatureKey: boolean;
+  hasSecretKey: boolean;
+  hasWebhookSecret: boolean;
+  hasClientSecret: boolean;
+  hasWebhookId: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentProviderAccountInput {
+  provider: PaymentProviderName;
+  friendlyName: string;
+  environment?: "sandbox" | "production";
+  isActive?: boolean;
+  isDefault?: boolean;
+  applicationId?: string;
+  locationId?: string;
+  publishableKey?: string;
+  clientId?: string;
+  accessToken?: string;
+  webhookSignatureKey?: string;
+  secretKey?: string;
+  webhookSecret?: string;
+  clientSecret?: string;
+  webhookId?: string;
+}
+
+export async function getPaymentProviderAccounts(
+  token: string,
+): Promise<{
+  accounts: PaymentProviderAccountItem[];
+  webhooks: Record<string, string>;
+}> {
+  return authRequest<{
+    accounts: PaymentProviderAccountItem[];
+    webhooks: Record<string, string>;
+  }>("/payment-provider-accounts", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createPaymentProviderAccount(
+  token: string,
+  data: PaymentProviderAccountInput,
+): Promise<{ account: PaymentProviderAccountItem }> {
+  return authRequest<{ account: PaymentProviderAccountItem }>(
+    "/payment-provider-accounts",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function updatePaymentProviderAccount(
+  token: string,
+  id: string,
+  data: Partial<PaymentProviderAccountInput>,
+): Promise<{ account: PaymentProviderAccountItem }> {
+  return authRequest<{ account: PaymentProviderAccountItem }>(
+    `/payment-provider-accounts/${id}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deletePaymentProviderAccount(
+  token: string,
+  id: string,
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>(
+    `/payment-provider-accounts/${id}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Google credentials (Control Panel)
 // ---------------------------------------------------------------------------
 
@@ -1300,6 +1594,7 @@ export interface MessagingContactItem {
   customerRef: string;
   customer: {
     _id: string;
+    accountName?: string;
     first: string;
     last: string;
     address: string;
@@ -1322,6 +1617,7 @@ export interface MessagingSendResultItem {
   contactId: string;
   status: "sent" | "failed";
   twilioSid?: string;
+  threadId?: string;
   error?: string;
 }
 
@@ -1353,6 +1649,7 @@ export interface TwilioCommunicationItem {
   twilioSid: string | null;
   customerRef: string | null;
   contactRef: string | null;
+  threadRef: string | null;
   templateRef: string | null;
   createdByUserRef: string | null;
   errorMessage: string | null;
@@ -1360,8 +1657,26 @@ export interface TwilioCommunicationItem {
   updatedAt: string;
 }
 
-export interface MessagingConversationItem {
-  contactId: string;
+export type MessageThreadStatus = "open" | "closed";
+
+export interface MessageThreadItem {
+  _id: string;
+  contactRef: string;
+  customerRef: string | null;
+  twilioAccountRef: string;
+  accountSid: string;
+  accountFriendlyName: string | null;
+  ourNumber: string;
+  contactPhoneSnapshot: string;
+  status: MessageThreadStatus;
+  startedByUserRef: string | null;
+  closedAt: string | null;
+  closedByUserRef: string | null;
+  lastMessageAt: string | null;
+  lastMessageDirection: CommunicationDirection | null;
+  lastMessageChannel: CommunicationChannel | null;
+  lastMessagePreview: string;
+  messageCount: number;
   contact: {
     _id: string;
     first: string;
@@ -1369,10 +1684,20 @@ export interface MessagingConversationItem {
     phone: string;
     label: string;
     customerRef: string;
-  };
-  customer: { _id: string; first: string; last: string } | null;
-  lastMessage: TwilioCommunicationItem;
-  messageCount: number;
+  } | null;
+  customer: { _id: string; accountName?: string; first: string; last: string } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MessageThreadDetail {
+  thread: MessageThreadItem;
+  messages: TwilioCommunicationItem[];
+}
+
+export interface ThreadConflictCheck {
+  hasOpenThread: boolean;
+  openThread: MessageThreadItem | null;
 }
 
 export interface MessagingWebhookInfo {
@@ -1504,6 +1829,7 @@ export async function sendMessagingMessages(
     contactIds: string[];
     body?: string;
     templateId?: string;
+    threadId?: string;
     twilioAccountId?: string;
     fromNumber?: string;
     mediaUrls?: string[];
@@ -1584,17 +1910,67 @@ export async function getMessagingCommunications(
   });
 }
 
-export async function getMessagingConversations(
+export async function getMessagingThreads(
   token: string,
-  options?: { twilioAccountId?: string },
-): Promise<{ conversations: MessagingConversationItem[] }> {
+  options?: {
+    twilioAccountId?: string;
+    customerId?: string;
+    contactId?: string;
+    status?: MessageThreadStatus;
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  threads: MessageThreadItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
   const params = new URLSearchParams();
   if (options?.twilioAccountId) {
     params.set("twilioAccountId", options.twilioAccountId);
   }
+  if (options?.customerId) params.set("customerId", options.customerId);
+  if (options?.contactId) params.set("contactId", options.contactId);
+  if (options?.status) params.set("status", options.status);
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
   const qs = params.toString();
-  return authRequest<{ conversations: MessagingConversationItem[] }>(
-    `/messaging/conversations${qs ? `?${qs}` : ""}`,
+  return authRequest<{
+    threads: MessageThreadItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/messaging/threads${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getMessagingThreadDetail(
+  token: string,
+  threadId: string,
+): Promise<MessageThreadDetail> {
+  return authRequest<MessageThreadDetail>(`/messaging/threads/${threadId}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function checkMessagingThreadConflict(
+  token: string,
+  options: { contactId: string; fromNumber: string; excludeThreadId?: string },
+): Promise<ThreadConflictCheck> {
+  const params = new URLSearchParams();
+  params.set("contactId", options.contactId);
+  params.set("fromNumber", options.fromNumber);
+  if (options.excludeThreadId) {
+    params.set("excludeThreadId", options.excludeThreadId);
+  }
+  return authRequest<ThreadConflictCheck>(
+    `/messaging/threads/check-conflict?${params.toString()}`,
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
@@ -1602,46 +1978,18 @@ export async function getMessagingConversations(
   );
 }
 
-export async function getMessagingConversationThread(
+export async function closeMessagingThread(
   token: string,
-  contactId: string,
-  options?: { twilioAccountId?: string },
-): Promise<{
-  contact: {
-    _id: string;
-    first: string;
-    last: string;
-    phone: string;
-    email: string;
-    label: string;
-    isPrimary: boolean;
-    customerRef: string;
-  };
-  customer: { _id: string; first: string; last: string } | null;
-  messages: TwilioCommunicationItem[];
-}> {
-  const params = new URLSearchParams();
-  if (options?.twilioAccountId) {
-    params.set("twilioAccountId", options.twilioAccountId);
-  }
-  const qs = params.toString();
-  return authRequest<{
-    contact: {
-      _id: string;
-      first: string;
-      last: string;
-      phone: string;
-      email: string;
-      label: string;
-      isPrimary: boolean;
-      customerRef: string;
-    };
-    customer: { _id: string; first: string; last: string } | null;
-    messages: TwilioCommunicationItem[];
-  }>(`/messaging/conversations/${contactId}${qs ? `?${qs}` : ""}`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  threadId: string,
+): Promise<{ thread: MessageThreadItem }> {
+  return authRequest<{ thread: MessageThreadItem }>(
+    `/messaging/threads/${threadId}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status: "closed" }),
+    },
+  );
 }
 
 export async function getMessagingWebhookInfo(
@@ -1763,7 +2111,9 @@ export type NotificationEntityType =
   | "twilio_account"
   | "contract_template"
   | "lead"
-  | "google_credentials";
+  | "google_credentials"
+  | "payment_provider_account"
+  | "invoice";
 
 export type NotificationAction =
   | "created"

@@ -18,7 +18,7 @@ import {
 } from "@/lib/contractDates";
 import { formatContractCatalogLabel } from "@/lib/contractTypes";
 import {
-  formatCustomerName,
+  formatCustomerRecordName,
   formatCustomerState,
   toProperCase,
 } from "@/lib/formatName";
@@ -502,10 +502,7 @@ export default function UpcomingRenewalsTable() {
                     >
                       <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
                         {contract.customer
-                          ? formatCustomerName(
-                              contract.customer.first,
-                              contract.customer.last,
-                            )
+                          ? formatCustomerRecordName(contract.customer)
                           : `Customer #${contract.customerId}`}
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">

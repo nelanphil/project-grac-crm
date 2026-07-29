@@ -13,7 +13,7 @@ import {
   formatContractCatalogLabel,
   getContractTypeStyle,
 } from "@/lib/contractTypes";
-import { formatCustomerName } from "@/lib/formatName";
+import { formatCustomerRecordName } from "@/lib/formatName";
 import LucideIconByName from "@/components/icons/LucideIconByName";
 import { formatAddressLabel } from "@/components/customers/CustomerAddressesPanel";
 import { ContractEquipmentSummary } from "@/lib/api";
@@ -80,10 +80,7 @@ function ContractRow({
               href={`/dashboard/customers/detail?id=${contract.customer._id}`}
               className="font-medium text-brand-dark hover:text-brand-orange transition-colors"
             >
-              {formatCustomerName(
-                contract.customer.first,
-                contract.customer.last,
-              )}
+              {formatCustomerRecordName(contract.customer)}
             </Link>
           ) : (
             <span className="text-neutral-400">Unknown customer</span>

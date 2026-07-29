@@ -22,6 +22,7 @@ import {
   mergeCustomers,
   restoreCustomer,
   softDeleteCustomer,
+  updateCustomer,
   updateCustomerAddress,
   updateCustomerContact,
   updateEquipment,
@@ -145,7 +146,8 @@ router.post("/:id/merge", requirePermission("customers:write"), mergeCustomers);
 router.post("/:id/restore", adminRoles, restoreCustomer);
 router.delete("/:id", adminRoles, softDeleteCustomer);
 
-// Detail (must be last among /:id routes that are exact)
+// Detail + account name update
+router.patch("/:id", requirePermission("customers:write"), updateCustomer);
 router.get("/:id", requirePermission("customers:read"), getCustomerById);
 
 export default router;

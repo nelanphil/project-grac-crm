@@ -137,6 +137,7 @@ export function toPublicCommunication(
     twilioSid: d.twilioSid ?? null,
     customerRef: d.customerRef ? String(d.customerRef) : null,
     contactRef: d.contactRef ? String(d.contactRef) : null,
+    threadRef: d.threadRef ? String(d.threadRef) : null,
     templateRef: d.templateRef ? String(d.templateRef) : null,
     createdByUserRef: d.createdByUserRef ? String(d.createdByUserRef) : null,
     errorMessage: d.errorMessage ?? null,

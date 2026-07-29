@@ -29,6 +29,13 @@ function resolveMongoUri(): string {
 export const env = {
   port: parseInt(process.env.PORT || "4009", 10),
   clientUrl: process.env.CLIENT_URL || "http://localhost:3009",
+  publicApiUrl:
+    process.env.PUBLIC_API_URL ||
+    `http://localhost:${process.env.PORT || "4009"}`,
+  renewalInvoiceLeadDays: parseInt(
+    process.env.RENEWAL_INVOICE_LEAD_DAYS || "30",
+    10,
+  ),
   mongodbUri: resolveMongoUri(),
   jwt: {
     secret: process.env.JWT_SECRET || "dev-secret-change-in-production",

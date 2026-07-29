@@ -21,7 +21,7 @@ import {
   STANDING_STYLES,
   formatDateOnly,
 } from "@/lib/contractDates";
-import { formatCustomerName } from "@/lib/formatName";
+import { formatCustomerName, formatCustomerRecordName } from "@/lib/formatName";
 
 function formatPhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
@@ -298,7 +298,7 @@ export default function MergeCustomersDialog({
   const filtered = allCustomers
     .filter((c) => {
       if (!q) return false;
-      const name = `${c.first} ${c.last}`.toLowerCase();
+      const name = formatCustomerRecordName(c).toLowerCase();
       const phone = c.phone.replace(/\D/g, "");
       const addr = [c.address, c.city, c.state, c.zip].join(" ").toLowerCase();
       return (
@@ -352,7 +352,7 @@ export default function MergeCustomersDialog({
               id="merge-customers-title"
               className="text-lg font-semibold text-brand-dark"
             >
-              Merge into {formatCustomerName(survivor.first, survivor.last)}
+              Merge into {formatCustomerRecordName(survivor)}
             </h2>
           </div>
           <button
@@ -403,7 +403,7 @@ export default function MergeCustomersDialog({
                           }`}
                         >
                           <div className="font-medium text-brand-dark">
-                            {formatCustomerName(c.first, c.last)}
+                            {formatCustomerRecordName(c)}
                           </div>
                           <div className="text-xs text-neutral-500">
                             {formatAddressLine(c)}
@@ -440,7 +440,7 @@ export default function MergeCustomersDialog({
                           }`}
                         >
                           <div className="font-medium text-brand-dark">
-                            {formatCustomerName(c.first, c.last)}
+                            {formatCustomerRecordName(c)}
                           </div>
                           <div className="text-xs text-neutral-500">
                             {formatAddressLine(c)}
@@ -470,16 +470,14 @@ export default function MergeCustomersDialog({
                     <p className="mt-1 text-sm text-brand-dark">
                       Merging{" "}
                       <span className="font-medium">
-                        {formatCustomerName(
-                          preview.source.first,
-                          preview.source.last,
+                        {formatCustomerRecordName(
+                          preview.source,
                         )}
                       </span>{" "}
                       into{" "}
                       <span className="font-medium">
-                        {formatCustomerName(
-                          preview.survivor.first,
-                          preview.survivor.last,
+                        {formatCustomerRecordName(
+                          preview.survivor,
                         )}
                       </span>
                     </p>

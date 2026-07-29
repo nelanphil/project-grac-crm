@@ -26,9 +26,10 @@ export const messagingPreviewSchema = z.object({
 
 export const messagingSendSchema = z
   .object({
-    contactIds: z.array(z.string().trim().min(1)).min(1).max(100),
+    contactIds: z.array(z.string().trim().min(1)).min(1).max(200),
     body: z.string().max(1600).optional(),
     templateId: z.string().trim().min(1).optional(),
+    threadId: z.string().trim().min(1).optional(),
     twilioAccountId: z.string().trim().min(1).optional(),
     fromNumber: z.string().trim().min(1).optional(),
     mediaUrls: z
@@ -51,7 +52,11 @@ export const messagingSendSchema = z
       message: "Both renewalYear and renewalMonth are required together",
       path: ["renewalMonth"],
     },
-  );
+  )
+  .refine((data) => !data.threadId || data.contactIds.length === 1, {
+    message: "threadId can only be used when sending to a single contact",
+    path: ["threadId"],
+  });
 
 export const messagingCallSchema = z.object({
   contactId: z.string().trim().min(1),

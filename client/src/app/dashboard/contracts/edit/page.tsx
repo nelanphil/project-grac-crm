@@ -24,6 +24,8 @@ import {
 } from "@/lib/contractDates";
 import { formatAddressLabel } from "@/components/customers/CustomerAddressesPanel";
 import { formatEquipmentLabel } from "@/components/contracts/ServiceContractsTable";
+import InvoiceBillingPanel from "@/components/billing/InvoiceBillingPanel";
+import { formatCustomerRecordName } from "@/lib/formatName";
 
 function toInputDate(date: string | null): string {
   if (!date) return "";
@@ -262,7 +264,7 @@ function EditContractContent() {
   }
 
   const customerName = contract.customer
-    ? `${contract.customer.first} ${contract.customer.last}`
+    ? formatCustomerRecordName(contract.customer)
     : "Unknown customer";
   const standing = contract.standing ?? "expired";
 
@@ -588,6 +590,15 @@ function EditContractContent() {
           {renewing ? "Recording…" : "Record Renewal"}
         </button>
       </form>
+
+      {contract && token ? (
+        <InvoiceBillingPanel
+          token={token}
+          sourceType="contract_renewal"
+          contractRef={contract._id}
+          title="Renewal invoice"
+        />
+      ) : null}
 
       {(contract.renewals?.length ?? 0) > 0 && (
         <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-4">

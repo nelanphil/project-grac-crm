@@ -11,8 +11,10 @@ import {
   sendMessages,
   placeCall,
   listCommunications,
-  listConversations,
-  getConversationThread,
+  listThreads,
+  getThreadDetail,
+  checkThreadConflict,
+  closeThreadEndpoint,
   getWebhookInfo,
 } from "../controllers/messaging.controller";
 
@@ -30,15 +32,21 @@ router.get(
   requirePermission("messages:read"),
   listCommunications,
 );
+router.get("/threads", requirePermission("messages:read"), listThreads);
 router.get(
-  "/conversations",
+  "/threads/check-conflict",
   requirePermission("messages:read"),
-  listConversations,
+  checkThreadConflict,
 );
 router.get(
-  "/conversations/:contactId",
+  "/threads/:threadId",
   requirePermission("messages:read"),
-  getConversationThread,
+  getThreadDetail,
+);
+router.patch(
+  "/threads/:threadId",
+  requirePermission("messages:write"),
+  closeThreadEndpoint,
 );
 router.get("/webhook-info", requirePermission("messages:read"), getWebhookInfo);
 router.post("/preview", requirePermission("messages:read"), previewMessage);

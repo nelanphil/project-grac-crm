@@ -14,6 +14,17 @@ export function formatCustomerName(
   return [toProperCase(first), toProperCase(last)].filter(Boolean).join(" ");
 }
 
+/** Prefer durable account name; fall back to primary-contact first/last. */
+export function formatCustomerRecordName(customer: {
+  accountName?: string | null;
+  first?: string | null;
+  last?: string | null;
+}): string {
+  const account = customer.accountName?.trim();
+  if (account) return account;
+  return formatCustomerName(customer.first, customer.last);
+}
+
 /** Normalizes state for display; defaults empty values to FL. */
 export function formatCustomerState(state: string | null | undefined): string {
   const normalized = state?.trim().toUpperCase() ?? "";

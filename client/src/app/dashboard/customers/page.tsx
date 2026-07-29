@@ -1,6 +1,7 @@
-"use client";
+﻿"use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
@@ -16,20 +17,16 @@ import LucideIconByName from "@/components/icons/LucideIconByName";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   getCustomers,
-  createCustomer,
   softDeleteCustomer,
   restoreCustomer,
-  validateCustomerAddress,
   CustomerListItem,
   CustomerContractBadge,
-  CreateCustomerInput,
-  ValidatedAddress,
   ApiError,
 } from "@/lib/api";
 import { STANDING_STYLES } from "@/lib/contractDates";
 import { formatContractType } from "@/lib/contractTypes";
 import {
-  formatCustomerName,
+  formatCustomerRecordName,
   formatCustomerState,
   toProperCase,
 } from "@/lib/formatName";
@@ -41,33 +38,13 @@ type SortKey = "customer" | "phone" | "street" | "city" | "state" | "zip";
 type SortDir = "asc" | "desc";
 type ListView = "active" | "deleted";
 
-const EMPTY_CREATE_FORM: CreateCustomerInput = {
-  first: "",
-  last: "",
-  phone: "",
-  email: "",
-  address: "",
-  city: "",
-  state: "",
-  zip: "",
-  propertyType: "residential",
-};
-
 function formatPhone(phone: string): string {
-  if (!phone) return "—";
+  if (!phone) return "â€”";
   const digits = phone.replace(/\D/g, "");
   if (digits.length === 10) {
     return `(${digits.slice(0, 3)})${digits.slice(3, 6)}-${digits.slice(6)}`;
   }
   return phone;
-}
-
-function formatPhoneInput(value: string): string {
-  const digits = value.replace(/\D/g, "").slice(0, 10);
-  if (digits.length === 0) return "";
-  if (digits.length < 4) return `(${digits}`;
-  if (digits.length < 7) return `(${digits.slice(0, 3)})${digits.slice(3)}`;
-  return `(${digits.slice(0, 3)})${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
 function CustomerContractBadges({
@@ -89,7 +66,7 @@ function CustomerContractBadges({
         return (
           <span
             key={contract._id}
-            title={`${label} · ${standing.replace("_", " ")}`}
+            title={`${label} Â· ${standing.replace("_", " ")}`}
             className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${
               isActive
                 ? STANDING_STYLES.active
@@ -170,7 +147,7 @@ function CustomersPagination({
       }`}
     >
       <p className="text-xs text-neutral-500">
-        Showing {rangeStart}–{rangeEnd} of {total}
+        Showing {rangeStart}â€“{rangeEnd} of {total}
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-xs text-neutral-500">
@@ -239,20 +216,6 @@ function CustomersContent() {
   const [sortKey, setSortKey] = useState<SortKey>("customer");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [refreshKey, setRefreshKey] = useState(0);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createForm, setCreateForm] =
-    useState<CreateCustomerInput>(EMPTY_CREATE_FORM);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [addressValidated, setAddressValidated] = useState(false);
-  const [validatingAddress, setValidatingAddress] = useState(false);
-  const [addressValidationMsg, setAddressValidationMsg] = useState<
-    string | null
-  >(null);
-  const [suggestedAddress, setSuggestedAddress] = useState<{
-    address: ValidatedAddress;
-    matchedAddress?: string;
-  } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
 
@@ -336,195 +299,9 @@ function CustomersContent() {
     refreshKey,
   ]);
 
-  function openCreate() {
-    setCreateForm(EMPTY_CREATE_FORM);
-    setCreateError(null);
-    setAddressValidated(false);
-    setAddressValidationMsg(null);
-    setSuggestedAddress(null);
-    setCreateOpen(true);
-  }
-
-  function closeCreate() {
-    if (creating || validatingAddress) return;
-    setCreateOpen(false);
-    setCreateError(null);
-    setAddressValidated(false);
-    setAddressValidationMsg(null);
-    setSuggestedAddress(null);
-  }
-
-  function updateCreateAddressField<K extends keyof CreateCustomerInput>(
-    key: K,
-    value: CreateCustomerInput[K],
-  ) {
-    setCreateForm((f) => ({ ...f, [key]: value }));
-    if (addressValidated || addressValidationMsg || suggestedAddress) {
-      setAddressValidated(false);
-      setAddressValidationMsg(null);
-      setSuggestedAddress(null);
-    }
-  }
-
-  async function handleValidateAddress() {
-    if (!token) return;
-    const street = createForm.address?.trim() || "";
-    if (!street) {
-      setAddressValidated(false);
-      setSuggestedAddress(null);
-      setAddressValidationMsg(null);
-      return;
-    }
-
-    const cityEntered = createForm.city?.trim() || "";
-    const stateEntered = createForm.state?.trim() || "";
-    const zipEntered = createForm.zip?.trim() || "";
-
-    setValidatingAddress(true);
-    setAddressValidationMsg(null);
-    try {
-      const result = await validateCustomerAddress(token, {
-        address: street,
-        city: cityEntered,
-        state: stateEntered,
-        zip: zipEntered,
-      });
-      if (!result.valid || !result.address) {
-        setAddressValidated(false);
-        setSuggestedAddress(null);
-        setAddressValidationMsg(
-          result.message || "Address could not be validated.",
-        );
-        return;
-      }
-
-      const matched = result.address;
-      const matchesEntered =
-        matched.address.trim().toLowerCase() === street.toLowerCase() &&
-        matched.city.trim().toLowerCase() === cityEntered.toLowerCase() &&
-        matched.state.trim().toLowerCase() === stateEntered.toLowerCase() &&
-        matched.zip.trim() === zipEntered;
-
-      if (matchesEntered) {
-        setAddressValidated(true);
-        setSuggestedAddress(null);
-        setAddressValidationMsg("Address verified.");
-      } else {
-        setAddressValidated(false);
-        setSuggestedAddress({
-          address: matched,
-          matchedAddress: result.matchedAddress,
-        });
-        setAddressValidationMsg(null);
-      }
-    } catch (err) {
-      setAddressValidated(false);
-      setSuggestedAddress(null);
-      setAddressValidationMsg(
-        err instanceof ApiError
-          ? err.message
-          : "Address validation failed. Try again.",
-      );
-    } finally {
-      setValidatingAddress(false);
-    }
-  }
-
-  function acceptSuggestedAddress() {
-    if (!suggestedAddress) return;
-    const { address } = suggestedAddress;
-    setCreateForm((f) => ({
-      ...f,
-      address: address.address,
-      city: address.city,
-      state: address.state,
-      zip: address.zip,
-    }));
-    setAddressValidated(true);
-    setAddressValidationMsg(
-      suggestedAddress.matchedAddress
-        ? `Matched: ${suggestedAddress.matchedAddress}`
-        : "Address validated.",
-    );
-    setSuggestedAddress(null);
-  }
-
-  function dismissSuggestedAddress() {
-    setAddressValidated(true);
-    setAddressValidationMsg("Using address as entered.");
-    setSuggestedAddress(null);
-  }
-
-  useEffect(() => {
-    if (!createOpen || !token) return;
-    const street = createForm.address?.trim() || "";
-    if (!street) return;
-    if (addressValidated || suggestedAddress) return;
-
-    const timer = setTimeout(() => {
-      void handleValidateAddress();
-    }, 700);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    createOpen,
-    token,
-    createForm.address,
-    createForm.city,
-    createForm.state,
-    createForm.zip,
-  ]);
-
-  async function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    if (!token) return;
-    const first = createForm.first.trim();
-    const last = createForm.last.trim();
-    if (!first && !last) {
-      setCreateError("First or last name is required.");
-      return;
-    }
-    if (!addressValidated) {
-      setCreateError("Validate the address before creating the customer.");
-      return;
-    }
-
-    setCreating(true);
-    setCreateError(null);
-    try {
-      const { customer } = await createCustomer(token, {
-        first,
-        last,
-        phone: createForm.phone?.trim() || "",
-        email: createForm.email?.trim() || "",
-        address: createForm.address?.trim() || "",
-        city: createForm.city?.trim() || "",
-        state: createForm.state?.trim() || "",
-        zip: createForm.zip?.trim() || "",
-        propertyType: createForm.propertyType ?? "residential",
-      });
-      setCreateOpen(false);
-      setCreateForm(EMPTY_CREATE_FORM);
-      setAddressValidated(false);
-      setAddressValidationMsg(null);
-      if (listView === "deleted") {
-        setListView("active");
-      }
-      setPage(1);
-      setRefreshKey((k) => k + 1);
-      router.push(`/dashboard/customers/detail?id=${customer._id}`);
-    } catch (err) {
-      setCreateError(
-        err instanceof ApiError ? err.message : "Failed to create customer.",
-      );
-    } finally {
-      setCreating(false);
-    }
-  }
-
   async function handleSoftDelete(customer: CustomerListItem) {
     if (!token) return;
-    const name = formatCustomerName(customer.first, customer.last);
+    const name = formatCustomerRecordName(customer) || "this customer";
     if (
       !window.confirm(
         `Soft-delete ${name}? They can be restored from the Deleted view.`,
@@ -567,7 +344,7 @@ function CustomersContent() {
 
   if (loading && customers.length === 0)
     return (
-      <div className="text-sm text-neutral-500 py-6">Loading customers…</div>
+      <div className="text-sm text-neutral-500 py-6">Loading customersâ€¦</div>
     );
   if (error) {
     return (
@@ -600,7 +377,7 @@ function CustomersContent() {
               onChange={(e) => {
                 setSearch(e.target.value);
               }}
-              placeholder="Search by name, location, or phone…"
+              placeholder="Search by name, location, or phoneâ€¦"
               className="w-full rounded-lg border border-neutral-200 bg-white py-2 pl-9 pr-3 text-sm text-brand-dark outline-none transition-colors placeholder:text-neutral-400 focus:border-brand-orange"
             />
           </div>
@@ -638,14 +415,13 @@ function CustomersContent() {
                   Deleted
                 </button>
               </div>
-              <button
-                type="button"
-                onClick={openCreate}
+              <Link
+                href="/dashboard/customers/create?returnTo=/dashboard/customers"
                 className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark/90"
               >
                 <Plus className="h-4 w-4" />
                 Add Customer
-              </button>
+              </Link>
             </>
           ) : null}
         </div>
@@ -763,7 +539,7 @@ function CustomersContent() {
                     >
                       <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
                         <span className="inline-flex items-center gap-2">
-                          {formatCustomerName(customer.first, customer.last)}
+                          {formatCustomerRecordName(customer)}
                           {isDeleted ? (
                             <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-600 ring-1 ring-inset ring-neutral-300">
                               Deleted
@@ -790,16 +566,16 @@ function CustomersContent() {
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {customer.address
                           ? toProperCase(customer.address)
-                          : "—"}
+                          : "â€”"}
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {customer.city ? toProperCase(customer.city) : "—"}
+                        {customer.city ? toProperCase(customer.city) : "â€”"}
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {formatCustomerState(customer.state)}
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {customer.zip?.trim() || "—"}
+                        {customer.zip?.trim() || "â€”"}
                       </td>
                       {canManageCustomers ? (
                         <td className="px-6 py-4 text-right whitespace-nowrap">
@@ -815,7 +591,7 @@ function CustomersContent() {
                             >
                               <RotateCcw className="h-3.5 w-3.5" />
                               {restoringId === customer._id
-                                ? "Restoring…"
+                                ? "Restoringâ€¦"
                                 : "Restore"}
                             </button>
                           ) : (
@@ -861,250 +637,6 @@ function CustomersContent() {
           />
         )}
       </div>
-
-      {createOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-lg rounded-xl bg-white shadow-xl">
-            <div className="border-b border-neutral-100 px-6 py-4">
-              <h3 className="text-lg font-semibold text-brand-dark">
-                Add Customer
-              </h3>
-            </div>
-            <form onSubmit={handleCreate} className="px-6 py-5 space-y-4">
-              {createError ? (
-                <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-                  {createError}
-                </div>
-              ) : null}
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-brand-dark">
-                    First name
-                  </label>
-                  <input
-                    value={createForm.first}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({ ...f, first: e.target.value }))
-                    }
-                    className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-brand-dark">
-                    Last name
-                  </label>
-                  <input
-                    value={createForm.last}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({ ...f, last: e.target.value }))
-                    }
-                    className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-brand-dark">
-                    Phone
-                  </label>
-                  <input
-                    type="tel"
-                    value={createForm.phone}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({
-                        ...f,
-                        phone: formatPhoneInput(e.target.value),
-                      }))
-                    }
-                    maxLength={14}
-                    placeholder="(386)555-0123"
-                    className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-brand-dark">
-                    Email
-                  </label>
-                  <input
-                    type="email"
-                    value={createForm.email}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({ ...f, email: e.target.value }))
-                    }
-                    className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-brand-dark">
-                  Property type
-                </label>
-                <div className="mt-1 inline-flex rounded-md border border-neutral-200 p-0.5">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setCreateForm((f) => ({
-                        ...f,
-                        propertyType: "residential",
-                      }))
-                    }
-                    className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                      (createForm.propertyType ?? "residential") ===
-                      "residential"
-                        ? "bg-brand-dark text-white"
-                        : "text-neutral-600 hover:bg-neutral-50"
-                    }`}
-                  >
-                    Residential
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setCreateForm((f) => ({
-                        ...f,
-                        propertyType: "commercial",
-                      }))
-                    }
-                    className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                      createForm.propertyType === "commercial"
-                        ? "bg-brand-dark text-white"
-                        : "text-neutral-600 hover:bg-neutral-50"
-                    }`}
-                  >
-                    Commercial
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-brand-dark">
-                  Street <span className="text-red-500">*</span>
-                </label>
-                <input
-                  value={createForm.address}
-                  onChange={(e) =>
-                    updateCreateAddressField("address", e.target.value)
-                  }
-                  required
-                  className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                />
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-1">
-                  <label className="block text-sm font-medium text-brand-dark">
-                    City
-                  </label>
-                  <input
-                    value={createForm.city}
-                    onChange={(e) =>
-                      updateCreateAddressField("city", e.target.value)
-                    }
-                    className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-brand-dark">
-                    State
-                  </label>
-                  <input
-                    value={createForm.state}
-                    onChange={(e) =>
-                      updateCreateAddressField("state", e.target.value)
-                    }
-                    className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-brand-dark">
-                    Zip
-                  </label>
-                  <input
-                    value={createForm.zip}
-                    onChange={(e) =>
-                      updateCreateAddressField("zip", e.target.value)
-                    }
-                    className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {addressValidated && !suggestedAddress ? (
-                  <span className="inline-flex text-xs font-medium text-emerald-700">
-                    Address verified
-                  </span>
-                ) : null}
-
-                {suggestedAddress ? (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm">
-                    <p className="font-medium text-amber-800">
-                      We found a close match
-                    </p>
-                    <p className="mt-1 text-amber-900">
-                      {suggestedAddress.matchedAddress ||
-                        `${suggestedAddress.address.address}, ${suggestedAddress.address.city}, ${suggestedAddress.address.state} ${suggestedAddress.address.zip}`}
-                    </p>
-                    <div className="mt-2 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={acceptSuggestedAddress}
-                        className="rounded-md bg-brand-orange px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
-                      >
-                        Use this address
-                      </button>
-                      <button
-                        type="button"
-                        onClick={dismissSuggestedAddress}
-                        className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
-                      >
-                        Keep as entered
-                      </button>
-                    </div>
-                  </div>
-                ) : validatingAddress ? (
-                  <p className="text-xs text-neutral-500">
-                    Checking address…
-                  </p>
-                ) : addressValidationMsg ? (
-                  <p
-                    className={`text-xs ${
-                      addressValidated ? "text-emerald-700" : "text-red-600"
-                    }`}
-                  >
-                    {addressValidationMsg}
-                  </p>
-                ) : (
-                  <p className="text-xs text-neutral-500">
-                    We&apos;ll check this address automatically as you type.
-                  </p>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={closeCreate}
-                  disabled={creating || validatingAddress}
-                  className="rounded-md border border-neutral-200 px-4 py-2 text-sm font-medium text-brand-dark hover:bg-neutral-50 disabled:opacity-60"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating || validatingAddress || !addressValidated}
-                  className="btn-primary text-sm px-4 py-2 disabled:opacity-60"
-                >
-                  {creating ? "Creating…" : "Create customer"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

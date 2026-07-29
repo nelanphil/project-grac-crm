@@ -6,7 +6,6 @@ import {
   ScrollText,
   Settings2,
   MessageSquare,
-  MessagesSquare,
   LucideIcon,
 } from "lucide-react";
 
@@ -43,14 +42,6 @@ export const NAV_SECTIONS: NavSection[] = [
         label: "Messaging",
         icon: MessageSquare,
         includeRoles: ["admin", "super-admin", "owner"],
-        children: [
-          {
-            href: "/dashboard/messaging/history",
-            label: "Conversation history",
-            icon: MessagesSquare,
-            includeRoles: ["admin", "super-admin", "owner"],
-          },
-        ],
       },
       {
         href: "/dashboard/control-panel",
@@ -63,7 +54,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "General",
     items: [
-      { href: "/dashboard/orders", label: "Orders", icon: ShoppingCart },
+      { href: "/dashboard/orders", label: "Invoices", icon: ShoppingCart },
       { href: "/dashboard/services", label: "Services", icon: Wrench },
       { href: "/dashboard/contact", label: "Contact", icon: Phone },
     ],

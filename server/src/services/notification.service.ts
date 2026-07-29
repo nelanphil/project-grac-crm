@@ -56,9 +56,12 @@ export function actorFromRequest(user?: { id: string } | null): {
 }
 
 export function customerDisplayName(c: {
+  accountName?: string | null;
   first?: string | null;
   last?: string | null;
 }): string {
+  const account = (c.accountName ?? "").trim();
+  if (account) return account;
   const name = `${c.first ?? ""} ${c.last ?? ""}`.trim();
   return name || "Customer";
 }

@@ -7,6 +7,10 @@ export interface IRenewalEvent {
   newDueDate: Date;
   wasLate: boolean;
   workOrderRef?: Types.ObjectId;
+  invoiceRef?: Types.ObjectId;
+  amountCents?: number;
+  paymentProvider?: string;
+  providerPaymentId?: string;
   notes?: string;
   userId?: number;
   createdAt: Date;
@@ -40,6 +44,10 @@ const renewalEventSchema = new Schema<IRenewalEvent>(
     newDueDate: { type: Date, required: true },
     wasLate: { type: Boolean, required: true },
     workOrderRef: { type: Schema.Types.ObjectId, ref: "WorkOrder" },
+    invoiceRef: { type: Schema.Types.ObjectId, ref: "Invoice" },
+    amountCents: { type: Number },
+    paymentProvider: { type: String },
+    providerPaymentId: { type: String },
     notes: { type: String, default: "" },
     userId: { type: Number },
     createdAt: { type: Date, default: Date.now },

@@ -1,5 +1,6 @@
 import { Response } from "express";
 import mongoose from "mongoose";
+import { z } from "zod";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { activeCustomerFilter, Customer } from "../models/mongo/Customer";
 import {
@@ -21,12 +22,19 @@ import {
   updateEquipmentSchema,
 } from "../schemas/customerSite.schema";
 import {
+  createCustomerSchema,
+  updateCustomerSchema,
+  type CreateCustomerAddressNested,
+  type CreateCustomerContactNested,
+} from "../schemas/customer.schema";
+import {
   ensureCustomerContactFromFlat,
   syncCustomerPrimaryContactFields,
 } from "../utils/customerContacts";
 import { ensureCustomerUser } from "../utils/ensureCustomerUser";
 import {
   customerHasSiteData,
+  defaultAddressLabel,
   ensureCustomerSiteFromFlat,
   normalizePhoneDigits,
   syncCustomerPrimaryFields,
@@ -108,7 +116,7 @@ async function findSerialConflicts(
       .select("label address city")
       .lean(),
     Customer.find({ _id: { $in: customerIds } })
-      .select("first last")
+      .select("accountName first last")
       .lean(),
   ]);
   const addrMap = new Map(addresses.map((a) => [String(a._id), a]));
@@ -127,7 +135,11 @@ async function findSerialConflicts(
         null
       : null;
     const customerName = cust
-      ? [cust.first, cust.last].filter(Boolean).join(" ").trim() || null
+      ? (() => {
+          const account = (cust.accountName ?? "").trim();
+          if (account) return account;
+          return [cust.first, cust.last].filter(Boolean).join(" ").trim() || null;
+        })()
       : null;
     const base = {
       equipmentId: String(m._id),
@@ -254,6 +266,7 @@ async function findActiveCustomerOr404(
 ): Promise<{
   _id: mongoose.Types.ObjectId;
   legacyId: number;
+  accountName: string;
   first: string;
   last: string;
   phone: string;
@@ -285,7 +298,10 @@ async function findActiveCustomerOr404(
     return null;
   }
 
-  return customer;
+  return {
+    ...customer,
+    accountName: customer.accountName ?? "",
+  };
 }
 
 const notMergedFilter: {
@@ -384,11 +400,22 @@ function buildSortKeyExpr(sortKey: string): Record<string, unknown> {
       return trimFieldExpr("$zip");
     case "customer":
     default:
-      // Mirror the displayed "First Last" name so ordering matches the UI.
+      // Prefer durable accountName; fall back to "First Last".
       return {
         $trim: {
           input: {
-            $concat: [trimFieldExpr("$first"), " ", trimFieldExpr("$last")],
+            $cond: [
+              {
+                $gt: [
+                  { $strLenCP: { $trim: { input: { $ifNull: ["$accountName", ""] } } } },
+                  0,
+                ],
+              },
+              trimFieldExpr("$accountName"),
+              {
+                $concat: [trimFieldExpr("$first"), " ", trimFieldExpr("$last")],
+              },
+            ],
           },
         },
       };
@@ -430,6 +457,7 @@ export async function listCustomers(
     if (search) {
       const rx = new RegExp(escapeRegex(search), "i");
       const or: Array<Record<string, unknown>> = [
+        { accountName: rx },
         { first: rx },
         { last: rx },
         { address: rx },
@@ -558,6 +586,37 @@ export async function listCustomers(
 }
 
 // POST /customers/validate-address — Google Address Validation, falling back to Census geocode
+/** Prefer Google Address Validation when configured; fall back to Census. */
+async function resolveGeocodedAddress(input: {
+  street: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+}): Promise<GeocodeResult> {
+  let result: GeocodeResult | null = null;
+
+  const googleApiKey = await getActiveGoogleApiKey();
+  if (googleApiKey) {
+    try {
+      result = await geocodeAddressGoogle(input, googleApiKey);
+    } catch (err) {
+      console.error("Google address validation error:", err);
+      result = null;
+    }
+  }
+
+  if (!result || !result.ok) {
+    const censusResult = await geocodeAddress(input);
+    // Prefer a successful Census match; otherwise keep whichever failure
+    // message is more informative (Google's, if it was actually attempted).
+    if (censusResult.ok || !result) {
+      result = censusResult;
+    }
+  }
+
+  return result;
+}
+
 export async function validateCustomerAddress(
   req: AuthRequest,
   res: Response,
@@ -570,26 +629,7 @@ export async function validateCustomerAddress(
       zip: trimStr(req.body?.zip),
     };
 
-    let result: GeocodeResult | null = null;
-
-    const googleApiKey = await getActiveGoogleApiKey();
-    if (googleApiKey) {
-      try {
-        result = await geocodeAddressGoogle(input, googleApiKey);
-      } catch (err) {
-        console.error("Google address validation error:", err);
-        result = null;
-      }
-    }
-
-    if (!result || !result.ok) {
-      const censusResult = await geocodeAddress(input);
-      // Prefer a successful Census match; otherwise keep whichever failure
-      // message is more informative (Google's, if it was actually attempted).
-      if (censusResult.ok || !result) {
-        result = censusResult;
-      }
-    }
+    const result = await resolveGeocodedAddress(input);
 
     if (!result.ok) {
       res.status(200).json({
@@ -617,45 +657,130 @@ export async function createCustomer(
   res: Response,
 ): Promise<void> {
   try {
-    const first = trimStr(req.body?.first);
-    const last = trimStr(req.body?.last);
-    if (!first && !last) {
-      res.status(400).json({ message: "First or last name is required" });
+    const normalized = normalizeCreateCustomerBody(req.body);
+    const parsed = createCustomerSchema.safeParse(normalized);
+    if (!parsed.success) {
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
       return;
     }
 
-    const phone = trimStr(req.body?.phone);
-    const email = trimStr(req.body?.email).toLowerCase();
-    const addressInput = trimStr(req.body?.address);
-    const cityInput = trimStr(req.body?.city);
-    const stateInput = trimStr(req.body?.state);
-    const zipInput = trimStr(req.body?.zip);
-    const propertyType: CustomerAddressPropertyType =
-      req.body?.propertyType === "commercial" ? "commercial" : "residential";
-
-    if (!addressInput) {
-      res.status(400).json({ message: "Street address is required" });
+    const input = parsed.data;
+    const contacts = resolvePrimaryContacts(input.contacts);
+    const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
+    if (!primaryHasReachability(primary)) {
+      res.status(400).json({
+        message:
+          "Primary contact requires a valid phone number and/or email address",
+      });
       return;
     }
 
-    const geocode = await geocodeAddress({
-      street: addressInput,
-      city: cityInput,
-      state: stateInput,
-      zip: zipInput,
-    });
-    if (!geocode.ok) {
-      const status =
-        geocode.reason === "incomplete"
-          ? 400
-          : geocode.reason === "upstream_error"
-            ? 502
-            : 422;
-      res.status(status).json({ message: geocode.message });
-      return;
+    let accountName = trimStr(input.accountName);
+    if (!accountName) {
+      accountName = `${primary.first} ${primary.last}`.trim();
     }
 
-    const { address, city, state, zip } = geocode.match.normalized;
+    // Pre-validate / geocode addresses that have a street before writing anything.
+    const preparedAddresses: Array<{
+      label: string;
+      address: string;
+      city: string;
+      state: string;
+      zip: string;
+      propertyType: CustomerAddressPropertyType;
+      isPrimary: boolean;
+      equipment: CreateCustomerAddressNested["equipment"];
+    }> = [];
+
+    for (const addr of input.addresses) {
+      const street = trimStr(addr.address);
+      const city = trimStr(addr.city);
+      const state = trimStr(addr.state);
+      const zip = trimStr(addr.zip);
+      const hasAny =
+        street || city || state || zip || trimStr(addr.label) ||
+        (addr.equipment?.length ?? 0) > 0;
+      if (!hasAny) continue;
+
+      if (!street) {
+        res.status(400).json({
+          message: "Street address is required when adding a property",
+        });
+        return;
+      }
+
+      const geocode = await resolveGeocodedAddress({
+        street,
+        city,
+        state,
+        zip,
+      });
+      if (!geocode.ok) {
+        const status =
+          geocode.reason === "incomplete"
+            ? 400
+            : geocode.reason === "upstream_error"
+              ? 502
+              : 422;
+        res.status(status).json({ message: geocode.message });
+        return;
+      }
+
+      const normalizedAddr = geocode.match.normalized;
+      preparedAddresses.push({
+        label: trimStr(addr.label),
+        address: normalizedAddr.address,
+        city: normalizedAddr.city,
+        state: normalizedAddr.state,
+        zip: normalizedAddr.zip,
+        propertyType:
+          addr.propertyType === "commercial" ? "commercial" : "residential",
+        isPrimary: addr.isPrimary === true,
+        equipment: addr.equipment ?? [],
+      });
+    }
+
+    // Ensure exactly one primary address when any exist.
+    if (preparedAddresses.length > 0) {
+      const primaryIdx = preparedAddresses.findIndex((a) => a.isPrimary);
+      if (primaryIdx < 0) {
+        preparedAddresses[0].isPrimary = true;
+      } else {
+        preparedAddresses.forEach((a, i) => {
+          a.isPrimary = i === primaryIdx;
+        });
+      }
+    }
+
+    // Reject duplicate serials within the incoming payload (same customer).
+    const seenSerials = new Set<string>();
+    const seenAts = new Set<string>();
+    for (const addr of preparedAddresses) {
+      for (const eq of addr.equipment ?? []) {
+        const serial = trimStr(eq.serial);
+        const atsSerial = trimStr(eq.atsSerial);
+        if (serial) {
+          if (seenSerials.has(serial)) {
+            res.status(409).json({
+              message: `Serial "${serial}" is used more than once on this customer`,
+            });
+            return;
+          }
+          seenSerials.add(serial);
+        }
+        if (atsSerial) {
+          if (seenAts.has(atsSerial)) {
+            res.status(409).json({
+              message: `ATS serial "${atsSerial}" is used more than once on this customer`,
+            });
+            return;
+          }
+          seenAts.add(atsSerial);
+        }
+      }
+    }
 
     const maxLegacy = await Customer.findOne()
       .sort({ legacyId: -1 })
@@ -663,27 +788,126 @@ export async function createCustomer(
       .lean();
     const legacyId = (maxLegacy?.legacyId ?? 0) + 1;
 
+    const primarySite = preparedAddresses.find((a) => a.isPrimary);
+    const phone = trimStr(primary.phone);
+    const email = trimStr(primary.email).toLowerCase();
+
     const customer = await Customer.create({
       legacyId,
       userId: 0,
-      first,
-      last,
+      accountName,
+      first: trimStr(primary.first),
+      last: trimStr(primary.last),
       phone,
       phoneDigits: normalizePhoneDigits(phone),
       email,
-      address,
-      city,
-      state,
-      zip,
+      address: primarySite?.address ?? "",
+      city: primarySite?.city ?? "",
+      state: primarySite?.state ?? "",
+      zip: primarySite?.zip ?? "",
       deletedAt: null,
       mergedIntoRef: null,
       mergedAt: null,
     });
 
-    await ensureCustomerSiteFromFlat(customer, { propertyType });
-    await ensureCustomerContactFromFlat(customer);
+    try {
+      for (const contact of contacts) {
+        const contactDoc = await CustomerContact.create({
+          customerRef: customer._id,
+          first: trimStr(contact.first),
+          last: trimStr(contact.last),
+          phone: trimStr(contact.phone),
+          email: trimStr(contact.email).toLowerCase(),
+          label: trimStr(contact.label),
+          isPrimary: contact.isPrimary === true,
+          legacyCustomerId: legacyId,
+        });
+        await ensureCustomerUser(contactDoc);
+      }
 
-    const custName = customerDisplayName(customer);
+      for (const addr of preparedAddresses) {
+        const addressDoc = await CustomerAddress.create({
+          customerRef: customer._id,
+          label: addr.label || defaultAddressLabel(addr.city, addr.address),
+          address: addr.address,
+          city: addr.city,
+          state: addr.state,
+          zip: addr.zip,
+          isPrimary: addr.isPrimary,
+          propertyType: addr.propertyType,
+          legacyCustomerId: legacyId,
+        });
+
+        for (const eq of addr.equipment ?? []) {
+          const serial = trimStr(eq.serial);
+          const atsSerial = trimStr(eq.atsSerial);
+          const generatorModel = trimStr(eq.generatorModel);
+          const exday = trimStr(eq.exday);
+          const extime = trimStr(eq.extime);
+          const lastSvc = parseLastSvc(eq.lastSvc);
+          if (
+            !serial &&
+            !atsSerial &&
+            !generatorModel &&
+            !exday &&
+            !extime &&
+            lastSvc === undefined
+          ) {
+            continue;
+          }
+
+          const { blocking } = await findSerialConflicts(customer._id, {
+            serial,
+            atsSerial,
+          });
+          if (blocking.length > 0) {
+            const conflictErr = new Error(serialConflictMessage(blocking)) as Error & {
+              status: number;
+              conflicts: SerialConflict[];
+            };
+            conflictErr.status = 409;
+            conflictErr.conflicts = blocking;
+            throw conflictErr;
+          }
+
+          await Equipment.create({
+            customerRef: customer._id,
+            addressRef: addressDoc._id,
+            generatorModel,
+            serial,
+            atsSerial,
+            lastSvc: lastSvc === undefined ? null : lastSvc,
+            exday,
+            extime,
+          });
+        }
+      }
+
+      await syncCustomerPrimaryFields(customer._id);
+      await syncCustomerPrimaryContactFields(customer._id);
+      // Re-apply durable account name after contact sync (sync does not touch it,
+      // but refresh the in-memory doc for the response).
+      await Customer.findByIdAndUpdate(customer._id, {
+        $set: { accountName },
+      });
+    } catch (err) {
+      await cleanupPartialCustomer(customer._id);
+      const conflictErr = err as Error & {
+        status?: number;
+        conflicts?: SerialConflict[];
+      };
+      if (conflictErr?.status === 409) {
+        res.status(409).json({
+          message: conflictErr.message,
+          conflicts: conflictErr.conflicts,
+        });
+        return;
+      }
+      throw err;
+    }
+
+    const fresh = await Customer.findById(customer._id).lean();
+    const custName = customerDisplayName(fresh ?? customer);
     logNotificationAsync({
       entityType: "customer",
       action: "created",
@@ -697,7 +921,152 @@ export async function createCustomer(
     res.status(201).json({
       customer: {
         _id: customer._id.toString(),
+        legacyId: fresh?.legacyId ?? customer.legacyId,
+        accountName: fresh?.accountName ?? accountName,
+        first: fresh?.first ?? customer.first,
+        last: fresh?.last ?? customer.last,
+        email: fresh?.email ?? customer.email,
+        phone: fresh?.phone ?? customer.phone,
+        address: fresh?.address ?? customer.address,
+        city: fresh?.city ?? customer.city,
+        state: fresh?.state ?? customer.state,
+        zip: fresh?.zip ?? customer.zip,
+        generatorModel: fresh?.generatorModel ?? customer.generatorModel ?? "",
+        lastSvc: fresh?.lastSvc
+          ? fresh.lastSvc.toISOString()
+          : customer.lastSvc
+            ? customer.lastSvc.toISOString()
+            : null,
+        deletedAt: null,
+        duplicateCount: 0,
+      },
+    });
+  } catch (err) {
+    console.error("POST /customers error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+function isValidCreateEmail(email: string): boolean {
+  if (!email) return false;
+  return z.string().email().safeParse(email).success;
+}
+
+function isValidCreatePhone(phone: string): boolean {
+  return normalizePhoneDigits(phone).length === 10;
+}
+
+function primaryHasReachability(contact: {
+  phone?: string;
+  email?: string;
+}): boolean {
+  const phone = trimStr(contact.phone);
+  const email = trimStr(contact.email).toLowerCase();
+  return isValidCreatePhone(phone) || isValidCreateEmail(email);
+}
+
+function resolvePrimaryContacts(
+  contacts: CreateCustomerContactNested[],
+): Array<CreateCustomerContactNested & { isPrimary: boolean }> {
+  const primaryIdx = contacts.findIndex((c) => c.isPrimary === true);
+  const idx = primaryIdx >= 0 ? primaryIdx : 0;
+  return contacts.map((c, i) => ({ ...c, isPrimary: i === idx }));
+}
+
+/** Accept legacy flat create body or rich nested body. */
+function normalizeCreateCustomerBody(body: unknown): unknown {
+  if (!body || typeof body !== "object") return body;
+  const b = body as Record<string, unknown>;
+  if (Array.isArray(b.contacts)) return body;
+
+  const contacts = [
+    {
+      first: b.first ?? "",
+      last: b.last ?? "",
+      phone: b.phone ?? "",
+      email: b.email ?? "",
+      label: "",
+      isPrimary: true,
+    },
+  ];
+  const addresses: CreateCustomerAddressNested[] = [];
+  if (trimStr(b.address)) {
+    addresses.push({
+      label: "",
+      address: String(b.address ?? ""),
+      city: String(b.city ?? ""),
+      state: String(b.state ?? ""),
+      zip: String(b.zip ?? ""),
+      propertyType:
+        b.propertyType === "commercial" ? "commercial" : "residential",
+      isPrimary: true,
+      equipment: [],
+    });
+  }
+  return {
+    accountName: b.accountName ?? "",
+    contacts,
+    addresses,
+  };
+}
+
+async function cleanupPartialCustomer(
+  customerId: mongoose.Types.ObjectId,
+): Promise<void> {
+  await Promise.all([
+    Equipment.deleteMany({ customerRef: customerId }),
+    CustomerAddress.deleteMany({ customerRef: customerId }),
+    CustomerContact.deleteMany({ customerRef: customerId }),
+  ]);
+  await Customer.deleteOne({ _id: customerId });
+}
+
+// PATCH /customers/:id — update durable account name
+export async function updateCustomer(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    if (!customer) return;
+    if (customer.mergedIntoRef) {
+      res.status(404).json({ message: "Customer not found" });
+      return;
+    }
+
+    const parsed = updateCustomerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+      return;
+    }
+
+    const accountName = parsed.data.accountName;
+    await Customer.findByIdAndUpdate(customer._id, {
+      $set: { accountName },
+    });
+
+    const custName = customerDisplayName({
+      accountName,
+      first: customer.first,
+      last: customer.last,
+    });
+    logNotificationAsync({
+      entityType: "customer",
+      action: "updated",
+      entityId: String(customer._id),
+      customerRef: customer._id,
+      summary: `Customer ${custName} updated`,
+      metadata: { customerName: custName, accountName },
+      ...actorFromRequest(req.user),
+    });
+
+    res.status(200).json({
+      customer: {
+        _id: customer._id.toString(),
         legacyId: customer.legacyId,
+        accountName,
         first: customer.first,
         last: customer.last,
         email: customer.email,
@@ -708,12 +1077,11 @@ export async function createCustomer(
         zip: customer.zip,
         generatorModel: customer.generatorModel ?? "",
         lastSvc: customer.lastSvc ? customer.lastSvc.toISOString() : null,
-        deletedAt: null,
-        duplicateCount: 0,
+        deletedAt: customer.deletedAt ? customer.deletedAt.toISOString() : null,
       },
     });
   } catch (err) {
-    console.error("POST /customers error:", err);
+    console.error("PATCH /customers/:id error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }
@@ -2045,6 +2413,7 @@ export async function getMergePreview(
       survivor: {
         _id: survivor._id.toString(),
         legacyId: survivor.legacyId,
+        accountName: survivor.accountName ?? "",
         first: survivor.first,
         last: survivor.last,
         phone: survivor.phone,
@@ -2053,6 +2422,7 @@ export async function getMergePreview(
       source: {
         _id: source._id.toString(),
         legacyId: source.legacyId,
+        accountName: source.accountName ?? "",
         first: source.first,
         last: source.last,
         phone: source.phone,

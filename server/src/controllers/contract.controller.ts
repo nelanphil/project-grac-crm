@@ -13,7 +13,6 @@ import {
   ContractStanding,
   DEFAULT_DURATION_MONTHS,
   computeInitialRenewalDueDate,
-  computeRenewalDueDateAfterRenewal,
   getContractStanding,
   isInGoodStanding,
   parseDateOnly,
@@ -24,6 +23,7 @@ import {
   logNotificationAsync,
 } from "../services/notification.service";
 import { inferContractType } from "../utils/contractTypes";
+import { applyContractRenewal } from "../services/invoice.service";
 
 async function enrichWithCustomer(
   contracts: Array<Record<string, unknown>>,
@@ -37,7 +37,7 @@ async function enrichWithCustomer(
   ];
 
   const customers = await Customer.find({ _id: { $in: customerIds } })
-    .select("_id first last address city state zip phone")
+    .select("_id accountName first last address city state zip phone")
     .lean();
 
   const customerById = new Map(
@@ -45,6 +45,7 @@ async function enrichWithCustomer(
       c._id.toString(),
       {
         _id: c._id,
+        accountName: c.accountName ?? "",
         first: c.first,
         last: c.last,
         address: c.address,
@@ -769,64 +770,37 @@ export async function renewContract(
       return;
     }
 
-    if (!existing.renewalDueDate) {
-      res.status(400).json({
-        message: "Contract must have a renewal due date before recording a renewal",
-      });
-      return;
-    }
-
-    const previousDueDate = parseDateOnly(existing.renewalDueDate);
-    if (!previousDueDate) {
-      res.status(400).json({ message: "Invalid renewal due date on contract" });
-      return;
-    }
-
-    const { newDueDate, wasLate } = computeRenewalDueDateAfterRenewal(
-      renewedAtDate,
-      previousDueDate,
-      durationMonths,
-    );
-
-    const renewalEvent = {
+    await applyContractRenewal({
+      contract: existing,
       renewedAt: renewedAtDate,
       durationMonths,
-      previousDueDate,
-      newDueDate,
-      wasLate,
-      workOrderRef: workOrderRef || undefined,
       notes: notes ?? "",
       userId: req.user ? parseInt(req.user.id, 10) : undefined,
-      createdAt: new Date(),
-    };
+      actorUserId: req.user?.id,
+    });
 
-    existing.lastRenewalDate = renewedAtDate;
-    existing.durationMonths = durationMonths;
-    existing.renewalDueDate = newDueDate;
-    // Late renewals reset the current term start; on-time renewals keep the anchor.
-    if (wasLate) {
-      existing.contractDate = renewedAtDate;
+    // Preserve optional workOrderRef on the latest renewal event if provided
+    if (workOrderRef && existing.renewals.length > 0) {
+      const last = existing.renewals[existing.renewals.length - 1];
+      if (Types.ObjectId.isValid(workOrderRef)) {
+        last.workOrderRef = new Types.ObjectId(workOrderRef);
+        await existing.save();
+      }
     }
-    existing.renewals.push(renewalEvent);
-
-    await existing.save();
 
     const enriched = await enrichContract(
       existing.toObject() as unknown as Record<string, unknown>,
     );
 
-    logNotificationAsync({
-      entityType: "contract",
-      action: "renewed",
-      entityId: String(existing._id),
-      customerRef: existing.customerRef ?? null,
-      summary: "Contract renewed",
-      ...actorFromRequest(req.user),
-    });
-
     res.json({ contract: enriched });
-  } catch {
-    res.status(500).json({ message: "Failed to record renewal" });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Failed to record renewal";
+    const status =
+      message.includes("renewal due date") || message.includes("Invalid")
+        ? 400
+        : 500;
+    res.status(status).json({ message });
   }
 }
 

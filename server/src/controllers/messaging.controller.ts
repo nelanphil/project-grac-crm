@@ -1,11 +1,12 @@
 import { Response } from "express";
-import { PipelineStage, Types } from "mongoose";
+import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { Customer } from "../models/mongo/Customer";
 import { MessageTemplate } from "../models/mongo/MessageTemplate";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
 import { TwilioAccount } from "../models/mongo/TwilioAccount";
+import { MessageThread } from "../models/mongo/MessageThread";
 import { env } from "../config/env";
 import {
   messagingCallSchema,
@@ -31,6 +32,15 @@ import {
   toPublicCommunication,
 } from "../utils/communicationFormat";
 import {
+  checkOpenThreadConflict,
+  closeThread,
+  resolveOrCreateOpenThreadForOutbound,
+  sendIntoThread,
+  ThreadConflictError,
+  ThreadNotFoundError,
+  touchThreadAfterMessage,
+} from "../utils/messageThreads";
+import {
   createOutboundCall,
   getTwilioAccountForSend,
   resolveFromNumber,
@@ -38,7 +48,7 @@ import {
   TwilioServiceError,
 } from "../services/twilio.service";
 
-const PAGE_SIZES = new Set([25, 50, 100, 150, 250]);
+const PAGE_SIZES = new Set([25, 50, 100, 150, 200, 250]);
 const SEND_CONCURRENCY = 5;
 const DEFAULT_SAY_TEXT =
   "Hello, this is a call from GRAC. Please call us back at your earliest convenience.";
@@ -212,6 +222,7 @@ export async function searchMessagingContacts(
         customerRef: String(c.customerRef),
         customer: {
           _id: String(customer._id),
+          accountName: customer.accountName ?? "",
           first: customer.first ?? "",
           last: customer.last ?? "",
           address: customer.address ?? "",
@@ -391,6 +402,45 @@ export async function sendMessages(
 
         const toE164Number = toE164(built.contact.phone);
         const rendered = renderMessageTemplate(bodyTemplate, built.context);
+        const contactRef = new Types.ObjectId(built.contact._id);
+        const customerRef = built.customer
+          ? new Types.ObjectId(built.customer._id)
+          : null;
+
+        let thread;
+        try {
+          thread = data.threadId
+            ? await sendIntoThread({
+                threadId: data.threadId,
+                userId: userId ?? null,
+              })
+            : await resolveOrCreateOpenThreadForOutbound({
+                contactRef,
+                customerRef,
+                twilioAccountRef: account._id,
+                accountSid: account.accountSid,
+                ourNumber: fromNumber,
+                userId: userId ?? null,
+              });
+        } catch (err) {
+          const errorMessage =
+            err instanceof ThreadNotFoundError || err instanceof ThreadConflictError
+              ? err.message
+              : "Failed to resolve message thread";
+          return {
+            contactId,
+            status: "failed" as const,
+            error: errorMessage,
+          };
+        }
+
+        if (data.threadId && String(thread.contactRef) !== contactId) {
+          return {
+            contactId,
+            status: "failed" as const,
+            error: "Thread does not belong to this contact",
+          };
+        }
 
         if (!toE164Number) {
           await TwilioCommunication.create({
@@ -402,12 +452,19 @@ export async function sendMessages(
             toNumber: built.contact.phone || "",
             body: rendered,
             mediaUrls,
-            customerRef: built.customer?._id ?? null,
-            contactRef: built.contact._id,
+            customerRef,
+            contactRef,
+            threadRef: thread._id,
             templateRef,
             status: "failed",
             errorMessage: "Contact phone number is invalid",
             createdByUserRef: userId ?? null,
+          });
+          await touchThreadAfterMessage(thread._id, {
+            direction: "outbound",
+            channel,
+            body: rendered,
+            at: new Date(),
           });
           return {
             contactId,
@@ -434,18 +491,26 @@ export async function sendMessages(
             toNumber: toE164Number,
             body: rendered,
             mediaUrls,
-            customerRef: built.customer?._id ?? null,
-            contactRef: built.contact._id,
+            customerRef,
+            contactRef,
+            threadRef: thread._id,
             templateRef,
             status: "sent",
             twilioSid: sid,
             createdByUserRef: userId ?? null,
+          });
+          await touchThreadAfterMessage(thread._id, {
+            direction: "outbound",
+            channel,
+            body: rendered,
+            at: new Date(),
           });
 
           return {
             contactId,
             status: "sent" as const,
             twilioSid: sid,
+            threadId: String(thread._id),
           };
         } catch (err) {
           const errorMessage =
@@ -464,18 +529,26 @@ export async function sendMessages(
             toNumber: toE164Number,
             body: rendered,
             mediaUrls,
-            customerRef: built.customer?._id ?? null,
-            contactRef: built.contact._id,
+            customerRef,
+            contactRef,
+            threadRef: thread._id,
             templateRef,
             status: "failed",
             errorMessage,
             createdByUserRef: userId ?? null,
+          });
+          await touchThreadAfterMessage(thread._id, {
+            direction: "outbound",
+            channel,
+            body: rendered,
+            at: new Date(),
           });
 
           return {
             contactId,
             status: "failed" as const,
             error: errorMessage,
+            threadId: String(thread._id),
           };
         }
       },
@@ -546,6 +619,20 @@ export async function placeCall(
       `${req.protocol}://${req.get("host")}`;
     const statusCallbackUrl = `${apiBase}/webhooks/twilio/status?accountSid=${encodeURIComponent(account.accountSid)}`;
 
+    const contactRef = new Types.ObjectId(built.contact._id);
+    const customerRef = built.customer
+      ? new Types.ObjectId(built.customer._id)
+      : null;
+    const userId = req.user?.id ?? null;
+    const thread = await resolveOrCreateOpenThreadForOutbound({
+      contactRef,
+      customerRef,
+      twilioAccountRef: account._id,
+      accountSid: account.accountSid,
+      ourNumber: fromNumber,
+      userId,
+    });
+
     try {
       const { sid } = await createOutboundCall({
         account,
@@ -566,9 +653,16 @@ export async function placeCall(
         body: sayText,
         mediaUrls: [],
         twilioSid: sid,
-        customerRef: built.customer?._id ?? null,
-        contactRef: built.contact._id,
-        createdByUserRef: req.user?.id ?? null,
+        customerRef,
+        contactRef,
+        threadRef: thread._id,
+        createdByUserRef: userId,
+      });
+      await touchThreadAfterMessage(thread._id, {
+        direction: "outbound",
+        channel: "voice",
+        body: sayText,
+        at: new Date(),
       });
 
       res.status(201).json({
@@ -592,10 +686,17 @@ export async function placeCall(
         toNumber: toE164Number,
         body: sayText,
         mediaUrls: [],
-        customerRef: built.customer?._id ?? null,
-        contactRef: built.contact._id,
+        customerRef,
+        contactRef,
+        threadRef: thread._id,
         errorMessage,
-        createdByUserRef: req.user?.id ?? null,
+        createdByUserRef: userId,
+      });
+      await touchThreadAfterMessage(thread._id, {
+        direction: "outbound",
+        channel: "voice",
+        body: sayText,
+        at: new Date(),
       });
 
       res.status(400).json({ message: errorMessage });
@@ -690,147 +791,235 @@ export async function listCommunications(
   }
 }
 
-// GET /messaging/conversations
-export async function listConversations(
+type ThreadLookups = {
+  contactById: Map<string, Record<string, unknown>>;
+  customerById: Map<string, Record<string, unknown>>;
+  names: Map<string, { friendlyName: string; accountSid: string }>;
+};
+
+async function buildThreadLookups(
+  threads: Array<{
+    contactRef: Types.ObjectId;
+    twilioAccountRef: Types.ObjectId;
+  }>,
+): Promise<ThreadLookups> {
+  const contactIds = [...new Set(threads.map((t) => String(t.contactRef)))];
+  const contacts = await CustomerContact.find({ _id: { $in: contactIds } })
+    .select("_id first last phone customerRef label")
+    .lean();
+  const contactById = new Map(contacts.map((c) => [String(c._id), c]));
+
+  const customerIds = [
+    ...new Set(contacts.map((c) => String(c.customerRef))),
+  ];
+  const customers = await Customer.find({ _id: { $in: customerIds } })
+    .select("_id first last")
+    .lean();
+  const customerById = new Map(customers.map((c) => [String(c._id), c]));
+
+  const names = await accountNameMap(
+    threads.map((t) => String(t.twilioAccountRef)),
+  );
+
+  return { contactById, customerById, names };
+}
+
+function toPublicThread(
+  thread: Record<string, unknown>,
+  lookups: ThreadLookups,
+) {
+  const contact = lookups.contactById.get(String(thread.contactRef));
+  const customer = contact
+    ? lookups.customerById.get(String(contact.customerRef))
+    : undefined;
+  const accountFriendlyName =
+    lookups.names.get(String(thread.twilioAccountRef))?.friendlyName ?? null;
+
+  return {
+    _id: String(thread._id),
+    contactRef: String(thread.contactRef),
+    customerRef: thread.customerRef ? String(thread.customerRef) : null,
+    twilioAccountRef: String(thread.twilioAccountRef),
+    accountSid: thread.accountSid ?? "",
+    accountFriendlyName,
+    ourNumber: thread.ourNumber ?? "",
+    contactPhoneSnapshot: thread.contactPhoneSnapshot ?? "",
+    status: thread.status,
+    startedByUserRef: thread.startedByUserRef
+      ? String(thread.startedByUserRef)
+      : null,
+    closedAt:
+      thread.closedAt instanceof Date
+        ? thread.closedAt.toISOString()
+        : (thread.closedAt as string | null) ?? null,
+    closedByUserRef: thread.closedByUserRef
+      ? String(thread.closedByUserRef)
+      : null,
+    lastMessageAt:
+      thread.lastMessageAt instanceof Date
+        ? thread.lastMessageAt.toISOString()
+        : (thread.lastMessageAt as string | null) ?? null,
+    lastMessageDirection: thread.lastMessageDirection ?? null,
+    lastMessageChannel: thread.lastMessageChannel ?? null,
+    lastMessagePreview: thread.lastMessagePreview ?? "",
+    messageCount: thread.messageCount ?? 0,
+    contact: contact
+      ? {
+          _id: String(contact._id),
+          first: contact.first ?? "",
+          last: contact.last ?? "",
+          phone: contact.phone ?? "",
+          label: contact.label ?? "",
+          customerRef: String(contact.customerRef),
+        }
+      : null,
+    customer: customer
+      ? {
+          _id: String(customer._id),
+          accountName: customer.accountName ?? "",
+          first: customer.first ?? "",
+          last: customer.last ?? "",
+        }
+      : null,
+    createdAt:
+      thread.createdAt instanceof Date
+        ? thread.createdAt.toISOString()
+        : String(thread.createdAt ?? ""),
+    updatedAt:
+      thread.updatedAt instanceof Date
+        ? thread.updatedAt.toISOString()
+        : String(thread.updatedAt ?? ""),
+  };
+}
+
+// GET /messaging/threads
+export async function listThreads(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
   try {
-    const accountFilter = parseAccountFilter(req.query);
-    const match: Record<string, unknown> = {
-      contactRef: { $ne: null },
-      channel: { $in: ["sms", "mms", "voice"] },
-      ...accountFilter,
+    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "50"), 10) || 50;
+    const pageSize = PAGE_SIZES.has(pageSizeRaw) ? pageSizeRaw : 50;
+
+    const filter: Record<string, unknown> = {
+      ...parseAccountFilter(req.query),
     };
+    if (
+      req.query.customerId &&
+      Types.ObjectId.isValid(String(req.query.customerId))
+    ) {
+      filter.customerRef = String(req.query.customerId);
+    }
+    if (
+      req.query.contactId &&
+      Types.ObjectId.isValid(String(req.query.contactId))
+    ) {
+      filter.contactRef = String(req.query.contactId);
+    }
+    if (req.query.status) {
+      const status = String(req.query.status);
+      if (["open", "closed"].includes(status)) {
+        filter.status = status;
+      }
+    }
 
-    const pipeline: PipelineStage[] = [
-      { $match: match },
-      { $sort: { createdAt: -1 } },
-      {
-        $group: {
-          _id: "$contactRef",
-          lastMessage: { $first: "$$ROOT" },
-          messageCount: { $sum: 1 },
-        },
-      },
-      { $sort: { "lastMessage.createdAt": -1 } },
-      { $limit: 50 },
-    ];
+    const [total, rows] = await Promise.all([
+      MessageThread.countDocuments(filter),
+      MessageThread.find(filter)
+        .sort({ lastMessageAt: -1, createdAt: -1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize)
+        .lean(),
+    ]);
 
-    const groups = await TwilioCommunication.aggregate(pipeline);
-    const contactIds = groups.map((g) => g._id).filter(Boolean);
-    const contacts = await CustomerContact.find({ _id: { $in: contactIds } })
-      .select("_id first last phone customerRef label")
-      .lean();
-    const contactById = new Map(contacts.map((c) => [String(c._id), c]));
+    const lookups = await buildThreadLookups(rows);
 
-    const customerIds = [
-      ...new Set(contacts.map((c) => String(c.customerRef))),
-    ];
-    const customers = await Customer.find({ _id: { $in: customerIds } })
-      .select("_id first last")
-      .lean();
-    const customerById = new Map(customers.map((c) => [String(c._id), c]));
-
-    const names = await accountNameMap(
-      groups.map((g) => String(g.lastMessage.twilioAccountRef)),
-    );
-
-    const conversations = groups
-      .map((g) => {
-        const contact = contactById.get(String(g._id));
-        if (!contact) return null;
-        const customer = customerById.get(String(contact.customerRef));
-        const last = toPublicCommunication(
-          g.lastMessage,
-          names.get(String(g.lastMessage.twilioAccountRef))?.friendlyName,
-        );
-        return {
-          contactId: String(contact._id),
-          contact: {
-            _id: String(contact._id),
-            first: contact.first ?? "",
-            last: contact.last ?? "",
-            phone: contact.phone ?? "",
-            label: contact.label ?? "",
-            customerRef: String(contact.customerRef),
-          },
-          customer: customer
-            ? {
-                _id: String(customer._id),
-                first: customer.first ?? "",
-                last: customer.last ?? "",
-              }
-            : null,
-          lastMessage: last,
-          messageCount: g.messageCount as number,
-        };
-      })
-      .filter(Boolean);
-
-    res.json({ conversations });
+    res.json({
+      threads: rows.map((r) => toPublicThread(r, lookups)),
+      total,
+      page,
+      pageSize,
+    });
   } catch (err) {
-    console.error("GET /messaging/conversations error:", err);
-    res.status(500).json({ message: "Failed to list conversations" });
+    console.error("GET /messaging/threads error:", err);
+    res.status(500).json({ message: "Failed to list threads" });
   }
 }
 
-// GET /messaging/conversations/:contactId
-export async function getConversationThread(
+// GET /messaging/threads/check-conflict
+export async function checkThreadConflict(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
   try {
-    const contactId = String(req.params.contactId);
+    const contactId = String(req.query.contactId ?? "");
     if (!Types.ObjectId.isValid(contactId)) {
       res.status(400).json({ message: "Invalid contactId" });
       return;
     }
+    const fromNumber = String(req.query.fromNumber ?? "");
+    const ourNumber = toE164(fromNumber);
+    if (!ourNumber) {
+      res.status(400).json({ message: "Invalid fromNumber" });
+      return;
+    }
+    const excludeThreadId = req.query.excludeThreadId
+      ? String(req.query.excludeThreadId)
+      : undefined;
 
-    const contact = await CustomerContact.findById(contactId)
-      .select("_id first last phone email label customerRef isPrimary")
-      .lean();
-    if (!contact) {
-      res.status(404).json({ message: "Contact not found" });
+    const { hasOpenThread, openThread } = await checkOpenThreadConflict({
+      contactRef: new Types.ObjectId(contactId),
+      ourNumber,
+      excludeThreadId,
+    });
+
+    let openThreadPublic = null;
+    if (openThread) {
+      const lookups = await buildThreadLookups([openThread]);
+      openThreadPublic = toPublicThread(
+        openThread.toObject ? openThread.toObject() : openThread,
+        lookups,
+      );
+    }
+
+    res.json({ hasOpenThread, openThread: openThreadPublic });
+  } catch (err) {
+    console.error("GET /messaging/threads/check-conflict error:", err);
+    res.status(500).json({ message: "Failed to check thread conflict" });
+  }
+}
+
+// GET /messaging/threads/:threadId
+export async function getThreadDetail(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const threadId = String(req.params.threadId);
+    if (!Types.ObjectId.isValid(threadId)) {
+      res.status(400).json({ message: "Invalid threadId" });
       return;
     }
 
-    const filter: Record<string, unknown> = {
-      contactRef: contactId,
-      ...parseAccountFilter(req.query),
-    };
+    const thread = await MessageThread.findById(threadId).lean();
+    if (!thread) {
+      res.status(404).json({ message: "Thread not found" });
+      return;
+    }
 
-    const rows = await TwilioCommunication.find(filter)
+    const rows = await TwilioCommunication.find({ threadRef: threadId })
       .sort({ createdAt: 1 })
       .limit(500)
       .lean();
 
-    const names = await accountNameMap(
-      rows.map((r) => String(r.twilioAccountRef)),
-    );
-
-    const customer = await Customer.findById(contact.customerRef)
-      .select("_id first last")
-      .lean();
+    const [lookups, names] = await Promise.all([
+      buildThreadLookups([thread]),
+      accountNameMap(rows.map((r) => String(r.twilioAccountRef))),
+    ]);
 
     res.json({
-      contact: {
-        _id: String(contact._id),
-        first: contact.first ?? "",
-        last: contact.last ?? "",
-        phone: contact.phone ?? "",
-        email: contact.email ?? "",
-        label: contact.label ?? "",
-        isPrimary: Boolean(contact.isPrimary),
-        customerRef: String(contact.customerRef),
-      },
-      customer: customer
-        ? {
-            _id: String(customer._id),
-            first: customer.first ?? "",
-            last: customer.last ?? "",
-          }
-        : null,
+      thread: toPublicThread(thread, lookups),
       messages: rows.map((r) =>
         toPublicCommunication(
           r,
@@ -839,8 +1028,41 @@ export async function getConversationThread(
       ),
     });
   } catch (err) {
-    console.error("GET /messaging/conversations/:contactId error:", err);
-    res.status(500).json({ message: "Failed to load conversation" });
+    console.error("GET /messaging/threads/:threadId error:", err);
+    res.status(500).json({ message: "Failed to load thread" });
+  }
+}
+
+// PATCH /messaging/threads/:threadId
+export async function closeThreadEndpoint(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const threadId = String(req.params.threadId);
+    if (req.body?.status !== "closed") {
+      res.status(400).json({ message: "Only status:\"closed\" is supported" });
+      return;
+    }
+
+    const thread = await closeThread({
+      threadId,
+      userId: req.user?.id ?? null,
+    });
+    const lookups = await buildThreadLookups([thread]);
+    res.json({
+      thread: toPublicThread(
+        thread.toObject ? thread.toObject() : thread,
+        lookups,
+      ),
+    });
+  } catch (err) {
+    if (err instanceof ThreadNotFoundError) {
+      res.status(404).json({ message: err.message });
+      return;
+    }
+    console.error("PATCH /messaging/threads/:threadId error:", err);
+    res.status(500).json({ message: "Failed to close thread" });
   }
 }
 
