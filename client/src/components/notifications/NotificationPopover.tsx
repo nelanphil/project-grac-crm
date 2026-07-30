@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import Link from "next/link";
 import { useNotificationsStore } from "@/store/useNotificationsStore";
 import NotificationListItem from "./NotificationItem";
 
@@ -75,6 +76,16 @@ export default function NotificationPopover({ anchorRef }: Props) {
             <NotificationListItem key={item.id} item={item} />
           ))
         )}
+      </div>
+
+      <div className="border-t border-neutral-100 px-4 py-2 text-center">
+        <Link
+          href="/dashboard/notifications"
+          onClick={() => setOpen(false)}
+          className="text-xs font-medium text-brand-orange transition-colors hover:text-brand-dark"
+        >
+          View all notifications
+        </Link>
       </div>
     </div>
   );

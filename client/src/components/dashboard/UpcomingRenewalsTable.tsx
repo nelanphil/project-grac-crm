@@ -8,6 +8,7 @@ import {
   ArrowRight,
   ArrowUp,
   ArrowUpDown,
+  GitMerge,
 } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import { getContracts, ContractListItem, ApiError } from "@/lib/api";
@@ -342,7 +343,8 @@ export default function UpcomingRenewalsTable() {
             Upcoming Renewals
           </h2>
           <p className="mt-0.5 text-xs text-neutral-500">
-            Service contracts with renewal due in this month
+            Contracts due this month, including prior-year expired with the same
+            renewal month
           </p>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
@@ -501,9 +503,22 @@ export default function UpcomingRenewalsTable() {
                       className="cursor-pointer transition-colors hover:bg-neutral-50"
                     >
                       <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
-                        {contract.customer
-                          ? formatCustomerRecordName(contract.customer)
-                          : `Customer #${contract.customerId}`}
+                        {contract.customer ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            {formatCustomerRecordName(contract.customer)}
+                            {(contract.customer.duplicateCount ?? 0) > 0 ? (
+                              <span
+                                className="inline-flex text-amber-700"
+                                title={`${contract.customer.duplicateCount} other customer(s) share this phone`}
+                                aria-label="Possible duplicate"
+                              >
+                                <GitMerge className="h-3.5 w-3.5" />
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : (
+                          `Customer #${contract.customerId}`
+                        )}
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {formatPhone(contract.customer?.phone)}

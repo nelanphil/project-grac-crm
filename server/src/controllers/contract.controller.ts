@@ -2,7 +2,7 @@ import { Response } from "express";
 import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { Contract } from "../models/mongo/Contract";
-import { Customer } from "../models/mongo/Customer";
+import { activeCustomerFilter, Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { Equipment } from "../models/mongo/Equipment";
 import {
@@ -16,6 +16,7 @@ import {
   getContractStanding,
   isInGoodStanding,
   parseDateOnly,
+  renewalDueDateFilterForMonth,
 } from "../utils/contractDates";
 import {
   actorFromRequest,
@@ -24,6 +25,13 @@ import {
 } from "../services/notification.service";
 import { inferContractType } from "../utils/contractTypes";
 import { applyContractRenewal } from "../services/invoice.service";
+import { normalizePhoneDigits } from "../utils/customerSites";
+
+const notMergedFilter: {
+  $or: Array<{ mergedIntoRef: null } | { mergedIntoRef: { $exists: false } }>;
+} = {
+  $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
+};
 
 async function enrichWithCustomer(
   contracts: Array<Record<string, unknown>>,
@@ -37,24 +45,54 @@ async function enrichWithCustomer(
   ];
 
   const customers = await Customer.find({ _id: { $in: customerIds } })
-    .select("_id accountName first last address city state zip phone")
+    .select("_id accountName first last address city state zip phone phoneDigits")
     .lean();
 
-  const customerById = new Map(
-    customers.map((c) => [
-      c._id.toString(),
+  const pageDigits = [
+    ...new Set(
+      customers
+        .map((c) => c.phoneDigits || normalizePhoneDigits(c.phone))
+        .filter((d) => d.length >= 7),
+    ),
+  ];
+  const duplicateByDigits = new Map<string, number>();
+  if (pageDigits.length > 0) {
+    const grouped = await Customer.aggregate<{ _id: string; count: number }>([
       {
-        _id: c._id,
-        accountName: c.accountName ?? "",
-        first: c.first,
-        last: c.last,
-        address: c.address,
-        city: c.city,
-        state: c.state,
-        zip: c.zip,
-        phone: c.phone,
+        $match: {
+          ...activeCustomerFilter,
+          ...notMergedFilter,
+          phoneDigits: { $in: pageDigits },
+        },
       },
-    ]),
+      { $group: { _id: "$phoneDigits", count: { $sum: 1 } } },
+    ]);
+    for (const g of grouped) duplicateByDigits.set(g._id, g.count);
+  }
+
+  const customerById = new Map(
+    customers.map((c) => {
+      const digits = c.phoneDigits || normalizePhoneDigits(c.phone);
+      const peers =
+        digits.length >= 7
+          ? Math.max(0, (duplicateByDigits.get(digits) ?? 1) - 1)
+          : 0;
+      return [
+        c._id.toString(),
+        {
+          _id: c._id,
+          accountName: c.accountName ?? "",
+          first: c.first,
+          last: c.last,
+          address: c.address,
+          city: c.city,
+          state: c.state,
+          zip: c.zip,
+          phone: c.phone,
+          duplicateCount: peers,
+        },
+      ];
+    }),
   );
 
   return contracts.map((c) => ({
@@ -426,10 +464,7 @@ export async function getContracts(
         res.status(400).json({ message: "Invalid year or month" });
         return;
       }
-      filter.renewalDueDate = {
-        $gte: new Date(Date.UTC(year, month - 1, 1)),
-        $lt: new Date(Date.UTC(year, month, 1)),
-      };
+      Object.assign(filter, renewalDueDateFilterForMonth(year, month));
     }
 
     const contracts = await Contract.find(filter)

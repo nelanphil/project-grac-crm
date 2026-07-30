@@ -3,6 +3,7 @@ import { Customer } from "../models/mongo/Customer";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { Contract } from "../models/mongo/Contract";
 import { ContractTemplate } from "../models/mongo/ContractTemplate";
+import { renewalDueDateFilterForMonth } from "./contractDates";
 import {
   formatDateForTemplate,
   MessageTemplateContext,
@@ -20,20 +21,12 @@ export interface ContactRenewalInfo {
   contractType: string | null;
 }
 
-function renewalWindow(scope: RenewalScope): { gte: Date; lt: Date } {
-  return {
-    gte: new Date(Date.UTC(scope.year, scope.month - 1, 1)),
-    lt: new Date(Date.UTC(scope.year, scope.month, 1)),
-  };
-}
-
 /** Customer refs that have a contract renewing in the given UTC month. */
 export async function customerRefsWithRenewalsInMonth(
   scope: RenewalScope,
 ): Promise<Types.ObjectId[]> {
-  const { gte, lt } = renewalWindow(scope);
   const rows = await Contract.find({
-    renewalDueDate: { $gte: gte, $lt: lt },
+    ...renewalDueDateFilterForMonth(scope.year, scope.month),
     customerRef: { $exists: true, $ne: null },
   })
     .select("customerRef")
@@ -71,15 +64,13 @@ export async function resolveRenewalsForCustomers(
   const objectIds = unique.map((id) => new Types.ObjectId(id));
   const filter: Record<string, unknown> = {
     customerRef: { $in: objectIds },
-    renewalDueDate: { $ne: null },
   };
 
   if (scope) {
-    const { gte, lt } = renewalWindow(scope);
-    filter.renewalDueDate = { $gte: gte, $lt: lt };
+    Object.assign(filter, renewalDueDateFilterForMonth(scope.year, scope.month));
   } else {
     // Prefer soonest upcoming renewal
-    filter.renewalDueDate = { $gte: new Date() };
+    filter.renewalDueDate = { $ne: null, $gte: new Date() };
   }
 
   const contracts = await Contract.find(filter)

@@ -113,3 +113,34 @@ export function isInGoodStanding(
   if (!renewalDueDate) return false;
   return today.getTime() <= endOfDay(renewalDueDate).getTime();
 }
+
+/** UTC half-open bounds for a calendar month (month is 1–12). */
+export function renewalMonthWindow(
+  year: number,
+  month: number,
+): { gte: Date; lt: Date } {
+  return {
+    gte: new Date(Date.UTC(year, month - 1, 1)),
+    lt: new Date(Date.UTC(year, month, 1)),
+  };
+}
+
+/**
+ * Mongo filter for renewals in a selected calendar month, including expired
+ * contracts from earlier years with the same anniversary month.
+ */
+export function renewalDueDateFilterForMonth(
+  year: number,
+  month: number,
+): Record<string, unknown> {
+  const { gte, lt } = renewalMonthWindow(year, month);
+  return {
+    $or: [
+      { renewalDueDate: { $gte: gte, $lt: lt } },
+      {
+        renewalDueDate: { $lt: gte, $ne: null },
+        $expr: { $eq: [{ $month: "$renewalDueDate" }, month] },
+      },
+    ],
+  };
+}

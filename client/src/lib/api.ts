@@ -977,6 +977,8 @@ export interface ContractListItem {
     state: string;
     zip: string;
     phone: string;
+    /** Other open customers sharing this phone. */
+    duplicateCount?: number;
   } | null;
 }
 

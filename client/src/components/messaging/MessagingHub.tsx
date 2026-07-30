@@ -73,6 +73,15 @@ export default function MessagingHub() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() =>
     initialContactId ? new Set([initialContactId]) : new Set(),
   );
+  const [selectedContactsById, setSelectedContactsById] = useState<
+    Record<string, MessagingContactItem>
+  >({});
+  const selectedIdsRef = useRef(selectedIds);
+  const [resetSignal, setResetSignal] = useState(0);
+
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
 
   const [accountId, setAccountId] = useState("");
   const [fromNumber, setFromNumber] = useState("");
@@ -92,6 +101,13 @@ export default function MessagingHub() {
 
   const selectedAccount = accounts.find((a) => a._id === accountId);
   const fromOptions = selectedAccount?.phoneNumbers ?? [];
+  const selectedContacts = useMemo(
+    () =>
+      [...selectedIds]
+        .map((id) => selectedContactsById[id])
+        .filter((c): c is MessagingContactItem => Boolean(c)),
+    [selectedIds, selectedContactsById],
+  );
   const effectiveFromNumber = fromOptions.includes(fromNumber)
     ? fromNumber
     : (fromOptions[0] ?? "");
@@ -168,6 +184,19 @@ export default function MessagingHub() {
         if (cancelled) return;
         setContacts(res.contacts);
         setContactsTotal(res.total);
+        // Backfill full contact details for ids selected before this page
+        // (e.g. the initial ?contactId=) loaded.
+        setSelectedContactsById((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const c of res.contacts) {
+            if (selectedIdsRef.current.has(c._id) && !next[c._id]) {
+              next[c._id] = c;
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -324,7 +353,8 @@ export default function MessagingHub() {
     }
   }
 
-  function toggleContact(id: string) {
+  function toggleContact(contact: MessagingContactItem) {
+    const { _id: id } = contact;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -336,6 +366,14 @@ export default function MessagingHub() {
         next.add(id);
       }
       return next;
+    });
+    setSelectedContactsById((prev) => {
+      if (prev[id]) {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      }
+      return { ...prev, [id]: contact };
     });
   }
 
@@ -354,6 +392,29 @@ export default function MessagingHub() {
       }
       return next;
     });
+    setSelectedContactsById((prev) => {
+      const next = { ...prev };
+      if (allSelected) {
+        for (const id of pageIds) delete next[id];
+      } else {
+        for (const c of contacts) next[c._id] = c;
+      }
+      return next;
+    });
+  }
+
+  function resetCreateFlow() {
+    setSelectedIds(new Set());
+    setSelectedContactsById({});
+    setSelectedTemplateId(null);
+    setTemplateName("");
+    setBody(
+      "Hi {{first_name}}, this is a reminder about your upcoming service renewal on {{renewal_due_date}}. Reply if you'd like to schedule.",
+    );
+    setMediaUrlsRaw("");
+    setError(null);
+    setSendResult(null);
+    setResetSignal((n) => n + 1);
   }
 
   function shiftMonth(delta: number) {
@@ -469,6 +530,7 @@ export default function MessagingHub() {
         />
       ) : activeTab === "create" ? (
         <CreatePanel
+          key={resetSignal}
           token={token}
           search={search}
           onSearchChange={(v) => {
@@ -494,9 +556,13 @@ export default function MessagingHub() {
             setPage(1);
           }}
           selectedIds={selectedIds}
+          selectedContacts={selectedContacts}
           onToggleContact={toggleContact}
           onToggleSelectPage={toggleSelectPage}
-          onClearSelection={() => setSelectedIds(new Set())}
+          onClearSelection={() => {
+            setSelectedIds(new Set());
+            setSelectedContactsById({});
+          }}
           maxSend={MAX_SEND}
           templates={templates}
           selectedTemplateId={selectedTemplateId}
@@ -520,6 +586,7 @@ export default function MessagingHub() {
           onOpenConfirm={() => setConfirmOpen(true)}
           onCloseConfirm={() => setConfirmOpen(false)}
           onConfirmSend={handleSend}
+          onCancelFlow={resetCreateFlow}
           previewText={previewText}
           previewContactLabel={previewContactLabel}
           previewSample={previewSample}

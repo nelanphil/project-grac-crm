@@ -344,7 +344,14 @@ function CustomersContent() {
 
   if (loading && customers.length === 0)
     return (
-      <div className="text-sm text-neutral-500 py-6">Loading customersâ€¦</div>
+      <div className="flex items-center gap-1 text-sm text-neutral-500 py-6">
+        <span>Loading customers</span>
+        <span className="inline-flex">
+          <span className="animate-bounce [animation-delay:-0.3s]">.</span>
+          <span className="animate-bounce [animation-delay:-0.15s]">.</span>
+          <span className="animate-bounce">.</span>
+        </span>
+      </div>
     );
   if (error) {
     return (

@@ -12,12 +12,19 @@ import { useNotificationsStore } from "@/store/useNotificationsStore";
 
 interface Props {
   item: NotificationItem;
+  onMarkRead?: (id: string) => void;
+  onNavigate?: () => void;
 }
 
-export default function NotificationListItem({ item }: Props) {
+export default function NotificationListItem({
+  item,
+  onMarkRead,
+  onNavigate,
+}: Props) {
   const router = useRouter();
-  const markRead = useNotificationsStore((s) => s.markRead);
+  const storeMarkRead = useNotificationsStore((s) => s.markRead);
   const setOpen = useNotificationsStore((s) => s.setOpen);
+  const markRead = onMarkRead ?? storeMarkRead;
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -30,7 +37,7 @@ export default function NotificationListItem({ item }: Props) {
     if (item.read) return;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => {
-      void markRead(item.id);
+      markRead(item.id);
     }, 300);
   }
 
@@ -42,9 +49,10 @@ export default function NotificationListItem({ item }: Props) {
   }
 
   function handleClick() {
-    if (!item.read) void markRead(item.id);
+    if (!item.read) markRead(item.id);
     const href = notificationHref(item);
-    setOpen(false);
+    if (onNavigate) onNavigate();
+    else setOpen(false);
     if (href) router.push(href);
   }
 

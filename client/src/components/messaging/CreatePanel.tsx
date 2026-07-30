@@ -91,7 +91,8 @@ type CreatePanelProps = {
   onPageSizeChange: (pageSize: number) => void;
 
   selectedIds: Set<string>;
-  onToggleContact: (id: string) => void;
+  selectedContacts: MessagingContactItem[];
+  onToggleContact: (contact: MessagingContactItem) => void;
   onToggleSelectPage: () => void;
   onClearSelection: () => void;
   maxSend: number;
@@ -122,6 +123,7 @@ type CreatePanelProps = {
   onOpenConfirm: () => void;
   onCloseConfirm: () => void;
   onConfirmSend: () => void;
+  onCancelFlow: () => void;
 
   previewText: string;
   previewContactLabel?: string;
@@ -149,6 +151,7 @@ export default function CreatePanel({
   onPageChange,
   onPageSizeChange,
   selectedIds,
+  selectedContacts,
   onToggleContact,
   onToggleSelectPage,
   onClearSelection,
@@ -175,6 +178,7 @@ export default function CreatePanel({
   onOpenConfirm,
   onCloseConfirm,
   onConfirmSend,
+  onCancelFlow,
   previewText,
   previewContactLabel,
   previewSample,
@@ -422,7 +426,7 @@ export default function CreatePanel({
                           <input
                             type="checkbox"
                             checked={checked}
-                            onChange={() => onToggleContact(c._id)}
+                            onChange={() => onToggleContact(c)}
                           />
                         </td>
                         <td className="px-2 py-2">
@@ -670,22 +674,31 @@ export default function CreatePanel({
               ) : null}
             </dl>
 
-            <button
-              type="button"
-              disabled={
-                sending ||
-                selectedIds.size === 0 ||
-                !accountId ||
-                !effectiveFromNumber ||
-                !body.trim()
-              }
-              onClick={onOpenConfirm}
-              className="btn-primary inline-flex w-full items-center justify-center gap-1.5 disabled:opacity-60"
-            >
-              <MessageSquare className="h-4 w-4" />
-              Send to {selectedIds.size}
-              {mediaUrlsRaw.trim() ? " (MMS)" : ""}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={
+                  sending ||
+                  selectedIds.size === 0 ||
+                  !accountId ||
+                  !effectiveFromNumber ||
+                  !body.trim()
+                }
+                onClick={onOpenConfirm}
+                className="btn-primary inline-flex flex-1 items-center justify-center gap-1.5 disabled:opacity-60"
+              >
+                <MessageSquare className="h-4 w-4" />
+                Send to {selectedIds.size}
+                {mediaUrlsRaw.trim() ? " (MMS)" : ""}
+              </button>
+              <button
+                type="button"
+                onClick={onCancelFlow}
+                className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
 
           <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
@@ -703,6 +716,54 @@ export default function CreatePanel({
               isSample={previewSample}
             />
           </section>
+
+          <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm xl:col-span-2">
+            <h2 className="mb-3 text-sm font-semibold text-brand-dark">
+              Recipients ({selectedIds.size})
+            </h2>
+            {selectedContacts.length === 0 ? (
+              <p className="text-sm text-neutral-500">No recipients selected.</p>
+            ) : (
+              <div className="max-h-[320px] overflow-auto rounded-lg border border-neutral-100">
+                <table className="w-full text-left text-sm">
+                  <thead className="sticky top-0 bg-neutral-50 text-xs text-neutral-500">
+                    <tr>
+                      <th className="px-2 py-2 font-medium">Contact</th>
+                      <th className="px-2 py-2 font-medium">Phone</th>
+                      <th className="px-2 py-2 font-medium">Customer</th>
+                      <th className="px-2 py-2 font-medium">Renewal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedContacts.map((c) => (
+                      <tr key={c._id} className="border-t border-neutral-100">
+                        <td className="px-2 py-2">
+                          <div className="font-medium text-brand-dark">
+                            {formatCustomerName(c.first, c.last) || "—"}
+                          </div>
+                          {c.label ? (
+                            <div className="text-[11px] text-neutral-400">
+                              {toProperCase(c.label)}
+                              {c.isPrimary ? " · Primary" : ""}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-2 py-2 whitespace-nowrap text-neutral-700">
+                          {formatPhone(c.phone)}
+                        </td>
+                        <td className="px-2 py-2 text-neutral-600">
+                          {formatCustomerRecordName(c.customer) || "—"}
+                        </td>
+                        <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
+                          {formatRenewalDate(c.renewalDueDate)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       ) : null}
 
