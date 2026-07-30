@@ -6,8 +6,12 @@ import {
   mapTwilioMessageStatus,
 } from "../utils/communicationFormat";
 import { resolveAccountFromWebhook } from "../services/twilio.service";
-import { resolveThreadForInbound, touchThreadAfterMessage } from "../utils/messageThreads";
+import {
+  resolveThreadForInbound,
+  touchThreadAfterMessage,
+} from "../utils/messageThreads";
 import { toE164 } from "../utils/messagingContext";
+import { describeTwilioError } from "../utils/twilioErrorCodes";
 
 function asStringRecord(body: unknown): Record<string, string> {
   const out: Record<string, string> = {};
@@ -28,9 +32,7 @@ function buildWebhookUrl(req: Request): string {
 async function resolveAccount(req: Request) {
   const params = asStringRecord(req.body);
   const hint =
-    (req.query.accountSid as string | undefined) ||
-    params.AccountSid ||
-    null;
+    (req.query.accountSid as string | undefined) || params.AccountSid || null;
 
   return resolveAccountFromWebhook({
     accountSidHint: hint,
@@ -50,7 +52,8 @@ function collectMediaUrls(params: Record<string, string>): string[] {
   return urls;
 }
 
-const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
+const EMPTY_TWIML =
+  '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
 // POST /webhooks/twilio/message
 export async function inboundMessageWebhook(
@@ -146,7 +149,10 @@ export async function statusWebhook(
 
     const params = asStringRecord(req.body);
     const twilioSid =
-      params.MessageSid || params.SmsSid || params.CallSid || params.ParentCallSid;
+      params.MessageSid ||
+      params.SmsSid ||
+      params.CallSid ||
+      params.ParentCallSid;
     if (!twilioSid) {
       res.status(200).send("OK");
       return;
@@ -160,6 +166,11 @@ export async function statusWebhook(
     const durationRaw = params.CallDuration || params.Duration;
     const durationSeconds = durationRaw ? parseInt(durationRaw, 10) : null;
 
+    const errorCode = params.ErrorCode || null;
+    const errorMessage = errorCode
+      ? describeTwilioError(errorCode, params.ErrorMessage || null)
+      : params.ErrorMessage || null;
+
     await TwilioCommunication.findOneAndUpdate(
       { accountSid: account.accountSid, twilioSid },
       {
@@ -168,8 +179,12 @@ export async function statusWebhook(
           ...(Number.isFinite(durationSeconds as number)
             ? { durationSeconds }
             : {}),
-          rawStatus: params.CallStatus || params.MessageStatus || params.SmsStatus || null,
-          errorMessage: params.ErrorMessage || params.ErrorCode || null,
+          rawStatus:
+            params.CallStatus ||
+            params.MessageStatus ||
+            params.SmsStatus ||
+            null,
+          errorMessage,
         },
         $setOnInsert: {
           twilioAccountRef: account._id,

@@ -3,6 +3,7 @@
 import { RefObject } from "react";
 import { Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { MergeFieldItem, MessageTemplateItem } from "@/lib/api";
+import PhonePreview from "./PhonePreview";
 
 type TemplatesPanelProps = {
   templates: MessageTemplateItem[];
@@ -23,6 +24,10 @@ type TemplatesPanelProps = {
   body: string;
   onBodyChange: (value: string) => void;
 
+  previewText: string;
+  previewContactLabel?: string;
+  previewSample: boolean;
+
   error: string | null;
 };
 
@@ -42,6 +47,9 @@ export default function TemplatesPanel({
   bodyRef,
   body,
   onBodyChange,
+  previewText,
+  previewContactLabel,
+  previewSample,
   error,
 }: TemplatesPanelProps) {
   return (
@@ -52,7 +60,7 @@ export default function TemplatesPanel({
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)]">
+      <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)_300px]">
         {/* Templates list */}
         <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
@@ -172,6 +180,23 @@ export default function TemplatesPanel({
           <p className="mt-2 text-xs text-neutral-400">
             Pick a template and recipients in the Create tab to send a message.
           </p>
+        </section>
+
+        {/* Phone preview */}
+        <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold text-brand-dark">
+            Phone preview
+          </h2>
+          <p className="mb-4 text-xs text-neutral-500">
+            {previewSample
+              ? "Showing sample contact data."
+              : "Preview uses the selected contact’s data."}
+          </p>
+          <PhonePreview
+            message={previewText}
+            contactLabel={previewContactLabel}
+            isSample={previewSample}
+          />
         </section>
       </div>
     </div>

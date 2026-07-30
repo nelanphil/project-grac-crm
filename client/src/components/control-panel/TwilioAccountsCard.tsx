@@ -21,6 +21,7 @@ type FormState = {
   authToken: string;
   testAccountSid: string;
   testAuthToken: string;
+  clearTestAuthToken: boolean;
   phoneNumbers: string;
   isActive: boolean;
 };
@@ -31,6 +32,7 @@ const EMPTY_FORM: FormState = {
   authToken: "",
   testAccountSid: "",
   testAuthToken: "",
+  clearTestAuthToken: false,
   phoneNumbers: "",
   isActive: true,
 };
@@ -58,6 +60,8 @@ export default function TwilioAccountsCard() {
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingAccount, setEditingAccount] =
+    useState<TwilioAccountItem | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -86,6 +90,7 @@ export default function TwilioAccountsCard() {
 
   function openCreate() {
     setEditingId(null);
+    setEditingAccount(null);
     setForm(EMPTY_FORM);
     setSaveError(null);
     setFormOpen(true);
@@ -93,12 +98,14 @@ export default function TwilioAccountsCard() {
 
   function openEdit(account: TwilioAccountItem) {
     setEditingId(account._id);
+    setEditingAccount(account);
     setForm({
       friendlyName: account.friendlyName,
       accountSid: account.accountSid,
       authToken: "",
       testAccountSid: account.testAccountSid ?? "",
       testAuthToken: "",
+      clearTestAuthToken: false,
       phoneNumbers: account.phoneNumbers.join(", "),
       isActive: account.isActive,
     });
@@ -109,6 +116,7 @@ export default function TwilioAccountsCard() {
   function closeForm() {
     setFormOpen(false);
     setEditingId(null);
+    setEditingAccount(null);
     setForm(EMPTY_FORM);
     setSaveError(null);
   }
@@ -125,7 +133,9 @@ export default function TwilioAccountsCard() {
       accountSid: form.accountSid.trim(),
       authToken: form.authToken.trim() || undefined,
       testAccountSid: form.testAccountSid.trim(),
-      testAuthToken: form.testAuthToken.trim() || undefined,
+      testAuthToken: form.clearTestAuthToken
+        ? null
+        : form.testAuthToken.trim() || undefined,
       phoneNumbers: parsePhoneNumbers(form.phoneNumbers),
       isActive: form.isActive,
     };
@@ -313,6 +323,20 @@ export default function TwilioAccountsCard() {
                 className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
                 placeholder={editingId ? "••••••••" : "Live auth token"}
               />
+              {editingId && (
+                <span className="mt-1 block text-[11px] text-neutral-500">
+                  Currently:{" "}
+                  {editingAccount?.hasAuthToken ? (
+                    <span className="text-green-700">
+                      set (hidden for security)
+                    </span>
+                  ) : (
+                    <span className="text-red-600">not set</span>
+                  )}
+                  . Field stays blank on purpose — type a new value only to
+                  replace it.
+                </span>
+              )}
             </label>
 
             <label className="block">
@@ -329,6 +353,8 @@ export default function TwilioAccountsCard() {
                 Twilio&apos;s special Test Account SID (found on the Twilio
                 console). Must be paired with the test auth token below — a test
                 auth token alone will NOT work and will fail to authenticate.
+                This field shows the real stored value — clear it and save to
+                remove it.
               </span>
             </label>
 
@@ -340,10 +366,41 @@ export default function TwilioAccountsCard() {
               <PasswordInput
                 value={form.testAuthToken}
                 onChange={(e) => field("testAuthToken", e.target.value)}
+                disabled={form.clearTestAuthToken}
                 autoComplete="new-password"
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark disabled:bg-neutral-100"
                 placeholder={editingId ? "••••••••" : "Test auth token"}
               />
+              {editingId && (
+                <>
+                  <span className="mt-1 block text-[11px] text-neutral-500">
+                    Currently:{" "}
+                    {editingAccount?.hasTestAuthToken ? (
+                      <span className="text-amber-700">
+                        set (hidden for security)
+                      </span>
+                    ) : (
+                      <span className="text-neutral-500">not set</span>
+                    )}
+                    . Field stays blank on purpose — type a new value only to
+                    replace it.
+                  </span>
+                  <label className="mt-1 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.clearTestAuthToken}
+                      onChange={(e) => {
+                        field("clearTestAuthToken", e.target.checked);
+                        if (e.target.checked) field("testAuthToken", "");
+                      }}
+                      className="h-4 w-4 rounded border-neutral-300 text-brand-dark focus:ring-brand-dark"
+                    />
+                    <span className="text-xs text-neutral-700">
+                      Clear stored test auth token on save
+                    </span>
+                  </label>
+                </>
+              )}
             </label>
 
             <label className="block sm:col-span-2">

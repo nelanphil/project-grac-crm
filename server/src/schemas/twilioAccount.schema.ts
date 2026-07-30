@@ -21,9 +21,11 @@ export const createTwilioAccountSchema = z.object({
 export const updateTwilioAccountSchema = z.object({
   accountSid: accountSidSchema.optional(),
   friendlyName: z.string().trim().min(1).max(120).optional(),
-  authToken: z.string().trim().optional(),
-  testAccountSid: z.string().trim().optional(),
-  testAuthToken: z.string().trim().optional(),
+  // Live auth token can be replaced but never explicitly cleared (it's required).
+  authToken: z.string().trim().min(1).optional(),
+  // string = set new value, null = explicitly clear, undefined = leave unchanged
+  testAccountSid: z.string().trim().nullable().optional(),
+  testAuthToken: z.string().trim().min(1).nullable().optional(),
   phoneNumbers: z.array(z.string().trim().min(1)).optional(),
   isActive: z.boolean().optional(),
 });

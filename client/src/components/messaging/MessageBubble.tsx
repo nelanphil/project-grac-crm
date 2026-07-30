@@ -1,6 +1,7 @@
 "use client";
 
-import { Phone } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Phone, X } from "lucide-react";
 import { TwilioCommunicationItem } from "@/lib/api";
 
 export function truncateSid(sid: string): string {
@@ -15,6 +16,14 @@ export function formatTime(iso: string | null): string {
   return d.toLocaleString();
 }
 
+const FAILED_STATUSES = new Set([
+  "failed",
+  "undelivered",
+  "canceled",
+  "busy",
+  "no-answer",
+]);
+
 export function AccountBadge({
   name,
   sid,
@@ -24,11 +33,90 @@ export function AccountBadge({
 }) {
   return (
     <span
-      className="inline-flex max-w-[140px] truncate rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600"
+      className="inline-flex max-w-35 truncate rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600"
       title={sid}
     >
       {name || truncateSid(sid)}
     </span>
+  );
+}
+
+export function NumberBadge({
+  outbound,
+  fromNumber,
+  toNumber,
+}: {
+  outbound: boolean;
+  fromNumber: string;
+  toNumber: string;
+}) {
+  const number = outbound ? fromNumber : toNumber;
+  if (!number) return null;
+  return (
+    <span
+      className="inline-flex max-w-30 truncate rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600"
+      title={`From ${fromNumber || "?"} · To ${toNumber || "?"}`}
+    >
+      {outbound ? "from " : "to "}
+      {number}
+    </span>
+  );
+}
+
+export function StatusBadge({
+  status,
+  errorMessage,
+}: {
+  status: string;
+  errorMessage: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const failed = FAILED_STATUSES.has(status.toLowerCase());
+  if (!failed) {
+    return <span className="capitalize">{status}</span>;
+  }
+  const detail =
+    errorMessage || `Message ${status} — no further detail provided by Twilio`;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1 rounded bg-red-50 px-1.5 py-0.5 font-semibold text-red-700 hover:bg-red-100"
+      >
+        <AlertTriangle className="h-3 w-3" />
+        {status}
+      </button>
+      {open ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-lg bg-white p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="flex items-center gap-1.5 text-sm font-semibold text-red-700">
+                <AlertTriangle className="h-4 w-4" />
+                Message {status}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
+                className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-sm whitespace-pre-wrap text-neutral-700">
+              {detail}
+            </p>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -44,14 +132,20 @@ export default function MessageBubble({
         <div className="max-w-[90%] rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-700 shadow-sm">
           <div className="mb-1 flex items-center gap-1.5 font-medium">
             <Phone className="h-3 w-3" />
-            Voice call · {msg.status}
+            Voice call ·{" "}
+            <StatusBadge status={msg.status} errorMessage={msg.errorMessage} />
             {msg.durationSeconds != null ? ` · ${msg.durationSeconds}s` : ""}
           </div>
           {msg.body ? (
             <p className="text-neutral-500 whitespace-pre-wrap">{msg.body}</p>
           ) : null}
-          <div className="mt-1 flex items-center gap-2 text-[10px] text-neutral-400">
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-neutral-400">
             <AccountBadge name={msg.accountFriendlyName} sid={msg.accountSid} />
+            <NumberBadge
+              outbound={outbound}
+              fromNumber={msg.fromNumber}
+              toNumber={msg.toNumber}
+            />
             <span>{formatTime(msg.createdAt)}</span>
           </div>
         </div>
@@ -87,12 +181,20 @@ export default function MessageBubble({
           </div>
         ) : null}
         <div
-          className={`mt-1 flex items-center gap-2 text-[10px] ${
+          className={`mt-1 flex flex-wrap items-center gap-2 text-[10px] ${
             outbound ? "text-white/70" : "text-neutral-500"
           }`}
         >
           <span className="uppercase">{msg.channel}</span>
           <AccountBadge name={msg.accountFriendlyName} sid={msg.accountSid} />
+          <NumberBadge
+            outbound={outbound}
+            fromNumber={msg.fromNumber}
+            toNumber={msg.toNumber}
+          />
+          {outbound && (
+            <StatusBadge status={msg.status} errorMessage={msg.errorMessage} />
+          )}
           <span>{formatTime(msg.createdAt)}</span>
         </div>
       </div>

@@ -1353,8 +1353,9 @@ export interface TwilioAccountInput {
   accountSid: string;
   friendlyName: string;
   authToken?: string;
-  testAccountSid?: string;
-  testAuthToken?: string;
+  // string = set new value, null = explicitly clear, omit = leave unchanged
+  testAccountSid?: string | null;
+  testAuthToken?: string | null;
   phoneNumbers?: string[];
   isActive?: boolean;
 }

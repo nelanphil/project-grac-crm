@@ -13,10 +13,7 @@ import {
   messagingPreviewSchema,
   messagingSendSchema,
 } from "../schemas/messageTemplate.schema";
-import {
-  MERGE_FIELDS,
-  renderMessageTemplate,
-} from "../utils/messageTemplate";
+import { MERGE_FIELDS, renderMessageTemplate } from "../utils/messageTemplate";
 import {
   buildTemplateContextForContact,
   contactHasValidPhone,
@@ -57,6 +54,37 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Twilio rejects StatusCallback URLs that aren't publicly resolvable (e.g.
+ * `localhost`, `127.0.0.1`, bare hostnames without a dot) with a 21609
+ * "not a valid URL" error. Only pass a statusCallback when we have a real
+ * public base URL (e.g. PUBLIC_API_URL set to the deployed domain);
+ * otherwise omit it so local/dev sends still succeed (delivery status just
+ * won't be tracked back asynchronously).
+ */
+function buildStatusCallbackUrl(
+  apiBase: string,
+  accountSid: string,
+): string | undefined {
+  let host: string;
+  try {
+    host = new URL(apiBase).hostname;
+  } catch {
+    return undefined;
+  }
+
+  const isLocal =
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host.endsWith(".local") ||
+    !host.includes(".");
+
+  if (isLocal) return undefined;
+
+  return `${apiBase}/webhooks/twilio/status?accountSid=${encodeURIComponent(accountSid)}`;
+}
+
 function parseRenewalScope(
   yearRaw: unknown,
   monthRaw: unknown,
@@ -65,7 +93,9 @@ function parseRenewalScope(
     return {};
   }
   if (yearRaw === undefined || monthRaw === undefined) {
-    return { error: "Both year and month are required when filtering by renewals" };
+    return {
+      error: "Both year and month are required when filtering by renewals",
+    };
   }
   const year = parseInt(String(yearRaw), 10);
   const month = parseInt(String(monthRaw), 10);
@@ -152,10 +182,7 @@ export async function searchMessagingContacts(
 
       const matchingCustomers = await Customer.find({
         deletedAt: null,
-        $or: [
-          { mergedIntoRef: null },
-          { mergedIntoRef: { $exists: false } },
-        ],
+        $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
         $and: [{ $or: customerOr }],
       })
         .select("_id")
@@ -178,7 +205,9 @@ export async function searchMessagingContacts(
     const withPhone = candidates.filter((c) => contactHasValidPhone(c.phone));
 
     // Exclude contacts on deleted/merged customers
-    const customerIds = [...new Set(withPhone.map((c) => String(c.customerRef)))];
+    const customerIds = [
+      ...new Set(withPhone.map((c) => String(c.customerRef))),
+    ];
     const customers = await Customer.find({
       _id: { $in: customerIds },
       deletedAt: null,
@@ -378,6 +407,13 @@ export async function sendMessages(
     const userId = req.user?.id;
     const mediaUrls = data.mediaUrls ?? [];
     const channel = mediaUrls.length > 0 ? ("mms" as const) : ("sms" as const);
+    const apiBase =
+      process.env.PUBLIC_API_URL?.replace(/\/$/, "") ||
+      `${req.protocol}://${req.get("host")}`;
+    const statusCallbackUrl = buildStatusCallbackUrl(
+      apiBase,
+      account.accountSid,
+    );
 
     const results = await mapWithConcurrency(
       uniqueContactIds,
@@ -424,7 +460,8 @@ export async function sendMessages(
               });
         } catch (err) {
           const errorMessage =
-            err instanceof ThreadNotFoundError || err instanceof ThreadConflictError
+            err instanceof ThreadNotFoundError ||
+            err instanceof ThreadConflictError
               ? err.message
               : "Failed to resolve message thread";
           return {
@@ -480,6 +517,7 @@ export async function sendMessages(
             to: toE164Number,
             body: rendered,
             mediaUrls,
+            statusCallbackUrl,
           });
 
           await TwilioCommunication.create({
@@ -617,7 +655,10 @@ export async function placeCall(
     const apiBase =
       process.env.PUBLIC_API_URL?.replace(/\/$/, "") ||
       `${req.protocol}://${req.get("host")}`;
-    const statusCallbackUrl = `${apiBase}/webhooks/twilio/status?accountSid=${encodeURIComponent(account.accountSid)}`;
+    const statusCallbackUrl = buildStatusCallbackUrl(
+      apiBase,
+      account.accountSid,
+    );
 
     const contactRef = new Types.ObjectId(built.contact._id);
     const customerRef = built.customer
@@ -739,10 +780,16 @@ export async function listCommunications(
       ...parseAccountFilter(req.query),
     };
 
-    if (req.query.customerId && Types.ObjectId.isValid(String(req.query.customerId))) {
+    if (
+      req.query.customerId &&
+      Types.ObjectId.isValid(String(req.query.customerId))
+    ) {
       filter.customerRef = String(req.query.customerId);
     }
-    if (req.query.contactId && Types.ObjectId.isValid(String(req.query.contactId))) {
+    if (
+      req.query.contactId &&
+      Types.ObjectId.isValid(String(req.query.contactId))
+    ) {
       filter.contactRef = String(req.query.contactId);
     }
     if (req.query.channel) {
@@ -809,9 +856,7 @@ async function buildThreadLookups(
     .lean();
   const contactById = new Map(contacts.map((c) => [String(c._id), c]));
 
-  const customerIds = [
-    ...new Set(contacts.map((c) => String(c.customerRef))),
-  ];
+  const customerIds = [...new Set(contacts.map((c) => String(c.customerRef)))];
   const customers = await Customer.find({ _id: { $in: customerIds } })
     .select("_id first last")
     .lean();
@@ -851,14 +896,14 @@ function toPublicThread(
     closedAt:
       thread.closedAt instanceof Date
         ? thread.closedAt.toISOString()
-        : (thread.closedAt as string | null) ?? null,
+        : ((thread.closedAt as string | null) ?? null),
     closedByUserRef: thread.closedByUserRef
       ? String(thread.closedByUserRef)
       : null,
     lastMessageAt:
       thread.lastMessageAt instanceof Date
         ? thread.lastMessageAt.toISOString()
-        : (thread.lastMessageAt as string | null) ?? null,
+        : ((thread.lastMessageAt as string | null) ?? null),
     lastMessageDirection: thread.lastMessageDirection ?? null,
     lastMessageChannel: thread.lastMessageChannel ?? null,
     lastMessagePreview: thread.lastMessagePreview ?? "",
@@ -1041,7 +1086,7 @@ export async function closeThreadEndpoint(
   try {
     const threadId = String(req.params.threadId);
     if (req.body?.status !== "closed") {
-      res.status(400).json({ message: "Only status:\"closed\" is supported" });
+      res.status(400).json({ message: 'Only status:"closed" is supported' });
       return;
     }
 

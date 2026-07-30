@@ -462,6 +462,9 @@ export default function MessagingHub() {
           bodyRef={bodyRef}
           body={body}
           onBodyChange={setBody}
+          previewText={previewText}
+          previewContactLabel={previewContactLabel}
+          previewSample={previewSample}
           error={error}
         />
       ) : activeTab === "create" ? (
@@ -525,7 +528,7 @@ export default function MessagingHub() {
           onDismissSendResult={() => setSendResult(null)}
         />
       ) : (
-        <ThreadsPanel token={token} accounts={accounts} accountId={accountId} />
+        <ThreadsPanel token={token} accounts={accounts} />
       )}
     </div>
   );

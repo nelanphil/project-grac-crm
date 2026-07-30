@@ -62,11 +62,9 @@ export async function createTwilioAccount(
   const data = parsed.data;
   const existing = await TwilioAccount.findOne({ accountSid: data.accountSid });
   if (existing) {
-    res
-      .status(409)
-      .json({
-        message: "A Twilio account with this Account SID already exists",
-      });
+    res.status(409).json({
+      message: "A Twilio account with this Account SID already exists",
+    });
     return;
   }
 
@@ -123,11 +121,9 @@ export async function updateTwilioAccount(
       accountSid: data.accountSid,
     });
     if (conflict) {
-      res
-        .status(409)
-        .json({
-          message: "A Twilio account with this Account SID already exists",
-        });
+      res.status(409).json({
+        message: "A Twilio account with this Account SID already exists",
+      });
       return;
     }
     account.accountSid = data.accountSid;
@@ -142,12 +138,20 @@ export async function updateTwilioAccount(
     account.authTokenEncrypted = encryptCredential(authToken);
   }
 
-  const testAuthToken = emptyToUndefined(data.testAuthToken);
-  if (testAuthToken) {
-    account.testAuthTokenEncrypted = encryptCredential(testAuthToken);
+  // testAuthToken: string = set new value, null = explicitly clear, undefined = leave unchanged
+  if (data.testAuthToken === null) {
+    account.testAuthTokenEncrypted = undefined;
+  } else {
+    const testAuthToken = emptyToUndefined(data.testAuthToken);
+    if (testAuthToken) {
+      account.testAuthTokenEncrypted = encryptCredential(testAuthToken);
+    }
   }
 
-  if (data.testAccountSid !== undefined) {
+  // testAccountSid: string = set new value, null = explicitly clear, undefined = leave unchanged
+  if (data.testAccountSid === null) {
+    account.testAccountSid = undefined;
+  } else if (data.testAccountSid !== undefined) {
     account.testAccountSid = emptyToUndefined(data.testAccountSid);
   }
 

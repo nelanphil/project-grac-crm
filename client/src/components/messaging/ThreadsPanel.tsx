@@ -20,24 +20,22 @@ import MessageBubble, { formatTime } from "./MessageBubble";
 type ThreadsPanelProps = {
   token: string;
   accounts: TwilioAccountItem[];
-  accountId: string;
 };
 
-export default function ThreadsPanel({
-  token,
-  accounts,
-  accountId,
-}: ThreadsPanelProps) {
+export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
   const searchParams = useSearchParams();
   const initialThreadId = searchParams.get("threadId");
   const initialContactId = searchParams.get("contactId");
   const consumedDeepLink = useRef(false);
 
+  // Independent account filter for browsing threads. Defaults to "All
+  // accounts" so threads from every Twilio account are visible here,
+  // regardless of which account is selected for sending on the Create tab.
+  const [filterAccountId, setFilterAccountId] = useState("");
+
   const [threads, setThreads] = useState<MessageThreadItem[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(true);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
-    null,
-  );
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [threadDetail, setThreadDetail] = useState<MessageThreadDetail | null>(
     null,
   );
@@ -56,7 +54,7 @@ export default function ThreadsPanel({
       if (!cancelled) setLoadingThreads(true);
     });
     getMessagingThreads(token, {
-      twilioAccountId: accountId || undefined,
+      twilioAccountId: filterAccountId || undefined,
       pageSize: 100,
     })
       .then((res) => {
@@ -87,7 +85,7 @@ export default function ThreadsPanel({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, accountId, refreshKey]);
+  }, [token, filterAccountId, refreshKey]);
 
   // Load selected thread detail
   useEffect(() => {
@@ -196,11 +194,18 @@ export default function ThreadsPanel({
         <div className="flex items-center justify-between border-b border-neutral-100 px-3 py-2">
           <h2 className="text-sm font-semibold text-brand-dark">Threads</h2>
           {accounts.length > 0 ? (
-            <span className="text-[11px] text-neutral-400">
-              {accountId
-                ? accounts.find((a) => a._id === accountId)?.friendlyName
-                : "All accounts"}
-            </span>
+            <select
+              value={filterAccountId}
+              onChange={(e) => setFilterAccountId(e.target.value)}
+              className="rounded-md border border-neutral-300 px-2 py-1 text-[11px] text-neutral-600 outline-none focus:border-brand-orange"
+            >
+              <option value="">All accounts</option>
+              {accounts.map((a) => (
+                <option key={a._id} value={a._id}>
+                  {a.friendlyName}
+                </option>
+              ))}
+            </select>
           ) : null}
         </div>
 
@@ -248,6 +253,13 @@ export default function ThreadsPanel({
                         </div>
                         <div className="truncate text-[11px] text-neutral-500">
                           {t.lastMessagePreview || t.lastMessageChannel || "—"}
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-neutral-400">
+                          <span className="truncate" title={t.accountSid}>
+                            {t.accountFriendlyName || t.accountSid}
+                          </span>
+                          <span>·</span>
+                          <span className="truncate">{t.ourNumber}</span>
                         </div>
                         <div className="text-[10px] text-neutral-400">
                           {formatTime(t.lastMessageAt)}
@@ -303,6 +315,20 @@ export default function ThreadsPanel({
                 </div>
               ) : null}
             </div>
+            {threadDetail ? (
+              <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-1.5 text-[11px] text-neutral-500">
+                <span
+                  className="truncate rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600"
+                  title={threadDetail.thread.accountSid}
+                >
+                  {threadDetail.thread.accountFriendlyName ||
+                    threadDetail.thread.accountSid}
+                </span>
+                <span className="truncate">
+                  via {threadDetail.thread.ourNumber}
+                </span>
+              </div>
+            ) : null}
             <div className="flex flex-1 flex-col gap-2 overflow-y-auto bg-[#f2f2f7] p-3">
               {loadingThreadDetail ? (
                 <div className="flex items-center gap-2 text-xs text-neutral-500">

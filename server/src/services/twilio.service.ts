@@ -2,6 +2,7 @@ import twilio from "twilio";
 import { Types } from "mongoose";
 import { TwilioAccount, ITwilioAccount } from "../models/mongo/TwilioAccount";
 import { decryptCredential } from "../utils/credentialsCrypto";
+import { describeTwilioError } from "../utils/twilioErrorCodes";
 
 export class TwilioServiceError extends Error {
   constructor(message: string) {
@@ -114,6 +115,7 @@ export async function sendSms(params: {
   to: string;
   body: string;
   mediaUrls?: string[];
+  statusCallbackUrl?: string;
 }): Promise<{ sid: string }> {
   const { accountSid, authToken } = resolveCredentials(params.account);
   const client = twilio(accountSid, authToken);
@@ -129,11 +131,16 @@ export async function sendSms(params: {
       to: params.to,
       body: params.body,
       ...(mediaUrl ? { mediaUrl } : {}),
+      ...(params.statusCallbackUrl
+        ? { statusCallback: params.statusCallbackUrl }
+        : {}),
     });
     return { sid: message.sid };
   } catch (err) {
+    const code = (err as { code?: string | number })?.code ?? null;
+    const rawMessage = err instanceof Error ? err.message : null;
     const message =
-      err instanceof Error ? err.message : "Failed to send SMS via Twilio";
+      describeTwilioError(code, rawMessage) ?? "Failed to send SMS via Twilio";
     throw new TwilioServiceError(message);
   }
 }
@@ -176,8 +183,10 @@ export async function createOutboundCall(params: {
     });
     return { sid: call.sid };
   } catch (err) {
+    const code = (err as { code?: string | number })?.code ?? null;
+    const rawMessage = err instanceof Error ? err.message : null;
     const message =
-      err instanceof Error ? err.message : "Failed to create Twilio call";
+      describeTwilioError(code, rawMessage) ?? "Failed to create Twilio call";
     throw new TwilioServiceError(message);
   }
 }
