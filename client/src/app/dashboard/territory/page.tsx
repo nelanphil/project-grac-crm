@@ -28,8 +28,7 @@ function TerritoryPageContent() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const isAllowed = user ? TERRITORY_ROLES.includes(user.role) : false;
-  const isOrgAdmin =
-    user?.role === "admin" || user?.role === "super-admin";
+  const isOrgAdmin = user?.role === "admin" || user?.role === "super-admin";
 
   const [owners, setOwners] = useState<TerritoryOwner[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,7 +54,9 @@ function TerritoryPageContent() {
       setSelectedId((prev) => {
         if (prev && list.some((o) => o._id === prev)) return prev;
         if (user?.role === "owner") {
-          return list.find((o) => o._id === user.id)?._id ?? list[0]?._id ?? null;
+          return (
+            list.find((o) => o._id === user.id)?._id ?? list[0]?._id ?? null
+          );
         }
         return list[0]?._id ?? null;
       });
@@ -86,9 +87,7 @@ function TerritoryPageContent() {
     setSaveOk(null);
     try {
       const { owner } = await updateTerritories(token, ownerId, territories);
-      setOwners((prev) =>
-        prev.map((o) => (o._id === ownerId ? owner : o)),
-      );
+      setOwners((prev) => prev.map((o) => (o._id === ownerId ? owner : o)));
       setSaveOk(
         "Territory saved. Customer ownership is recalculating in the background — refresh Customers in a moment.",
       );
