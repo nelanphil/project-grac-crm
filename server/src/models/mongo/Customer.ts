@@ -12,6 +12,10 @@ export interface ICustomer extends Document {
   city: string;
   state: string;
   zip: string;
+  /** Denormalized primary county — kept in sync with primary CustomerAddress. */
+  county: string;
+  /** Territory owner resolved from primary site location. */
+  ownerUserRef?: Types.ObjectId | null;
   phone: string;
   /** Denormalized digits-only phone for indexed duplicate detection. */
   phoneDigits: string;
@@ -43,6 +47,13 @@ const customerSchema = new Schema<ICustomer>(
     city: { type: String, default: "" },
     state: { type: String, default: "" },
     zip: { type: String, default: "" },
+    county: { type: String, default: "", index: true },
+    ownerUserRef: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
     phone: { type: String, default: "" },
     phoneDigits: { type: String, default: "", index: true },
     email: { type: String, default: "", index: true },

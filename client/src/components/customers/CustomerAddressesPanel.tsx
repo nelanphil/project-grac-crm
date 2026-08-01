@@ -11,6 +11,7 @@ import {
   createCustomerAddress,
   createCustomerEquipment,
 } from "@/lib/api";
+import { FLORIDA_COUNTIES } from "@/lib/floridaCounties";
 
 function formatDate(date: string | null): string {
   if (!date) return "—";
@@ -19,7 +20,7 @@ function formatDate(date: string | null): string {
 
 function formatAddressLine(addr: CustomerAddress): string {
   return (
-    [addr.address, addr.city, addr.state, addr.zip]
+    [addr.address, addr.city, addr.county, addr.state, addr.zip]
       .filter(Boolean)
       .join(", ") || "—"
   );
@@ -57,6 +58,7 @@ export default function CustomerAddressesPanel({
     city: "",
     state: "",
     zip: "",
+    county: "",
     propertyType: "residential" as "residential" | "commercial",
   });
 
@@ -109,6 +111,7 @@ export default function CustomerAddressesPanel({
     try {
       const { address } = await createCustomerAddress(token, customerId, {
         ...addrForm,
+        countyManual: Boolean(addrForm.county.trim()),
         isPrimary: addresses.length === 0,
       });
       onAddressesChange([
@@ -121,6 +124,7 @@ export default function CustomerAddressesPanel({
         city: "",
         state: "",
         zip: "",
+        county: "",
         propertyType: "residential",
       });
       setAddingAddress(false);
@@ -435,6 +439,25 @@ export default function CustomerAddressesPanel({
               value={addrForm.zip}
               onChange={(v) => setAddrForm((f) => ({ ...f, zip: v }))}
             />
+            <div>
+              <label className="mb-1 block text-xs font-medium text-neutral-500">
+                County
+              </label>
+              <select
+                value={addrForm.county}
+                onChange={(e) =>
+                  setAddrForm((f) => ({ ...f, county: e.target.value }))
+                }
+                className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+              >
+                <option value="">Select county…</option>
+                {FLORIDA_COUNTIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="flex justify-end gap-2">
             <button

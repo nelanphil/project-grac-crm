@@ -8,6 +8,8 @@ export const createCustomerAddressSchema = z.object({
   city: z.string().trim().max(120).optional().default(""),
   state: z.string().trim().max(40).optional().default(""),
   zip: z.string().trim().max(20).optional().default(""),
+  county: z.string().trim().max(120).optional().default(""),
+  countyManual: z.boolean().optional().default(false),
   isPrimary: z.boolean().optional(),
   propertyType: propertyTypeSchema.optional().default("residential"),
 });

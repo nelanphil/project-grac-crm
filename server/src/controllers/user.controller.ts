@@ -2,7 +2,7 @@ import { Response } from "express";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { User, activeUserFilter } from "../models/mongo/User";
+import { User, activeUserFilter, IUserTerritories } from "../models/mongo/User";
 import { Role } from "../models/mongo/Role";
 import { createUserSchema, updateUserSchema } from "../schemas/user.schema";
 import { updateRoleSchema } from "../schemas/auth.schema";
@@ -15,9 +15,24 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
+import {
+  emptyTerritories,
+  findTerritoryConflicts,
+  normalizeTerritoriesInput,
+  scheduleOwnerReassignment,
+} from "../utils/ownerTerritory";
 
 function generateTempPassword(): string {
   return crypto.randomBytes(12).toString("base64url");
+}
+
+function formatTerritories(
+  territories?: IUserTerritories | null,
+): { counties: string[]; zips: string[] } {
+  return {
+    counties: territories?.counties ?? [],
+    zips: territories?.zips ?? [],
+  };
 }
 
 function formatUser(user: {
@@ -28,6 +43,7 @@ function formatUser(user: {
   role: string;
   username?: string | null;
   usernameKey?: string | null;
+  territories?: IUserTerritories | null;
   createdAt: Date;
   updatedAt?: Date;
 }) {
@@ -39,6 +55,7 @@ function formatUser(user: {
     role: user.role,
     username: user.username ?? null,
     usernameNumber: usernameNumberFromKey(user.username, user.usernameKey),
+    territories: formatTerritories(user.territories),
     createdAt: user.createdAt,
     ...(user.updatedAt ? { updatedAt: user.updatedAt } : {}),
   };
@@ -47,6 +64,16 @@ function formatUser(user: {
 async function assertRoleExists(roleSlug: string): Promise<boolean> {
   const role = await Role.findOne({ slug: roleSlug, deletedAt: null }).lean();
   return Boolean(role);
+}
+
+function formatConflictMessage(
+  conflicts: Awaited<ReturnType<typeof findTerritoryConflicts>>,
+): string {
+  const parts = conflicts.map((c) => {
+    const label = c.type === "county" ? `county ${c.value}` : `ZIP ${c.value}`;
+    return `${label} (held by ${c.ownerName || c.ownerId})`;
+  });
+  return `Territory conflict: ${parts.join("; ")}`;
 }
 
 export async function listUsers(req: AuthRequest, res: Response): Promise<void> {
@@ -84,6 +111,22 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
+    const territories =
+      role === "owner" && parsed.data.territories
+        ? normalizeTerritoriesInput(parsed.data.territories)
+        : emptyTerritories();
+
+    if (role === "owner" && (territories.counties.length || territories.zips.length)) {
+      const conflicts = await findTerritoryConflicts(territories);
+      if (conflicts.length > 0) {
+        res.status(409).json({
+          message: formatConflictMessage(conflicts),
+          conflicts,
+        });
+        return;
+      }
+    }
+
     const activeExisting = await User.findOne({
       email: email.toLowerCase(),
       ...activeUserFilter,
@@ -106,6 +149,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       softDeleted.first_name = first_name;
       softDeleted.last_name = last_name;
       softDeleted.role = role;
+      softDeleted.territories = territories;
       softDeleted.deletedAt = null;
       if (username !== undefined) {
         try {
@@ -126,6 +170,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
         first_name,
         last_name,
         role,
+        territories,
       });
       if (username !== undefined && username !== "" && username !== null) {
         try {
@@ -139,6 +184,10 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
           return;
         }
       }
+    }
+
+    if (role === "owner") {
+      scheduleOwnerReassignment(`user-create=${String(user._id)}`);
     }
 
     res.status(201).json({
@@ -189,6 +238,9 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
+    const previousRole = user.role;
+    const previousTerritories = formatTerritories(user.territories);
+
     if (email !== undefined) {
       const conflict = await User.findOne({
         email: email.toLowerCase(),
@@ -204,6 +256,22 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     if (first_name !== undefined) user.first_name = first_name;
     if (last_name !== undefined) user.last_name = last_name;
     if (role !== undefined) user.role = role;
+
+    const nextRole = role ?? user.role;
+    if (nextRole !== "owner") {
+      user.territories = emptyTerritories();
+    } else if (parsed.data.territories !== undefined) {
+      const territories = normalizeTerritoriesInput(parsed.data.territories);
+      const conflicts = await findTerritoryConflicts(territories, user._id);
+      if (conflicts.length > 0) {
+        res.status(409).json({
+          message: formatConflictMessage(conflicts),
+          conflicts,
+        });
+        return;
+      }
+      user.territories = territories;
+    }
 
     if (username !== undefined) {
       try {
@@ -221,6 +289,22 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     }
 
     await user.save();
+
+    const nextTerritories = formatTerritories(user.territories);
+    const counties = [
+      ...new Set([...previousTerritories.counties, ...nextTerritories.counties]),
+    ];
+    const zips = [
+      ...new Set([...previousTerritories.zips, ...nextTerritories.zips]),
+    ];
+    if (
+      previousRole === "owner" ||
+      user.role === "owner" ||
+      counties.length > 0 ||
+      zips.length > 0
+    ) {
+      scheduleOwnerReassignment(`user-update=${String(user._id)}`);
+    }
 
     const fresh = await User.findById(user._id).lean();
 
@@ -259,16 +343,25 @@ export async function updateUserRole(
       return;
     }
 
-    const user = await User.findOneAndUpdate(
-      { _id: req.params.id, ...activeUserFilter },
-      { role: parsed.data.role },
-      { new: true, select: "-password_hash" }
-    ).lean();
-
+    const user = await User.findOne({ _id: req.params.id, ...activeUserFilter });
     if (!user) {
       res.status(404).json({ message: "User not found" });
       return;
     }
+
+    const previousRole = user.role;
+    const previousTerritories = formatTerritories(user.territories);
+    user.role = parsed.data.role;
+    if (parsed.data.role !== "owner") {
+      user.territories = emptyTerritories();
+    }
+    await user.save();
+
+    if (previousRole === "owner" || parsed.data.role === "owner") {
+      scheduleOwnerReassignment(`user-role=${String(user._id)}`);
+    }
+
+    const fresh = await User.findById(user._id).lean();
 
     logNotificationAsync({
       entityType: "user",
@@ -279,7 +372,7 @@ export async function updateUserRole(
       ...actorFromRequest(req.user),
     });
 
-    res.status(200).json({ user: formatUser(user) });
+    res.status(200).json({ user: formatUser(fresh ?? user) });
   } catch (err) {
     console.error("PATCH /users/:id/role error:", err);
     res.status(500).json({ message: "Internal server error" });
@@ -308,11 +401,18 @@ export async function softDeleteUser(
     }
 
     const previousUsername = user.username;
+    const previousRole = user.role;
+    const previousTerritories = formatTerritories(user.territories);
     user.deletedAt = new Date();
     // Free unique usernameKey so active users can claim the bare name
     user.usernameKey = null;
     user.username = null;
+    user.territories = emptyTerritories();
     await user.save();
+
+    if (previousRole === "owner") {
+      scheduleOwnerReassignment(`user-delete=${String(user._id)}`);
+    }
 
     if (previousUsername) {
       const remaining = await User.find({

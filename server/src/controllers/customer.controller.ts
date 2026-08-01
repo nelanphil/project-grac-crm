@@ -46,7 +46,14 @@ import {
   customerDisplayName,
   logNotificationAsync,
 } from "../services/notification.service";
+import { normalizeCountyName } from "../constants/floridaCounties";
 import { geocodeAddress, GeocodeResult } from "../utils/censusGeocoder";
+import {
+  assertOwnerCanAccessCustomer,
+  assignCustomerOwner,
+  buildOwnerCustomerFilter,
+} from "../utils/ownerTerritory";
+import { User } from "../models/mongo/User";
 import {
   geocodeAddressGoogle,
   getActiveGoogleApiKey,
@@ -180,6 +187,8 @@ function formatAddress(doc: {
   city?: string;
   state?: string;
   zip?: string;
+  county?: string;
+  countyManual?: boolean;
   isPrimary?: boolean;
   propertyType?: CustomerAddressPropertyType;
   legacyCustomerId?: number | null;
@@ -194,6 +203,8 @@ function formatAddress(doc: {
     city: doc.city ?? "",
     state: doc.state ?? "",
     zip: doc.zip ?? "",
+    county: doc.county ?? "",
+    countyManual: Boolean(doc.countyManual),
     isPrimary: Boolean(doc.isPrimary),
     propertyType: doc.propertyType ?? "residential",
     legacyCustomerId: doc.legacyCustomerId ?? null,
@@ -263,6 +274,7 @@ function formatContact(doc: {
 async function findActiveCustomerOr404(
   customerId: string,
   res: Response,
+  accessUser?: { id: string; role: string } | null,
 ): Promise<{
   _id: mongoose.Types.ObjectId;
   legacyId: number;
@@ -275,6 +287,8 @@ async function findActiveCustomerOr404(
   city: string;
   state: string;
   zip: string;
+  county: string;
+  ownerUserRef?: mongoose.Types.ObjectId | null;
   generatorModel: string;
   serial: string;
   atsSerial: string;
@@ -295,6 +309,14 @@ async function findActiveCustomerOr404(
   }).lean();
   if (!customer) {
     res.status(404).json({ message: "Customer not found" });
+    return null;
+  }
+
+  if (
+    accessUser &&
+    !(await assertOwnerCanAccessCustomer(accessUser, customer))
+  ) {
+    res.status(403).json({ message: "Customer is outside your territory" });
     return null;
   }
 
@@ -447,9 +469,14 @@ export async function listCustomers(
       ? sortKeyRaw
       : "customer";
 
+    const ownerScope = req.user
+      ? await buildOwnerCustomerFilter({ id: req.user.id, role: req.user.role })
+      : null;
+
     const baseFilter: Record<string, unknown> = {
       ...notMergedFilter,
       ...(deletedOnly ? { deletedAt: { $ne: null } } : activeCustomerFilter),
+      ...(ownerScope ?? {}),
     };
 
     const search = trimStr(req.query.search);
@@ -464,6 +491,7 @@ export async function listCustomers(
         { city: rx },
         { state: rx },
         { zip: rx },
+        { county: rx },
         { phone: rx },
       ];
       const digits = normalizePhoneDigits(search);
@@ -561,6 +589,31 @@ export async function listCustomers(
       }
     }
 
+    const ownerIds = [
+      ...new Set(
+        customers
+          .map((c) => (c.ownerUserRef ? String(c.ownerUserRef) : ""))
+          .filter(Boolean),
+      ),
+    ];
+    const ownerById = new Map<
+      string,
+      { _id: string; first_name: string; last_name: string; email: string }
+    >();
+    if (ownerIds.length > 0) {
+      const owners = await User.find({ _id: { $in: ownerIds } })
+        .select("_id first_name last_name email")
+        .lean();
+      for (const o of owners) {
+        ownerById.set(String(o._id), {
+          _id: String(o._id),
+          first_name: o.first_name,
+          last_name: o.last_name,
+          email: o.email,
+        });
+      }
+    }
+
     res.status(200).json({
       customers: customers.map((c) => {
         const digits = normalizePhoneDigits(c.phone);
@@ -568,8 +621,11 @@ export async function listCustomers(
           digits.length >= 7
             ? Math.max(0, (duplicateByDigits.get(digits) ?? 1) - 1)
             : 0;
+        const ownerId = c.ownerUserRef ? String(c.ownerUserRef) : null;
         return {
           ...c,
+          ownerUserRef: ownerId,
+          owner: ownerId ? (ownerById.get(ownerId) ?? null) : null,
           deletedAt: c.deletedAt ? c.deletedAt.toISOString() : null,
           duplicateCount: peers,
           contracts: contractsByCustomer.get(c.legacyId) ?? [],
@@ -689,6 +745,8 @@ export async function createCustomer(
       city: string;
       state: string;
       zip: string;
+      county: string;
+      countyManual: boolean;
       propertyType: CustomerAddressPropertyType;
       isPrimary: boolean;
       equipment: CreateCustomerAddressNested["equipment"];
@@ -699,8 +757,10 @@ export async function createCustomer(
       const city = trimStr(addr.city);
       const state = trimStr(addr.state);
       const zip = trimStr(addr.zip);
+      const manualCounty = normalizeCountyName(addr.county);
+      const countyManualInput = addr.countyManual === true;
       const hasAny =
-        street || city || state || zip || trimStr(addr.label) ||
+        street || city || state || zip || trimStr(addr.label) || manualCounty ||
         (addr.equipment?.length ?? 0) > 0;
       if (!hasAny) continue;
 
@@ -729,12 +789,24 @@ export async function createCustomer(
       }
 
       const normalizedAddr = geocode.match.normalized;
+      const geocodedCounty = normalizeCountyName(normalizedAddr.county);
+      const countyManual =
+        countyManualInput ||
+        (Boolean(manualCounty) &&
+          Boolean(geocodedCounty) &&
+          manualCounty !== geocodedCounty);
+      const county = countyManual
+        ? manualCounty || geocodedCounty
+        : geocodedCounty || manualCounty;
+
       preparedAddresses.push({
         label: trimStr(addr.label),
         address: normalizedAddr.address,
         city: normalizedAddr.city,
         state: normalizedAddr.state,
         zip: normalizedAddr.zip,
+        county,
+        countyManual,
         propertyType:
           addr.propertyType === "commercial" ? "commercial" : "residential",
         isPrimary: addr.isPrimary === true,
@@ -805,6 +877,8 @@ export async function createCustomer(
       city: primarySite?.city ?? "",
       state: primarySite?.state ?? "",
       zip: primarySite?.zip ?? "",
+      county: primarySite?.county ?? "",
+      ownerUserRef: null,
       deletedAt: null,
       mergedIntoRef: null,
       mergedAt: null,
@@ -833,6 +907,8 @@ export async function createCustomer(
           city: addr.city,
           state: addr.state,
           zip: addr.zip,
+          county: addr.county,
+          countyManual: addr.countyManual,
           isPrimary: addr.isPrimary,
           propertyType: addr.propertyType,
           legacyCustomerId: legacyId,
@@ -885,6 +961,7 @@ export async function createCustomer(
 
       await syncCustomerPrimaryFields(customer._id);
       await syncCustomerPrimaryContactFields(customer._id);
+      await assignCustomerOwner(customer._id);
       // Re-apply durable account name after contact sync (sync does not touch it,
       // but refresh the in-memory doc for the response).
       await Customer.findByIdAndUpdate(customer._id, {
@@ -997,6 +1074,8 @@ function normalizeCreateCustomerBody(body: unknown): unknown {
       city: String(b.city ?? ""),
       state: String(b.state ?? ""),
       zip: String(b.zip ?? ""),
+      county: String(b.county ?? ""),
+      countyManual: b.countyManual === true,
       propertyType:
         b.propertyType === "commercial" ? "commercial" : "residential",
       isPrimary: true,
@@ -1027,7 +1106,7 @@ export async function updateCustomer(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1259,7 +1338,7 @@ export async function getCustomerById(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
 
     if (customer.mergedIntoRef) {
@@ -1305,10 +1384,34 @@ export async function getCustomerById(
       loadContactsForCustomer(customer._id),
     ]);
 
+    let owner: {
+      _id: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+    } | null = null;
+    if (customer.ownerUserRef) {
+      const ownerDoc = await User.findById(customer.ownerUserRef)
+        .select("_id first_name last_name email")
+        .lean();
+      if (ownerDoc) {
+        owner = {
+          _id: String(ownerDoc._id),
+          first_name: ownerDoc.first_name,
+          last_name: ownerDoc.last_name,
+          email: ownerDoc.email,
+        };
+      }
+    }
+
     res.status(200).json({
       customer: {
         ...customer,
         _id: customer._id.toString(),
+        ownerUserRef: customer.ownerUserRef
+          ? String(customer.ownerUserRef)
+          : null,
+        owner,
         lastSvc: customer.lastSvc ? customer.lastSvc.toISOString() : null,
         mergedIntoRef: null,
         addresses,
@@ -1327,7 +1430,7 @@ export async function getCustomerAddresses(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1348,7 +1451,7 @@ export async function createCustomerAddress(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1372,6 +1475,9 @@ export async function createCustomerAddress(
       await clearOtherPrimary(customer._id);
     }
 
+    const county = normalizeCountyName(parsed.data.county);
+    const countyManual = parsed.data.countyManual === true || Boolean(county);
+
     const address = await CustomerAddress.create({
       customerRef: customer._id,
       label: parsed.data.label,
@@ -1379,12 +1485,15 @@ export async function createCustomerAddress(
       city: parsed.data.city,
       state: parsed.data.state,
       zip: parsed.data.zip,
+      county,
+      countyManual,
       isPrimary: makePrimary,
       propertyType: parsed.data.propertyType,
       legacyCustomerId: null,
     });
 
     await syncCustomerPrimaryFields(customer._id);
+    await assignCustomerOwner(customer._id);
 
     const custName = customerDisplayName(customer);
     logNotificationAsync({
@@ -1415,7 +1524,7 @@ export async function updateCustomerAddress(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1453,6 +1562,13 @@ export async function updateCustomerAddress(
     if (parsed.data.zip !== undefined) address.zip = parsed.data.zip;
     if (parsed.data.propertyType !== undefined)
       address.propertyType = parsed.data.propertyType;
+    if (parsed.data.county !== undefined) {
+      address.county = normalizeCountyName(parsed.data.county);
+      address.countyManual = true;
+    }
+    if (parsed.data.countyManual !== undefined) {
+      address.countyManual = parsed.data.countyManual;
+    }
 
     if (parsed.data.isPrimary === true) {
       await clearOtherPrimary(
@@ -1483,6 +1599,7 @@ export async function updateCustomerAddress(
 
     await address.save();
     await syncCustomerPrimaryFields(customer._id);
+    await assignCustomerOwner(customer._id);
 
     const custName = customerDisplayName(customer);
     logNotificationAsync({
@@ -1514,7 +1631,7 @@ export async function deleteCustomerAddress(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1567,6 +1684,7 @@ export async function deleteCustomerAddress(
     }
 
     await syncCustomerPrimaryFields(customer._id);
+    await assignCustomerOwner(customer._id);
 
     const custName = customerDisplayName(customer);
     logNotificationAsync({
@@ -1592,7 +1710,7 @@ export async function checkEquipmentSerial(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1625,7 +1743,7 @@ export async function createEquipment(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1706,7 +1824,7 @@ export async function updateEquipment(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1815,7 +1933,7 @@ export async function deleteEquipment(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1876,7 +1994,7 @@ export async function getCustomerContacts(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1898,7 +2016,7 @@ export async function createCustomerContact(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1964,7 +2082,7 @@ export async function updateCustomerContact(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2058,7 +2176,7 @@ export async function deleteCustomerContact(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res);
+    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2129,7 +2247,7 @@ export async function getMergePreview(
   res: Response,
 ): Promise<void> {
   try {
-    const survivor = await findActiveCustomerOr404(String(req.params.id), res);
+    const survivor = await findActiveCustomerOr404(String(req.params.id), res, req.user);
     if (!survivor) return;
     if (survivor.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2137,7 +2255,7 @@ export async function getMergePreview(
     }
 
     const sourceCustomerId = String(req.query.sourceCustomerId ?? "");
-    const source = await findActiveCustomerOr404(sourceCustomerId, res);
+    const source = await findActiveCustomerOr404(sourceCustomerId, res, req.user);
     if (!source) return;
 
     if (survivor._id.equals(source._id)) {
@@ -2617,6 +2735,7 @@ export async function mergeCustomers(
     await source.save();
 
     await syncCustomerPrimaryFields(survivor._id);
+    await assignCustomerOwner(survivor._id);
     await syncCustomerPrimaryContactFields(survivor._id);
 
     const [addresses, contacts, refreshed] = await Promise.all([

@@ -1,4 +1,5 @@
 import mongoose, { FilterQuery, Types } from "mongoose";
+import { Customer } from "../models/mongo/Customer";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import {
   INotificationEvent,
@@ -11,7 +12,8 @@ import {
 import { NotificationRead } from "../models/mongo/NotificationRead";
 import { User } from "../models/mongo/User";
 
-const FULL_ACCESS_ROLES = new Set(["super-admin", "admin", "owner"]);
+/** Org-wide notification visibility (owners are territory-scoped). */
+const FULL_ACCESS_ROLES = new Set(["super-admin", "admin"]);
 
 export interface LogNotificationInput {
   entityType: NotificationEntityType;
@@ -131,11 +133,30 @@ export async function resolveCustomerRefsForUser(
   return [...unique.values()];
 }
 
+async function resolveOwnerCustomerRefs(
+  userId: string
+): Promise<Types.ObjectId[]> {
+  const id = toObjectId(userId);
+  if (!id) return [];
+  const customers = await Customer.find({ ownerUserRef: id })
+    .select("_id")
+    .lean();
+  return customers.map((c) => c._id as Types.ObjectId);
+}
+
 export async function buildVisibilityFilter(
   user: AuthUserLike
 ): Promise<FilterQuery<INotificationEvent>> {
   if (FULL_ACCESS_ROLES.has(user.role)) {
     return {};
+  }
+
+  if (user.role === "owner") {
+    const refs = await resolveOwnerCustomerRefs(user.id);
+    if (refs.length === 0) {
+      return { _id: { $in: [] } };
+    }
+    return { customerRef: { $in: refs } };
   }
 
   if (user.role === "customer") {

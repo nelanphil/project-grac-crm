@@ -9,6 +9,10 @@ export interface ICustomerAddress extends Document {
   city: string;
   state: string;
   zip: string;
+  /** County name without "County" suffix when known. */
+  county: string;
+  /** When true, geocode/re-normalize must not overwrite county. */
+  countyManual: boolean;
   isPrimary: boolean;
   propertyType: CustomerAddressPropertyType;
   /** Legacy customer id this site originated from (migration/merge). */
@@ -30,6 +34,8 @@ const customerAddressSchema = new Schema<ICustomerAddress>(
     city: { type: String, default: "" },
     state: { type: String, default: "" },
     zip: { type: String, default: "" },
+    county: { type: String, default: "", index: true },
+    countyManual: { type: Boolean, default: false },
     isPrimary: { type: Boolean, default: false, index: true },
     propertyType: {
       type: String,

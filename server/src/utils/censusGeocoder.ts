@@ -3,9 +3,14 @@
  * https://geocoding.geo.census.gov/geocoder/
  */
 
+import { normalizeCountyName } from "../constants/floridaCounties";
+
 const CENSUS_ADDRESS_URL =
   "https://geocoding.geo.census.gov/geocoder/locations/address";
+const CENSUS_GEOGRAPHIES_URL =
+  "https://geocoding.geo.census.gov/geocoder/geographies/address";
 const BENCHMARK = "Public_AR_Current";
+const VINTAGE = "Current_Current";
 
 export type AddressInput = {
   street: string;
@@ -19,6 +24,8 @@ export type NormalizedAddress = {
   city: string;
   state: string;
   zip: string;
+  /** County name without "County" suffix when known. */
+  county: string;
 };
 
 export type GeocodeMatch = {
@@ -81,7 +88,55 @@ function parseMatchedAddress(matched: string): NormalizedAddress | null {
     city: toTitleCase(cityPart),
     state,
     zip: zipMatch[1],
+    county: "",
   };
+}
+
+type CensusCountyGeo = { NAME?: string; BASENAME?: string };
+
+type CensusGeographiesResponse = {
+  result?: {
+    addressMatches?: Array<{
+      geographies?: {
+        Counties?: CensusCountyGeo[];
+      };
+    }>;
+  };
+};
+
+/** Fetch county name via Census geographies endpoint. */
+export async function lookupCountyFromCensus(
+  input: AddressInput,
+): Promise<string> {
+  const street = trim(input.street);
+  if (!street) return "";
+
+  const params = new URLSearchParams({
+    street,
+    benchmark: BENCHMARK,
+    vintage: VINTAGE,
+    format: "json",
+  });
+  const city = trim(input.city);
+  const state = trim(input.state);
+  const zip = trim(input.zip);
+  if (city) params.set("city", city);
+  if (state) params.set("state", state);
+  if (zip) params.set("zip", zip);
+
+  try {
+    const res = await fetch(`${CENSUS_GEOGRAPHIES_URL}?${params.toString()}`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) return "";
+    const data = (await res.json()) as CensusGeographiesResponse;
+    const county = data.result?.addressMatches?.[0]?.geographies?.Counties?.[0];
+    const raw = county?.BASENAME || county?.NAME || "";
+    return normalizeCountyName(raw);
+  } catch {
+    return "";
+  }
 }
 
 function toTitleCase(value: string): string {
@@ -193,6 +248,7 @@ export async function geocodeAddress(
     city: toTitleCase(match.addressComponents?.city ?? city),
     state: (match.addressComponents?.state ?? state).toUpperCase().slice(0, 2),
     zip: match.addressComponents?.zip ?? zip.replace(/\D/g, "").slice(0, 5),
+    county: "",
   };
 
   if (!normalized.address || !normalized.city || !normalized.state) {
@@ -202,6 +258,15 @@ export async function geocodeAddress(
       message:
         "No matching US address found. Check the street, city, state, and ZIP.",
     };
+  }
+
+  if (!normalized.county) {
+    normalized.county = await lookupCountyFromCensus({
+      street: normalized.address,
+      city: normalized.city,
+      state: normalized.state,
+      zip: normalized.zip,
+    });
   }
 
   const lng = match.coordinates?.x;

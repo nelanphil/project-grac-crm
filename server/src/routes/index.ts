@@ -4,6 +4,7 @@ import { getMySQLStatus } from "../config/mysql";
 import authRoutes from "./auth.routes";
 import leadRoutes from "./lead.routes";
 import userRoutes from "./user.routes";
+import territoryRoutes from "./territory.routes";
 import roleRoutes from "./role.routes";
 import workOrderRoutes from "./workOrder.routes";
 import customerRoutes from "./customer.routes";
@@ -31,6 +32,7 @@ router.get("/health", (_req: Request, res: Response) => {
 router.use("/auth", authRoutes);
 router.use("/leads", leadRoutes);
 router.use("/users", userRoutes);
+router.use("/territories", territoryRoutes);
 router.use("/roles", roleRoutes);
 router.use("/work-orders", workOrderRoutes);
 router.use("/customers", customerRoutes);

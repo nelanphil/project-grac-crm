@@ -2,15 +2,22 @@
  * Google Address Validation API.
  * https://developers.google.com/maps/documentation/address-validation
  */
+import { normalizeCountyName } from "../constants/floridaCounties";
 import { GoogleCredentials } from "../models/mongo/GoogleCredentials";
 import { decryptCredential } from "./credentialsCrypto";
-import type { AddressInput, GeocodeResult, NormalizedAddress } from "./censusGeocoder";
+import {
+  lookupCountyFromCensus,
+  type AddressInput,
+  type GeocodeResult,
+  type NormalizedAddress,
+} from "./censusGeocoder";
 
 const VALIDATE_URL =
   "https://addressvalidation.googleapis.com/v1:validateAddress";
 
 type GoogleAddressComponent = {
   componentType?: string;
+  componentName?: { text?: string };
 };
 
 type GooglePostalAddress = {
@@ -129,12 +136,27 @@ export async function geocodeAddressGoogle(
     };
   }
 
+  const countyComponent = result?.address?.addressComponents?.find(
+    (c) => c.componentType === "administrative_area_level_2",
+  );
+  let county = normalizeCountyName(countyComponent?.componentName?.text ?? "");
+
   const normalized: NormalizedAddress = {
     address: toTitleCase(streetLine),
     city: toTitleCase(cityVal),
     state: stateVal.toUpperCase().slice(0, 2),
     zip: zipVal,
+    county,
   };
+
+  if (!normalized.county) {
+    normalized.county = await lookupCountyFromCensus({
+      street: normalized.address,
+      city: normalized.city,
+      state: normalized.state,
+      zip: normalized.zip,
+    });
+  }
 
   const location = result?.geocode?.location;
   const lat = location?.latitude;

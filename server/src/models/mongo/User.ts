@@ -3,6 +3,13 @@ import mongoose, { Schema, Document } from "mongoose";
 // UserRole is now an open string to support dynamic roles
 export type UserRole = string;
 
+export interface IUserTerritories {
+  /** FL county names (no "County" suffix), e.g. "Orange". */
+  counties: string[];
+  /** Exclusive 5-digit ZIP carve-outs. */
+  zips: string[];
+}
+
 export interface IUser extends Document {
   email: string;
   password_hash: string;
@@ -13,10 +20,20 @@ export interface IUser extends Document {
   username: string | null;
   /** Unique backend key, e.g. doc1 / doc2. Never exposed to clients. */
   usernameKey: string | null;
+  /** Geographic territories for owner-role users. */
+  territories: IUserTerritories;
   deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+const territoriesSchema = new Schema<IUserTerritories>(
+  {
+    counties: { type: [String], default: [] },
+    zips: { type: [String], default: [] },
+  },
+  { _id: false }
+);
 
 const userSchema = new Schema<IUser>(
   {
@@ -27,6 +44,10 @@ const userSchema = new Schema<IUser>(
     role: { type: String, default: "agent", required: true },
     username: { type: String, default: null, lowercase: true, trim: true, index: true },
     usernameKey: { type: String, default: null, lowercase: true, trim: true },
+    territories: {
+      type: territoriesSchema,
+      default: () => ({ counties: [], zips: [] }),
+    },
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true }

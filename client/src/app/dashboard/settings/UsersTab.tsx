@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   getUsers,
@@ -12,6 +12,7 @@ import {
   RoleItem,
   ApiError,
 } from "@/lib/api";
+import { FLORIDA_COUNTIES } from "@/lib/floridaCounties";
 import UsernameDisplay from "@/components/ui/UsernameDisplay";
 
 type ModalMode = "create" | "edit" | null;
@@ -23,7 +24,13 @@ const emptyForm = {
   username: "",
   role: "agent",
   password: "",
+  counties: [] as string[],
+  zips: [] as string[],
 };
+
+function normalizeZipInput(raw: string): string {
+  return raw.replace(/\D/g, "").slice(0, 5);
+}
 
 export default function UsersTab() {
   const token = useAuthStore((s) => s.token);
@@ -38,6 +45,7 @@ export default function UsersTab() {
   const [modal, setModal] = useState<ModalMode>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [zipDraft, setZipDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
@@ -79,6 +87,7 @@ export default function UsersTab() {
 
   function openCreate() {
     setForm({ ...emptyForm, role: roleList[0]?.slug ?? "agent" });
+    setZipDraft("");
     setEditingId(null);
     setSaveError(null);
     setTempPassword(null);
@@ -93,7 +102,10 @@ export default function UsersTab() {
       username: user.username ?? "",
       role: user.role,
       password: "",
+      counties: user.territories?.counties ?? [],
+      zips: user.territories?.zips ?? [],
     });
+    setZipDraft("");
     setEditingId(user._id);
     setSaveError(null);
     setTempPassword(null);
@@ -104,6 +116,45 @@ export default function UsersTab() {
     setModal(null);
     setEditingId(null);
     setSaveError(null);
+    setZipDraft("");
+  }
+
+  function toggleCounty(county: string) {
+    setForm((f) => {
+      const has = f.counties.includes(county);
+      return {
+        ...f,
+        counties: has
+          ? f.counties.filter((c) => c !== county)
+          : [...f.counties, county].sort((a, b) => a.localeCompare(b)),
+      };
+    });
+  }
+
+  function addZip(raw: string) {
+    const zip = normalizeZipInput(raw);
+    if (zip.length !== 5) return;
+    setForm((f) =>
+      f.zips.includes(zip)
+        ? f
+        : { ...f, zips: [...f.zips, zip].sort() },
+    );
+    setZipDraft("");
+  }
+
+  function removeZip(zip: string) {
+    setForm((f) => ({ ...f, zips: f.zips.filter((z) => z !== zip) }));
+  }
+
+  function onZipKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
+      if (zipDraft.trim()) {
+        e.preventDefault();
+        addZip(zipDraft);
+      }
+    } else if (e.key === "Backspace" && !zipDraft && form.zips.length) {
+      removeZip(form.zips[form.zips.length - 1]);
+    }
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -112,6 +163,18 @@ export default function UsersTab() {
     setSaving(true);
     setSaveError(null);
     setTempPassword(null);
+
+    if (zipDraft.trim()) {
+      addZip(zipDraft);
+    }
+
+    const territories =
+      form.role === "owner"
+        ? {
+            counties: form.counties,
+            zips: form.zips,
+          }
+        : undefined;
 
     try {
       if (modal === "create") {
@@ -122,6 +185,7 @@ export default function UsersTab() {
           role: string;
           password?: string;
           username?: string | null;
+          territories?: { counties: string[]; zips: string[] };
         } = {
           email: form.email.trim(),
           first_name: form.first_name.trim(),
@@ -132,6 +196,7 @@ export default function UsersTab() {
         if (form.password.trim()) {
           payload.password = form.password;
         }
+        if (territories) payload.territories = territories;
         const { user, temporaryPassword } = await createUser(token, payload);
         setUsers((prev) => [user, ...prev]);
         if (temporaryPassword) {
@@ -147,6 +212,7 @@ export default function UsersTab() {
           role: string;
           username: string | null;
           password?: string;
+          territories?: { counties: string[]; zips: string[] };
         } = {
           email: form.email.trim(),
           first_name: form.first_name.trim(),
@@ -156,6 +222,14 @@ export default function UsersTab() {
         };
         if (isSuperAdmin && form.password.trim()) {
           payload.password = form.password;
+        }
+        if (form.role === "owner") {
+          payload.territories = {
+            counties: form.counties,
+            zips: form.zips,
+          };
+        } else {
+          payload.territories = { counties: [], zips: [] };
         }
         const { user } = await updateUser(token, editingId, payload);
         setUsers((prev) => prev.map((u) => (u._id === editingId ? user : u)));
@@ -269,6 +343,9 @@ export default function UsersTab() {
                 Role
               </th>
               <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Territory
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Joined
               </th>
               <th className="px-6 py-3" />
@@ -278,56 +355,78 @@ export default function UsersTab() {
             {filteredUsers.length === 0 ? (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={7}
                   className="px-6 py-8 text-center text-sm text-neutral-500"
                 >
                   No users match your search.
                 </td>
               </tr>
             ) : (
-              filteredUsers.map((user) => (
-                <tr key={user._id}>
-                  <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
-                    {user.first_name} {user.last_name}
-                  </td>
-                  <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                    {user.email}
-                  </td>
-                  <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                    <UsernameDisplay
-                      username={user.username}
-                      usernameNumber={user.usernameNumber}
-                    />
-                  </td>
-                  <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
-                    {getRoleLabel(user.role)}
-                  </td>
-                  <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
-                    {new Date(user.createdAt).toLocaleDateString()}
-                  </td>
-                  <td className="px-6 py-4 text-right whitespace-nowrap">
-                    <div className="flex items-center justify-end gap-3">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(user)}
-                        className="text-xs font-medium text-brand-orange hover:underline"
-                      >
-                        Edit
-                      </button>
-                      {currentUser?.id !== user._id && (
+              filteredUsers.map((user) => {
+                const counties = user.territories?.counties ?? [];
+                const zips = user.territories?.zips ?? [];
+                const territorySummary =
+                  user.role !== "owner"
+                    ? "—"
+                    : counties.length === 0 && zips.length === 0
+                      ? "None"
+                      : [
+                          counties.length
+                            ? `${counties.length} count${counties.length === 1 ? "y" : "ies"}`
+                            : null,
+                          zips.length
+                            ? `${zips.length} ZIP${zips.length === 1 ? "" : "s"}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(", ");
+                return (
+                  <tr key={user._id}>
+                    <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
+                      {user.first_name} {user.last_name}
+                    </td>
+                    <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                      {user.email}
+                    </td>
+                    <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                      <UsernameDisplay
+                        username={user.username}
+                        usernameNumber={user.usernameNumber}
+                      />
+                    </td>
+                    <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
+                      {getRoleLabel(user.role)}
+                    </td>
+                    <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                      {territorySummary}
+                    </td>
+                    <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
+                      {new Date(user.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-6 py-4 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-3">
                         <button
                           type="button"
-                          onClick={() => handleDelete(user._id)}
-                          disabled={deletingId === user._id}
-                          className="text-xs font-medium text-red-600 hover:underline disabled:opacity-60"
+                          onClick={() => openEdit(user)}
+                          className="text-xs font-medium text-brand-orange hover:underline"
                         >
-                          {deletingId === user._id ? "Deleting…" : "Delete"}
+                          Edit
                         </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))
+                        {currentUser?.id !== user._id && (
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(user._id)}
+                            disabled={deletingId === user._id}
+                            className="text-xs font-medium text-red-600 hover:underline disabled:opacity-60"
+                          >
+                            {deletingId === user._id ? "Deleting…" : "Delete"}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -335,7 +434,11 @@ export default function UsersTab() {
 
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+          <div
+            className={`w-full rounded-xl bg-white shadow-xl ${
+              form.role === "owner" ? "max-w-2xl" : "max-w-md"
+            }`}
+          >
             <div className="border-b border-neutral-100 px-6 py-4">
               <h3 className="text-lg font-semibold text-brand-dark">
                 {modal === "create" ? "Create user" : "Edit user"}
@@ -362,7 +465,10 @@ export default function UsersTab() {
                 </div>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+              <form
+                onSubmit={handleSubmit}
+                className="px-6 py-5 space-y-4 max-h-[85vh] overflow-y-auto"
+              >
                 {saveError && (
                   <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
                     {saveError}
@@ -440,7 +546,13 @@ export default function UsersTab() {
                   <select
                     value={form.role}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, role: e.target.value }))
+                      setForm((f) => ({
+                        ...f,
+                        role: e.target.value,
+                        ...(e.target.value !== "owner"
+                          ? { counties: [], zips: [] }
+                          : {}),
+                      }))
                     }
                     className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
                   >
@@ -451,6 +563,110 @@ export default function UsersTab() {
                     ))}
                   </select>
                 </div>
+
+                {form.role === "owner" && (
+                  <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4">
+                    <div>
+                      <p className="text-sm font-medium text-brand-dark">
+                        Territory (Florida)
+                      </p>
+                      <p className="mt-0.5 text-xs text-neutral-500">
+                        Assign counties this owner covers. Use ZIP carve-outs
+                        when two owners share a county.
+                      </p>
+                    </div>
+
+                    <div>
+                      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                        <label className="block text-xs font-medium text-neutral-600">
+                          Counties ({form.counties.length} selected)
+                        </label>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setForm((f) => ({
+                                ...f,
+                                counties: [...FLORIDA_COUNTIES],
+                              }))
+                            }
+                            className="text-xs font-medium text-brand-orange hover:underline"
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setForm((f) => ({ ...f, counties: [] }))
+                            }
+                            disabled={form.counties.length === 0}
+                            className="text-xs font-medium text-neutral-500 hover:underline disabled:opacity-40 disabled:no-underline"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                      <div className="max-h-40 overflow-y-auto rounded-md border border-neutral-200 bg-white p-2 grid grid-cols-2 gap-1 sm:grid-cols-3">
+                        {FLORIDA_COUNTIES.map((county) => {
+                          const checked = form.counties.includes(county);
+                          return (
+                            <label
+                              key={county}
+                              className="flex items-center gap-1.5 rounded px-1.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleCounty(county)}
+                                className="rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
+                              />
+                              {county}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-neutral-600 mb-1.5">
+                        ZIP carve-outs
+                      </label>
+                      <div className="flex flex-wrap gap-1.5 rounded-md border border-neutral-200 bg-white px-2 py-2 min-h-[42px]">
+                        {form.zips.map((zip) => (
+                          <button
+                            key={zip}
+                            type="button"
+                            onClick={() => removeZip(zip)}
+                            className="inline-flex items-center gap-1 rounded bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-700 hover:bg-neutral-200"
+                          >
+                            {zip}
+                            <span aria-hidden>×</span>
+                          </button>
+                        ))}
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={zipDraft}
+                          onChange={(e) =>
+                            setZipDraft(normalizeZipInput(e.target.value))
+                          }
+                          onKeyDown={onZipKeyDown}
+                          onBlur={() => {
+                            if (zipDraft.length === 5) addZip(zipDraft);
+                          }}
+                          placeholder={
+                            form.zips.length ? "Add ZIP…" : "e.g. 32789"
+                          }
+                          className="min-w-[5rem] flex-1 border-0 bg-transparent px-1 py-0.5 text-sm outline-none"
+                        />
+                      </div>
+                      <p className="mt-1 text-xs text-neutral-400">
+                        Press Enter to add. ZIP claims override county
+                        ownership.
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {(modal === "create" || (modal === "edit" && isSuperAdmin)) && (
                   <div>

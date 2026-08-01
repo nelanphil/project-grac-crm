@@ -13,6 +13,7 @@ import {
   createCustomer,
   validateCustomerAddress,
 } from "@/lib/api";
+import { FLORIDA_COUNTIES } from "@/lib/floridaCounties";
 
 function safeReturnTo(value: string | null): string {
   if (value && value.startsWith("/dashboard")) return value;
@@ -60,6 +61,8 @@ type AddressDraft = {
   city: string;
   state: string;
   zip: string;
+  county: string;
+  countyManual: boolean;
   propertyType: CustomerAddressPropertyType;
   isPrimary: boolean;
   equipment: EquipmentDraft[];
@@ -102,6 +105,8 @@ function emptyAddress(isPrimary = false): AddressDraft {
     city: "",
     state: "",
     zip: "",
+    county: "",
+    countyManual: false,
     propertyType: "residential",
     isPrimary,
     equipment: [],
@@ -247,6 +252,9 @@ function CreateCustomerContent() {
           validating: false,
           suggested: null,
           validationMsg: "Address verified.",
+          ...(addr.countyManual
+            ? {}
+            : { county: matched.county?.trim() || addr.county }),
         });
       } else {
         updateAddress(addr.key, {
@@ -346,6 +354,8 @@ function CreateCustomerContent() {
           city: a.city.trim(),
           state: a.state.trim(),
           zip: a.zip.trim(),
+          county: a.county.trim(),
+          countyManual: a.countyManual,
           propertyType: a.propertyType,
           isPrimary: a.isPrimary,
           equipment: a.equipment
@@ -717,6 +727,67 @@ function CreateCustomerContent() {
                         />
                       </label>
                     </div>
+                    <label className="block text-sm font-medium text-brand-dark sm:col-span-2">
+                      County{" "}
+                      <span className="font-normal text-neutral-500">
+                        (auto-filled; override if needed)
+                      </span>
+                      <select
+                        value={
+                          FLORIDA_COUNTIES.includes(
+                            addr.county as (typeof FLORIDA_COUNTIES)[number],
+                          )
+                            ? addr.county
+                            : addr.county
+                              ? "__other__"
+                              : ""
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === "__other__") {
+                            updateAddress(addr.key, {
+                              county: addr.county || "",
+                              countyManual: true,
+                            });
+                            return;
+                          }
+                          updateAddress(addr.key, {
+                            county: v,
+                            countyManual: Boolean(v),
+                          });
+                        }}
+                        className={inputClass}
+                      >
+                        <option value="">Select county…</option>
+                        {FLORIDA_COUNTIES.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                        {addr.county &&
+                        !FLORIDA_COUNTIES.includes(
+                          addr.county as (typeof FLORIDA_COUNTIES)[number],
+                        ) ? (
+                          <option value="__other__">{addr.county}</option>
+                        ) : null}
+                      </select>
+                      {addr.county &&
+                      !FLORIDA_COUNTIES.includes(
+                        addr.county as (typeof FLORIDA_COUNTIES)[number],
+                      ) ? (
+                        <input
+                          value={addr.county}
+                          onChange={(e) =>
+                            updateAddress(addr.key, {
+                              county: e.target.value,
+                              countyManual: true,
+                            })
+                          }
+                          className={inputClass}
+                          placeholder="County name"
+                        />
+                      ) : null}
+                    </label>
                   </div>
 
                   <div className="mt-3 space-y-2">
@@ -758,6 +829,9 @@ function CreateCustomerContent() {
                                 city: matched.city,
                                 state: matched.state,
                                 zip: matched.zip,
+                                county: addr.countyManual
+                                  ? addr.county
+                                  : matched.county?.trim() || addr.county,
                                 validated: true,
                                 suggested: null,
                                 validationMsg: addr.suggested!.matchedAddress

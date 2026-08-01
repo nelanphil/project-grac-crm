@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isFloridaCounty } from "../constants/floridaCounties";
 
 const usernameField = z
   .union([
@@ -15,6 +16,24 @@ const usernameField = z
   ])
   .optional();
 
+const territoriesSchema = z
+  .object({
+    counties: z.array(z.string()).optional().default([]),
+    zips: z.array(z.string()).optional().default([]),
+  })
+  .superRefine((val, ctx) => {
+    for (const county of val.counties ?? []) {
+      if (county.trim() && !isFloridaCounty(county)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `"${county}" is not a valid Florida county`,
+          path: ["counties"],
+        });
+      }
+    }
+  })
+  .optional();
+
 export const createUserSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z
@@ -26,6 +45,7 @@ export const createUserSchema = z.object({
   last_name: z.string().min(1, "Last name is required").max(100),
   role: z.string().min(1, "Role is required"),
   username: usernameField,
+  territories: territoriesSchema,
 });
 
 export const updateUserSchema = z.object({
@@ -39,6 +59,7 @@ export const updateUserSchema = z.object({
     .min(8, "Password must be at least 8 characters")
     .max(100, "Password is too long")
     .optional(),
+  territories: territoriesSchema,
 });
 
 export const forgotPasswordSchema = z.object({

@@ -6,6 +6,7 @@ import {
   ScrollText,
   Settings2,
   MessageSquare,
+  Map,
   LucideIcon,
 } from "lucide-react";
 
@@ -37,6 +38,12 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/dashboard/customers", label: "Customers", icon: Users, excludeRoles: ["customer"] },
       { href: "/dashboard/contracts", label: "Contracts", icon: ScrollText, excludeRoles: ["customer"] },
+      {
+        href: "/dashboard/territory",
+        label: "Territory",
+        icon: Map,
+        includeRoles: ["admin", "super-admin", "owner"],
+      },
       {
         href: "/dashboard/messaging",
         label: "Messaging",

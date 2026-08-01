@@ -54,10 +54,21 @@ async function authRequest<T>(
   endpoint: string,
   options: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${endpoint}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers ?? {}),
+      },
+    });
+  } catch {
+    throw new ApiError(
+      "Could not reach the server. Check your connection and try again.",
+      0,
+    );
+  }
 
   const body = await res.json().catch(() => ({}));
 
@@ -171,6 +182,11 @@ export async function authResetPassword(
   });
 }
 
+export interface UserTerritories {
+  counties: string[];
+  zips: string[];
+}
+
 export interface UserListItem {
   _id: string;
   email: string;
@@ -179,6 +195,7 @@ export interface UserListItem {
   role: AuthUser["role"];
   username: string | null;
   usernameNumber: number | null;
+  territories: UserTerritories;
   createdAt: string;
   updatedAt?: string;
 }
@@ -201,6 +218,7 @@ export async function createUser(
     last_name: string;
     role: string;
     username?: string | null;
+    territories?: UserTerritories;
   },
 ): Promise<{ user: UserListItem; temporaryPassword?: string }> {
   return authRequest<{ user: UserListItem; temporaryPassword?: string }>(
@@ -223,6 +241,7 @@ export async function updateUser(
     role?: string;
     username?: string | null;
     password?: string;
+    territories?: UserTerritories;
   },
 ): Promise<{ user: UserListItem }> {
   return authRequest<{ user: UserListItem }>(`/users/${id}`, {
@@ -239,6 +258,44 @@ export async function deleteUser(
   return authRequest<{ message: string }>(`/users/${id}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface TerritoryOwner {
+  _id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: string;
+  territories: UserTerritories;
+}
+
+export async function getTerritories(
+  token: string,
+): Promise<{ owners: TerritoryOwner[] }> {
+  return authRequest<{ owners: TerritoryOwner[] }>("/territories", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function updateTerritories(
+  token: string,
+  userId: string,
+  data: UserTerritories,
+): Promise<{
+  owner: TerritoryOwner;
+  reassignment?: { status: "started" } | { processed: number; assigned: number };
+}> {
+  return authRequest<{
+    owner: TerritoryOwner;
+    reassignment?:
+      | { status: "started" }
+      | { processed: number; assigned: number };
+  }>(`/territories/${userId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
   });
 }
 
@@ -268,6 +325,13 @@ export interface CustomerEquipment {
 
 export type CustomerAddressPropertyType = "residential" | "commercial";
 
+export interface CustomerOwnerSummary {
+  _id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+}
+
 export interface CustomerAddress {
   _id: string;
   customerRef: string;
@@ -276,6 +340,8 @@ export interface CustomerAddress {
   city: string;
   state: string;
   zip: string;
+  county: string;
+  countyManual: boolean;
   isPrimary: boolean;
   propertyType: CustomerAddressPropertyType;
   legacyCustomerId: number | null;
@@ -318,6 +384,9 @@ export interface CustomerListItem {
   city: string;
   state: string;
   zip: string;
+  county?: string;
+  ownerUserRef?: string | null;
+  owner?: CustomerOwnerSummary | null;
   generatorModel: string;
   lastSvc: string | null;
   deletedAt?: string | null;
@@ -351,6 +420,8 @@ export interface CreateCustomerAddressInput {
   city?: string;
   state?: string;
   zip?: string;
+  county?: string;
+  countyManual?: boolean;
   isPrimary?: boolean;
   propertyType?: CustomerAddressPropertyType;
   equipment?: CreateCustomerEquipmentInput[];
@@ -444,6 +515,7 @@ export interface ValidatedAddress {
   city: string;
   state: string;
   zip: string;
+  county?: string;
 }
 
 export interface ValidateCustomerAddressResult {
@@ -512,6 +584,9 @@ export interface CustomerDetail {
   city: string;
   state: string;
   zip: string;
+  county?: string;
+  ownerUserRef?: string | null;
+  owner?: CustomerOwnerSummary | null;
   phone: string;
   email: string;
   atsSerial: string;
@@ -755,6 +830,8 @@ export async function createCustomerAddress(
     city?: string;
     state?: string;
     zip?: string;
+    county?: string;
+    countyManual?: boolean;
     isPrimary?: boolean;
     propertyType?: CustomerAddressPropertyType;
   },

@@ -327,6 +327,19 @@ function CustomerDetailContent() {
           <p className="mt-1 text-sm text-neutral-500">
             Customer details, addresses, and work order history
           </p>
+          <p className="mt-2 text-sm text-neutral-600">
+            <span className="font-medium text-neutral-500">Owner:</span>{" "}
+            {customer.owner
+              ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
+              : "Unassigned"}
+            {customer.county ? (
+              <>
+                {" · "}
+                <span className="font-medium text-neutral-500">County:</span>{" "}
+                {customer.county}
+              </>
+            ) : null}
+          </p>
         </div>
         {canWrite ? (
           <button
