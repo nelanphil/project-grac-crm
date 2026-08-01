@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { COMPANY } from "@/lib/constants";
 import type { EstimateFormData } from "@/lib/estimate-types";
 
@@ -111,7 +112,14 @@ export default function HomeFinancingStep({
           By clicking Submit, you consent to {COMPANY.name} sharing your contact
           information for the purpose of providing a generator estimate. You also
           agree to receive phone calls, emails, and automated messages from us
-          regarding your request. See our privacy policy for details.
+          regarding your request.{" "}
+          <Link
+            href="/privacy"
+            className="text-brand-orange underline-offset-2 hover:underline"
+          >
+            See our privacy policy
+          </Link>{" "}
+          for details.
         </p>
 
         {submitError && (

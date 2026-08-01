@@ -4,8 +4,8 @@ export const COMPANY = {
   name: "Generator Maintenance of Florida",
   shortName: "GMF",
   tagline: "Expert Backup Power for Central & South Florida",
-  phone: "(407) 555-0199",
-  phoneHref: "tel:+14075550199",
+  phone: "(386) 631-8982",
+  phoneHref: "tel:+13866318982",
   email: "info@generatormaintenancefl.com",
   license: "Licensed & Insured",
 } as const;
@@ -201,6 +201,7 @@ export const FOOTER_LINKS = {
     { label: COMPANY.phone, href: COMPANY.phoneHref },
     { label: COMPANY.email, href: `mailto:${COMPANY.email}` },
   ],
+  Legal: [{ label: "Privacy Policy", href: "/privacy" }],
 } as const;
 
 export const US_STATES = [

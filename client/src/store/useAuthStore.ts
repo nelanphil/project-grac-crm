@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { CookieConsentStatus } from "@/store/useConsentStore";
 
 export type UserRole = string;
 
@@ -13,6 +14,8 @@ export interface AuthUser {
   username: string | null;
   /** Numeric suffix from backend key (doc1 → 1). Shown subtly in UI. */
   usernameNumber: number | null;
+  /** Client-only cookie preference mirrored from consent store. */
+  cookieConsentStatus?: CookieConsentStatus | null;
 }
 
 interface AuthStore {
@@ -23,6 +26,7 @@ interface AuthStore {
   login: (token: string, user: AuthUser) => void;
   logout: () => void;
   setRedirectAfterAuth: (path: string | null) => void;
+  setCookieConsentStatus: (status: CookieConsentStatus) => void;
   hasPermission: (permission: string) => boolean;
   hasRole: (...roles: UserRole[]) => boolean;
 }
@@ -35,13 +39,29 @@ export const useAuthStore = create<AuthStore>()(
       isAuthenticated: false,
       redirectAfterAuth: null,
 
-      login: (token, user) =>
-        set({ token, user, isAuthenticated: true }),
+      login: (token, user) => {
+        const previous = get().user;
+        set({
+          token,
+          user: {
+            ...user,
+            cookieConsentStatus:
+              user.cookieConsentStatus ?? previous?.cookieConsentStatus ?? null,
+          },
+          isAuthenticated: true,
+        });
+      },
 
       logout: () =>
         set({ token: null, user: null, isAuthenticated: false }),
 
       setRedirectAfterAuth: (path) => set({ redirectAfterAuth: path }),
+
+      setCookieConsentStatus: (status) => {
+        const { user } = get();
+        if (!user) return;
+        set({ user: { ...user, cookieConsentStatus: status } });
+      },
 
       hasPermission: (permission) => {
         const { user } = get();
