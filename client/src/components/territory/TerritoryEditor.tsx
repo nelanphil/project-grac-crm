@@ -2,7 +2,8 @@
 
 import { FormEvent, KeyboardEvent, useState } from "react";
 import { FLORIDA_COUNTIES } from "@/lib/floridaCounties";
-import type { UserTerritories } from "@/lib/api";
+import type { TerritoryOwner, UserTerritories } from "@/lib/api";
+import TerritoryMap from "@/components/territory/TerritoryMap";
 
 function normalizeZipInput(raw: string): string {
   return raw.replace(/\D/g, "").slice(0, 5);
@@ -14,6 +15,9 @@ interface TerritoryEditorProps {
   error?: string | null;
   onSave: (territories: UserTerritories) => Promise<void>;
   submitLabel?: string;
+  /** Other owners (not the one being edited) — used to paint claimed areas. */
+  otherOwners?: TerritoryOwner[];
+  showMap?: boolean;
 }
 
 export default function TerritoryEditor({
@@ -22,6 +26,8 @@ export default function TerritoryEditor({
   error = null,
   onSave,
   submitLabel = "Save territory",
+  otherOwners = [],
+  showMap = true,
 }: TerritoryEditorProps) {
   const [counties, setCounties] = useState<string[]>(initial.counties ?? []);
   const [zips, setZips] = useState<string[]>(initial.zips ?? []);
@@ -48,6 +54,18 @@ export default function TerritoryEditor({
     });
   }
 
+  function toggleZip(zip: string) {
+    const normalized = normalizeZipInput(zip);
+    if (normalized.length !== 5) return;
+    setDirty(true);
+    setZips((prev) => {
+      const has = prev.includes(normalized);
+      return has
+        ? prev.filter((z) => z !== normalized)
+        : [...prev, normalized].sort();
+    });
+  }
+
   function addZip(raw: string) {
     const zip = normalizeZipInput(raw);
     if (zip.length !== 5) return;
@@ -68,7 +86,7 @@ export default function TerritoryEditor({
         addZip(zipDraft);
       }
     } else if (e.key === "Backspace" && !zipDraft && zips.length) {
-      removeZip(zips[zips.length - 1]);
+      removeZip(zips[zips.length - 1]!);
     }
   }
 
@@ -97,6 +115,17 @@ export default function TerritoryEditor({
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
+      ) : null}
+
+      {showMap ? (
+        <TerritoryMap
+          counties={counties}
+          zips={zips}
+          otherOwners={otherOwners}
+          onToggleCounty={toggleCounty}
+          onToggleZip={toggleZip}
+          disabled={saving}
+        />
       ) : null}
 
       <div>

@@ -1,14 +1,21 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { GoogleCredentials, IGoogleCredentials } from "../models/mongo/GoogleCredentials";
+import {
+  GoogleCredentials,
+  IGoogleCredentials,
+} from "../models/mongo/GoogleCredentials";
 import { saveGoogleCredentialsSchema } from "../schemas/googleCredentials.schema";
-import { encryptCredential } from "../utils/credentialsCrypto";
+import {
+  decryptCredential,
+  encryptCredential,
+} from "../utils/credentialsCrypto";
 import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
 
 const SLUG = "google";
+const TERRITORY_MAP_ROLES = new Set(["owner", "admin", "super-admin"]);
 
 function emptyToUndefined(value: string | undefined | null): string | undefined {
   if (value == null || value.trim() === "") return undefined;
@@ -16,9 +23,10 @@ function emptyToUndefined(value: string | undefined | null): string | undefined 
 }
 
 function toPublic(doc: IGoogleCredentials | Record<string, unknown>) {
-  const d = "toObject" in doc && typeof doc.toObject === "function"
-    ? (doc as IGoogleCredentials).toObject()
-    : (doc as Record<string, unknown>);
+  const d =
+    "toObject" in doc && typeof doc.toObject === "function"
+      ? (doc as IGoogleCredentials).toObject()
+      : (doc as Record<string, unknown>);
 
   return {
     _id: d._id,
@@ -26,6 +34,7 @@ function toPublic(doc: IGoogleCredentials | Record<string, unknown>) {
     projectId: d.projectId ?? "",
     isActive: d.isActive ?? true,
     hasApiKey: Boolean(d.apiKeyEncrypted),
+    hasMapsBrowserApiKey: Boolean(d.mapsBrowserApiKeyEncrypted),
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
   };
@@ -33,15 +42,58 @@ function toPublic(doc: IGoogleCredentials | Record<string, unknown>) {
 
 export async function getGoogleCredentials(
   _req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   const doc = await GoogleCredentials.findOne({ slug: SLUG }).lean();
   res.json({ credentials: doc ? toPublic(doc) : null });
 }
 
+/**
+ * GET /google-credentials/maps-browser-key
+ * Returns the Maps JS browser key for territory map (owner/admin/super-admin).
+ */
+export async function getMapsBrowserApiKey(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user || !TERRITORY_MAP_ROLES.has(req.user.role)) {
+    res.status(403).json({ message: "Insufficient role" });
+    return;
+  }
+
+  const envKey =
+    process.env.GOOGLE_MAPS_BROWSER_API_KEY?.trim() ||
+    process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() ||
+    "";
+  const doc = await GoogleCredentials.findOne({
+    slug: SLUG,
+    isActive: true,
+  }).lean();
+
+  let apiKey = "";
+  if (doc?.mapsBrowserApiKeyEncrypted) {
+    try {
+      apiKey = decryptCredential(doc.mapsBrowserApiKeyEncrypted);
+    } catch {
+      apiKey = "";
+    }
+  }
+  if (!apiKey && envKey) apiKey = envKey;
+
+  if (!apiKey) {
+    res.status(404).json({
+      message:
+        "Maps JavaScript API key not configured. Add one in Control Panel → Google credentials.",
+    });
+    return;
+  }
+
+  res.json({ apiKey });
+}
+
 export async function saveGoogleCredentials(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   const parsed = saveGoogleCredentialsSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -54,6 +106,7 @@ export async function saveGoogleCredentials(
 
   const data = parsed.data;
   const apiKey = emptyToUndefined(data.apiKey);
+  const mapsBrowserApiKey = emptyToUndefined(data.mapsBrowserApiKey);
 
   let doc = await GoogleCredentials.findOne({ slug: SLUG });
 
@@ -67,12 +120,20 @@ export async function saveGoogleCredentials(
       slug: SLUG,
       label: data.label?.trim() || "Google Address Validation API",
       apiKeyEncrypted: encryptCredential(apiKey!),
+      mapsBrowserApiKeyEncrypted: mapsBrowserApiKey
+        ? encryptCredential(mapsBrowserApiKey)
+        : undefined,
       projectId: emptyToUndefined(data.projectId),
       isActive: data.isActive ?? true,
     });
   } else {
     if (data.label !== undefined) doc.label = data.label.trim();
     if (apiKey) doc.apiKeyEncrypted = encryptCredential(apiKey);
+    if (mapsBrowserApiKey) {
+      doc.mapsBrowserApiKeyEncrypted = encryptCredential(mapsBrowserApiKey);
+    } else if (data.clearMapsBrowserApiKey === true) {
+      doc.mapsBrowserApiKeyEncrypted = undefined;
+    }
     if (data.projectId !== undefined) {
       doc.projectId = emptyToUndefined(data.projectId);
     }
@@ -95,7 +156,7 @@ export async function saveGoogleCredentials(
 
 export async function deleteGoogleCredentials(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   const doc = await GoogleCredentials.findOneAndDelete({ slug: SLUG });
   if (!doc) {

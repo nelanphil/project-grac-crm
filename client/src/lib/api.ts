@@ -1630,6 +1630,7 @@ export interface GoogleCredentialsItem {
   projectId: string;
   isActive: boolean;
   hasApiKey: boolean;
+  hasMapsBrowserApiKey: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1637,6 +1638,8 @@ export interface GoogleCredentialsItem {
 export interface GoogleCredentialsInput {
   label?: string;
   apiKey?: string;
+  mapsBrowserApiKey?: string;
+  clearMapsBrowserApiKey?: boolean;
   projectId?: string;
   isActive?: boolean;
 }
@@ -1646,6 +1649,18 @@ export async function getGoogleCredentials(
 ): Promise<{ credentials: GoogleCredentialsItem | null }> {
   return authRequest<{ credentials: GoogleCredentialsItem | null }>(
     "/google-credentials",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function getGoogleMapsBrowserKey(
+  token: string,
+): Promise<{ apiKey: string }> {
+  return authRequest<{ apiKey: string }>(
+    "/google-credentials/maps-browser-key",
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },

@@ -15,6 +15,8 @@ import {
 type FormState = {
   label: string;
   apiKey: string;
+  mapsBrowserApiKey: string;
+  clearMapsBrowserApiKey: boolean;
   projectId: string;
   isActive: boolean;
 };
@@ -22,6 +24,8 @@ type FormState = {
 const EMPTY_FORM: FormState = {
   label: "Google Address Validation API",
   apiKey: "",
+  mapsBrowserApiKey: "",
+  clearMapsBrowserApiKey: false,
   projectId: "",
   isActive: true,
 };
@@ -62,6 +66,8 @@ export default function GoogleCredentialsCard() {
     setForm({
       label: credentials?.label || "Google Address Validation API",
       apiKey: "",
+      mapsBrowserApiKey: "",
+      clearMapsBrowserApiKey: false,
       projectId: credentials?.projectId || "",
       isActive: credentials?.isActive ?? true,
     });
@@ -89,6 +95,8 @@ export default function GoogleCredentialsCard() {
       const { credentials: saved } = await saveGoogleCredentials(token, {
         label: form.label.trim() || undefined,
         apiKey: form.apiKey.trim() || undefined,
+        mapsBrowserApiKey: form.mapsBrowserApiKey.trim() || undefined,
+        clearMapsBrowserApiKey: form.clearMapsBrowserApiKey || undefined,
         projectId: form.projectId.trim(),
         isActive: form.isActive,
       });
@@ -149,8 +157,9 @@ export default function GoogleCredentialsCard() {
             Google credentials
           </h2>
           <p className="text-sm text-neutral-500 mt-0.5">
-            API key used to call the Google Address Validation API for
-            real-time address checking and suggestions.
+            Server key for Address Validation, plus an optional Maps JavaScript
+            API key (HTTP-referrer restricted) for the Territory map. Do not
+            reuse the Address Validation key in the browser.
           </p>
         </div>
         {!formOpen && !credentials && (
@@ -210,7 +219,8 @@ export default function GoogleCredentialsCard() {
 
             <label className="block sm:col-span-2">
               <span className="text-xs font-medium text-neutral-600">
-                API key{credentials ? " (leave blank to keep current)" : ""}
+                Address Validation API key
+                {credentials ? " (leave blank to keep current)" : ""}
               </span>
               <PasswordInput
                 required={!credentials}
@@ -221,6 +231,47 @@ export default function GoogleCredentialsCard() {
                 placeholder={credentials ? "••••••••" : "AIza…"}
               />
             </label>
+
+            <label className="block sm:col-span-2">
+              <span className="text-xs font-medium text-neutral-600">
+                Maps JavaScript API key (browser)
+                {credentials?.hasMapsBrowserApiKey
+                  ? " (leave blank to keep current)"
+                  : ""}
+              </span>
+              <PasswordInput
+                value={form.mapsBrowserApiKey}
+                onChange={(e) => {
+                  field("mapsBrowserApiKey", e.target.value);
+                  if (e.target.value) field("clearMapsBrowserApiKey", false);
+                }}
+                autoComplete="new-password"
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                placeholder={
+                  credentials?.hasMapsBrowserApiKey ? "••••••••" : "AIza…"
+                }
+              />
+              <span className="mt-1 block text-xs text-neutral-400">
+                Enable Maps JavaScript API in GCP. Restrict by HTTP referrer
+                (e.g. localhost and your production origin).
+              </span>
+            </label>
+
+            {credentials?.hasMapsBrowserApiKey ? (
+              <label className="flex items-center gap-2 sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={form.clearMapsBrowserApiKey}
+                  onChange={(e) =>
+                    field("clearMapsBrowserApiKey", e.target.checked)
+                  }
+                  className="h-4 w-4 rounded border-neutral-300 text-brand-dark focus:ring-brand-dark"
+                />
+                <span className="text-sm text-neutral-700">
+                  Clear Maps JavaScript API key
+                </span>
+              </label>
+            ) : null}
 
             <label className="block sm:col-span-2">
               <span className="text-xs font-medium text-neutral-600">
@@ -278,8 +329,16 @@ export default function GoogleCredentialsCard() {
               </span>
             </div>
             <div className="mt-0.5 text-xs text-neutral-400">
-              {credentials.hasApiKey ? "API key set" : "Missing API key"}
-              {credentials.projectId ? ` · Project: ${credentials.projectId}` : ""}
+              {credentials.hasApiKey
+                ? "Address Validation key set"
+                : "Missing Address Validation key"}
+              {" · "}
+              {credentials.hasMapsBrowserApiKey
+                ? "Maps JS key set"
+                : "No Maps JS key"}
+              {credentials.projectId
+                ? ` · Project: ${credentials.projectId}`
+                : ""}
             </div>
           </div>
           <div className="flex items-center gap-1">

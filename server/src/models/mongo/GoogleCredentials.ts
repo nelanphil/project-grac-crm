@@ -4,6 +4,8 @@ export interface IGoogleCredentials extends Document {
   slug: string;
   label: string;
   apiKeyEncrypted: string;
+  /** Optional Maps JavaScript API key for browser (referrer-restricted). */
+  mapsBrowserApiKeyEncrypted?: string;
   projectId?: string;
   isActive: boolean;
   createdAt: Date;
@@ -28,6 +30,10 @@ const googleCredentialsSchema = new Schema<IGoogleCredentials>(
       type: String,
       required: true,
     },
+    mapsBrowserApiKeyEncrypted: {
+      type: String,
+      default: undefined,
+    },
     projectId: {
       type: String,
       trim: true,
@@ -38,10 +44,10 @@ const googleCredentialsSchema = new Schema<IGoogleCredentials>(
       default: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export const GoogleCredentials = mongoose.model<IGoogleCredentials>(
   "GoogleCredentials",
-  googleCredentialsSchema
+  googleCredentialsSchema,
 );

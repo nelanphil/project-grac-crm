@@ -256,6 +256,7 @@ function TerritoryPageContent() {
                 initial={selected.territories}
                 saving={savingId === selected._id}
                 error={saveError}
+                otherOwners={owners.filter((o) => o._id !== selected._id)}
                 onSave={(territories) => handleSave(selected._id, territories)}
                 submitLabel={
                   user.role === "owner" ? "Save my territory" : "Save territory"
