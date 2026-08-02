@@ -39,7 +39,7 @@ type SortDir = "asc" | "desc";
 type ListView = "active" | "deleted";
 
 function formatPhone(phone: string): string {
-  if (!phone) return "â€”";
+  if (!phone) return "\u2014";
   const digits = phone.replace(/\D/g, "");
   if (digits.length === 10) {
     return `(${digits.slice(0, 3)})${digits.slice(3, 6)}-${digits.slice(6)}`;
@@ -147,7 +147,7 @@ function CustomersPagination({
       }`}
     >
       <p className="text-xs text-neutral-500">
-        Showing {rangeStart}â€“{rangeEnd} of {total}
+        Showing {rangeStart}&ndash;{rangeEnd} of {total}
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-xs text-neutral-500">
@@ -384,7 +384,7 @@ function CustomersContent() {
               onChange={(e) => {
                 setSearch(e.target.value);
               }}
-              placeholder="Search by name, location, or phoneâ€¦"
+              placeholder="Search by name, location, or phone\u2026"
               className="w-full rounded-lg border border-neutral-200 bg-white py-2 pl-9 pr-3 text-sm text-brand-dark outline-none transition-colors placeholder:text-neutral-400 focus:border-brand-orange"
             />
           </div>
@@ -576,21 +576,21 @@ function CustomersContent() {
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {customer.address
                           ? toProperCase(customer.address)
-                          : "â€”"}
+                          : "\u2014"}
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {customer.city ? toProperCase(customer.city) : "â€”"}
+                        {customer.city ? toProperCase(customer.city) : "\u2014"}
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {formatCustomerState(customer.state)}
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {customer.zip?.trim() || "â€”"}
+                        {customer.zip?.trim() || "\u2014"}
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {customer.owner
                           ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
-                          : "â€”"}
+                          : "\u2014"}
                       </td>
                       {canManageCustomers ? (
                         <td className="px-6 py-4 text-right whitespace-nowrap">
@@ -606,7 +606,7 @@ function CustomersContent() {
                             >
                               <RotateCcw className="h-3.5 w-3.5" />
                               {restoringId === customer._id
-                                ? "Restoringâ€¦"
+                                ? "Restoring\u2026"
                                 : "Restore"}
                             </button>
                           ) : (

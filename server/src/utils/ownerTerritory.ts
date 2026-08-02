@@ -1,5 +1,8 @@
 import { Types } from "mongoose";
-import { normalizeCountyName } from "../constants/floridaCounties";
+import {
+  FLORIDA_COUNTIES,
+  normalizeCountyName,
+} from "../constants/floridaCounties";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { User, activeUserFilter } from "../models/mongo/User";
@@ -353,10 +356,59 @@ export function normalizeTerritoriesInput(raw: {
   return { counties, zips };
 }
 
+function ownerHasStatewideCounties(counties: string[]): boolean {
+  if (counties.length < FLORIDA_COUNTIES.length) return false;
+  const set = new Set(counties.map((c) => normalizeCountyName(c)));
+  return FLORIDA_COUNTIES.every((c) => set.has(c));
+}
+
+/** Include common stored variants ("Orange" / "Orange County"). */
+function countyQueryValues(counties: string[]): string[] {
+  const values = new Set<string>();
+  for (const raw of counties) {
+    const c = normalizeCountyName(raw);
+    if (!c) continue;
+    values.add(c);
+    values.add(`${c} County`);
+    values.add(c.toUpperCase());
+    values.add(`${c.toUpperCase()} COUNTY`);
+  }
+  return [...values];
+}
+
+async function zipsClaimedByOtherOwners(
+  excludeUserId: Types.ObjectId | string,
+): Promise<string[]> {
+  const others = await User.find({
+    ...activeUserFilter,
+    role: "owner",
+    _id: { $ne: excludeUserId },
+    "territories.zips.0": { $exists: true },
+  })
+    .select("territories.zips")
+    .lean();
+
+  const zips = new Set<string>();
+  for (const o of others) {
+    for (const z of o.territories?.zips ?? []) {
+      const zip = normalizeZip5(z);
+      if (zip) zips.add(zip);
+    }
+  }
+  return [...zips];
+}
+
+const unassignedOwnerClause = {
+  $or: [{ ownerUserRef: null }, { ownerUserRef: { $exists: false } }],
+};
+
 /**
  * Mongo filter for owner-scoped customer lists.
  * Matches assigned owner OR (unassigned + location in territory) so owners
  * still see customers if denormalized ownerUserRef lags behind.
+ *
+ * Statewide owners (all 67 FL counties) also see unassigned customers with
+ * missing county data — otherwise most legacy records are invisible.
  */
 export async function buildOwnerCustomerFilter(user: {
   id: string;
@@ -367,11 +419,46 @@ export async function buildOwnerCustomerFilter(user: {
 
   const ownerId = new Types.ObjectId(user.id);
   const owner = await User.findById(ownerId).select("territories").lean();
-  const counties = owner?.territories?.counties ?? [];
-  const zips = (owner?.territories?.zips ?? []).map(normalizeZip5);
+  const counties = (owner?.territories?.counties ?? []).map(normalizeCountyName);
+  const zips = (owner?.territories?.zips ?? []).map(normalizeZip5).filter(Boolean);
+  const otherZips = await zipsClaimedByOtherOwners(ownerId);
+
+  if (counties.length === 0 && zips.length === 0) {
+    return { ownerUserRef: ownerId };
+  }
+
+  const notOtherZip =
+    otherZips.length > 0
+      ? {
+          $or: [
+            { zip: { $nin: otherZips } },
+            { zip: null },
+            { zip: "" },
+            { zip: { $exists: false } },
+          ],
+        }
+      : null;
+
+  // Owner claimed every FL county — treat as statewide coverage.
+  if (ownerHasStatewideCounties(counties)) {
+    const unassignedAndAvailable: Record<string, unknown>[] = [
+      unassignedOwnerClause,
+    ];
+    if (notOtherZip) unassignedAndAvailable.push(notOtherZip);
+
+    return {
+      $or: [
+        { ownerUserRef: ownerId },
+        { $and: unassignedAndAvailable },
+      ],
+    };
+  }
 
   const locationClauses: Array<Record<string, unknown>> = [];
-  if (counties.length) locationClauses.push({ county: { $in: counties } });
+  const countyValues = countyQueryValues(counties);
+  if (countyValues.length) {
+    locationClauses.push({ county: { $in: countyValues } });
+  }
   if (zips.length) locationClauses.push({ zip: { $in: zips } });
 
   if (locationClauses.length === 0) {
@@ -382,15 +469,7 @@ export async function buildOwnerCustomerFilter(user: {
     $or: [
       { ownerUserRef: ownerId },
       {
-        $and: [
-          {
-            $or: [
-              { ownerUserRef: null },
-              { ownerUserRef: { $exists: false } },
-            ],
-          },
-          { $or: locationClauses },
-        ],
+        $and: [unassignedOwnerClause, { $or: locationClauses }],
       },
     ],
   };
@@ -402,6 +481,7 @@ export async function assertOwnerCanAccessCustomer(
     ownerUserRef?: Types.ObjectId | string | null;
     county?: string | null;
     zip?: string | null;
+    state?: string | null;
   },
 ): Promise<boolean> {
   if (user.role === "super-admin" || user.role === "admin") return true;
@@ -409,17 +489,22 @@ export async function assertOwnerCanAccessCustomer(
 
   const ref = customer.ownerUserRef;
   if (ref && String(ref) === user.id) return true;
-
-  // Allow access when unassigned but location falls in this owner's territory.
   if (ref && String(ref) !== user.id) return false;
 
   const owner = await User.findById(user.id).select("territories").lean();
-  const counties = owner?.territories?.counties ?? [];
+  const counties = (owner?.territories?.counties ?? []).map(normalizeCountyName);
   const zips = (owner?.territories?.zips ?? []).map(normalizeZip5);
   const county = normalizeCountyName(customer.county);
   const zip = normalizeZip5(customer.zip);
 
+  const otherZips = await zipsClaimedByOtherOwners(user.id);
+  if (zip && otherZips.includes(zip)) return false;
+
   if (zip && zips.includes(zip)) return true;
   if (county && counties.includes(county)) return true;
+
+  // Statewide owners can open unassigned customers even before county backfill.
+  if (ownerHasStatewideCounties(counties)) return true;
+
   return false;
 }
