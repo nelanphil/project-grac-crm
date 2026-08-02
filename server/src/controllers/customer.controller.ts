@@ -47,17 +47,13 @@ import {
   logNotificationAsync,
 } from "../services/notification.service";
 import { normalizeCountyName } from "../constants/floridaCounties";
-import { geocodeAddress, GeocodeResult } from "../utils/censusGeocoder";
 import {
   assertOwnerCanAccessCustomer,
   assignCustomerOwner,
   buildOwnerCustomerFilter,
 } from "../utils/ownerTerritory";
 import { User } from "../models/mongo/User";
-import {
-  geocodeAddressGoogle,
-  getActiveGoogleApiKey,
-} from "../utils/googleAddressValidator";
+import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
 
 function parseLastSvc(value: unknown): Date | null | undefined {
   if (value === undefined) return undefined;
@@ -642,37 +638,6 @@ export async function listCustomers(
 }
 
 // POST /customers/validate-address — Google Address Validation, falling back to Census geocode
-/** Prefer Google Address Validation when configured; fall back to Census. */
-async function resolveGeocodedAddress(input: {
-  street: string;
-  city?: string;
-  state?: string;
-  zip?: string;
-}): Promise<GeocodeResult> {
-  let result: GeocodeResult | null = null;
-
-  const googleApiKey = await getActiveGoogleApiKey();
-  if (googleApiKey) {
-    try {
-      result = await geocodeAddressGoogle(input, googleApiKey);
-    } catch (err) {
-      console.error("Google address validation error:", err);
-      result = null;
-    }
-  }
-
-  if (!result || !result.ok) {
-    const censusResult = await geocodeAddress(input);
-    // Prefer a successful Census match; otherwise keep whichever failure
-    // message is more informative (Google's, if it was actually attempted).
-    if (censusResult.ok || !result) {
-      result = censusResult;
-    }
-  }
-
-  return result;
-}
-
 export async function validateCustomerAddress(
   req: AuthRequest,
   res: Response,
@@ -1378,6 +1343,24 @@ export async function getCustomerById(
     }
 
     await ensureCustomerContactFromFlat(customer);
+
+    // Lazy ZIP→county + owner fill so detail never stays blank after imports
+    // when bulk Recalculate hasn't finished yet.
+    if (!String(customer.county ?? "").trim() || customer.ownerUserRef == null) {
+      await assignCustomerOwner(customer._id, {
+        fillMissingCounty: true,
+        allowCensus: false,
+      });
+      const refreshed = await Customer.findById(customer._id).lean();
+      if (refreshed) {
+        customer.county = refreshed.county ?? "";
+        customer.ownerUserRef = refreshed.ownerUserRef ?? null;
+        customer.zip = refreshed.zip ?? customer.zip;
+        customer.city = refreshed.city ?? customer.city;
+        customer.state = refreshed.state ?? customer.state;
+        customer.address = refreshed.address ?? customer.address;
+      }
+    }
 
     const [addresses, contacts] = await Promise.all([
       loadSitesForCustomer(customer._id),

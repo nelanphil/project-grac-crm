@@ -3,6 +3,7 @@
  * https://developers.google.com/maps/documentation/address-validation
  */
 import { normalizeCountyName } from "../constants/floridaCounties";
+import { countyForFloridaZip } from "../constants/floridaZipCounties";
 import { GoogleCredentials } from "../models/mongo/GoogleCredentials";
 import { decryptCredential } from "./credentialsCrypto";
 import {
@@ -137,7 +138,9 @@ export async function geocodeAddressGoogle(
   }
 
   const countyComponent = result?.address?.addressComponents?.find(
-    (c) => c.componentType === "administrative_area_level_2",
+    (c) =>
+      c.componentType === "administrative_area_level_2" ||
+      c.componentType === "county",
   );
   let county = normalizeCountyName(countyComponent?.componentName?.text ?? "");
 
@@ -148,6 +151,13 @@ export async function geocodeAddressGoogle(
     zip: zipVal,
     county,
   };
+
+  // Google often omits county; FL ZIP map is fast/reliable, then Census.
+  if (!normalized.county && normalized.zip) {
+    normalized.county = normalizeCountyName(
+      countyForFloridaZip(normalized.zip),
+    );
+  }
 
   if (!normalized.county) {
     normalized.county = await lookupCountyFromCensus({

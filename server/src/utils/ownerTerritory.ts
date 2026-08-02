@@ -3,6 +3,7 @@ import {
   FLORIDA_COUNTIES,
   normalizeCountyName,
 } from "../constants/floridaCounties";
+import { countyForFloridaZip } from "../constants/floridaZipCounties";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { User, activeUserFilter } from "../models/mongo/User";
@@ -23,6 +24,38 @@ export function normalizeZip5(zip: string | null | undefined): string {
   return digits.slice(0, 5);
 }
 
+type TerritoryIndex = {
+  byZip: Map<string, Types.ObjectId>;
+  byCounty: Map<string, Types.ObjectId>;
+};
+
+/** In-memory owner territory maps for bulk reassignment (avoids per-customer User queries). */
+let territoryIndex: TerritoryIndex | null = null;
+
+async function buildTerritoryIndex(): Promise<TerritoryIndex> {
+  const owners = await User.find({
+    ...activeUserFilter,
+    role: "owner",
+  })
+    .select("_id territories")
+    .lean();
+
+  const byZip = new Map<string, Types.ObjectId>();
+  const byCounty = new Map<string, Types.ObjectId>();
+  for (const owner of owners) {
+    const id = owner._id as Types.ObjectId;
+    for (const zip of owner.territories?.zips ?? []) {
+      const z = normalizeZip5(zip);
+      if (z && !byZip.has(z)) byZip.set(z, id);
+    }
+    for (const county of owner.territories?.counties ?? []) {
+      const c = normalizeCountyName(county);
+      if (c && !byCounty.has(c)) byCounty.set(c, id);
+    }
+  }
+  return { byZip, byCounty };
+}
+
 /** Zip match wins; otherwise FL county match. */
 export async function resolveOwnerForLocation(
   loc: LocationForOwner,
@@ -30,6 +63,19 @@ export async function resolveOwnerForLocation(
   const zip = normalizeZip5(loc.zip);
   const state = (loc.state ?? "").trim().toUpperCase().slice(0, 2);
   const county = normalizeCountyName(loc.county);
+
+  if (territoryIndex) {
+    if (zip) {
+      const byZip = territoryIndex.byZip.get(zip);
+      if (byZip) return byZip;
+    }
+    // County match: allow wrong/missing state when we already have a FL county name.
+    if (county && (state === "FL" || !state || territoryIndex.byCounty.has(county))) {
+      const byCounty = territoryIndex.byCounty.get(county);
+      if (byCounty) return byCounty;
+    }
+    return null;
+  }
 
   if (zip) {
     const byZip = await User.findOne({
@@ -56,36 +102,52 @@ export async function resolveOwnerForLocation(
   return null;
 }
 
-async function resolveCountyForAddress(addr: {
-  _id: Types.ObjectId;
-  address?: string;
-  city?: string;
-  state?: string;
-  zip?: string;
-  county?: string;
-  countyManual?: boolean;
-}): Promise<string> {
+/**
+ * Resolve county for an address.
+ * Prefer FL ZIP→county (fast/reliable for this CRM), then Census street geocode.
+ */
+async function resolveCountyForAddress(
+  addr: {
+    _id: Types.ObjectId;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    county?: string;
+    countyManual?: boolean;
+  },
+  options?: { allowCensus?: boolean },
+): Promise<string> {
   const existing = normalizeCountyName(addr.county);
   if (existing) return existing;
   if (addr.countyManual) return "";
 
-  const street = (addr.address ?? "").trim();
-  if (!street) return "";
-
   const state = (addr.state ?? "").trim().toUpperCase().slice(0, 2) || "FL";
-  const city = (addr.city ?? "").trim();
   const zip = normalizeZip5(addr.zip);
-  const cacheKey = `${street}|${city}|${state}|${zip}`.toLowerCase();
+  const street = (addr.address ?? "").trim();
+  const city = (addr.city ?? "").trim();
+  const allowCensus = options?.allowCensus !== false;
 
-  let county = countyLookupCache.get(cacheKey);
-  if (county === undefined) {
-    county = await lookupCountyFromCensus({
-      street,
-      city,
-      state,
-      zip,
-    });
-    countyLookupCache.set(cacheKey, county);
+  // Prefer FL ZIP map whenever the ZIP is known — state is often wrong/missing
+  // in imported data (e.g. "DL" for DeLand).
+  let county = "";
+  if (zip) {
+    county = normalizeCountyName(countyForFloridaZip(zip));
+  }
+
+  if (!county && allowCensus && street) {
+    const cacheKey = `${street}|${city}|${state}|${zip}`.toLowerCase();
+    let lookedUp = countyLookupCache.get(cacheKey);
+    if (lookedUp === undefined) {
+      lookedUp = await lookupCountyFromCensus({
+        street,
+        city,
+        state,
+        zip,
+      });
+      countyLookupCache.set(cacheKey, lookedUp);
+    }
+    county = lookedUp;
   }
 
   if (county) {
@@ -101,11 +163,12 @@ async function resolveCountyForAddress(addr: {
 /** Set/clear customer.ownerUserRef from primary address location. */
 export async function assignCustomerOwner(
   customerId: Types.ObjectId | string,
-  options?: { fillMissingCounty?: boolean },
+  options?: { fillMissingCounty?: boolean; allowCensus?: boolean },
 ): Promise<Types.ObjectId | null> {
   const fillMissingCounty = options?.fillMissingCounty !== false;
+  const allowCensus = options?.allowCensus !== false;
 
-  let primary =
+  const primary =
     (await CustomerAddress.findOne({
       customerRef: customerId,
       isPrimary: true,
@@ -116,50 +179,73 @@ export async function assignCustomerOwner(
 
   // Fall back to denormalized customer fields when no address doc exists.
   const customer = await Customer.findById(customerId)
-    .select("county zip state address city")
+    .select("county zip state address city ownerUserRef")
     .lean();
 
   let county = normalizeCountyName(primary?.county || customer?.county);
   const zip = normalizeZip5(primary?.zip || customer?.zip);
-  const state = (
-    primary?.state ||
-    customer?.state ||
-    "FL"
-  )
+  const state = (primary?.state || customer?.state || "FL")
     .trim()
     .toUpperCase()
     .slice(0, 2);
 
-  if (fillMissingCounty && !county && primary) {
-    county = await resolveCountyForAddress(primary);
-    if (county) {
-      await syncCustomerPrimaryFields(customerId);
+  if (fillMissingCounty && !county) {
+    if (primary) {
+      county = await resolveCountyForAddress(primary, { allowCensus });
+      if (county) {
+        await syncCustomerPrimaryFields(customerId);
+      }
+    } else if (zip) {
+      county = normalizeCountyName(countyForFloridaZip(zip));
+      if (county) {
+        await Customer.findByIdAndUpdate(customerId, { $set: { county } });
+      }
+    } else if (allowCensus && customer?.address?.trim()) {
+      const cacheKey =
+        `${customer.address}|${customer.city ?? ""}|${state}|${zip}`.toLowerCase();
+      let lookedUp = countyLookupCache.get(cacheKey);
+      if (lookedUp === undefined) {
+        lookedUp = await lookupCountyFromCensus({
+          street: customer.address,
+          city: customer.city,
+          state,
+          zip,
+        });
+        countyLookupCache.set(cacheKey, lookedUp);
+      }
+      county = lookedUp;
+      if (county) {
+        await Customer.findByIdAndUpdate(customerId, { $set: { county } });
+      }
     }
-  } else if (fillMissingCounty && !county && customer?.address?.trim()) {
-    // No address document — look up from flat customer fields and persist later via sync.
-    const cacheKey =
-      `${customer.address}|${customer.city ?? ""}|${state}|${zip}`.toLowerCase();
-    let lookedUp = countyLookupCache.get(cacheKey);
-    if (lookedUp === undefined) {
-      lookedUp = await lookupCountyFromCensus({
-        street: customer.address,
-        city: customer.city,
-        state,
-        zip,
-      });
-      countyLookupCache.set(cacheKey, lookedUp);
-    }
-    county = lookedUp;
+  }
+
+  // Last resort: ZIP map even when fill path above only had empty street geocode.
+  if (fillMissingCounty && !county && zip) {
+    county = normalizeCountyName(countyForFloridaZip(zip));
     if (county) {
-      await Customer.findByIdAndUpdate(customerId, { $set: { county } });
+      if (primary) {
+        await CustomerAddress.updateOne(
+          { _id: primary._id, countyManual: { $ne: true } },
+          { $set: { county } },
+        );
+        await syncCustomerPrimaryFields(customerId);
+      } else {
+        await Customer.findByIdAndUpdate(customerId, { $set: { county } });
+      }
     }
   }
 
   const ownerId = await resolveOwnerForLocation({ county, zip, state });
-
-  await Customer.findByIdAndUpdate(customerId, {
-    $set: { ownerUserRef: ownerId },
-  });
+  const prevOwner = customer?.ownerUserRef
+    ? String(customer.ownerUserRef)
+    : "";
+  const nextOwner = ownerId ? String(ownerId) : "";
+  if (prevOwner !== nextOwner) {
+    await Customer.findByIdAndUpdate(customerId, {
+      $set: { ownerUserRef: ownerId },
+    });
+  }
 
   return ownerId;
 }
@@ -173,24 +259,29 @@ const notMergedFilter = {
  * When `allCustomers` is true (default for territory saves), every active
  * customer is re-evaluated so missing county data can be filled and assigned.
  */
-/** Fire-and-forget ownership recalculation (fast pass, then Census fill). */
+/**
+ * Fire-and-forget ownership recalculation.
+ * Fast pass uses FL ZIP→county (no network); optional Census pass fills gaps.
+ */
 export function scheduleOwnerReassignment(label = "territory"): void {
   void reassignOwnersForTerritoryChange({
     allCustomers: true,
-    fillMissingCounty: false,
+    fillMissingCounty: true,
+    allowCensus: false,
   })
     .then((fast) => {
       console.log(
-        `[territory] ${label} fast reassignment: processed=${fast.processed} assigned=${fast.assigned}`,
+        `[territory] ${label} ZIP reassignment: processed=${fast.processed} assigned=${fast.assigned}`,
       );
       return reassignOwnersForTerritoryChange({
         allCustomers: true,
         fillMissingCounty: true,
+        allowCensus: true,
       });
     })
     .then((full) => {
       console.log(
-        `[territory] ${label} full reassignment: processed=${full.processed} assigned=${full.assigned}`,
+        `[territory] ${label} Census reassignment: processed=${full.processed} assigned=${full.assigned}`,
       );
     })
     .catch((err) => {
@@ -204,8 +295,10 @@ export async function reassignOwnersForTerritoryChange(options: {
   previousOwnerId?: Types.ObjectId | string | null;
   allCustomers?: boolean;
   fillMissingCounty?: boolean;
+  allowCensus?: boolean;
 }): Promise<{ processed: number; assigned: number }> {
   const fillMissingCounty = options.fillMissingCounty !== false;
+  const allowCensus = options.allowCensus !== false;
   const allCustomers = options.allCustomers === true;
 
   let customerIds: Types.ObjectId[];
@@ -257,10 +350,24 @@ export async function reassignOwnersForTerritoryChange(options: {
     customerIds = customers.map((c) => c._id as Types.ObjectId);
   }
 
+  territoryIndex = await buildTerritoryIndex();
   let assigned = 0;
-  for (const id of customerIds) {
-    const ownerId = await assignCustomerOwner(id, { fillMissingCounty });
-    if (ownerId) assigned += 1;
+  try {
+    for (let i = 0; i < customerIds.length; i += 1) {
+      const id = customerIds[i]!;
+      const ownerId = await assignCustomerOwner(id, {
+        fillMissingCounty,
+        allowCensus,
+      });
+      if (ownerId) assigned += 1;
+      if ((i + 1) % 500 === 0) {
+        console.log(
+          `[territory] reassignment progress ${i + 1}/${customerIds.length} (assigned=${assigned})`,
+        );
+      }
+    }
+  } finally {
+    territoryIndex = null;
   }
   return { processed: customerIds.length, assigned };
 }

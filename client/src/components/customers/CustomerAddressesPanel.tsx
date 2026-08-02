@@ -1,6 +1,11 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import {
+  Dispatch,
+  FormEvent,
+  SetStateAction,
+  useState,
+} from "react";
 import { Loader2, MapPin, Plus, Wrench } from "lucide-react";
 import {
   ApiError,
@@ -10,8 +15,45 @@ import {
   checkEquipmentSerial,
   createCustomerAddress,
   createCustomerEquipment,
+  updateCustomerAddress,
+  validateCustomerAddress,
 } from "@/lib/api";
 import { FLORIDA_COUNTIES } from "@/lib/floridaCounties";
+
+type AddressFormState = {
+  label: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  county: string;
+  propertyType: "residential" | "commercial";
+  isPrimary: boolean;
+};
+
+const emptyAddrForm = (): AddressFormState => ({
+  label: "",
+  address: "",
+  city: "",
+  state: "",
+  zip: "",
+  county: "",
+  propertyType: "residential",
+  isPrimary: false,
+});
+
+function formFromAddress(addr: CustomerAddress): AddressFormState {
+  return {
+    label: addr.label ?? "",
+    address: addr.address ?? "",
+    city: addr.city ?? "",
+    state: addr.state ?? "",
+    zip: addr.zip ?? "",
+    county: addr.county ?? "",
+    propertyType: addr.propertyType === "commercial" ? "commercial" : "residential",
+    isPrimary: Boolean(addr.isPrimary),
+  };
+}
 
 function formatDate(date: string | null): string {
   if (!date) return "—";
@@ -46,21 +88,14 @@ export default function CustomerAddressesPanel({
   onAddressesChange,
 }: CustomerAddressesPanelProps) {
   const [addingAddress, setAddingAddress] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [addingEquipmentFor, setAddingEquipmentFor] = useState<string | null>(
     null,
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [addrForm, setAddrForm] = useState({
-    label: "",
-    address: "",
-    city: "",
-    state: "",
-    zip: "",
-    county: "",
-    propertyType: "residential" as "residential" | "commercial",
-  });
+  const [addrForm, setAddrForm] = useState<AddressFormState>(emptyAddrForm);
 
   const [eqForm, setEqForm] = useState({
     generatorModel: "",
@@ -100,8 +135,50 @@ export default function CustomerAddressesPanel({
 
   function openEquipmentForm(addressId: string | null) {
     setAddingEquipmentFor(addressId);
+    setEditingId(null);
+    setAddingAddress(false);
     setSerialCheck({ blocking: [], warnings: [] });
     setError(null);
+  }
+
+  function startAddAddress() {
+    setAddingAddress(true);
+    setEditingId(null);
+    setAddingEquipmentFor(null);
+    setAddrForm({ ...emptyAddrForm(), isPrimary: addresses.length === 0 });
+    setError(null);
+  }
+
+  function startEditAddress(addr: CustomerAddress) {
+    setEditingId(addr._id);
+    setAddingAddress(false);
+    setAddingEquipmentFor(null);
+    setAddrForm(formFromAddress(addr));
+    setError(null);
+  }
+
+  function cancelAddressForm() {
+    setAddingAddress(false);
+    setEditingId(null);
+    setAddrForm(emptyAddrForm());
+    setError(null);
+  }
+
+  function applyUpdatedAddress(updated: CustomerAddress) {
+    onAddressesChange(
+      addresses.map((addr) => {
+        if (addr._id === updated._id) {
+          return {
+            ...updated,
+            equipment: updated.equipment ?? addr.equipment,
+          };
+        }
+        if (updated.isPrimary) {
+          return { ...addr, isPrimary: false };
+        }
+        return addr;
+      }),
+    );
   }
 
   async function handleAddAddress(e: FormEvent) {
@@ -110,27 +187,82 @@ export default function CustomerAddressesPanel({
     setError(null);
     try {
       const { address } = await createCustomerAddress(token, customerId, {
-        ...addrForm,
+        label: addrForm.label,
+        address: addrForm.address,
+        city: addrForm.city,
+        state: addrForm.state,
+        zip: addrForm.zip,
+        county: addrForm.county,
         countyManual: Boolean(addrForm.county.trim()),
-        isPrimary: addresses.length === 0,
+        propertyType: addrForm.propertyType,
+        isPrimary: addresses.length === 0 || addrForm.isPrimary,
       });
-      onAddressesChange([
-        ...addresses,
+      const next = [
+        ...addresses.map((a) =>
+          address.isPrimary ? { ...a, isPrimary: false } : a,
+        ),
         { ...address, equipment: address.equipment ?? [] },
-      ]);
-      setAddrForm({
-        label: "",
-        address: "",
-        city: "",
-        state: "",
-        zip: "",
-        county: "",
-        propertyType: "residential",
-      });
-      setAddingAddress(false);
+      ];
+      onAddressesChange(next);
+      cancelAddressForm();
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : "Failed to add address.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleUpdateAddress(e: FormEvent) {
+    e.preventDefault();
+    if (!editingId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const { address } = await updateCustomerAddress(
+        token,
+        customerId,
+        editingId,
+        {
+          label: addrForm.label,
+          address: addrForm.address,
+          city: addrForm.city,
+          state: addrForm.state,
+          zip: addrForm.zip,
+          county: addrForm.county,
+          countyManual: Boolean(addrForm.county.trim()),
+          propertyType: addrForm.propertyType,
+          isPrimary: addrForm.isPrimary,
+        },
+      );
+      applyUpdatedAddress(address);
+      cancelAddressForm();
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to update address.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSetPrimary(addressId: string) {
+    setSaving(true);
+    setError(null);
+    try {
+      const { address } = await updateCustomerAddress(
+        token,
+        customerId,
+        addressId,
+        { isPrimary: true },
+      );
+      applyUpdatedAddress(address);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to set primary address.",
       );
     } finally {
       setSaving(false);
@@ -190,7 +322,7 @@ export default function CustomerAddressesPanel({
           {canWrite ? (
             <button
               type="button"
-              onClick={() => setAddingAddress(true)}
+              onClick={startAddAddress}
               className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-brand-orange hover:underline"
             >
               <Plus className="h-4 w-4" />
@@ -244,22 +376,63 @@ export default function CustomerAddressesPanel({
               </p>
             </div>
             {canWrite ? (
-              <button
-                type="button"
-                onClick={() =>
-                  openEquipmentForm(
-                    addingEquipmentFor === addr._id ? null : addr._id,
-                  )
-                }
-                className="inline-flex items-center gap-1 text-xs font-medium text-brand-orange hover:underline"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add equipment
-              </button>
+              <div className="flex flex-wrap gap-3 text-xs">
+                {!addr.isPrimary ? (
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => handleSetPrimary(addr._id)}
+                    className="font-medium text-brand-orange hover:underline disabled:opacity-50"
+                  >
+                    Set primary
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() =>
+                    editingId === addr._id
+                      ? cancelAddressForm()
+                      : startEditAddress(addr)
+                  }
+                  className="font-medium text-neutral-600 hover:underline disabled:opacity-50"
+                >
+                  {editingId === addr._id ? "Cancel" : "Edit"}
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() =>
+                    openEquipmentForm(
+                      addingEquipmentFor === addr._id ? null : addr._id,
+                    )
+                  }
+                  className="inline-flex items-center gap-1 font-medium text-brand-orange hover:underline disabled:opacity-50"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add equipment
+                </button>
+              </div>
             ) : null}
           </div>
 
-          {addr.equipment.length === 0 && addingEquipmentFor !== addr._id ? (
+          {editingId === addr._id ? (
+            <AddressFormFields
+              title="Edit address"
+              token={token}
+              form={addrForm}
+              setForm={setAddrForm}
+              saving={saving}
+              showPrimaryToggle={addresses.length > 1}
+              onCancel={cancelAddressForm}
+              onSubmit={handleUpdateAddress}
+              submitLabel="Save address"
+            />
+          ) : null}
+
+          {addr.equipment.length === 0 &&
+          addingEquipmentFor !== addr._id &&
+          editingId !== addr._id ? (
             <p className="text-xs text-neutral-400">
               No equipment at this address.
             </p>
@@ -374,116 +547,22 @@ export default function CustomerAddressesPanel({
       ))}
 
       {addingAddress ? (
-        <form
+        <AddressFormFields
+          title="New address"
+          token={token}
+          form={addrForm}
+          setForm={setAddrForm}
+          saving={saving}
+          showPrimaryToggle={addresses.length > 0}
+          onCancel={cancelAddressForm}
           onSubmit={handleAddAddress}
-          className="space-y-3 rounded-xl border border-neutral-200 bg-white p-5 shadow-sm"
-        >
-          <p className="text-sm font-semibold text-brand-dark">New address</p>
-          <div>
-            <span className="mb-1 block text-xs font-medium text-neutral-500">
-              Property type
-            </span>
-            <div className="inline-flex rounded-md border border-neutral-300 p-0.5">
-              <button
-                type="button"
-                onClick={() =>
-                  setAddrForm((f) => ({ ...f, propertyType: "residential" }))
-                }
-                className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
-                  addrForm.propertyType === "residential"
-                    ? "bg-brand-dark text-white"
-                    : "text-neutral-600 hover:bg-white"
-                }`}
-              >
-                Residential
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setAddrForm((f) => ({ ...f, propertyType: "commercial" }))
-                }
-                className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
-                  addrForm.propertyType === "commercial"
-                    ? "bg-brand-dark text-white"
-                    : "text-neutral-600 hover:bg-white"
-                }`}
-              >
-                Commercial
-              </button>
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field
-              label="Label"
-              value={addrForm.label}
-              onChange={(v) => setAddrForm((f) => ({ ...f, label: v }))}
-              placeholder="e.g. Ormond Beach"
-            />
-            <Field
-              label="Street"
-              value={addrForm.address}
-              onChange={(v) => setAddrForm((f) => ({ ...f, address: v }))}
-            />
-            <Field
-              label="City"
-              value={addrForm.city}
-              onChange={(v) => setAddrForm((f) => ({ ...f, city: v }))}
-            />
-            <Field
-              label="State"
-              value={addrForm.state}
-              onChange={(v) => setAddrForm((f) => ({ ...f, state: v }))}
-            />
-            <Field
-              label="Zip"
-              value={addrForm.zip}
-              onChange={(v) => setAddrForm((f) => ({ ...f, zip: v }))}
-            />
-            <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">
-                County
-              </label>
-              <select
-                value={addrForm.county}
-                onChange={(e) =>
-                  setAddrForm((f) => ({ ...f, county: e.target.value }))
-                }
-                className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-              >
-                <option value="">Select county…</option>
-                {FLORIDA_COUNTIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setAddingAddress(false)}
-              className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded-md bg-brand-orange px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-orange/90 disabled:opacity-50"
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Save address
-            </button>
-          </div>
-        </form>
-      ) : canWrite ? (
+          submitLabel="Save address"
+          className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm"
+        />
+      ) : canWrite && !editingId ? (
         <button
           type="button"
-          onClick={() => {
-            setAddingAddress(true);
-            setError(null);
-          }}
+          onClick={startAddAddress}
           className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-orange hover:underline"
         >
           <Plus className="h-4 w-4" />
@@ -491,6 +570,241 @@ export default function CustomerAddressesPanel({
         </button>
       ) : null}
     </div>
+  );
+}
+
+function AddressFormFields({
+  title,
+  token,
+  form,
+  setForm,
+  saving,
+  showPrimaryToggle,
+  onCancel,
+  onSubmit,
+  submitLabel,
+  className = "mt-3 space-y-3 rounded-lg border border-neutral-200 bg-neutral-50 p-4",
+}: {
+  title: string;
+  token: string;
+  form: AddressFormState;
+  setForm: Dispatch<SetStateAction<AddressFormState>>;
+  saving: boolean;
+  showPrimaryToggle: boolean;
+  onCancel: () => void;
+  onSubmit: (e: FormEvent) => void;
+  submitLabel: string;
+  className?: string;
+}) {
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookupMsg, setLookupMsg] = useState<string | null>(null);
+  const [lookupError, setLookupError] = useState<string | null>(null);
+
+  async function handleLookupZipCounty() {
+    const street = form.address.trim();
+    const state = form.state.trim();
+    if (!street || !state) {
+      setLookupError("Street and state are required for lookup.");
+      setLookupMsg(null);
+      return;
+    }
+
+    setLookingUp(true);
+    setLookupError(null);
+    setLookupMsg(null);
+    try {
+      const result = await validateCustomerAddress(token, {
+        address: street,
+        city: form.city.trim(),
+        state,
+        zip: form.zip.trim(),
+      });
+      if (!result.valid || !result.address) {
+        setLookupError(
+          result.message || "Could not find a ZIP or county for this address.",
+        );
+        return;
+      }
+
+      const zip = result.address.zip?.trim() ?? "";
+      const county = result.address.county?.trim() ?? "";
+      setForm((f) => ({
+        ...f,
+        ...(zip ? { zip } : {}),
+        ...(county ? { county } : {}),
+      }));
+      setLookupMsg(
+        result.matchedAddress
+          ? `Matched: ${result.matchedAddress}`
+          : "ZIP and county updated from lookup.",
+      );
+    } catch (err) {
+      setLookupError(
+        err instanceof ApiError
+          ? err.message
+          : "Address lookup failed. Try again.",
+      );
+    } finally {
+      setLookingUp(false);
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit} className={className}>
+      <p className="text-sm font-semibold text-brand-dark">{title}</p>
+      <div>
+        <span className="mb-1 block text-xs font-medium text-neutral-500">
+          Property type
+        </span>
+        <div className="inline-flex rounded-md border border-neutral-300 p-0.5">
+          <button
+            type="button"
+            onClick={() =>
+              setForm((f) => ({ ...f, propertyType: "residential" }))
+            }
+            className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+              form.propertyType === "residential"
+                ? "bg-brand-dark text-white"
+                : "text-neutral-600 hover:bg-white"
+            }`}
+          >
+            Residential
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setForm((f) => ({ ...f, propertyType: "commercial" }))
+            }
+            className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+              form.propertyType === "commercial"
+                ? "bg-brand-dark text-white"
+                : "text-neutral-600 hover:bg-white"
+            }`}
+          >
+            Commercial
+          </button>
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field
+          label="Label"
+          value={form.label}
+          onChange={(v) => setForm((f) => ({ ...f, label: v }))}
+          placeholder="e.g. Ormond Beach"
+        />
+        <Field
+          label="Street"
+          value={form.address}
+          onChange={(v) => setForm((f) => ({ ...f, address: v }))}
+        />
+        <Field
+          label="City"
+          value={form.city}
+          onChange={(v) => setForm((f) => ({ ...f, city: v }))}
+        />
+        <Field
+          label="State"
+          value={form.state}
+          onChange={(v) => setForm((f) => ({ ...f, state: v }))}
+        />
+        <Field
+          label="Zip"
+          value={form.zip}
+          onChange={(v) => setForm((f) => ({ ...f, zip: v }))}
+        />
+        <div>
+          <label className="mb-1 block text-xs font-medium text-neutral-500">
+            County
+          </label>
+          <select
+            value={
+              form.county &&
+              !(FLORIDA_COUNTIES as readonly string[]).includes(form.county)
+                ? "__other__"
+                : form.county
+            }
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "__other__") return;
+              setForm((f) => ({ ...f, county: v }));
+            }}
+            className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+          >
+            <option value="">Select county…</option>
+            {FLORIDA_COUNTIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+            {form.county &&
+            !(FLORIDA_COUNTIES as readonly string[]).includes(form.county) ? (
+              <option value="__other__">{form.county}</option>
+            ) : null}
+          </select>
+          {form.county &&
+          !(FLORIDA_COUNTIES as readonly string[]).includes(form.county) ? (
+            <input
+              type="text"
+              value={form.county}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, county: e.target.value }))
+              }
+              className="mt-2 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+              placeholder="County name"
+            />
+          ) : null}
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <button
+          type="button"
+          disabled={lookingUp || saving}
+          onClick={handleLookupZipCounty}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-orange hover:underline disabled:opacity-50"
+        >
+          {lookingUp ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : null}
+          Lookup ZIP / county
+        </button>
+        {lookupMsg ? (
+          <p className="text-xs text-emerald-700">{lookupMsg}</p>
+        ) : null}
+        {lookupError ? (
+          <p className="text-xs text-red-600">{lookupError}</p>
+        ) : null}
+      </div>
+      {showPrimaryToggle ? (
+        <label className="flex items-center gap-2 text-sm text-neutral-700">
+          <input
+            type="checkbox"
+            checked={form.isPrimary}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, isPrimary: e.target.checked }))
+            }
+            className="rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
+          />
+          Primary address
+        </label>
+      ) : null}
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 rounded-md bg-brand-orange px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-orange/90 disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          {submitLabel}
+        </button>
+      </div>
+    </form>
   );
 }
 

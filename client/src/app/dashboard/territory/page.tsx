@@ -9,6 +9,7 @@ import {
   TerritoryOwner,
   UserTerritories,
   getTerritories,
+  recalculateTerritories,
   updateTerritories,
 } from "@/lib/api";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -37,6 +38,7 @@ function TerritoryPageContent() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveOk, setSaveOk] = useState<string | null>(null);
+  const [recalculating, setRecalculating] = useState(false);
 
   useEffect(() => {
     if (user && !isAllowed) {
@@ -76,6 +78,27 @@ function TerritoryPageContent() {
     }
   }, [isAllowed, token, load]);
 
+  async function handleRecalculate() {
+    if (!token) return;
+    setRecalculating(true);
+    setSaveError(null);
+    setSaveOk(null);
+    try {
+      const { reassignment } = await recalculateTerritories(token);
+      setSaveOk(
+        `Recalculated ownership from ZIP→county: assigned ${reassignment.assigned} of ${reassignment.processed} customers. Refresh Customers to see owners.`,
+      );
+    } catch (err) {
+      setSaveError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to recalculate ownership.",
+      );
+    } finally {
+      setRecalculating(false);
+    }
+  }
+
   async function handleSave(ownerId: string, territories: UserTerritories) {
     if (!token) {
       const msg = "You are not signed in.";
@@ -108,14 +131,35 @@ function TerritoryPageContent() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-brand-dark">Territory</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          {user.role === "owner"
-            ? "Assign the Florida counties and ZIP carve-outs you cover. Customers in your territory are assigned to you automatically."
-            : "Manage owner territories by county and ZIP. ZIP claims override county ownership when owners share a county."}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-brand-dark">Territory</h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            {user.role === "owner"
+              ? "Assign the Florida counties and ZIP carve-outs you cover. Customers in your territory are assigned to you automatically."
+              : "Manage owner territories by county and ZIP. ZIP claims override county ownership when owners share a county."}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleRecalculate()}
+          disabled={recalculating}
+          className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange disabled:opacity-60"
+        >
+          {recalculating ? "Recalculating…" : "Recalculate ownership"}
+        </button>
       </div>
+
+      {saveOk && !selected ? (
+        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+          {saveOk}
+        </div>
+      ) : null}
+      {saveError && !selected ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {saveError}
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="text-sm text-neutral-500">Loading territories…</div>

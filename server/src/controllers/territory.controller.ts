@@ -9,6 +9,7 @@ import {
 import {
   findTerritoryConflicts,
   normalizeTerritoriesInput,
+  reassignOwnersForTerritoryChange,
   scheduleOwnerReassignment,
 } from "../utils/ownerTerritory";
 
@@ -182,6 +183,61 @@ export async function updateTerritories(
     });
   } catch (err) {
     console.error("PATCH /territories/:userId error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+/**
+ * POST /territories/recalculate — fill counties from FL ZIP map (and optional
+ * Census) then reassign ownerUserRef for all active customers.
+ */
+export async function recalculateTerritories(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!req.user || !TERRITORY_ROLES.has(req.user.role)) {
+      res.status(403).json({ message: "Insufficient role" });
+      return;
+    }
+
+    // Synchronous ZIP→county pass so Owner/County columns update immediately.
+    const zipPass = await reassignOwnersForTerritoryChange({
+      allCustomers: true,
+      fillMissingCounty: true,
+      allowCensus: false,
+    });
+
+    // Background Census pass for ZIP misses only (avoid repeating ZIP work).
+    void reassignOwnersForTerritoryChange({
+      allCustomers: true,
+      fillMissingCounty: true,
+      allowCensus: true,
+    })
+      .then((full) => {
+        console.log(
+          `[territory] recalculate-api Census pass: processed=${full.processed} assigned=${full.assigned}`,
+        );
+      })
+      .catch((err) => {
+        console.error("[territory] recalculate-api Census pass failed:", err);
+      });
+
+    logNotificationAsync({
+      entityType: "user",
+      action: "updated",
+      entityId: req.user.id,
+      summary: "Customer territory ownership recalculated",
+      metadata: { reassignment: zipPass },
+      ...actorFromRequest(req.user),
+    });
+
+    res.status(200).json({
+      message: "Ownership recalculated from ZIP→county map.",
+      reassignment: zipPass,
+    });
+  } catch (err) {
+    console.error("POST /territories/recalculate error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }

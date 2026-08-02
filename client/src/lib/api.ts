@@ -299,6 +299,22 @@ export async function updateTerritories(
   });
 }
 
+export async function recalculateTerritories(
+  token: string,
+): Promise<{
+  message: string;
+  reassignment: { processed: number; assigned: number };
+}> {
+  return authRequest<{
+    message: string;
+    reassignment: { processed: number; assigned: number };
+  }>("/territories/recalculate", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({}),
+  });
+}
+
 export interface CustomerAddressSummary {
   _id: string;
   label: string;
@@ -840,6 +856,32 @@ export async function createCustomerAddress(
     `/customers/${customerId}/addresses`,
     {
       method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function updateCustomerAddress(
+  token: string,
+  customerId: string,
+  addressId: string,
+  data: {
+    label?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    county?: string;
+    countyManual?: boolean;
+    isPrimary?: boolean;
+    propertyType?: CustomerAddressPropertyType;
+  },
+): Promise<{ address: CustomerAddress }> {
+  return authRequest<{ address: CustomerAddress }>(
+    `/customers/${customerId}/addresses/${addressId}`,
+    {
+      method: "PATCH",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(data),
     },

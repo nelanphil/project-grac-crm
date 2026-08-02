@@ -361,7 +361,7 @@ function CustomersContent() {
     );
   }
 
-  const colCount = canManageCustomers ? 8 : 7;
+  const colCount = canManageCustomers ? 9 : 8;
   const showingDeleted = canManageCustomers && listView === "deleted";
 
   return (
@@ -506,6 +506,9 @@ function CustomersContent() {
                   onSort={handleSort}
                 />
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  County
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   Owner
                 </th>
                 {canManageCustomers ? (
@@ -586,6 +589,9 @@ function CustomersContent() {
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {customer.zip?.trim() || "\u2014"}
+                      </td>
+                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                        {customer.county?.trim() || "\u2014"}
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {customer.owner

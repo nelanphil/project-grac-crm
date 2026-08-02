@@ -4,6 +4,7 @@
  */
 
 import { normalizeCountyName } from "../constants/floridaCounties";
+import { countyForFloridaZip } from "../constants/floridaZipCounties";
 
 const CENSUS_ADDRESS_URL =
   "https://geocoding.geo.census.gov/geocoder/locations/address";
@@ -258,6 +259,12 @@ export async function geocodeAddress(
       message:
         "No matching US address found. Check the street, city, state, and ZIP.",
     };
+  }
+
+  if (!normalized.county && normalized.zip) {
+    normalized.county = normalizeCountyName(
+      countyForFloridaZip(normalized.zip),
+    );
   }
 
   if (!normalized.county) {

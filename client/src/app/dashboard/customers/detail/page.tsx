@@ -332,13 +332,9 @@ function CustomerDetailContent() {
             {customer.owner
               ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
               : "Unassigned"}
-            {customer.county ? (
-              <>
-                {" · "}
-                <span className="font-medium text-neutral-500">County:</span>{" "}
-                {customer.county}
-              </>
-            ) : null}
+            {" · "}
+            <span className="font-medium text-neutral-500">County:</span>{" "}
+            {customer.county?.trim() || "—"}
           </p>
         </div>
         {canWrite ? (
