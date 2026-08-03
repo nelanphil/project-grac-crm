@@ -38,7 +38,8 @@ const EMPTY_FORM: FormState = {
   fromName: "",
   fromEmail: "",
   isActive: true,
-  roles: [],
+  // Default so forgot-password / signup mail works after first save.
+  roles: ["general_notifications"],
 };
 
 const ROLE_OPTIONS: { value: EmailAccountRole; label: string; hint: string }[] =
@@ -171,6 +172,16 @@ export default function EmailAccountsCard() {
       return;
     }
 
+    if (form.roles.length === 0) {
+      const ok = window.confirm(
+        "No notification roles are selected. Forgot password and signup emails will not use this account until you assign General notifications. Save anyway?",
+      );
+      if (!ok) {
+        setSaving(false);
+        return;
+      }
+    }
+
     const payload = {
       friendlyName: form.friendlyName.trim(),
       host: form.host.trim(),
@@ -288,6 +299,10 @@ export default function EmailAccountsCard() {
     });
   }
 
+  const hasGeneralRole = accounts.some(
+    (a) => a.isActive && a.roles.includes("general_notifications"),
+  );
+
   if (loading) {
     return (
       <div className="rounded-xl border border-neutral-200 bg-white shadow-sm px-6 py-8 text-sm text-neutral-500">
@@ -323,6 +338,14 @@ export default function EmailAccountsCard() {
       {error && (
         <div className="mx-6 mt-4 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {!hasGeneralRole && (
+        <div className="mx-6 mt-4 rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+          No active account has the <strong>General notifications</strong> role.
+          Forgot password and signup confirmation emails will not send until you
+          edit an account and assign that role.
         </div>
       )}
 

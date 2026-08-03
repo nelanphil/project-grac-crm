@@ -23,6 +23,10 @@ import {
   sendRoleEmail,
 } from "../services/email.service";
 import {
+  buildPasswordResetEmail,
+  buildSignupWelcomeEmail,
+} from "../utils/emailTemplates";
+import {
   applyUsername,
   normalizeUsername,
   previewUsernameAssignment,
@@ -173,13 +177,16 @@ async function sendSignupConfirmationEmail(opts: {
   firstName: string;
 }): Promise<void> {
   const loginUrl = buildLoginUrl();
-  const name = opts.firstName.trim() || "there";
+  const mail = buildSignupWelcomeEmail({
+    firstName: opts.firstName,
+    loginUrl,
+  });
   try {
     const mailResult = await sendRoleEmail("general_notifications", {
       to: opts.email,
-      subject: "Welcome to GRAC CRM",
-      text: `Hi ${name},\n\nYour GRAC CRM account has been created. Sign in here:\n\n${loginUrl}\n\nIf you did not create this account, you can ignore this email.`,
-      html: `<p>Hi ${name},</p><p>Your GRAC CRM account has been created.</p><p><a href="${loginUrl}">Sign in to your account</a></p><p>If you did not create this account, you can ignore this email.</p>`,
+      subject: mail.subject,
+      text: mail.text,
+      html: mail.html,
     });
     console.info("[mail] Signup confirmation email accepted by SMTP:", {
       to: opts.email,
@@ -521,11 +528,12 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
       console.warn(`[mail] Dev reset URL for ${user.email}: ${resetUrl}`);
     } else {
       try {
+        const mail = buildPasswordResetEmail(resetUrl);
         const mailResult = await sendRoleEmail("general_notifications", {
           to: user.email,
-          subject: "Reset your GRAC CRM password",
-          text: `Reset your password using this link (expires in 1 hour):\n\n${resetUrl}\n\nIf you did not request this, you can ignore this email.`,
-          html: `<p>Reset your password using this link (expires in 1 hour):</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you did not request this, you can ignore this email.</p>`,
+          subject: mail.subject,
+          text: mail.text,
+          html: mail.html,
         });
         mailSent = true;
         console.info("[mail] Password reset email accepted by SMTP:", {
