@@ -9,8 +9,31 @@ import { errorHandler } from "./middleware/errorHandler";
 
 const app = express();
 
+// Normalize allowed origins: strip trailing slashes and support a
+// comma-separated list in CLIENT_URL. The browser's Origin header never
+// includes a trailing slash, so an exact match against a value like
+// "https://example.com/" would fail.
+const allowedOrigins = new Set(
+  env.clientUrl
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter(Boolean),
+);
+
 app.use(helmet());
-app.use(cors({ origin: env.clientUrl }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Allow non-browser requests (no Origin header) and allowed origins.
+      if (!origin || allowedOrigins.has(origin.replace(/\/+$/, ""))) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error(`Origin ${origin} not allowed by CORS`));
+    },
+    credentials: true,
+  }),
+);
 
 // Twilio webhooks post application/x-www-form-urlencoded; mount before JSON parser.
 app.use(
