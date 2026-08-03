@@ -16,6 +16,18 @@ export interface AuthUser {
   usernameNumber: number | null;
   /** Client-only cookie preference mirrored from consent store. */
   cookieConsentStatus?: CookieConsentStatus | null;
+  /** ISO timestamp when Terms of Service were accepted. */
+  termsAcceptedAt?: string | null;
+  /** ISO timestamp when Privacy Policy was accepted. */
+  privacyAcceptedAt?: string | null;
+  /** Whether the user opted in to SMS alerts. */
+  smsOptIn?: boolean;
+  /** ISO timestamp when SMS opt-in was recorded. */
+  smsOptInAt?: string | null;
+  /** Version of legal docs accepted. */
+  legalDocsVersion?: string | null;
+  /** True when a customer must accept legal terms before using the app. */
+  needsLegalConsent?: boolean;
 }
 
 interface AuthStore {
@@ -29,6 +41,13 @@ interface AuthStore {
   setCookieConsentStatus: (status: CookieConsentStatus) => void;
   hasPermission: (permission: string) => boolean;
   hasRole: (...roles: UserRole[]) => boolean;
+}
+
+/** Customers without terms acceptance must complete the legal consent gate. */
+export function userNeedsLegalConsent(user: AuthUser | null | undefined): boolean {
+  if (!user) return false;
+  if (typeof user.needsLegalConsent === "boolean") return user.needsLegalConsent;
+  return user.role === "customer" && !user.termsAcceptedAt;
 }
 
 export const useAuthStore = create<AuthStore>()(
@@ -45,6 +64,7 @@ export const useAuthStore = create<AuthStore>()(
           token,
           user: {
             ...user,
+            needsLegalConsent: userNeedsLegalConsent(user),
             cookieConsentStatus:
               user.cookieConsentStatus ?? previous?.cookieConsentStatus ?? null,
           },

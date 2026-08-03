@@ -27,6 +27,19 @@ services:
         value: 7d
       - key: CREDENTIALS_ENCRYPTION_KEY
         sync: false
+      # SMTP for password-reset and transactional email
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_SECURE
+        value: "false"
+      - key: EMAIL_FROM
+        sync: false
       - key: MYSQL_HOST
         sync: false
       - key: MYSQL_PORT

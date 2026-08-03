@@ -22,6 +22,16 @@ export interface IUser extends Document {
   usernameKey: string | null;
   /** Geographic territories for owner-role users. */
   territories: IUserTerritories;
+  /** When the user accepted the Terms of Service. */
+  termsAcceptedAt: Date | null;
+  /** When the user accepted the Privacy Policy. */
+  privacyAcceptedAt: Date | null;
+  /** Optional opt-in for automated text message alerts. */
+  smsOptIn: boolean;
+  /** When smsOptIn was last set to true. */
+  smsOptInAt: Date | null;
+  /** Version string of the legal docs accepted (e.g. "2026-08-03"). */
+  legalDocsVersion: string | null;
   deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -48,6 +58,11 @@ const userSchema = new Schema<IUser>(
       type: territoriesSchema,
       default: () => ({ counties: [], zips: [] }),
     },
+    termsAcceptedAt: { type: Date, default: null },
+    privacyAcceptedAt: { type: Date, default: null },
+    smsOptIn: { type: Boolean, default: false },
+    smsOptInAt: { type: Date, default: null },
+    legalDocsVersion: { type: String, default: null },
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true }

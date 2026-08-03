@@ -4,9 +4,9 @@ interface AuthCardProps {
   title: string;
   subtitle: string;
   children: React.ReactNode;
-  footerText: string;
-  footerLinkText: string;
-  footerLinkHref: string;
+  footerText?: string;
+  footerLinkText?: string;
+  footerLinkHref?: string;
 }
 
 export default function AuthCard({
@@ -17,6 +17,8 @@ export default function AuthCard({
   footerLinkText,
   footerLinkHref,
 }: AuthCardProps) {
+  const showFooter = Boolean(footerText && footerLinkText && footerLinkHref);
+
   return (
     <div className="flex items-center justify-center bg-neutral-100 px-4 py-12">
       <div className="w-full max-w-md">
@@ -36,15 +38,17 @@ export default function AuthCard({
 
           <div className="mt-8">{children}</div>
 
-          <p className="mt-6 text-center text-sm text-neutral-600">
-            {footerText}{" "}
-            <Link
-              href={footerLinkHref}
-              className="font-semibold text-brand-orange hover:underline"
-            >
-              {footerLinkText}
-            </Link>
-          </p>
+          {showFooter && (
+            <p className="mt-6 text-center text-sm text-neutral-600">
+              {footerText}{" "}
+              <Link
+                href={footerLinkHref!}
+                className="font-semibold text-brand-orange hover:underline"
+              >
+                {footerLinkText}
+              </Link>
+            </p>
+          )}
         </div>
 
         <p className="mt-6 text-center">

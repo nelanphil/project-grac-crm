@@ -11,6 +11,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "user",
   "role",
   "twilio_account",
+  "email_account",
   "contract_template",
   "lead",
   "google_credentials",

@@ -3,19 +3,37 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
-import { loginSchema, registerSchema, updateProfileSchema, updatePasswordSchema } from "../schemas/auth.schema";
+import {
+  loginSchema,
+  registerSchema,
+  legalConsentSchema,
+  updateProfileSchema,
+  updatePasswordSchema,
+  LEGAL_DOCS_VERSION,
+} from "../schemas/auth.schema";
 import { forgotPasswordSchema, resetPasswordSchema } from "../schemas/user.schema";
 import { User, UserRole, activeUserFilter } from "../models/mongo/User";
 import { PasswordResetToken } from "../models/mongo/PasswordResetToken";
 import { getPermissionsForRole } from "../models/mongo/RolePermission";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { buildPasswordResetUrl, sendMail } from "../utils/mail";
+import {
+  buildLoginUrl,
+  buildPasswordResetUrl,
+  isRoleMailConfigured,
+  sendRoleEmail,
+} from "../services/email.service";
 import {
   applyUsername,
   normalizeUsername,
   previewUsernameAssignment,
   usernameNumberFromKey,
 } from "../utils/username";
+
+function toIsoOrNull(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
 
 function buildUserPayload(user: {
   _id: unknown;
@@ -25,8 +43,14 @@ function buildUserPayload(user: {
   role: UserRole;
   username?: string | null;
   usernameKey?: string | null;
+  termsAcceptedAt?: Date | string | null;
+  privacyAcceptedAt?: Date | string | null;
+  smsOptIn?: boolean;
+  smsOptInAt?: Date | string | null;
+  legalDocsVersion?: string | null;
   permissions: string[];
 }) {
+  const termsAcceptedAt = toIsoOrNull(user.termsAcceptedAt);
   return {
     id: String(user._id),
     email: user.email,
@@ -36,7 +60,31 @@ function buildUserPayload(user: {
     username: user.username ?? null,
     usernameNumber: usernameNumberFromKey(user.username, user.usernameKey),
     permissions: user.permissions,
+    termsAcceptedAt,
+    privacyAcceptedAt: toIsoOrNull(user.privacyAcceptedAt),
+    smsOptIn: Boolean(user.smsOptIn),
+    smsOptInAt: toIsoOrNull(user.smsOptInAt),
+    legalDocsVersion: user.legalDocsVersion ?? null,
+    needsLegalConsent: user.role === "customer" && !termsAcceptedAt,
   };
+}
+
+function applyLegalConsent(
+  user: {
+    termsAcceptedAt: Date | null;
+    privacyAcceptedAt: Date | null;
+    smsOptIn: boolean;
+    smsOptInAt: Date | null;
+    legalDocsVersion: string | null;
+  },
+  smsOptIn: boolean
+) {
+  const now = new Date();
+  user.termsAcceptedAt = now;
+  user.privacyAcceptedAt = now;
+  user.legalDocsVersion = LEGAL_DOCS_VERSION;
+  user.smsOptIn = smsOptIn;
+  user.smsOptInAt = smsOptIn ? now : null;
 }
 
 const LOGIN_FAIL = { message: "Invalid email/username or password" };
@@ -52,7 +100,7 @@ export async function register(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const { email, password, first_name, last_name, role } = parsed.data;
+  const { email, password, first_name, last_name, role, smsOptIn } = parsed.data;
 
   try {
     const existing = await User.findOne({
@@ -75,43 +123,114 @@ export async function register(req: Request, res: Response): Promise<void> {
       softDeleted.last_name = last_name;
       softDeleted.role = role;
       softDeleted.deletedAt = null;
+      applyLegalConsent(softDeleted, smsOptIn);
       await softDeleted.save();
 
+      const permissions = await getPermissionsForRole(softDeleted.role);
+      void sendSignupConfirmationEmail({
+        email: softDeleted.email,
+        firstName: softDeleted.first_name,
+      });
       res.status(201).json({
         message: "User registered successfully",
-        user: {
-          id: String(softDeleted._id),
-          email: softDeleted.email,
-          first_name,
-          last_name,
-          role,
-          username: softDeleted.username ?? null,
-          usernameNumber: usernameNumberFromKey(
-            softDeleted.username,
-            softDeleted.usernameKey
-          ),
-        },
+        user: buildUserPayload({ ...softDeleted.toObject(), permissions }),
       });
       return;
     }
 
     const password_hash = await bcrypt.hash(password, 10);
-    const user = await User.create({ email, password_hash, first_name, last_name, role });
+    const now = new Date();
+    const user = await User.create({
+      email,
+      password_hash,
+      first_name,
+      last_name,
+      role,
+      termsAcceptedAt: now,
+      privacyAcceptedAt: now,
+      legalDocsVersion: LEGAL_DOCS_VERSION,
+      smsOptIn,
+      smsOptInAt: smsOptIn ? now : null,
+    });
 
+    const permissions = await getPermissionsForRole(user.role);
+    void sendSignupConfirmationEmail({
+      email: user.email,
+      firstName: user.first_name,
+    });
     res.status(201).json({
       message: "User registered successfully",
-      user: {
-        id: String(user._id),
-        email: user.email,
-        first_name,
-        last_name,
-        role,
-        username: user.username ?? null,
-        usernameNumber: usernameNumberFromKey(user.username, user.usernameKey),
-      },
+      user: buildUserPayload({ ...user.toObject(), permissions }),
     });
   } catch (err) {
     console.error("register error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+async function sendSignupConfirmationEmail(opts: {
+  email: string;
+  firstName: string;
+}): Promise<void> {
+  const loginUrl = buildLoginUrl();
+  const name = opts.firstName.trim() || "there";
+  try {
+    const mailResult = await sendRoleEmail("general_notifications", {
+      to: opts.email,
+      subject: "Welcome to GRAC CRM",
+      text: `Hi ${name},\n\nYour GRAC CRM account has been created. Sign in here:\n\n${loginUrl}\n\nIf you did not create this account, you can ignore this email.`,
+      html: `<p>Hi ${name},</p><p>Your GRAC CRM account has been created.</p><p><a href="${loginUrl}">Sign in to your account</a></p><p>If you did not create this account, you can ignore this email.</p>`,
+    });
+    console.info("[mail] Signup confirmation email accepted by SMTP:", {
+      to: opts.email,
+      messageId: mailResult.messageId,
+      accepted: mailResult.accepted,
+      rejected: mailResult.rejected,
+      response: mailResult.response,
+      from: mailResult.from,
+      host: mailResult.host,
+      port: mailResult.port,
+    });
+  } catch (err) {
+    console.error("[mail] Failed to send signup confirmation email:", err);
+  }
+}
+
+/** POST /auth/legal-consent — first-login terms / privacy / SMS for customers */
+export async function acceptLegalConsent(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  const parsed = legalConsentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "Validation error",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  try {
+    const user = await User.findOne({ _id: req.user.id, ...activeUserFilter });
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    applyLegalConsent(user, parsed.data.smsOptIn);
+    await user.save();
+
+    const permissions = await getPermissionsForRole(user.role);
+    res.status(200).json({
+      user: buildUserPayload({ ...user.toObject(), permissions }),
+    });
+  } catch (err) {
+    console.error("acceptLegalConsent error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }
@@ -369,15 +488,13 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
   const email = parsed.data.email.toLowerCase();
 
   // Always return the same message to avoid account enumeration
-  const okMessage = {
-    message:
-      "If an account exists for that email, password reset instructions have been sent.",
-  };
+  const okMessage =
+    "If an account exists for that email, password reset instructions have been sent.";
 
   try {
     const user = await User.findOne({ email, ...activeUserFilter });
     if (!user) {
-      res.status(200).json(okMessage);
+      res.status(200).json({ message: okMessage });
       return;
     }
 
@@ -392,14 +509,54 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
     });
 
     const resetUrl = buildPasswordResetUrl(rawToken);
-    await sendMail({
-      to: user.email,
-      subject: "Reset your GRAC CRM password",
-      text: `Reset your password using this link (expires in 1 hour):\n\n${resetUrl}\n\nIf you did not request this, you can ignore this email.`,
-      html: `<p>Reset your password using this link (expires in 1 hour):</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you did not request this, you can ignore this email.</p>`,
-    });
+    const exposeDevLink = process.env.NODE_ENV !== "production";
+    let mailSent = false;
+    let mailError: string | undefined;
 
-    res.status(200).json(okMessage);
+    const mailReady = await isRoleMailConfigured("general_notifications");
+    if (!mailReady) {
+      mailError =
+        "No General notifications email account is configured (and no env SMTP fallback).";
+      console.warn(`[mail] ${mailError}`);
+      console.warn(`[mail] Dev reset URL for ${user.email}: ${resetUrl}`);
+    } else {
+      try {
+        const mailResult = await sendRoleEmail("general_notifications", {
+          to: user.email,
+          subject: "Reset your GRAC CRM password",
+          text: `Reset your password using this link (expires in 1 hour):\n\n${resetUrl}\n\nIf you did not request this, you can ignore this email.`,
+          html: `<p>Reset your password using this link (expires in 1 hour):</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you did not request this, you can ignore this email.</p>`,
+        });
+        mailSent = true;
+        console.info("[mail] Password reset email accepted by SMTP:", {
+          to: user.email,
+          messageId: mailResult.messageId,
+          accepted: mailResult.accepted,
+          rejected: mailResult.rejected,
+          response: mailResult.response,
+          from: mailResult.from,
+          host: mailResult.host,
+          port: mailResult.port,
+          secure: mailResult.secure,
+          accountId: mailResult.accountId,
+          friendlyName: mailResult.friendlyName,
+        });
+      } catch (mailErr) {
+        mailError =
+          mailErr instanceof Error ? mailErr.message : "SMTP send failed";
+        console.error("[mail] Failed to send password reset email:", mailErr);
+        console.warn(`[mail] Fallback reset URL for ${user.email}: ${resetUrl}`);
+      }
+    }
+
+    res.status(200).json({
+      message: okMessage,
+      // Only expose the link outside production so local/dev can finish the flow
+      // without SMTP. Never include this in production responses.
+      ...(exposeDevLink && !mailSent
+        ? { devResetUrl: resetUrl, mailError }
+        : {}),
+    });
   } catch (err) {
     console.error("forgotPassword error:", err);
     res.status(500).json({ message: "Internal server error" });

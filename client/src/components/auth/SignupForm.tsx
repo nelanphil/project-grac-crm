@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authRegister, ApiError } from "@/lib/api";
 import PasswordInput from "@/components/ui/PasswordInput";
+import LegalConsentFields from "@/components/auth/LegalConsentFields";
 
 export default function SignupForm() {
   const router = useRouter();
@@ -13,6 +14,8 @@ export default function SignupForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [acceptLegal, setAcceptLegal] = useState(false);
+  const [smsOptIn, setSmsOptIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -25,6 +28,11 @@ export default function SignupForm() {
       return;
     }
 
+    if (!acceptLegal) {
+      setError("You must accept the Terms of Service and Privacy Policy.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -33,6 +41,9 @@ export default function SignupForm() {
         password,
         first_name: firstName,
         last_name: lastName,
+        acceptTerms: true,
+        acceptPrivacy: true,
+        smsOptIn,
       });
 
       router.push("/auth/login");
@@ -154,9 +165,17 @@ export default function SignupForm() {
         />
       </div>
 
+      <LegalConsentFields
+        idPrefix="signup"
+        acceptLegal={acceptLegal}
+        onAcceptLegalChange={setAcceptLegal}
+        smsOptIn={smsOptIn}
+        onSmsOptInChange={setSmsOptIn}
+      />
+
       <button
         type="submit"
-        disabled={loading}
+        disabled={loading || !acceptLegal}
         className="btn-primary w-full disabled:opacity-60"
       >
         {loading ? "Creating account…" : "Create Account"}

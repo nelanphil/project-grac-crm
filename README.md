@@ -61,13 +61,23 @@ Client runs at `http://localhost:3009`.
 
 ## Environment variables
 
+Repo-root `.env` is loaded by the API (`server/src/config/env.ts`).
+
 | Variable | Location | Description |
 |----------|----------|-------------|
-| `PORT` | server/.env | API port (default 4009) |
-| `CLIENT_URL` | server/.env | Frontend URL for CORS |
-| `MONGODB_URI` | server/.env | MongoDB connection string |
-| `MYSQL_*` | server/.env | MySQL connection settings |
-| `NEXT_PUBLIC_API_URL` | client/.env.local | Backend API URL |
+| `PORT` | `.env` | API port (default 4009) |
+| `CLIENT_URL` | `.env` | Frontend URL for CORS and password-reset links |
+| `MONGODB_URI_DEVELOPMENT` / `MONGODB_URI_PRODUCTION` | `.env` | MongoDB connection strings |
+| `MYSQL_*` | `.env` | MySQL connection settings |
+| `SMTP_HOST` | `.env` | Optional SMTP fallback host |
+| `SMTP_PORT` | `.env` | SMTP port (default `587`) |
+| `SMTP_USER` | `.env` | Optional SMTP fallback username |
+| `SMTP_PASS` | `.env` | Optional SMTP fallback password |
+| `SMTP_SECURE` | `.env` | Set `true` for port 465 TLS |
+| `EMAIL_FROM` | `.env` | Optional From address for env fallback |
+| `NEXT_PUBLIC_API_URL` | `client/.env.local` | Backend API URL |
+
+**Outbound email** is configured in the dashboard **Control Panel → Email**. Assign the **General notifications** role for password-reset and signup confirmation emails (and **Billing notifications** for future invoice mail). Env `SMTP_*` vars are a last-resort fallback when no matching account is assigned. In non-production, forgot-password may return a `devResetUrl` if mail cannot be sent.
 
 ## API endpoints
 

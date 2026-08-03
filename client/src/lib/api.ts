@@ -47,7 +47,7 @@ export interface LoginResponse {
 
 export interface RegisterResponse {
   message: string;
-  user: Pick<AuthUser, "id" | "email" | "first_name" | "last_name" | "role">;
+  user: AuthUser;
 }
 
 async function authRequest<T>(
@@ -99,9 +99,27 @@ export async function authRegister(data: {
   first_name: string;
   last_name: string;
   role?: "admin" | "manager" | "agent";
+  acceptTerms: true;
+  acceptPrivacy: true;
+  smsOptIn?: boolean;
 }): Promise<RegisterResponse> {
   return authRequest<RegisterResponse>("/auth/register", {
     method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function authAcceptLegalConsent(
+  token: string,
+  data: {
+    acceptTerms: true;
+    acceptPrivacy: true;
+    smsOptIn?: boolean;
+  },
+): Promise<{ user: AuthUser }> {
+  return authRequest<{ user: AuthUser }>("/auth/legal-consent", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
 }
@@ -165,8 +183,12 @@ export async function updatePassword(
 
 export async function authForgotPassword(
   email: string,
-): Promise<{ message: string }> {
-  return authRequest<{ message: string }>("/auth/forgot-password", {
+): Promise<{ message: string; devResetUrl?: string; mailError?: string }> {
+  return authRequest<{
+    message: string;
+    devResetUrl?: string;
+    mailError?: string;
+  }>("/auth/forgot-password", {
     method: "POST",
     body: JSON.stringify({ email }),
   });
@@ -1524,6 +1546,112 @@ export async function deleteTwilioAccount(
 }
 
 // ---------------------------------------------------------------------------
+// Email accounts (Control Panel)
+// ---------------------------------------------------------------------------
+
+export type EmailAccountRole =
+  | "general_notifications"
+  | "billing_notifications";
+
+export interface EmailAccountItem {
+  _id: string;
+  friendlyName: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  fromName: string;
+  fromEmail: string;
+  isActive: boolean;
+  roles: EmailAccountRole[];
+  hasPassword: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmailAccountInput {
+  friendlyName: string;
+  host: string;
+  port?: number;
+  secure?: boolean;
+  username: string;
+  password?: string;
+  fromName: string;
+  fromEmail: string;
+  isActive?: boolean;
+  roles?: EmailAccountRole[];
+}
+
+export async function getEmailAccounts(
+  token: string,
+): Promise<{ accounts: EmailAccountItem[] }> {
+  return authRequest<{ accounts: EmailAccountItem[] }>("/email-accounts", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createEmailAccount(
+  token: string,
+  data: EmailAccountInput,
+): Promise<{ account: EmailAccountItem }> {
+  return authRequest<{ account: EmailAccountItem }>("/email-accounts", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateEmailAccount(
+  token: string,
+  id: string,
+  data: Partial<EmailAccountInput>,
+): Promise<{ account: EmailAccountItem }> {
+  return authRequest<{ account: EmailAccountItem }>(`/email-accounts/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteEmailAccount(
+  token: string,
+  id: string,
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>(`/email-accounts/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface EmailAccountTestResult {
+  messageId?: string;
+  accepted: string[];
+  rejected: string[];
+  response?: string;
+  from: string;
+  to: string;
+  host: string;
+  port: number;
+  secure: boolean;
+}
+
+export async function testEmailAccount(
+  token: string,
+  id: string,
+  to: string,
+): Promise<{ message: string; result: EmailAccountTestResult }> {
+  return authRequest<{ message: string; result: EmailAccountTestResult }>(
+    `/email-accounts/${id}/test`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to }),
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Payment provider accounts (Control Panel)
 // ---------------------------------------------------------------------------
 
@@ -2248,6 +2376,7 @@ export type NotificationEntityType =
   | "user"
   | "role"
   | "twilio_account"
+  | "email_account"
   | "contract_template"
   | "lead"
   | "google_credentials"

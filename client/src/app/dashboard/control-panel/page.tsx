@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import TwilioAccountsCard from "@/components/control-panel/TwilioAccountsCard";
+import EmailAccountsCard from "@/components/control-panel/EmailAccountsCard";
 import GoogleCredentialsCard from "@/components/control-panel/GoogleCredentialsCard";
 import PaymentProvidersCard from "@/components/control-panel/PaymentProvidersCard";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -43,6 +44,7 @@ function ControlPanelContent() {
 
       <PaymentProvidersCard />
       <TwilioAccountsCard />
+      <EmailAccountsCard />
       <GoogleCredentialsCard />
     </div>
   );

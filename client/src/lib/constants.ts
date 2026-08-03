@@ -201,7 +201,10 @@ export const FOOTER_LINKS = {
     { label: COMPANY.phone, href: COMPANY.phoneHref },
     { label: COMPANY.email, href: `mailto:${COMPANY.email}` },
   ],
-  Legal: [{ label: "Privacy Policy", href: "/privacy" }],
+  Legal: [
+    { label: "Terms of Service", href: "/terms" },
+    { label: "Privacy Policy", href: "/privacy" },
+  ],
 } as const;
 
 export const US_STATES = [

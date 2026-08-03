@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useAuthStore } from "@/store/useAuthStore";
+import { useAuthStore, userNeedsLegalConsent } from "@/store/useAuthStore";
 import { authLogin, ApiError } from "@/lib/api";
 import PasswordInput from "@/components/ui/PasswordInput";
 
@@ -24,6 +24,11 @@ export default function LoginForm() {
     try {
       const { token, user } = await authLogin(identifier, password);
       login(token, user);
+
+      if (userNeedsLegalConsent(user)) {
+        router.push("/auth/legal-consent");
+        return;
+      }
 
       const destination = redirectAfterAuth ?? "/dashboard";
       setRedirectAfterAuth(null);

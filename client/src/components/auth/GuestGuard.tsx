@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useAuthStore } from "@/store/useAuthStore";
+import { useAuthStore, userNeedsLegalConsent } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
 
 interface GuestGuardProps {
@@ -19,13 +19,17 @@ interface GuestGuardProps {
 export default function GuestGuard({ children }: GuestGuardProps) {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const user = useAuthStore((s) => s.user);
+  const needsLegalConsent = userNeedsLegalConsent(user);
   const hydrated = useHasHydrated();
 
   useEffect(() => {
     if (hydrated && isAuthenticated) {
-      router.replace("/dashboard");
+      router.replace(
+        needsLegalConsent ? "/auth/legal-consent" : "/dashboard"
+      );
     }
-  }, [hydrated, isAuthenticated, router]);
+  }, [hydrated, isAuthenticated, needsLegalConsent, router]);
 
   if (!hydrated || isAuthenticated) return null;
 

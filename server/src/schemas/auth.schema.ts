@@ -17,6 +17,9 @@ export const loginSchema = z
     path: ["identifier"],
   });
 
+/** Bump when Terms or Privacy copy changes and re-acceptance is required. */
+export const LEGAL_DOCS_VERSION = "2026-08-03";
+
 export const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z
@@ -26,6 +29,23 @@ export const registerSchema = z.object({
   first_name: z.string().min(1, "First name is required").max(100),
   last_name: z.string().min(1, "Last name is required").max(100),
   role: z.string().min(1).optional().default("agent"),
+  acceptTerms: z.literal(true, {
+    error: "You must accept the Terms of Service",
+  }),
+  acceptPrivacy: z.literal(true, {
+    error: "You must accept the Privacy Policy",
+  }),
+  smsOptIn: z.boolean().optional().default(false),
+});
+
+export const legalConsentSchema = z.object({
+  acceptTerms: z.literal(true, {
+    error: "You must accept the Terms of Service",
+  }),
+  acceptPrivacy: z.literal(true, {
+    error: "You must accept the Privacy Policy",
+  }),
+  smsOptIn: z.boolean().optional().default(false),
 });
 
 const usernameField = z
@@ -64,6 +84,7 @@ export const updateRoleSchema = z.object({
 
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
+export type LegalConsentInput = z.infer<typeof legalConsentSchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export type UpdatePasswordInput = z.infer<typeof updatePasswordSchema>;
 export type UpdateRoleInput = z.infer<typeof updateRoleSchema>;
