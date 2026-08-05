@@ -1,8 +1,8 @@
 ﻿"use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowDown,
   ArrowUp,
@@ -194,6 +194,8 @@ function CustomersPagination({
 
 function CustomersContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialQuery = searchParams.get("q")?.trim() ?? "";
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const canManageCustomers = useAuthStore((s) =>
@@ -205,8 +207,8 @@ function CustomersContent() {
 
   const [customers, setCustomers] = useState<CustomerListItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [search, setSearch] = useState(initialQuery);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialQuery);
   const [listView, setListView] = useState<ListView>("active");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -240,6 +242,15 @@ function CustomersContent() {
       router.replace("/dashboard");
     }
   }, [user, router]);
+
+  useEffect(() => {
+    const q = searchParams.get("q")?.trim() ?? "";
+    if (q && q !== search) {
+      setSearch(q);
+    }
+    // Seed from URL only when the query param changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -665,7 +676,15 @@ function CustomersContent() {
 export default function CustomersPage() {
   return (
     <AuthGuard>
-      <CustomersContent />
+      <Suspense
+        fallback={
+          <div className="rounded-xl border border-neutral-200 bg-white px-6 py-8 text-sm text-neutral-500">
+            Loading customers…
+          </div>
+        }
+      >
+        <CustomersContent />
+      </Suspense>
     </AuthGuard>
   );
 }

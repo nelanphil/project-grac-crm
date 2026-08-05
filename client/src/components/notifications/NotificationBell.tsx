@@ -11,9 +11,14 @@ const POLL_MS = 30_000;
 
 interface Props {
   className?: string;
+  /** Visual variant for dark headers vs light staff chrome. */
+  variant?: "dark" | "light";
 }
 
-export default function NotificationBell({ className = "" }: Props) {
+export default function NotificationBell({
+  className = "",
+  variant = "dark",
+}: Props) {
   const hydrated = useHasHydrated();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const token = useAuthStore((s) => s.token);
@@ -49,7 +54,11 @@ export default function NotificationBell({ className = "" }: Props) {
         ref={buttonRef}
         type="button"
         onClick={() => toggleOpen()}
-        className="relative rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange"
+        className={`relative rounded-md p-2 transition-colors ${
+          variant === "light"
+            ? "text-[var(--staff-muted)] hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)]"
+            : "text-white/80 hover:text-brand-orange"
+        }`}
         aria-label={
           unreadCount > 0
             ? `Notifications, ${unreadCount} unread`
