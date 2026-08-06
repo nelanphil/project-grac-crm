@@ -29,11 +29,14 @@ only cover non-obvious caveats for running things in this environment.
   server runs without any `.env`. `client/.env.local` sets `NEXT_PUBLIC_API_URL`
   (defaults to `http://localhost:4009` if absent). The `.env.example` files referenced in
   `README.md` are not committed.
-- Square **OAuth** (Connect with Square in Control Panel) needs platform app credentials:
+- Square **OAuth** (Connect with Square in Control Panel) needs platform app credentials
+  (Square Developer Dashboard application). Prefer configuring them in Control Panel →
+  Payment providers → Square app settings. Env vars also work:
   `SQUARE_APPLICATION_ID` / `SQUARE_APPLICATION_SECRET` and optional
-  `SQUARE_SANDBOX_APPLICATION_ID` / `SQUARE_SANDBOX_APPLICATION_SECRET`. Register the
-  redirect URL `{PUBLIC_API_URL}/payment-provider-accounts/square/oauth/callback` in the
-  Square Developer Dashboard. Manual Square credential paste still works without these.
+  `SQUARE_SANDBOX_*` pair. Set `PUBLIC_API_URL` to the deployed API origin (required in
+  production so the OAuth callback is not `localhost`). Register the redirect URL
+  `{PUBLIC_API_URL}/payment-provider-accounts/square/oauth/callback` in Square. Manual
+  Square credential paste still works without OAuth app credentials.
 
 ### Initial admin / auth
 

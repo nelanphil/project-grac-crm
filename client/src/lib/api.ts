@@ -1665,11 +1665,25 @@ export interface PaymentProviderOwnerSummary {
   email: string;
 }
 
+export interface SquareOAuthAppConfig {
+  productionApplicationId: string;
+  sandboxApplicationId: string;
+  hasProductionApplicationSecret: boolean;
+  hasSandboxApplicationSecret: boolean;
+  envConfigured: {
+    production: boolean;
+    sandbox: boolean;
+  };
+}
+
 export interface SquareOAuthStatus {
   sandbox: boolean;
   production: boolean;
   forEnvironment: boolean;
   callbackUrl: string;
+  sandboxSource?: "env" | "control-panel" | "none";
+  productionSource?: "env" | "control-panel" | "none";
+  app?: SquareOAuthAppConfig;
 }
 
 export interface PaymentProviderAccountItem {
@@ -1747,6 +1761,27 @@ export async function startSquareOAuth(
     "/payment-provider-accounts/square/oauth/start",
     {
       method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function saveSquareOAuthApp(
+  token: string,
+  data: {
+    productionApplicationId?: string;
+    productionApplicationSecret?: string;
+    sandboxApplicationId?: string;
+    sandboxApplicationSecret?: string;
+    clearProductionApplicationSecret?: boolean;
+    clearSandboxApplicationSecret?: boolean;
+  },
+): Promise<{ squareOAuth: SquareOAuthStatus }> {
+  return authRequest<{ squareOAuth: SquareOAuthStatus }>(
+    "/payment-provider-accounts/square/oauth/app",
+    {
+      method: "PUT",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(data),
     },
