@@ -15,8 +15,11 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # Public URL of the deployed frontend, used for CORS
+      # Public URL of the deployed frontend, used for CORS + OAuth return
       - key: CLIENT_URL
+        sync: false
+      # Public URL of this API (required for Square OAuth callbacks & webhooks)
+      - key: PUBLIC_API_URL
         sync: false
       # Set the secret values below in the Render dashboard (never commit them)
       - key: MONGODB_URI_PRODUCTION
@@ -26,6 +29,15 @@ services:
       - key: JWT_EXPIRES_IN
         value: 7d
       - key: CREDENTIALS_ENCRYPTION_KEY
+        sync: false
+      # Optional: Square OAuth platform app (also configurable in Control Panel)
+      - key: SQUARE_APPLICATION_ID
+        sync: false
+      - key: SQUARE_APPLICATION_SECRET
+        sync: false
+      - key: SQUARE_SANDBOX_APPLICATION_ID
+        sync: false
+      - key: SQUARE_SANDBOX_APPLICATION_SECRET
         sync: false
       # SMTP for password-reset and transactional email
       - key: SMTP_HOST

@@ -13,6 +13,7 @@ import {
   getUsers,
   PaymentProviderAccountItem,
   PaymentProviderName,
+  saveSquareOAuthApp,
   SquareOAuthStatus,
   startSquareOAuth,
   updatePaymentProviderAccount,
@@ -97,10 +98,18 @@ export default function PaymentProvidersCard() {
 
   const [oauthEnvironment, setOauthEnvironment] = useState<
     "sandbox" | "production"
-  >("sandbox");
+  >("production");
   const [oauthOwnerUserId, setOauthOwnerUserId] = useState("");
   const [oauthConnecting, setOauthConnecting] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
+
+  const [appFormOpen, setAppFormOpen] = useState(false);
+  const [appProductionId, setAppProductionId] = useState("");
+  const [appProductionSecret, setAppProductionSecret] = useState("");
+  const [appSandboxId, setAppSandboxId] = useState("");
+  const [appSandboxSecret, setAppSandboxSecret] = useState("");
+  const [appSaving, setAppSaving] = useState(false);
+  const [appSaveError, setAppSaveError] = useState<string | null>(null);
 
   const editingAccount = useMemo(
     () => accounts.find((a) => a._id === editingId) ?? null,
@@ -156,6 +165,8 @@ export default function PaymentProvidersCard() {
         setAccounts(list);
         setWebhooks(hooks);
         setSquareOAuth(oauth);
+        setAppProductionId(oauth.app?.productionApplicationId ?? "");
+        setAppSandboxId(oauth.app?.sandboxApplicationId ?? "");
         setOwners(usersRes.users.filter((u) => u.role === "owner"));
       } catch (err) {
         setError(
@@ -342,6 +353,35 @@ export default function PaymentProvidersCard() {
     }
   }
 
+  async function handleSaveSquareApp(e: FormEvent) {
+    e.preventDefault();
+    if (!token || !isOrgAdmin) return;
+    setAppSaving(true);
+    setAppSaveError(null);
+    try {
+      const { squareOAuth: oauth } = await saveSquareOAuthApp(token, {
+        productionApplicationId: appProductionId.trim(),
+        sandboxApplicationId: appSandboxId.trim(),
+        productionApplicationSecret: appProductionSecret.trim() || undefined,
+        sandboxApplicationSecret: appSandboxSecret.trim() || undefined,
+      });
+      setSquareOAuth(oauth);
+      setAppProductionId(oauth.app?.productionApplicationId ?? "");
+      setAppSandboxId(oauth.app?.sandboxApplicationId ?? "");
+      setAppProductionSecret("");
+      setAppSandboxSecret("");
+      setAppFormOpen(false);
+    } catch (err) {
+      setAppSaveError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to save Square application credentials.",
+      );
+    } finally {
+      setAppSaving(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="rounded-xl border border-neutral-200 bg-white shadow-sm px-6 py-8 text-sm text-neutral-500">
@@ -403,16 +443,128 @@ export default function PaymentProvidersCard() {
       )}
 
       <div className="mx-6 mt-4 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-4 space-y-3">
-        <div>
-          <p className="text-sm font-semibold text-brand-dark">
-            Connect with Square
-          </p>
-          <p className="text-xs text-neutral-500 mt-0.5">
-            Sellers authorize this app to create payment links on their Square
-            account. Requires platform app credentials in the server
-            environment.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-brand-dark">
+              Connect with Square
+            </p>
+            <p className="text-xs text-neutral-500 mt-0.5">
+              Sellers authorize this app to create payment links on their Square
+              account. Link the connection to a territory owner (or global
+              fallback).
+            </p>
+          </div>
+          {isOrgAdmin && (
+            <button
+              type="button"
+              onClick={() => {
+                setAppFormOpen((open) => !open);
+                setAppSaveError(null);
+              }}
+              className="shrink-0 rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+            >
+              {appFormOpen ? "Close app settings" : "Square app settings"}
+            </button>
+          )}
         </div>
+
+        {isOrgAdmin && appFormOpen && (
+          <form
+            onSubmit={handleSaveSquareApp}
+            className="rounded-md border border-neutral-200 bg-white px-3 py-3 space-y-3"
+          >
+            <p className="text-xs text-neutral-600">
+              Enter your Square Developer Dashboard application credentials
+              (platform app). Register this redirect URL on the app&apos;s
+              OAuth page:{" "}
+              <code className="break-all">
+                {squareOAuth?.callbackUrl || "…"}
+              </code>
+            </p>
+            {appSaveError && (
+              <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+                {appSaveError}
+              </div>
+            )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block sm:col-span-2">
+                <span className="text-xs font-medium text-neutral-600">
+                  Production Application ID
+                  {squareOAuth?.app?.envConfigured.production
+                    ? " (overridden by server env)"
+                    : ""}
+                </span>
+                <input
+                  value={appProductionId}
+                  onChange={(e) => setAppProductionId(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                  placeholder="sq0idp-…"
+                />
+              </label>
+              <label className="block sm:col-span-2">
+                <span className="text-xs font-medium text-neutral-600">
+                  Production Application Secret
+                  {squareOAuth?.app?.hasProductionApplicationSecret
+                    ? " (leave blank to keep)"
+                    : ""}
+                </span>
+                <PasswordInput
+                  value={appProductionSecret}
+                  onChange={(e) => setAppProductionSecret(e.target.value)}
+                  autoComplete="new-password"
+                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                  placeholder={
+                    squareOAuth?.app?.hasProductionApplicationSecret
+                      ? "••••••••"
+                      : "sq0csp-…"
+                  }
+                />
+              </label>
+              <label className="block sm:col-span-2">
+                <span className="text-xs font-medium text-neutral-600">
+                  Sandbox Application ID
+                  {squareOAuth?.app?.envConfigured.sandbox
+                    ? " (overridden by server env)"
+                    : ""}
+                </span>
+                <input
+                  value={appSandboxId}
+                  onChange={(e) => setAppSandboxId(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                  placeholder="sandbox-sq0idb-…"
+                />
+              </label>
+              <label className="block sm:col-span-2">
+                <span className="text-xs font-medium text-neutral-600">
+                  Sandbox Application Secret
+                  {squareOAuth?.app?.hasSandboxApplicationSecret
+                    ? " (leave blank to keep)"
+                    : ""}
+                </span>
+                <PasswordInput
+                  value={appSandboxSecret}
+                  onChange={(e) => setAppSandboxSecret(e.target.value)}
+                  autoComplete="new-password"
+                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                  placeholder={
+                    squareOAuth?.app?.hasSandboxApplicationSecret
+                      ? "••••••••"
+                      : "sandbox-sq0csb-…"
+                  }
+                />
+              </label>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={appSaving}
+                className="rounded-md bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark/90 disabled:opacity-60"
+              >
+                {appSaving ? "Saving…" : "Save Square app"}
+              </button>
+            </div>
+          </form>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block">
@@ -428,8 +580,8 @@ export default function PaymentProvidersCard() {
               }
               className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
             >
-              <option value="sandbox">Sandbox</option>
               <option value="production">Production</option>
+              <option value="sandbox">Sandbox</option>
             </select>
           </label>
 
@@ -472,21 +624,23 @@ export default function PaymentProvidersCard() {
         {!oauthReady && (
           <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
             Square OAuth is not configured for{" "}
-            <span className="font-medium">{oauthEnvironment}</span>. Set{" "}
-            <code>
-              SQUARE_
-              {oauthEnvironment === "sandbox" ? "SANDBOX_" : ""}
-              APPLICATION_ID
-            </code>{" "}
-            and the matching secret on the API server, and register the redirect
-            URL
+            <span className="font-medium">{oauthEnvironment}</span>.{" "}
+            {isOrgAdmin
+              ? "Open Square app settings above and add the Application ID + secret from the Square Developer Dashboard, then register the redirect URL "
+              : "Ask an admin to configure the Square application credentials, then register the redirect URL "}
             {squareOAuth?.callbackUrl ? (
-              <>
-                {" "}
-                <code className="break-all">{squareOAuth.callbackUrl}</code>
-              </>
-            ) : null}
+              <code className="break-all">{squareOAuth.callbackUrl}</code>
+            ) : (
+              "shown after the API public URL is set"
+            )}
             .
+          </p>
+        )}
+
+        {oauthReady && squareOAuth?.callbackUrl && (
+          <p className="text-xs text-neutral-500">
+            OAuth redirect URL:{" "}
+            <code className="break-all">{squareOAuth.callbackUrl}</code>
           </p>
         )}
 

@@ -9,6 +9,7 @@ import {
   deletePaymentProviderAccount,
   getPaymentProviderAccounts,
   getPaymentProviderWebhookInfo,
+  saveSquareOAuthApp,
   squareOAuthCallback,
   startSquareOAuth,
   updatePaymentProviderAccount,
@@ -39,6 +40,12 @@ router.post(
   "/square/oauth/start",
   requirePermission("integrations:write"),
   startSquareOAuth,
+);
+router.put(
+  "/square/oauth/app",
+  requireRole("admin", "super-admin"),
+  requirePermission("integrations:write"),
+  saveSquareOAuthApp,
 );
 router.patch(
   "/:id",

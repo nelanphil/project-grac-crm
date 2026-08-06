@@ -8,6 +8,7 @@ import {
 import { User } from "../models/mongo/User";
 import {
   createPaymentProviderAccountSchema,
+  saveSquareOAuthAppSchema,
   startSquareOAuthSchema,
   updatePaymentProviderAccountSchema,
 } from "../schemas/paymentProviderAccount.schema";
@@ -16,7 +17,14 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
-import { env } from "../config/env";
+import {
+  SQUARE_OAUTH_APP_SLUG,
+  SquareOAuthApp,
+} from "../models/mongo/SquareOAuthApp";
+import {
+  resolveClientBaseUrl,
+  resolvePublicApiBase,
+} from "../utils/publicUrl";
 import {
   buildSquareAuthorizeUrl,
   exchangeSquareAuthorizationCode,
@@ -116,13 +124,37 @@ async function clearOtherDefaults(
   });
 }
 
-function buildWebhookUrls() {
-  const base =
-    env.publicApiUrl.replace(/\/$/, "") || `http://localhost:${env.port}`;
+function buildWebhookUrls(req?: AuthRequest) {
+  const base = resolvePublicApiBase(req);
   return {
     square: `${base}/webhooks/payments/square`,
     stripe: `${base}/webhooks/payments/stripe`,
     paypal: `${base}/webhooks/payments/paypal`,
+  };
+}
+
+async function squareOAuthStatusPayload(req?: AuthRequest) {
+  const status = await isSquareOAuthConfigured();
+  const stored = await SquareOAuthApp.findOne({
+    slug: SQUARE_OAUTH_APP_SLUG,
+  }).lean();
+  return {
+    ...status,
+    callbackUrl: squareOAuthCallbackUrl(req),
+    app: {
+      productionApplicationId: stored?.productionApplicationId ?? "",
+      sandboxApplicationId: stored?.sandboxApplicationId ?? "",
+      hasProductionApplicationSecret: Boolean(
+        stored?.productionApplicationSecretEncrypted,
+      ),
+      hasSandboxApplicationSecret: Boolean(
+        stored?.sandboxApplicationSecretEncrypted,
+      ),
+      envConfigured: {
+        production: status.productionSource === "env",
+        sandbox: status.sandboxSource === "env",
+      },
+    },
   };
 }
 
@@ -164,15 +196,12 @@ async function assertCanAccessAccount(
 }
 
 export async function getPaymentProviderWebhookInfo(
-  _req: AuthRequest,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> {
   res.json({
-    webhooks: buildWebhookUrls(),
-    squareOAuth: {
-      ...isSquareOAuthConfigured(),
-      callbackUrl: squareOAuthCallbackUrl(),
-    },
+    webhooks: buildWebhookUrls(req),
+    squareOAuth: await squareOAuthStatusPayload(req),
   });
 }
 
@@ -210,11 +239,8 @@ export async function getPaymentProviderAccounts(
         a.ownerUserRef ? ownerMap.get(String(a.ownerUserRef)) : null,
       ),
     ),
-    webhooks: buildWebhookUrls(),
-    squareOAuth: {
-      ...isSquareOAuthConfigured(),
-      callbackUrl: squareOAuthCallbackUrl(),
-    },
+    webhooks: buildWebhookUrls(req),
+    squareOAuth: await squareOAuthStatusPayload(req),
   });
 }
 
@@ -527,10 +553,10 @@ export async function startSquareOAuth(
   }
 
   const { environment, friendlyName } = parsed.data;
-  const oauthStatus = isSquareOAuthConfigured(environment);
+  const oauthStatus = await isSquareOAuthConfigured(environment);
   if (!oauthStatus.forEnvironment) {
     res.status(503).json({
-      message: `Square OAuth is not configured for ${environment}. Set SQUARE_${environment === "sandbox" ? "SANDBOX_" : ""}APPLICATION_ID and the matching secret in the server environment.`,
+      message: `Square OAuth is not configured for ${environment}. Add the Square Application ID and secret in Control Panel (Payment providers), or set SQUARE_${environment === "sandbox" ? "SANDBOX_" : ""}APPLICATION_ID and the matching secret on the API server.`,
     });
     return;
   }
@@ -553,15 +579,95 @@ export async function startSquareOAuth(
     return;
   }
 
+  const redirectUri = squareOAuthCallbackUrl(req);
+  if (
+    process.env.NODE_ENV === "production" &&
+    /localhost|127\.0\.0\.1/i.test(redirectUri)
+  ) {
+    res.status(503).json({
+      message:
+        "PUBLIC_API_URL must be set to your deployed API origin before Square OAuth can run in production (callback cannot use localhost).",
+    });
+    return;
+  }
+
   const state = signSquareOAuthState({
     environment,
     ownerUserId,
     initiatedBy: req.user!.id,
     friendlyName,
+    redirectUri,
   });
 
-  const authorizeUrl = buildSquareAuthorizeUrl({ environment, state });
-  res.json({ authorizeUrl, callbackUrl: squareOAuthCallbackUrl() });
+  const authorizeUrl = await buildSquareAuthorizeUrl({
+    environment,
+    state,
+    redirectUri,
+  });
+  res.json({ authorizeUrl, callbackUrl: redirectUri });
+}
+
+export async function saveSquareOAuthApp(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!isOrgAdmin(req.user?.role)) {
+    res.status(403).json({
+      message: "Only admin or super-admin can configure Square OAuth app credentials",
+    });
+    return;
+  }
+
+  const parsed = saveSquareOAuthAppSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "Validation failed",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  const data = parsed.data;
+  let doc = await SquareOAuthApp.findOne({ slug: SQUARE_OAUTH_APP_SLUG });
+  if (!doc) {
+    doc = new SquareOAuthApp({ slug: SQUARE_OAUTH_APP_SLUG });
+  }
+
+  if (data.productionApplicationId !== undefined) {
+    doc.productionApplicationId =
+      emptyToUndefined(data.productionApplicationId) || undefined;
+  }
+  if (data.sandboxApplicationId !== undefined) {
+    doc.sandboxApplicationId =
+      emptyToUndefined(data.sandboxApplicationId) || undefined;
+  }
+
+  const prodSecret = emptyToUndefined(data.productionApplicationSecret);
+  if (prodSecret) {
+    doc.productionApplicationSecretEncrypted = encryptCredential(prodSecret);
+  } else if (data.clearProductionApplicationSecret) {
+    doc.productionApplicationSecretEncrypted = undefined;
+  }
+
+  const sandboxSecret = emptyToUndefined(data.sandboxApplicationSecret);
+  if (sandboxSecret) {
+    doc.sandboxApplicationSecretEncrypted = encryptCredential(sandboxSecret);
+  } else if (data.clearSandboxApplicationSecret) {
+    doc.sandboxApplicationSecretEncrypted = undefined;
+  }
+
+  await doc.save();
+
+  logNotificationAsync({
+    entityType: "payment_provider_account",
+    action: "updated",
+    entityId: String(doc._id),
+    summary: "Square OAuth application credentials updated",
+    metadata: { authMethod: "oauth", scope: "platform-app" },
+    ...actorFromRequest(req.user),
+  });
+
+  res.json({ squareOAuth: await squareOAuthStatusPayload(req) });
 }
 
 /**
@@ -571,11 +677,21 @@ export async function squareOAuthCallback(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
-  const clientBase = env.clientUrl.split(",")[0]?.trim().replace(/\/+$/, "") || "";
+  const clientBase = resolveClientBaseUrl();
   const redirect = (status: "success" | "error", message?: string) => {
     const params = new URLSearchParams({ square_oauth: status });
     if (message) params.set("message", message);
-    res.redirect(`${clientBase}/dashboard/control-panel?${params.toString()}`);
+    const path = `/dashboard/control-panel?${params.toString()}`;
+    if (!clientBase) {
+      res
+        .status(status === "success" ? 200 : 400)
+        .type("html")
+        .send(
+          `<p>Square OAuth ${status}.${message ? ` ${message}` : ""}</p><p>Set CLIENT_URL on the API server, then return to Control Panel.</p>`,
+        );
+      return;
+    }
+    res.redirect(`${clientBase}${path}`);
   };
 
   try {
@@ -597,11 +713,16 @@ export async function squareOAuthCallback(
     }
 
     const payload = verifySquareOAuthState(state);
+    const redirectUri =
+      payload.redirectUri || squareOAuthCallbackUrl(req);
     const tokens = await exchangeSquareAuthorizationCode({
       environment: payload.environment,
       code,
+      redirectUri,
     });
-    const { applicationId } = getSquareAppCredentials(payload.environment);
+    const { applicationId } = await getSquareAppCredentials(
+      payload.environment,
+    );
     const location = await pickDefaultSquareLocation({
       accessToken: tokens.accessToken,
       environment: payload.environment,
