@@ -17,7 +17,7 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
-import { resolveCheckoutProvider } from "../payments/registry";
+import { resolveCheckoutProviderForInvoice } from "../payments/registry";
 import { env } from "../config/env";
 
 const STAFF_ROLES = new Set([
@@ -369,7 +369,9 @@ export async function startInvoiceCheckout(
       }
     }
 
-    const { adapter, account } = await resolveCheckoutProvider();
+    const { adapter, account } = await resolveCheckoutProviderForInvoice(
+      invoice.customerRef,
+    );
     const redirectUrl = `${env.clientUrl.replace(/\/$/, "")}/checkout/complete?invoiceId=${invoice._id}`;
 
     const result = await adapter.createCheckout({
@@ -489,7 +491,9 @@ export async function startCheckoutByPayToken(
       return;
     }
 
-    const { adapter, account } = await resolveCheckoutProvider();
+    const { adapter, account } = await resolveCheckoutProviderForInvoice(
+      invoice.customerRef,
+    );
     const redirectUrl = `${env.clientUrl.replace(/\/$/, "")}/checkout/complete?invoiceId=${invoice._id}`;
     const result = await adapter.createCheckout({
       invoice,

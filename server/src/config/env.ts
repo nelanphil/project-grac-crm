@@ -46,6 +46,22 @@ export const env = {
   credentialsEncryptionKey:
     process.env.CREDENTIALS_ENCRYPTION_KEY ||
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  /**
+   * Square OAuth application credentials (platform app in Square Developer Dashboard).
+   * Sandbox uses SQUARE_SANDBOX_* when set; otherwise falls back to the production pair.
+   */
+  square: {
+    applicationId: process.env.SQUARE_APPLICATION_ID || "",
+    applicationSecret: process.env.SQUARE_APPLICATION_SECRET || "",
+    sandboxApplicationId:
+      process.env.SQUARE_SANDBOX_APPLICATION_ID ||
+      process.env.SQUARE_APPLICATION_ID ||
+      "",
+    sandboxApplicationSecret:
+      process.env.SQUARE_SANDBOX_APPLICATION_SECRET ||
+      process.env.SQUARE_APPLICATION_SECRET ||
+      "",
+  },
   mysql: {
     host: process.env.MYSQL_HOST || "localhost",
     port: parseInt(process.env.MYSQL_PORT || "3306", 10),

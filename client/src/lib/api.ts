@@ -1656,6 +1656,21 @@ export async function testEmailAccount(
 // ---------------------------------------------------------------------------
 
 export type PaymentProviderName = "square" | "stripe" | "paypal";
+export type PaymentAuthMethod = "manual" | "oauth";
+
+export interface PaymentProviderOwnerSummary {
+  _id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+}
+
+export interface SquareOAuthStatus {
+  sandbox: boolean;
+  production: boolean;
+  forEnvironment: boolean;
+  callbackUrl: string;
+}
 
 export interface PaymentProviderAccountItem {
   _id: string;
@@ -1664,11 +1679,18 @@ export interface PaymentProviderAccountItem {
   environment: "sandbox" | "production";
   isActive: boolean;
   isDefault: boolean;
+  ownerUserRef: string | null;
+  owner: PaymentProviderOwnerSummary | null;
+  authMethod: PaymentAuthMethod;
   applicationId: string | null;
   locationId: string | null;
+  merchantId: string | null;
+  tokenExpiresAt: string | null;
+  connectedAt: string | null;
   publishableKey: string | null;
   clientId: string | null;
   hasAccessToken: boolean;
+  hasRefreshToken: boolean;
   hasWebhookSignatureKey: boolean;
   hasSecretKey: boolean;
   hasWebhookSecret: boolean;
@@ -1684,6 +1706,8 @@ export interface PaymentProviderAccountInput {
   environment?: "sandbox" | "production";
   isActive?: boolean;
   isDefault?: boolean;
+  /** Null = global fallback. Omit on create defaults to global for admins / self for owners. */
+  ownerUserId?: string | null;
   applicationId?: string;
   locationId?: string;
   publishableKey?: string;
@@ -1699,14 +1723,34 @@ export interface PaymentProviderAccountInput {
 export async function getPaymentProviderAccounts(token: string): Promise<{
   accounts: PaymentProviderAccountItem[];
   webhooks: Record<string, string>;
+  squareOAuth: SquareOAuthStatus;
 }> {
   return authRequest<{
     accounts: PaymentProviderAccountItem[];
     webhooks: Record<string, string>;
+    squareOAuth: SquareOAuthStatus;
   }>("/payment-provider-accounts", {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+export async function startSquareOAuth(
+  token: string,
+  data: {
+    environment?: "sandbox" | "production";
+    ownerUserId?: string | null;
+    friendlyName?: string;
+  },
+): Promise<{ authorizeUrl: string; callbackUrl: string }> {
+  return authRequest<{ authorizeUrl: string; callbackUrl: string }>(
+    "/payment-provider-accounts/square/oauth/start",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
 }
 
 export async function createPaymentProviderAccount(

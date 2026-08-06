@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import TwilioAccountsCard from "@/components/control-panel/TwilioAccountsCard";
@@ -42,7 +42,15 @@ function ControlPanelContent() {
         </p>
       </div>
 
-      <PaymentProvidersCard />
+      <Suspense
+        fallback={
+          <div className="rounded-xl border border-neutral-200 bg-white shadow-sm px-6 py-8 text-sm text-neutral-500">
+            Loading payment providers…
+          </div>
+        }
+      >
+        <PaymentProvidersCard />
+      </Suspense>
       <TwilioAccountsCard />
       <EmailAccountsCard />
       <GoogleCredentialsCard />
