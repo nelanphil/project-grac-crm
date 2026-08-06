@@ -745,7 +745,7 @@ export async function listContacts(
       ? pageSizeRaw
       : 25;
 
-    const sortDir = req.query.sortDir === "desc" ? -1 : 1;
+    const sortDir: 1 | -1 = req.query.sortDir === "desc" ? -1 : 1;
     const sortKeyRaw = String(req.query.sortKey ?? "name");
     const sortKey = CONTACT_SORT_KEYS.has(sortKeyRaw) ? sortKeyRaw : "name";
 
@@ -789,7 +789,7 @@ export async function listContacts(
         })()
       : null;
 
-    const pipeline: Record<string, unknown>[] = [
+    const pipeline: mongoose.PipelineStage[] = [
       {
         $lookup: {
           from: "customers",
@@ -804,6 +804,18 @@ export async function listContacts(
     if (searchMatch) {
       pipeline.push({ $match: searchMatch });
     }
+    pipeline.push({
+      $facet: {
+        total: [{ $count: "count" }],
+        items: [
+          { $addFields: { __sortKey: buildContactSortKeyExpr(sortKey) } },
+          { $sort: { __sortKey: sortDir, _id: 1 } },
+          { $skip: (page - 1) * pageSize },
+          { $limit: pageSize },
+          { $project: { __sortKey: 0 } },
+        ],
+      },
+    });
 
     const [facet] = await CustomerContact.aggregate<{
       total: Array<{ count: number }>;
@@ -827,21 +839,7 @@ export async function listContacts(
           last?: string;
         };
       }>;
-    }>([
-      ...pipeline,
-      {
-        $facet: {
-          total: [{ $count: "count" }],
-          items: [
-            { $addFields: { __sortKey: buildContactSortKeyExpr(sortKey) } },
-            { $sort: { __sortKey: sortDir, _id: 1 } },
-            { $skip: (page - 1) * pageSize },
-            { $limit: pageSize },
-            { $project: { __sortKey: 0 } },
-          ],
-        },
-      },
-    ]).collation({ locale: "en", strength: 2 });
+    }>(pipeline).collation({ locale: "en", strength: 2 });
 
     const total = facet?.total[0]?.count ?? 0;
     const contacts = (facet?.items ?? []).map((doc) => ({
