@@ -637,6 +637,235 @@ export async function listCustomers(
   }
 }
 
+const CONTACT_PAGE_SIZES = [25, 50, 150, 250, 500];
+const CONTACT_SORT_KEYS = new Set([
+  "name",
+  "phone",
+  "email",
+  "label",
+  "customer",
+  "primary",
+]);
+
+/** Prefix plain field keys for nested customer match after $lookup/$unwind. */
+function prefixFilterKeys(
+  filter: Record<string, unknown>,
+  prefix: string,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(filter)) {
+    if (key.startsWith("$")) {
+      if (Array.isArray(value)) {
+        out[key] = value.map((item) =>
+          item && typeof item === "object" && !Array.isArray(item)
+            ? prefixFilterKeys(item as Record<string, unknown>, prefix)
+            : item,
+        );
+      } else if (value && typeof value === "object") {
+        out[key] = prefixFilterKeys(value as Record<string, unknown>, prefix);
+      } else {
+        out[key] = value;
+      }
+    } else {
+      out[`${prefix}${key}`] = value;
+    }
+  }
+  return out;
+}
+
+function buildContactSortKeyExpr(sortKey: string): Record<string, unknown> {
+  switch (sortKey) {
+    case "phone":
+      return trimFieldExpr("$phone");
+    case "email":
+      return trimFieldExpr("$email");
+    case "label":
+      return trimFieldExpr("$label");
+    case "primary":
+      return { $cond: ["$isPrimary", 0, 1] };
+    case "customer":
+      return {
+        $trim: {
+          input: {
+            $cond: [
+              {
+                $gt: [
+                  {
+                    $strLenCP: {
+                      $trim: {
+                        input: { $ifNull: ["$customer.accountName", ""] },
+                      },
+                    },
+                  },
+                  0,
+                ],
+              },
+              trimFieldExpr("$customer.accountName"),
+              {
+                $trim: {
+                  input: {
+                    $concat: [
+                      { $ifNull: ["$customer.first", ""] },
+                      " ",
+                      { $ifNull: ["$customer.last", ""] },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+        },
+      };
+    case "name":
+    default:
+      return {
+        $trim: {
+          input: {
+            $concat: [
+              { $ifNull: ["$last", ""] },
+              " ",
+              { $ifNull: ["$first", ""] },
+            ],
+          },
+        },
+      };
+  }
+}
+
+// GET /customers/contacts — list contacts across active customers
+export async function listContacts(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const pageRaw = parseInt(String(req.query.page ?? "1"), 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "25"), 10);
+    const pageSize = CONTACT_PAGE_SIZES.includes(pageSizeRaw)
+      ? pageSizeRaw
+      : 25;
+
+    const sortDir = req.query.sortDir === "desc" ? -1 : 1;
+    const sortKeyRaw = String(req.query.sortKey ?? "name");
+    const sortKey = CONTACT_SORT_KEYS.has(sortKeyRaw) ? sortKeyRaw : "name";
+
+    const ownerScope = req.user
+      ? await buildOwnerCustomerFilter({ id: req.user.id, role: req.user.role })
+      : null;
+
+    const customerMatch: Record<string, unknown> = {
+      ...prefixFilterKeys(
+        {
+          ...activeCustomerFilter,
+          ...notMergedFilter,
+          ...(ownerScope ?? {}),
+        },
+        "customer.",
+      ),
+    };
+
+    const search = trimStr(req.query.search);
+    const searchMatch: Record<string, unknown> | null = search
+      ? (() => {
+          const rx = new RegExp(escapeRegex(search), "i");
+          const or: Array<Record<string, unknown>> = [
+            { first: rx },
+            { last: rx },
+            { phone: rx },
+            { email: rx },
+            { label: rx },
+            { "customer.accountName": rx },
+            { "customer.first": rx },
+            { "customer.last": rx },
+            { "customer.phone": rx },
+          ];
+          const digits = normalizePhoneDigits(search);
+          if (digits.length > 0) {
+            const digitRx = new RegExp(escapeRegex(digits));
+            or.push({ phone: digitRx });
+            or.push({ "customer.phoneDigits": digitRx });
+          }
+          return { $or: or };
+        })()
+      : null;
+
+    const pipeline: Record<string, unknown>[] = [
+      {
+        $lookup: {
+          from: "customers",
+          localField: "customerRef",
+          foreignField: "_id",
+          as: "customer",
+        },
+      },
+      { $unwind: "$customer" },
+      { $match: customerMatch },
+    ];
+    if (searchMatch) {
+      pipeline.push({ $match: searchMatch });
+    }
+
+    const [facet] = await CustomerContact.aggregate<{
+      total: Array<{ count: number }>;
+      items: Array<{
+        _id: mongoose.Types.ObjectId;
+        customerRef: mongoose.Types.ObjectId;
+        first?: string;
+        last?: string;
+        phone?: string;
+        email?: string;
+        label?: string;
+        isPrimary?: boolean;
+        userRef?: mongoose.Types.ObjectId | null;
+        legacyCustomerId?: number | null;
+        createdAt: Date;
+        updatedAt: Date;
+        customer: {
+          _id: mongoose.Types.ObjectId;
+          accountName?: string;
+          first?: string;
+          last?: string;
+        };
+      }>;
+    }>([
+      ...pipeline,
+      {
+        $facet: {
+          total: [{ $count: "count" }],
+          items: [
+            { $addFields: { __sortKey: buildContactSortKeyExpr(sortKey) } },
+            { $sort: { __sortKey: sortDir, _id: 1 } },
+            { $skip: (page - 1) * pageSize },
+            { $limit: pageSize },
+            { $project: { __sortKey: 0 } },
+          ],
+        },
+      },
+    ]).collation({ locale: "en", strength: 2 });
+
+    const total = facet?.total[0]?.count ?? 0;
+    const contacts = (facet?.items ?? []).map((doc) => ({
+      ...formatContact(doc),
+      customer: {
+        _id: doc.customer._id.toString(),
+        accountName: doc.customer.accountName ?? "",
+        first: doc.customer.first ?? "",
+        last: doc.customer.last ?? "",
+      },
+    }));
+
+    res.status(200).json({
+      contacts,
+      total,
+      page,
+      pageSize,
+    });
+  } catch (err) {
+    console.error("GET /customers/contacts error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
 // POST /customers/validate-address — Google Address Validation, falling back to Census geocode
 export async function validateCustomerAddress(
   req: AuthRequest,

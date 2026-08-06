@@ -63,7 +63,12 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/dashboard/orders", label: "Invoices", icon: ShoppingCart },
       { href: "/dashboard/services", label: "Services", icon: Wrench },
-      { href: "/dashboard/contact", label: "Contact", icon: Phone },
+      {
+        href: "/dashboard/contact",
+        label: "Contacts",
+        icon: Phone,
+        excludeRoles: ["customer"],
+      },
     ],
   },
 ];
