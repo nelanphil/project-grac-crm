@@ -246,9 +246,10 @@ function CustomersContent() {
   useEffect(() => {
     const q = searchParams.get("q")?.trim() ?? "";
     if (q && q !== search) {
+      // Seed from URL only when the query param changes.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSearch(q);
     }
-    // Seed from URL only when the query param changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
