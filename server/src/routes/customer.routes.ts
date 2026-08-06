@@ -18,6 +18,7 @@ import {
   getCustomerContacts,
   getCustomerDuplicates,
   getMergePreview,
+  listContacts,
   listCustomers,
   mergeCustomers,
   restoreCustomer,
@@ -43,6 +44,7 @@ router.use(authenticate);
 
 // List + duplicate discovery (static paths before :id)
 router.get("/", requirePermission("customers:read"), listCustomers);
+router.get("/contacts", requirePermission("customers:read"), listContacts);
 router.post("/", adminRoles, createCustomer);
 router.post("/validate-address", adminRoles, validateCustomerAddress);
 router.get(

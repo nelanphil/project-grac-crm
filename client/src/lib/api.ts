@@ -403,6 +403,51 @@ export interface CustomerContact {
   updatedAt: string;
 }
 
+export interface ContactListItem extends CustomerContact {
+  customer: {
+    _id: string;
+    accountName: string;
+    first: string;
+    last: string;
+  };
+}
+
+export interface GetContactsParams {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  sortKey?: string;
+  sortDir?: "asc" | "desc";
+}
+
+export interface ContactsResponse {
+  contacts: ContactListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export async function getContacts(
+  token: string,
+  options?: GetContactsParams,
+): Promise<ContactsResponse> {
+  const params = new URLSearchParams();
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined)
+    params.set("pageSize", String(options.pageSize));
+  if (options?.search) params.set("search", options.search);
+  if (options?.sortKey) params.set("sortKey", options.sortKey);
+  if (options?.sortDir) params.set("sortDir", options.sortDir);
+  const qs = params.toString();
+  return authRequest<ContactsResponse>(
+    `/customers/contacts${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export interface CustomerContractBadge {
   _id: string;
   standing: ContractStanding;
