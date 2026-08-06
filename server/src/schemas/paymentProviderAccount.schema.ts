@@ -1,11 +1,18 @@
 import { z } from "zod";
 import {
+  PAYMENT_AUTH_METHODS,
   PAYMENT_ENVIRONMENTS,
   PAYMENT_PROVIDERS,
 } from "../models/mongo/PaymentProviderAccount";
 
 const providerSchema = z.enum(PAYMENT_PROVIDERS);
 const environmentSchema = z.enum(PAYMENT_ENVIRONMENTS);
+const authMethodSchema = z.enum(PAYMENT_AUTH_METHODS);
+const objectIdSchema = z
+  .string()
+  .regex(/^[a-fA-F0-9]{24}$/, "Invalid user id")
+  .nullable()
+  .optional();
 
 export const createPaymentProviderAccountSchema = z
   .object({
@@ -14,6 +21,9 @@ export const createPaymentProviderAccountSchema = z
     environment: environmentSchema.default("sandbox"),
     isActive: z.boolean().optional().default(true),
     isDefault: z.boolean().optional().default(false),
+    /** Null/omit = global fallback account. */
+    ownerUserId: objectIdSchema,
+    authMethod: authMethodSchema.optional().default("manual"),
     applicationId: z.string().trim().optional(),
     locationId: z.string().trim().optional(),
     publishableKey: z.string().trim().optional(),
@@ -26,6 +36,14 @@ export const createPaymentProviderAccountSchema = z
     webhookId: z.string().trim().optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.authMethod === "oauth") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["authMethod"],
+        message: "OAuth accounts must be created via the Square Connect flow",
+      });
+      return;
+    }
     if (data.provider === "square") {
       if (!data.applicationId?.trim()) {
         ctx.addIssue({
@@ -88,6 +106,8 @@ export const updatePaymentProviderAccountSchema = z.object({
   environment: environmentSchema.optional(),
   isActive: z.boolean().optional(),
   isDefault: z.boolean().optional(),
+  /** Null clears assignment (global). Omit to leave unchanged. */
+  ownerUserId: objectIdSchema,
   applicationId: z.string().trim().optional(),
   locationId: z.string().trim().optional(),
   publishableKey: z.string().trim().optional(),
@@ -100,9 +120,17 @@ export const updatePaymentProviderAccountSchema = z.object({
   webhookId: z.string().trim().optional(),
 });
 
+export const startSquareOAuthSchema = z.object({
+  environment: environmentSchema.default("sandbox"),
+  /** Null/omit = connect as global fallback. Owners are forced to themselves. */
+  ownerUserId: objectIdSchema,
+  friendlyName: z.string().trim().min(1).max(120).optional(),
+});
+
 export type CreatePaymentProviderAccountInput = z.infer<
   typeof createPaymentProviderAccountSchema
 >;
 export type UpdatePaymentProviderAccountInput = z.infer<
   typeof updatePaymentProviderAccountSchema
 >;
+export type StartSquareOAuthInput = z.infer<typeof startSquareOAuthSchema>;

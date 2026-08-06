@@ -9,12 +9,17 @@ import {
   deletePaymentProviderAccount,
   getPaymentProviderAccounts,
   getPaymentProviderWebhookInfo,
+  squareOAuthCallback,
+  startSquareOAuth,
   updatePaymentProviderAccount,
 } from "../controllers/paymentProviderAccount.controller";
 
 const router = Router();
 
 const adminRoles = requireRole("admin", "super-admin", "owner");
+
+// Public Square OAuth redirect (state is signed/verified server-side).
+router.get("/square/oauth/callback", squareOAuthCallback);
 
 router.use(authenticate);
 router.use(adminRoles);
@@ -29,6 +34,11 @@ router.post(
   "/",
   requirePermission("integrations:write"),
   createPaymentProviderAccount,
+);
+router.post(
+  "/square/oauth/start",
+  requirePermission("integrations:write"),
+  startSquareOAuth,
 );
 router.patch(
   "/:id",

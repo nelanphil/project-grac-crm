@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import PasswordInput from "@/components/ui/PasswordInput";
@@ -9,15 +10,20 @@ import {
   createPaymentProviderAccount,
   deletePaymentProviderAccount,
   getPaymentProviderAccounts,
+  getUsers,
   PaymentProviderAccountItem,
   PaymentProviderName,
+  SquareOAuthStatus,
+  startSquareOAuth,
   updatePaymentProviderAccount,
+  UserListItem,
 } from "@/lib/api";
 
 type FormState = {
   provider: PaymentProviderName;
   friendlyName: string;
   environment: "sandbox" | "production";
+  ownerUserId: string;
   applicationId: string;
   locationId: string;
   publishableKey: string;
@@ -36,6 +42,7 @@ const EMPTY_FORM: FormState = {
   provider: "square",
   friendlyName: "",
   environment: "sandbox",
+  ownerUserId: "",
   applicationId: "",
   locationId: "",
   publishableKey: "",
@@ -56,13 +63,31 @@ const PROVIDER_LABELS: Record<PaymentProviderName, string> = {
   paypal: "PayPal",
 };
 
+const ORG_ADMIN_ROLES = ["admin", "super-admin"];
+
+function ownerLabel(owner: {
+  first_name: string;
+  last_name: string;
+  email: string;
+}): string {
+  const name = `${owner.first_name} ${owner.last_name}`.trim();
+  return name || owner.email;
+}
+
 export default function PaymentProvidersCard() {
   const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
+  const searchParams = useSearchParams();
+  const isOrgAdmin = user ? ORG_ADMIN_ROLES.includes(user.role) : false;
+  const isOwner = user?.role === "owner";
 
   const [accounts, setAccounts] = useState<PaymentProviderAccountItem[]>([]);
   const [webhooks, setWebhooks] = useState<Record<string, string> | null>(null);
+  const [squareOAuth, setSquareOAuth] = useState<SquareOAuthStatus | null>(null);
+  const [owners, setOwners] = useState<UserListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -70,29 +95,88 @@ export default function PaymentProvidersCard() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  const [oauthEnvironment, setOauthEnvironment] = useState<
+    "sandbox" | "production"
+  >("sandbox");
+  const [oauthOwnerUserId, setOauthOwnerUserId] = useState("");
+  const [oauthConnecting, setOauthConnecting] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+
+  const editingAccount = useMemo(
+    () => accounts.find((a) => a._id === editingId) ?? null,
+    [accounts, editingId],
+  );
+  const isEditingOauth = editingAccount?.authMethod === "oauth";
+
+  const oauthReady =
+    oauthEnvironment === "sandbox"
+      ? Boolean(squareOAuth?.sandbox)
+      : Boolean(squareOAuth?.production);
+
+  const oauthReturnStatus = searchParams.get("square_oauth");
+  const oauthReturnMessage = searchParams.get("message");
+  const banner =
+    !bannerDismissed && oauthReturnStatus
+      ? {
+          type: (oauthReturnStatus === "success" ? "success" : "error") as
+            | "success"
+            | "error",
+          message:
+            oauthReturnMessage ||
+            (oauthReturnStatus === "success"
+              ? "Square account connected."
+              : "Square OAuth failed."),
+        }
+      : null;
+
+  useEffect(() => {
+    if (!oauthReturnStatus || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("square_oauth")) return;
+    url.searchParams.delete("square_oauth");
+    url.searchParams.delete("message");
+    window.history.replaceState({}, "", url.pathname + url.search);
+  }, [oauthReturnStatus]);
+
   useEffect(() => {
     if (!token) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
-    getPaymentProviderAccounts(token)
-      .then(({ accounts: list, webhooks: hooks }) => {
+
+    const load = async () => {
+      try {
+        const [{ accounts: list, webhooks: hooks, squareOAuth: oauth }, usersRes] =
+          await Promise.all([
+            getPaymentProviderAccounts(token),
+            isOrgAdmin
+              ? getUsers(token).catch(() => ({ users: [] as UserListItem[] }))
+              : Promise.resolve({ users: [] as UserListItem[] }),
+          ]);
         setAccounts(list);
         setWebhooks(hooks);
-      })
-      .catch((err) =>
+        setSquareOAuth(oauth);
+        setOwners(usersRes.users.filter((u) => u.role === "owner"));
+      } catch (err) {
         setError(
           err instanceof ApiError
             ? err.message
             : "Failed to load payment providers.",
-        ),
-      )
-      .finally(() => setLoading(false));
-  }, [token]);
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void load();
+  }, [token, isOrgAdmin]);
 
   function openCreate() {
     setEditingId(null);
-    setForm(EMPTY_FORM);
+    setForm({
+      ...EMPTY_FORM,
+      ownerUserId: isOwner && user ? user.id : "",
+    });
     setSaveError(null);
     setFormOpen(true);
   }
@@ -103,6 +187,7 @@ export default function PaymentProvidersCard() {
       provider: account.provider,
       friendlyName: account.friendlyName,
       environment: account.environment,
+      ownerUserId: account.ownerUserRef ?? "",
       applicationId: account.applicationId ?? "",
       locationId: account.locationId ?? "",
       publishableKey: account.publishableKey ?? "",
@@ -131,6 +216,25 @@ export default function PaymentProvidersCard() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
+  function upsertAccountInList(account: PaymentProviderAccountItem) {
+    setAccounts((prev) => {
+      const without = prev.filter((a) => a._id !== account._id);
+      const clearedDefaults = without.map((a) => {
+        const sameScope =
+          (a.ownerUserRef ?? null) === (account.ownerUserRef ?? null);
+        if (account.isDefault && sameScope && a.isDefault) {
+          return { ...a, isDefault: false };
+        }
+        return a;
+      });
+      return [...clearedDefaults, account].sort((a, b) =>
+        a.provider === b.provider
+          ? a.friendlyName.localeCompare(b.friendlyName)
+          : a.provider.localeCompare(b.provider),
+      );
+    });
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!token) return;
@@ -138,12 +242,19 @@ export default function PaymentProvidersCard() {
     setSaving(true);
     setSaveError(null);
 
+    const ownerUserId = isOwner
+      ? user?.id ?? null
+      : form.ownerUserId.trim()
+        ? form.ownerUserId.trim()
+        : null;
+
     const payload = {
       provider: form.provider,
       friendlyName: form.friendlyName.trim(),
       environment: form.environment,
       isActive: form.isActive,
       isDefault: form.isDefault,
+      ownerUserId,
       applicationId: form.applicationId.trim() || undefined,
       locationId: form.locationId.trim() || undefined,
       publishableKey: form.publishableKey.trim() || undefined,
@@ -163,31 +274,10 @@ export default function PaymentProvidersCard() {
           editingId,
           payload,
         );
-        setAccounts((prev) =>
-          prev
-            .map((a) => {
-              if (a._id === editingId) return account;
-              if (account.isDefault && a.isDefault) {
-                return { ...a, isDefault: false };
-              }
-              return a;
-            })
-            .sort((a, b) =>
-              a.provider === b.provider
-                ? a.friendlyName.localeCompare(b.friendlyName)
-                : a.provider.localeCompare(b.provider),
-            ),
-        );
+        upsertAccountInList(account);
       } else {
         const { account } = await createPaymentProviderAccount(token, payload);
-        setAccounts((prev) =>
-          [...prev.map((a) => (account.isDefault ? { ...a, isDefault: false } : a)), account].sort(
-            (a, b) =>
-              a.provider === b.provider
-                ? a.friendlyName.localeCompare(b.friendlyName)
-                : a.provider.localeCompare(b.provider),
-          ),
-        );
+        upsertAccountInList(account);
       }
       closeForm();
     } catch (err) {
@@ -227,6 +317,31 @@ export default function PaymentProvidersCard() {
     }
   }
 
+  async function handleConnectSquare() {
+    if (!token) return;
+    setOauthConnecting(true);
+    setOauthError(null);
+    try {
+      const ownerUserId = isOwner
+        ? user?.id ?? null
+        : oauthOwnerUserId.trim()
+          ? oauthOwnerUserId.trim()
+          : null;
+      const { authorizeUrl } = await startSquareOAuth(token, {
+        environment: oauthEnvironment,
+        ownerUserId,
+      });
+      window.location.href = authorizeUrl;
+    } catch (err) {
+      setOauthError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to start Square OAuth.",
+      );
+      setOauthConnecting(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="rounded-xl border border-neutral-200 bg-white shadow-sm px-6 py-8 text-sm text-neutral-500">
@@ -243,9 +358,10 @@ export default function PaymentProvidersCard() {
             Payment providers
           </h2>
           <p className="text-sm text-neutral-500 mt-0.5">
-            Store Square, Stripe, and PayPal credentials for invoice checkout.
-            Secrets are encrypted at rest. Set one account as the default
-            checkout provider.
+            Connect Square via OAuth or enter credentials manually. Assign
+            accounts to a territory owner (or leave global as fallback). Invoice
+            checkout uses the customer&apos;s owner account first, then the
+            global default.
           </p>
         </div>
         {!formOpen && (
@@ -255,16 +371,134 @@ export default function PaymentProvidersCard() {
             className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark/90"
           >
             <Plus className="h-4 w-4" />
-            Add account
+            Add manually
           </button>
         )}
       </div>
+
+      {banner && (
+        <div
+          className={
+            banner.type === "success"
+              ? "mx-6 mt-4 flex items-start justify-between gap-3 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800"
+              : "mx-6 mt-4 flex items-start justify-between gap-3 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
+          }
+        >
+          <span>{banner.message}</span>
+          <button
+            type="button"
+            onClick={() => setBannerDismissed(true)}
+            className="shrink-0 rounded p-0.5 opacity-70 hover:opacity-100"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="mx-6 mt-4 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
+
+      <div className="mx-6 mt-4 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-4 space-y-3">
+        <div>
+          <p className="text-sm font-semibold text-brand-dark">
+            Connect with Square
+          </p>
+          <p className="text-xs text-neutral-500 mt-0.5">
+            Sellers authorize this app to create payment links on their Square
+            account. Requires platform app credentials in the server
+            environment.
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="text-xs font-medium text-neutral-600">
+              Environment
+            </span>
+            <select
+              value={oauthEnvironment}
+              onChange={(e) =>
+                setOauthEnvironment(
+                  e.target.value as "sandbox" | "production",
+                )
+              }
+              className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+            >
+              <option value="sandbox">Sandbox</option>
+              <option value="production">Production</option>
+            </select>
+          </label>
+
+          {isOrgAdmin ? (
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-600">
+                Assign to owner
+              </span>
+              <select
+                value={oauthOwnerUserId}
+                onChange={(e) => setOauthOwnerUserId(e.target.value)}
+                className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+              >
+                <option value="">Global fallback</option>
+                {owners.map((o) => (
+                  <option key={o._id} value={o._id}>
+                    {ownerLabel(o)} ({o.email})
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="block">
+              <span className="text-xs font-medium text-neutral-600">
+                Assignment
+              </span>
+              <p className="mt-2 text-sm text-neutral-700">
+                Connected to your owner account
+              </p>
+            </div>
+          )}
+        </div>
+
+        {oauthError && (
+          <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+            {oauthError}
+          </div>
+        )}
+
+        {!oauthReady && (
+          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+            Square OAuth is not configured for{" "}
+            <span className="font-medium">{oauthEnvironment}</span>. Set{" "}
+            <code>
+              SQUARE_
+              {oauthEnvironment === "sandbox" ? "SANDBOX_" : ""}
+              APPLICATION_ID
+            </code>{" "}
+            and the matching secret on the API server, and register the redirect
+            URL
+            {squareOAuth?.callbackUrl ? (
+              <>
+                {" "}
+                <code className="break-all">{squareOAuth.callbackUrl}</code>
+              </>
+            ) : null}
+            .
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={() => void handleConnectSquare()}
+          disabled={oauthConnecting || !oauthReady}
+          className="inline-flex items-center rounded-md bg-[#006AFF] px-3 py-2 text-sm font-medium text-white hover:bg-[#0058d6] disabled:opacity-60"
+        >
+          {oauthConnecting ? "Redirecting to Square…" : "Connect with Square"}
+        </button>
+      </div>
 
       {webhooks ? (
         <div className="mx-6 mt-4 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-xs text-neutral-600 space-y-2">
@@ -292,13 +526,15 @@ export default function PaymentProvidersCard() {
       {formOpen && (
         <form
           onSubmit={handleSubmit}
-          className="border-b border-neutral-100 px-6 py-5 space-y-4"
+          className="border-b border-neutral-100 px-6 py-5 space-y-4 mt-4"
         >
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-brand-dark">
               {editingId
-                ? "Edit payment provider"
-                : "Add payment provider"}
+                ? isEditingOauth
+                  ? "Edit Square OAuth account"
+                  : "Edit payment provider"
+                : "Add payment provider (manual)"}
             </h3>
             <button
               type="button"
@@ -342,6 +578,7 @@ export default function PaymentProvidersCard() {
               </span>
               <select
                 required
+                disabled={isEditingOauth}
                 value={form.environment}
                 onChange={(e) =>
                   field(
@@ -349,7 +586,7 @@ export default function PaymentProvidersCard() {
                     e.target.value as "sandbox" | "production",
                   )
                 }
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark disabled:bg-neutral-50"
               >
                 <option value="sandbox">Sandbox</option>
                 <option value="production">Production</option>
@@ -369,20 +606,47 @@ export default function PaymentProvidersCard() {
               />
             </label>
 
+            {isOrgAdmin ? (
+              <label className="block sm:col-span-2">
+                <span className="text-xs font-medium text-neutral-600">
+                  Assign to owner
+                </span>
+                <select
+                  value={form.ownerUserId}
+                  onChange={(e) => field("ownerUserId", e.target.value)}
+                  className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                >
+                  <option value="">Global fallback</option>
+                  {owners.map((o) => (
+                    <option key={o._id} value={o._id}>
+                      {ownerLabel(o)} ({o.email})
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-1 block text-xs text-neutral-500">
+                  Owner-scoped accounts are used for that owner&apos;s
+                  customers. Global is the fallback when no owner account
+                  exists.
+                </span>
+              </label>
+            ) : null}
+
             {form.provider === "square" && (
               <>
-                <label className="block">
-                  <span className="text-xs font-medium text-neutral-600">
-                    Application ID
-                  </span>
-                  <input
-                    required={!editingId}
-                    value={form.applicationId}
-                    onChange={(e) => field("applicationId", e.target.value)}
-                    className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
-                    placeholder="sq0idp-…"
-                  />
-                </label>
+                {!isEditingOauth && (
+                  <label className="block">
+                    <span className="text-xs font-medium text-neutral-600">
+                      Application ID
+                    </span>
+                    <input
+                      required={!editingId}
+                      value={form.applicationId}
+                      onChange={(e) => field("applicationId", e.target.value)}
+                      className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                      placeholder="sq0idp-…"
+                    />
+                  </label>
+                )}
                 <label className="block">
                   <span className="text-xs font-medium text-neutral-600">
                     Location ID
@@ -395,20 +659,22 @@ export default function PaymentProvidersCard() {
                     placeholder="L…"
                   />
                 </label>
-                <label className="block">
-                  <span className="text-xs font-medium text-neutral-600">
-                    Access token
-                    {editingId ? " (leave blank to keep)" : ""}
-                  </span>
-                  <PasswordInput
-                    required={!editingId}
-                    value={form.accessToken}
-                    onChange={(e) => field("accessToken", e.target.value)}
-                    autoComplete="new-password"
-                    className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
-                    placeholder={editingId ? "••••••••" : "Access token"}
-                  />
-                </label>
+                {!isEditingOauth && (
+                  <label className="block">
+                    <span className="text-xs font-medium text-neutral-600">
+                      Access token
+                      {editingId ? " (leave blank to keep)" : ""}
+                    </span>
+                    <PasswordInput
+                      required={!editingId}
+                      value={form.accessToken}
+                      onChange={(e) => field("accessToken", e.target.value)}
+                      autoComplete="new-password"
+                      className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                      placeholder={editingId ? "••••••••" : "Access token"}
+                    />
+                  </label>
+                )}
                 <label className="block">
                   <span className="text-xs font-medium text-neutral-600">
                     Webhook signature key
@@ -424,6 +690,12 @@ export default function PaymentProvidersCard() {
                     placeholder={editingId ? "••••••••" : "Signature key"}
                   />
                 </label>
+                {isEditingOauth ? (
+                  <p className="sm:col-span-2 text-xs text-neutral-500">
+                    Access tokens for OAuth accounts refresh automatically. Use
+                    Connect with Square again to reconnect this seller.
+                  </p>
+                ) : null}
               </>
             )}
 
@@ -532,7 +804,7 @@ export default function PaymentProvidersCard() {
                 className="h-4 w-4 rounded border-neutral-300 text-brand-dark focus:ring-brand-dark"
               />
               <span className="text-sm text-neutral-700">
-                Default checkout provider
+                Default for this scope
               </span>
             </label>
           </div>
@@ -562,11 +834,11 @@ export default function PaymentProvidersCard() {
 
       {accounts.length === 0 ? (
         <div className="px-6 py-8 text-sm text-neutral-500">
-          No payment providers configured yet. Add Square (or Stripe / PayPal)
-          credentials to enable invoice checkout.
+          No payment providers configured yet. Connect Square with OAuth or add
+          credentials manually to enable invoice checkout.
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto mt-2">
           <table className="min-w-full divide-y divide-neutral-100 text-sm">
             <thead className="bg-neutral-50">
               <tr>
@@ -575,6 +847,9 @@ export default function PaymentProvidersCard() {
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   Name
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  Owner
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   Environment
@@ -590,6 +865,9 @@ export default function PaymentProvidersCard() {
                 <tr key={account._id}>
                   <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
                     {PROVIDER_LABELS[account.provider]}
+                    <div className="mt-0.5 text-xs font-normal text-neutral-400 capitalize">
+                      {account.authMethod}
+                    </div>
                   </td>
                   <td className="px-6 py-4 text-neutral-700">
                     {account.friendlyName}
@@ -607,6 +885,11 @@ export default function PaymentProvidersCard() {
                           ? "Client secret set"
                           : "Missing client secret")}
                     </div>
+                  </td>
+                  <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                    {account.owner
+                      ? ownerLabel(account.owner)
+                      : "Global fallback"}
                   </td>
                   <td className="px-6 py-4 text-neutral-600 capitalize whitespace-nowrap">
                     {account.environment}
