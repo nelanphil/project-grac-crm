@@ -10,6 +10,15 @@
   --color-neutral-800: #333333;
   --background: #ffffff;
   --foreground: #231f20;
+
+  /* Staff (non-customer) dashboard — Homeworks-inspired warm shell */
+  --staff-shell: #151312;
+  --staff-canvas: #f5f2ef;
+  --staff-surface: #fffdfb;
+  --staff-cream: #faf4ee;
+  --staff-border: #e7e2de;
+  --staff-ink: #110f0d;
+  --staff-muted: #524941;
 }
 
 @theme inline {

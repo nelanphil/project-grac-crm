@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { Home, Settings, LogOut, Menu, X } from "lucide-react";
 import { NAV_LINKS, COMPANY, ESTIMATE_ROUTE } from "@/lib/constants";
+import { isStaffRole } from "@/lib/dashboard-role";
 import { getVisibleNavSections } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
@@ -68,6 +69,11 @@ export default function Header() {
 
   // ── Dashboard header ──────────────────────────────────────────────────────
   if (isDashboard) {
+    // Avoid a dark-header flash while auth rehydrates; staff chrome is in-shell.
+    if (!hydrated || isStaffRole(user?.role)) {
+      return null;
+    }
+
     const visibleSections = getVisibleNavSections(user?.role);
     const settingsActive = pathname.startsWith("/dashboard/settings");
 

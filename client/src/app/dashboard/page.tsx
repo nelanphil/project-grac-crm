@@ -2,7 +2,9 @@
 
 import AuthGuard from "@/components/auth/AuthGuard";
 import UpcomingRenewalsTable from "@/components/dashboard/UpcomingRenewalsTable";
+import StaffHomeDashboard from "@/components/dashboard/staff/StaffHomeDashboard";
 import UsernameDisplay from "@/components/ui/UsernameDisplay";
+import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -39,6 +41,10 @@ function DashboardContent() {
   const { user } = useAuthStore();
 
   if (!user) return null;
+
+  if (isStaffRole(user.role)) {
+    return <StaffHomeDashboard />;
+  }
 
   return (
     <div>
