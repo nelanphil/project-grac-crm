@@ -1,5 +1,6 @@
 import { randomBytes } from "crypto";
 import jwt from "jsonwebtoken";
+import { Request } from "express";
 import { SquareClient, SquareEnvironment } from "square";
 import { Types } from "mongoose";
 import { env } from "../config/env";
@@ -8,8 +9,13 @@ import {
   PaymentEnvironment,
   PaymentProviderAccount,
 } from "../models/mongo/PaymentProviderAccount";
+import {
+  SQUARE_OAUTH_APP_SLUG,
+  SquareOAuthApp,
+} from "../models/mongo/SquareOAuthApp";
 import { User } from "../models/mongo/User";
 import { encryptCredential, decryptCredential } from "../utils/credentialsCrypto";
+import { resolvePublicApiBase } from "../utils/publicUrl";
 
 const SQUARE_OAUTH_SCOPES = [
   "MERCHANT_PROFILE_READ",
@@ -30,6 +36,8 @@ export type SquareOAuthStatePayload = {
   ownerUserId: string | null;
   initiatedBy: string;
   friendlyName?: string;
+  /** Exact redirect_uri used in Authorize; must match ObtainToken. */
+  redirectUri: string;
 };
 
 function squareHosts(environment: PaymentEnvironment) {
@@ -47,32 +55,85 @@ function squareHosts(environment: PaymentEnvironment) {
   };
 }
 
-export function getSquareAppCredentials(environment: PaymentEnvironment): {
+type SquareAppCredentialPair = {
   applicationId: string;
   applicationSecret: string;
-} {
-  if (environment === "sandbox") {
-    return {
-      applicationId: env.square.sandboxApplicationId,
-      applicationSecret: env.square.sandboxApplicationSecret,
-    };
-  }
-  return {
-    applicationId: env.square.applicationId,
-    applicationSecret: env.square.applicationSecret,
-  };
+  source: "env" | "control-panel" | "none";
+};
+
+async function loadStoredSquareOAuthApp() {
+  return SquareOAuthApp.findOne({ slug: SQUARE_OAUTH_APP_SLUG }).lean();
 }
 
-export function isSquareOAuthConfigured(environment?: PaymentEnvironment): {
+export async function getSquareAppCredentials(
+  environment: PaymentEnvironment,
+): Promise<SquareAppCredentialPair> {
+  if (environment === "sandbox") {
+    if (
+      env.square.sandboxApplicationId &&
+      env.square.sandboxApplicationSecret
+    ) {
+      return {
+        applicationId: env.square.sandboxApplicationId,
+        applicationSecret: env.square.sandboxApplicationSecret,
+        source: "env",
+      };
+    }
+    const stored = await loadStoredSquareOAuthApp();
+    if (
+      stored?.sandboxApplicationId &&
+      stored.sandboxApplicationSecretEncrypted
+    ) {
+      return {
+        applicationId: stored.sandboxApplicationId,
+        applicationSecret: decryptCredential(
+          stored.sandboxApplicationSecretEncrypted,
+        ),
+        source: "control-panel",
+      };
+    }
+    return { applicationId: "", applicationSecret: "", source: "none" };
+  }
+
+  if (env.square.applicationId && env.square.applicationSecret) {
+    return {
+      applicationId: env.square.applicationId,
+      applicationSecret: env.square.applicationSecret,
+      source: "env",
+    };
+  }
+  const stored = await loadStoredSquareOAuthApp();
+  if (
+    stored?.productionApplicationId &&
+    stored.productionApplicationSecretEncrypted
+  ) {
+    return {
+      applicationId: stored.productionApplicationId,
+      applicationSecret: decryptCredential(
+        stored.productionApplicationSecretEncrypted,
+      ),
+      source: "control-panel",
+    };
+  }
+  return { applicationId: "", applicationSecret: "", source: "none" };
+}
+
+export async function isSquareOAuthConfigured(
+  environment?: PaymentEnvironment,
+): Promise<{
   sandbox: boolean;
   production: boolean;
   forEnvironment: boolean;
-} {
+  sandboxSource: "env" | "control-panel" | "none";
+  productionSource: "env" | "control-panel" | "none";
+}> {
+  const sandboxCreds = await getSquareAppCredentials("sandbox");
+  const productionCreds = await getSquareAppCredentials("production");
   const sandbox = Boolean(
-    env.square.sandboxApplicationId && env.square.sandboxApplicationSecret,
+    sandboxCreds.applicationId && sandboxCreds.applicationSecret,
   );
   const production = Boolean(
-    env.square.applicationId && env.square.applicationSecret,
+    productionCreds.applicationId && productionCreds.applicationSecret,
   );
   const forEnvironment =
     environment === "production"
@@ -80,33 +141,39 @@ export function isSquareOAuthConfigured(environment?: PaymentEnvironment): {
       : environment === "sandbox"
         ? sandbox
         : sandbox || production;
-  return { sandbox, production, forEnvironment };
+  return {
+    sandbox,
+    production,
+    forEnvironment,
+    sandboxSource: sandboxCreds.source,
+    productionSource: productionCreds.source,
+  };
 }
 
-export function squareOAuthCallbackUrl(): string {
-  const base = env.publicApiUrl.replace(/\/$/, "");
+export function squareOAuthCallbackUrl(req?: Request): string {
+  const base = resolvePublicApiBase(req);
   return `${base}/payment-provider-accounts/square/oauth/callback`;
 }
 
-export function buildSquareAuthorizeUrl(params: {
+export async function buildSquareAuthorizeUrl(params: {
   environment: PaymentEnvironment;
   state: string;
-}): string {
-  const { applicationId } = getSquareAppCredentials(params.environment);
+  redirectUri: string;
+}): Promise<string> {
+  const { applicationId } = await getSquareAppCredentials(params.environment);
   if (!applicationId) {
     throw new Error(
-      `Square OAuth is not configured for ${params.environment}. Set SQUARE_${params.environment === "sandbox" ? "SANDBOX_" : ""}APPLICATION_ID and matching secret.`,
+      `Square OAuth is not configured for ${params.environment}. Add Application ID + secret in Control Panel, or set SQUARE_${params.environment === "sandbox" ? "SANDBOX_" : ""}APPLICATION_ID and matching secret.`,
     );
   }
   const { authorizeBase } = squareHosts(params.environment);
-  const redirectUri = encodeURIComponent(squareOAuthCallbackUrl());
   return (
     `${authorizeBase}/oauth2/authorize` +
     `?client_id=${encodeURIComponent(applicationId)}` +
     `&scope=${SQUARE_OAUTH_SCOPES}` +
     `&session=false` +
     `&state=${encodeURIComponent(params.state)}` +
-    `&redirect_uri=${redirectUri}`
+    `&redirect_uri=${encodeURIComponent(params.redirectUri)}`
   );
 }
 
@@ -121,6 +188,7 @@ export function signSquareOAuthState(
     environment: payload.environment,
     ownerUserId: payload.ownerUserId,
     initiatedBy: payload.initiatedBy,
+    redirectUri: payload.redirectUri,
     ...(payload.friendlyName ? { friendlyName: payload.friendlyName } : {}),
   };
   return jwt.sign(body, env.jwt.secret, { expiresIn: OAUTH_STATE_TTL_SECONDS });
@@ -170,13 +238,14 @@ async function callSquareObtainToken(
 export async function exchangeSquareAuthorizationCode(params: {
   environment: PaymentEnvironment;
   code: string;
+  redirectUri: string;
 }): Promise<{
   accessToken: string;
   refreshToken: string;
   expiresAt: Date | null;
   merchantId: string;
 }> {
-  const { applicationId, applicationSecret } = getSquareAppCredentials(
+  const { applicationId, applicationSecret } = await getSquareAppCredentials(
     params.environment,
   );
   if (!applicationId || !applicationSecret) {
@@ -188,7 +257,7 @@ export async function exchangeSquareAuthorizationCode(params: {
     client_secret: applicationSecret,
     code: params.code,
     grant_type: "authorization_code",
-    redirect_uri: squareOAuthCallbackUrl(),
+    redirect_uri: params.redirectUri,
   });
 
   if (!json.access_token || !json.refresh_token || !json.merchant_id) {
@@ -209,7 +278,7 @@ export async function refreshSquareAccessToken(
   if (!account.refreshTokenEncrypted) {
     throw new Error("No Square refresh token available for this account");
   }
-  const { applicationId, applicationSecret } = getSquareAppCredentials(
+  const { applicationId, applicationSecret } = await getSquareAppCredentials(
     account.environment,
   );
   if (!applicationId || !applicationSecret) {
@@ -400,7 +469,7 @@ export async function revokeSquareToken(
   account: IPaymentProviderAccount,
 ): Promise<void> {
   if (account.authMethod !== "oauth" || !account.accessTokenEncrypted) return;
-  const { applicationId, applicationSecret } = getSquareAppCredentials(
+  const { applicationId, applicationSecret } = await getSquareAppCredentials(
     account.environment,
   );
   if (!applicationId || !applicationSecret) return;

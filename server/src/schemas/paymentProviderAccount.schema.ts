@@ -127,6 +127,16 @@ export const startSquareOAuthSchema = z.object({
   friendlyName: z.string().trim().min(1).max(120).optional(),
 });
 
+export const saveSquareOAuthAppSchema = z.object({
+  productionApplicationId: z.string().trim().optional(),
+  productionApplicationSecret: z.string().trim().optional(),
+  sandboxApplicationId: z.string().trim().optional(),
+  sandboxApplicationSecret: z.string().trim().optional(),
+  /** When true, clear the matching secret if the secret field is blank. */
+  clearProductionApplicationSecret: z.boolean().optional(),
+  clearSandboxApplicationSecret: z.boolean().optional(),
+});
+
 export type CreatePaymentProviderAccountInput = z.infer<
   typeof createPaymentProviderAccountSchema
 >;
@@ -134,3 +144,4 @@ export type UpdatePaymentProviderAccountInput = z.infer<
   typeof updatePaymentProviderAccountSchema
 >;
 export type StartSquareOAuthInput = z.infer<typeof startSquareOAuthSchema>;
+export type SaveSquareOAuthAppInput = z.infer<typeof saveSquareOAuthAppSchema>;
