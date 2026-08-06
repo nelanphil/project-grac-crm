@@ -450,7 +450,7 @@ export default function PaymentProvidersCard() {
         </div>
       )}
 
-      <div className="mx-6 mt-4 rounded-lg border border-[#006AFF]/25 bg-[#006AFF]/[0.04] px-4 py-5 space-y-4">
+      <div className="mx-6 mt-4 rounded-lg border border-sky-200 bg-sky-50/60 px-4 py-5 space-y-4">
         <div>
           <p className="text-base font-semibold text-brand-dark">
             Sign in with Square
