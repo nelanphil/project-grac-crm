@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
-import { LogOut, Menu, Plus, Search, X } from "lucide-react";
+import { useState } from "react";
+import { LogOut, Menu, Plus, X } from "lucide-react";
 import { COMPANY } from "@/lib/constants";
 import { getVisibleNavSections } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import NavItemGroup from "@/components/dashboard/NavItemGroup";
+import CustomerHeaderSearch from "@/components/dashboard/staff/CustomerHeaderSearch";
 
 export default function StaffTopBar() {
   const router = useRouter();
@@ -18,7 +19,6 @@ export default function StaffTopBar() {
   const canWriteCustomers = useAuthStore((s) =>
     s.hasPermission("customers:write"),
   );
-  const [query, setQuery] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
 
@@ -26,16 +26,6 @@ export default function StaffTopBar() {
   const initials =
     `${user?.first_name?.[0] ?? ""}${user?.last_name?.[0] ?? ""}`.toUpperCase() ||
     "U";
-
-  function handleSearch(e: FormEvent) {
-    e.preventDefault();
-    const q = query.trim();
-    if (!q) {
-      router.push("/dashboard/customers");
-      return;
-    }
-    router.push(`/dashboard/customers?q=${encodeURIComponent(q)}`);
-  }
 
   function handleLogout() {
     logout();
@@ -62,21 +52,7 @@ export default function StaffTopBar() {
           </p>
         </div>
 
-        <form
-          onSubmit={handleSearch}
-          className="mx-auto hidden min-w-0 max-w-xl flex-1 md:block"
-        >
-          <label className="relative block">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--staff-muted)]" />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search customers…"
-              className="w-full rounded-xl border border-[var(--staff-border)] bg-white py-2.5 pl-10 pr-3 text-sm text-[var(--staff-ink)] outline-none transition focus:border-brand-orange focus:ring-2 focus:ring-brand-orange/20"
-            />
-          </label>
-        </form>
+        <CustomerHeaderSearch className="mx-auto hidden min-w-0 max-w-xl flex-1 md:block" />
 
         <div className="ml-auto flex items-center gap-1 sm:gap-2">
           <div className="relative">
@@ -147,21 +123,10 @@ export default function StaffTopBar() {
         </div>
       </div>
 
-      <form
-        onSubmit={handleSearch}
+      <CustomerHeaderSearch
         className="border-t border-[var(--staff-border)] px-3 py-2 md:hidden"
-      >
-        <label className="relative block">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--staff-muted)]" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search customers…"
-            className="w-full rounded-xl border border-[var(--staff-border)] bg-white py-2 pl-10 pr-3 text-sm outline-none focus:border-brand-orange focus:ring-2 focus:ring-brand-orange/20"
-          />
-        </label>
-      </form>
+        inputClassName="w-full rounded-xl border border-[var(--staff-border)] bg-white py-2 pl-10 pr-3 text-sm outline-none focus:border-brand-orange focus:ring-2 focus:ring-brand-orange/20"
+      />
 
       {mobileOpen && (
         <div className="border-t border-[var(--staff-border)] bg-[var(--staff-surface)] px-4 pb-4 md:hidden">
