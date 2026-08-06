@@ -53,7 +53,6 @@ export default function CustomerHeaderSearch({
   const [highlightIndex, setHighlightIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const rootRef = useRef<HTMLFormElement>(null);
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestIdRef = useRef(0);
 
@@ -67,6 +66,7 @@ export default function CustomerHeaderSearch({
   useEffect(() => {
     if (!token || !debouncedQuery) {
       requestIdRef.current += 1;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale suggestions when query empties
       setResults([]);
       setLoading(false);
       setError(null);
@@ -185,7 +185,6 @@ export default function CustomerHeaderSearch({
 
   return (
     <form
-      ref={rootRef}
       onSubmit={handleSubmit}
       className={className}
       role="search"
