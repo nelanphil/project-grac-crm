@@ -87,10 +87,7 @@ export default function PaymentProvidersCard() {
   const [owners, setOwners] = useState<UserListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [banner, setBanner] = useState<{
-    type: "success" | "error";
-    message: string;
-  } | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -116,25 +113,30 @@ export default function PaymentProvidersCard() {
       ? Boolean(squareOAuth?.sandbox)
       : Boolean(squareOAuth?.production);
 
+  const oauthReturnStatus = searchParams.get("square_oauth");
+  const oauthReturnMessage = searchParams.get("message");
+  const banner =
+    !bannerDismissed && oauthReturnStatus
+      ? {
+          type: (oauthReturnStatus === "success" ? "success" : "error") as
+            | "success"
+            | "error",
+          message:
+            oauthReturnMessage ||
+            (oauthReturnStatus === "success"
+              ? "Square account connected."
+              : "Square OAuth failed."),
+        }
+      : null;
+
   useEffect(() => {
-    const status = searchParams.get("square_oauth");
-    if (!status) return;
-    const message =
-      searchParams.get("message") ||
-      (status === "success"
-        ? "Square account connected."
-        : "Square OAuth failed.");
-    setBanner({
-      type: status === "success" ? "success" : "error",
-      message,
-    });
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.delete("square_oauth");
-      url.searchParams.delete("message");
-      window.history.replaceState({}, "", url.pathname + url.search);
-    }
-  }, [searchParams]);
+    if (!oauthReturnStatus || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("square_oauth")) return;
+    url.searchParams.delete("square_oauth");
+    url.searchParams.delete("message");
+    window.history.replaceState({}, "", url.pathname + url.search);
+  }, [oauthReturnStatus]);
 
   useEffect(() => {
     if (!token) return;
@@ -378,11 +380,19 @@ export default function PaymentProvidersCard() {
         <div
           className={
             banner.type === "success"
-              ? "mx-6 mt-4 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800"
-              : "mx-6 mt-4 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
+              ? "mx-6 mt-4 flex items-start justify-between gap-3 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800"
+              : "mx-6 mt-4 flex items-start justify-between gap-3 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
           }
         >
-          {banner.message}
+          <span>{banner.message}</span>
+          <button
+            type="button"
+            onClick={() => setBannerDismissed(true)}
+            className="shrink-0 rounded p-0.5 opacity-70 hover:opacity-100"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
