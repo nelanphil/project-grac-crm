@@ -389,11 +389,18 @@ export default function PaymentProvidersCard() {
       setAppSandboxSecret("");
       setAppFormOpen(false);
     } catch (err) {
-      setAppSaveError(
-        err instanceof ApiError
-          ? err.message
-          : "Failed to save Square application credentials.",
-      );
+      if (err instanceof ApiError) {
+        const fieldMessages = err.errors
+          ? Object.values(err.errors).flat().filter(Boolean)
+          : [];
+        setAppSaveError(
+          fieldMessages.length > 0
+            ? fieldMessages.join(" ")
+            : err.message,
+        );
+      } else {
+        setAppSaveError("Failed to save Square application credentials.");
+      }
     } finally {
       setAppSaving(false);
     }

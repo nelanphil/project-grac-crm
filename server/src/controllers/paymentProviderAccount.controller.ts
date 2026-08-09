@@ -617,9 +617,13 @@ export async function saveSquareOAuthApp(
 
   const parsed = saveSquareOAuthAppSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
+    const fieldErrors = parsed.error.flatten().fieldErrors;
+    const firstDetail = Object.values(fieldErrors)
+      .flat()
+      .find((msg): msg is string => Boolean(msg));
     res.status(400).json({
-      message: "Validation failed",
-      errors: parsed.error.flatten().fieldErrors,
+      message: firstDetail || "Validation failed",
+      errors: fieldErrors,
     });
     return;
   }
