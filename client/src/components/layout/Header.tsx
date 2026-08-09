@@ -78,7 +78,7 @@ export default function Header() {
     const settingsActive = pathname.startsWith("/dashboard/settings");
 
     return (
-      <header className="sticky top-0 z-50 bg-brand-dark text-white">
+      <header className="sticky top-0 z-50 bg-brand-dark text-white print:hidden">
         <div className={HEADER_CONTAINER}>
           <div className="flex items-center">
             <BrandLink />
@@ -188,7 +188,7 @@ export default function Header() {
 
   // ── Public / landing header ───────────────────────────────────────────────
   return (
-    <header className="sticky top-0 z-50 bg-brand-dark text-white">
+    <header className="sticky top-0 z-50 bg-brand-dark text-white print:hidden">
       <div className={HEADER_CONTAINER}>
         <div className="flex items-center">
           <BrandLink />

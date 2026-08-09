@@ -170,7 +170,7 @@ function TerritoryPageContent() {
       ) : owners.length === 0 ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-6 py-10 text-center text-sm text-neutral-500 shadow-sm">
           {isOrgAdmin
-            ? "No users with the Owner role yet. Create an owner in Settings → Users, then assign their territory here."
+            ? "No users with the Owner role yet. Create an owner in Users, then assign their territory here."
             : "Your account is not set up as an owner."}
         </div>
       ) : (

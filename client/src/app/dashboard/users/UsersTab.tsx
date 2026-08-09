@@ -343,9 +343,6 @@ export default function UsersTab() {
                 Role
               </th>
               <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Territory
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Joined
               </th>
               <th className="px-6 py-3" />
@@ -355,7 +352,7 @@ export default function UsersTab() {
             {filteredUsers.length === 0 ? (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={6}
                   className="px-6 py-8 text-center text-sm text-neutral-500"
                 >
                   No users match your search.
@@ -363,23 +360,6 @@ export default function UsersTab() {
               </tr>
             ) : (
               filteredUsers.map((user) => {
-                const counties = user.territories?.counties ?? [];
-                const zips = user.territories?.zips ?? [];
-                const territorySummary =
-                  user.role !== "owner"
-                    ? "—"
-                    : counties.length === 0 && zips.length === 0
-                      ? "None"
-                      : [
-                          counties.length
-                            ? `${counties.length} count${counties.length === 1 ? "y" : "ies"}`
-                            : null,
-                          zips.length
-                            ? `${zips.length} ZIP${zips.length === 1 ? "" : "s"}`
-                            : null,
-                        ]
-                          .filter(Boolean)
-                          .join(", ");
                 return (
                   <tr key={user._id}>
                     <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
@@ -396,9 +376,6 @@ export default function UsersTab() {
                     </td>
                     <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
                       {getRoleLabel(user.role)}
-                    </td>
-                    <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                      {territorySummary}
                     </td>
                     <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
                       {new Date(user.createdAt).toLocaleDateString()}

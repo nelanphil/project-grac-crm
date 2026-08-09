@@ -40,6 +40,16 @@ body {
   font-family: var(--font-inter), system-ui, sans-serif;
 }
 
+@media print {
+  body {
+    background: #fff !important;
+  }
+
+  .invoice-document {
+    break-inside: avoid;
+  }
+}
+
 @layer components {
   .btn-primary {
     @apply inline-flex items-center justify-center rounded-full bg-brand-orange px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-orange/90;

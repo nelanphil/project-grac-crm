@@ -1292,6 +1292,25 @@ export interface InvoiceLineItem {
   amountCents: number;
 }
 
+export interface InvoiceCustomerSummary {
+  name: string;
+  accountNumber: number;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone: string;
+  email: string;
+}
+
+export interface InvoiceServiceAddress {
+  label?: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+}
+
 export interface InvoiceItem {
   _id: string;
   number: string;
@@ -1317,6 +1336,10 @@ export interface InvoiceItem {
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  /** Present on GET /invoices/:id only. */
+  customer?: InvoiceCustomerSummary | null;
+  /** Present on GET /invoices/:id only. */
+  serviceAddress?: InvoiceServiceAddress | null;
 }
 
 export interface CreateInvoiceInput {

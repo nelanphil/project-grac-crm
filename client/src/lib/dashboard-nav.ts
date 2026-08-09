@@ -3,6 +3,7 @@ import {
   Wrench,
   Phone,
   Users,
+  UserCog,
   ScrollText,
   Settings2,
   MessageSquare,
@@ -55,6 +56,19 @@ export const NAV_SECTIONS: NavSection[] = [
         label: "Control Panel",
         icon: Settings2,
         includeRoles: ["admin", "super-admin", "owner"],
+      },
+      {
+        href: "/dashboard/users",
+        label: "Users",
+        icon: UserCog,
+        includeRoles: ["admin", "super-admin", "owner"],
+        children: [
+          {
+            href: "/dashboard/users/roles",
+            label: "Roles & Permissions",
+            includeRoles: ["super-admin"],
+          },
+        ],
       },
     ],
   },

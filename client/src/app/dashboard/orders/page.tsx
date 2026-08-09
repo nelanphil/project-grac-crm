@@ -1,14 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuthStore } from "@/store/useAuthStore";
-import {
-  ApiError,
-  getInvoices,
-  InvoiceItem,
-  startInvoiceCheckout,
-} from "@/lib/api";
+import { ApiError, getInvoices, InvoiceItem } from "@/lib/api";
 import { FileText } from "lucide-react";
 
 function formatMoney(cents: number): string {
@@ -27,12 +23,12 @@ export default function OrdersPage() {
 }
 
 function OrdersContent() {
+  const router = useRouter();
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const [invoices, setInvoices] = useState<InvoiceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [payingId, setPayingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -48,21 +44,6 @@ function OrdersContent() {
       )
       .finally(() => setLoading(false));
   }, [token]);
-
-  async function handlePay(id: string) {
-    if (!token) return;
-    setPayingId(id);
-    try {
-      const { url } = await startInvoiceCheckout(token, id);
-      // eslint-disable-next-line react-hooks/immutability
-      window.location.href = url;
-    } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : "Failed to start checkout.",
-      );
-      setPayingId(null);
-    }
-  }
 
   const isCustomer = user?.role === "customer";
 
@@ -116,12 +97,25 @@ function OrdersContent() {
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   Status
                 </th>
-                <th className="px-6 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {invoices.map((inv) => (
-                <tr key={inv._id}>
+                <tr
+                  key={inv._id}
+                  role="link"
+                  tabIndex={0}
+                  onClick={() =>
+                    router.push(`/dashboard/orders/detail?id=${inv._id}`)
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      router.push(`/dashboard/orders/detail?id=${inv._id}`);
+                    }
+                  }}
+                  className="cursor-pointer transition hover:bg-neutral-50 focus-visible:bg-neutral-50 focus-visible:outline-none"
+                >
                   <td className="px-6 py-4 font-medium text-brand-dark">
                     {inv.number}
                     <div className="text-xs font-normal text-neutral-400">
@@ -136,18 +130,6 @@ function OrdersContent() {
                   </td>
                   <td className="px-6 py-4 capitalize text-neutral-600">
                     {inv.status}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    {(inv.status === "open" || inv.status === "failed") && (
-                      <button
-                        type="button"
-                        disabled={payingId === inv._id}
-                        onClick={() => handlePay(inv._id)}
-                        className="rounded-md bg-brand-dark px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
-                      >
-                        {payingId === inv._id ? "Redirecting…" : "Pay now"}
-                      </button>
-                    )}
                   </td>
                 </tr>
               ))}

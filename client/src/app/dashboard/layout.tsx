@@ -37,14 +37,14 @@ export default function DashboardLayout({
 
   return (
     <div
-      className={`mx-auto flex gap-8 py-6 md:py-10 ${
+      className={`mx-auto flex gap-8 py-6 md:py-10 print:block print:max-w-none print:gap-0 print:px-0 print:py-0 ${
         isWideLayout
           ? "w-full max-w-none px-4 sm:px-6 lg:px-10"
           : "max-w-screen-2xl px-6"
       }`}
     >
       {showNav && <DashboardNav />}
-      <main className="min-w-0 flex-1">{children}</main>
+      <main className="min-w-0 flex-1 print:w-full">{children}</main>
     </div>
   );
 }

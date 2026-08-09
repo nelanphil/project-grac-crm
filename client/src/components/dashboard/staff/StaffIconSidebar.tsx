@@ -10,12 +10,19 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { Home, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
+import {
+  ChevronRight,
+  Home,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+} from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   getVisibleNavSections,
   isNavChildActive,
   isNavItemActive,
+  type NavItem,
 } from "@/lib/dashboard-nav";
 import { COMPANY } from "@/lib/constants";
 
@@ -76,6 +83,108 @@ function NavLink({
         <span className="truncate text-sm font-medium">{label}</span>
       ) : null}
     </Link>
+  );
+}
+
+function StaffNavItem({
+  item,
+  pathname,
+  sidebarExpanded,
+  onShowTooltip,
+  onHideTooltip,
+}: {
+  item: NavItem;
+  pathname: string;
+  sidebarExpanded: boolean;
+  onShowTooltip: (label: string, el: HTMLElement) => void;
+  onHideTooltip: () => void;
+}) {
+  const hasChildren = Boolean(item.children?.length);
+  const childActive = Boolean(
+    item.children?.some((child) => isNavChildActive(pathname, child.href)),
+  );
+  const parentActive = isNavItemActive(pathname, item.href, hasChildren);
+  const Icon = item.icon;
+
+  // Collapsed by default; open when a child route is active.
+  const [childrenOpen, setChildrenOpen] = useState(false);
+  const [prevChildActive, setPrevChildActive] = useState(childActive);
+
+  if (childActive !== prevChildActive) {
+    setPrevChildActive(childActive);
+    if (childActive) {
+      setChildrenOpen(true);
+    }
+  }
+
+  return (
+    <div
+      className={
+        sidebarExpanded && hasChildren
+          ? "flex w-full flex-col gap-0.5"
+          : undefined
+      }
+    >
+      <div
+        className={
+          sidebarExpanded && hasChildren
+            ? "flex w-full items-center gap-0.5"
+            : undefined
+        }
+      >
+        <div className={sidebarExpanded && hasChildren ? "min-w-0 flex-1" : undefined}>
+          <NavLink
+            href={item.href}
+            label={item.label}
+            active={
+              hasChildren
+                ? parentActive || (!sidebarExpanded && childActive)
+                : parentActive || childActive
+            }
+            expanded={sidebarExpanded}
+            onShowTooltip={onShowTooltip}
+            onHideTooltip={onHideTooltip}
+          >
+            <Icon className="h-5 w-5" />
+          </NavLink>
+        </div>
+        {sidebarExpanded && hasChildren ? (
+          <button
+            type="button"
+            aria-label={
+              childrenOpen ? `Collapse ${item.label}` : `Expand ${item.label}`
+            }
+            aria-expanded={childrenOpen}
+            onClick={() => setChildrenOpen((v) => !v)}
+            className="flex h-11 w-9 shrink-0 items-center justify-center rounded-xl text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+          >
+            <ChevronRight
+              className={`h-4 w-4 transition-transform ${
+                childrenOpen ? "rotate-90" : ""
+              }`}
+            />
+          </button>
+        ) : null}
+      </div>
+      {sidebarExpanded && hasChildren && childrenOpen
+        ? item.children!.map((child) => (
+            <Link
+              key={child.href}
+              href={child.href}
+              aria-current={
+                isNavChildActive(pathname, child.href) ? "page" : undefined
+              }
+              className={`ml-4 flex h-9 items-center rounded-lg px-3 text-sm transition-colors ${
+                isNavChildActive(pathname, child.href)
+                  ? "bg-brand-orange text-white"
+                  : "text-white/60 hover:bg-white/10 hover:text-white"
+              }`}
+            >
+              <span className="truncate font-medium">{child.label}</span>
+            </Link>
+          ))
+        : null}
+    </div>
   );
 }
 
@@ -164,30 +273,16 @@ export default function StaffIconSidebar() {
         </NavLink>
 
         {sections.map((section) =>
-          section.items.map((item) => {
-            const hasChildren = Boolean(item.children?.length);
-            const active =
-              isNavItemActive(pathname, item.href, hasChildren) ||
-              Boolean(
-                item.children?.some((child) =>
-                  isNavChildActive(pathname, child.href),
-                ),
-              );
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                active={active}
-                expanded={expanded}
-                onShowTooltip={showTooltip}
-                onHideTooltip={hideTooltip}
-              >
-                <Icon className="h-5 w-5" />
-              </NavLink>
-            );
-          }),
+          section.items.map((item) => (
+            <StaffNavItem
+              key={item.href}
+              item={item}
+              pathname={pathname}
+              sidebarExpanded={expanded}
+              onShowTooltip={showTooltip}
+              onHideTooltip={hideTooltip}
+            />
+          )),
         )}
       </nav>
 

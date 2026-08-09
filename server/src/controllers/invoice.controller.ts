@@ -6,6 +6,8 @@ import { Invoice, IInvoice } from "../models/mongo/Invoice";
 import { Contract } from "../models/mongo/Contract";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { ContractTemplate } from "../models/mongo/ContractTemplate";
+import { Customer } from "../models/mongo/Customer";
+import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { createInvoiceSchema } from "../schemas/invoice.schema";
 import {
@@ -61,6 +63,101 @@ function toPublicInvoice(doc: IInvoice | Record<string, unknown>) {
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
   };
+}
+
+type InvoiceCustomerSummary = {
+  name: string;
+  accountNumber: number;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone: string;
+  email: string;
+};
+
+type InvoiceServiceAddress = {
+  label?: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+};
+
+function customerDisplayName(customer: {
+  accountName?: string;
+  first?: string;
+  last?: string;
+}): string {
+  const account = (customer.accountName ?? "").trim();
+  if (account) return account;
+  return `${customer.first ?? ""} ${customer.last ?? ""}`.trim();
+}
+
+async function enrichInvoiceDetail(invoice: {
+  customerId: number;
+  customerRef?: Types.ObjectId | null;
+  contractRef?: Types.ObjectId | null;
+  workOrderRef?: Types.ObjectId | null;
+}): Promise<{
+  customer: InvoiceCustomerSummary | null;
+  serviceAddress: InvoiceServiceAddress | null;
+}> {
+  let customer: InvoiceCustomerSummary | null = null;
+  let serviceAddress: InvoiceServiceAddress | null = null;
+
+  if (invoice.customerRef) {
+    const [cust, primaryContact] = await Promise.all([
+      Customer.findById(invoice.customerRef).lean(),
+      CustomerContact.findOne({
+        customerRef: invoice.customerRef,
+        isPrimary: true,
+      })
+        .select("phone email")
+        .lean(),
+    ]);
+
+    if (cust) {
+      customer = {
+        name: customerDisplayName(cust) || `Customer #${cust.legacyId}`,
+        accountNumber: cust.legacyId ?? invoice.customerId,
+        address: cust.address ?? "",
+        city: cust.city ?? "",
+        state: cust.state ?? "",
+        zip: cust.zip ?? "",
+        phone: (primaryContact?.phone || cust.phone || "").trim(),
+        email: (primaryContact?.email || cust.email || "").trim(),
+      };
+    }
+  }
+
+  let addressRef: Types.ObjectId | null | undefined;
+  if (invoice.contractRef) {
+    const contract = await Contract.findById(invoice.contractRef)
+      .select("addressRef")
+      .lean();
+    addressRef = contract?.addressRef ?? null;
+  } else if (invoice.workOrderRef) {
+    const wo = await WorkOrder.findById(invoice.workOrderRef)
+      .select("addressRef")
+      .lean();
+    addressRef = wo?.addressRef ?? null;
+  }
+
+  if (addressRef) {
+    const site = await CustomerAddress.findById(addressRef).lean();
+    if (site) {
+      serviceAddress = {
+        label: site.label || undefined,
+        address: site.address ?? "",
+        city: site.city ?? "",
+        state: site.state ?? "",
+        zip: site.zip ?? "",
+      };
+    }
+  }
+
+  return { customer, serviceAddress };
 }
 
 export async function resolveCustomerRefsForAuthUser(
@@ -157,7 +254,13 @@ export async function getInvoiceById(
       }
     }
 
-    res.json({ invoice: toPublicInvoice(invoice) });
+    const enrichment = await enrichInvoiceDetail(invoice);
+    res.json({
+      invoice: {
+        ...toPublicInvoice(invoice),
+        ...enrichment,
+      },
+    });
   } catch {
     res.status(500).json({ message: "Failed to load invoice" });
   }

@@ -47,6 +47,40 @@ function isPastDue(invoice: InvoiceItem, today: Date): boolean {
   return due.getTime() < today.getTime();
 }
 
+type StandingBucket = "pastDue" | "outstanding" | "failed" | "paid";
+
+const STANDING_LABELS: Record<StandingBucket, string> = {
+  pastDue: "Past due",
+  outstanding: "Outstanding",
+  failed: "Failed",
+  paid: "Paid",
+};
+
+function matchesStandingBucket(
+  invoice: InvoiceItem,
+  bucket: StandingBucket,
+  today: Date,
+): boolean {
+  if (bucket === "paid") return invoice.status === "paid";
+  if (bucket === "failed") return invoice.status === "failed";
+  if (invoice.status !== "open") return false;
+  const pastDue = isPastDue(invoice, today);
+  return bucket === "pastDue" ? pastDue : !pastDue;
+}
+
+function standingRowDate(
+  invoice: InvoiceItem,
+  bucket: StandingBucket,
+): string {
+  if (bucket === "paid") {
+    return formatDateOnly(invoice.paidAt ?? invoice.updatedAt);
+  }
+  if (bucket === "pastDue" || bucket === "outstanding") {
+    return formatDateOnly(invoice.dueDate ?? invoice.issuedAt);
+  }
+  return formatDateOnly(invoice.issuedAt);
+}
+
 type KpiTone = "danger" | "info" | "success" | "warning" | "neutral";
 
 const TONE_STYLES: Record<KpiTone, string> = {
@@ -62,23 +96,44 @@ function KpiCard({
   value,
   hint,
   tone,
+  onClick,
+  expanded,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone: KpiTone;
+  onClick?: () => void;
+  expanded?: boolean;
 }) {
-  return (
-    <div
-      className={`rounded-2xl border px-4 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${TONE_STYLES[tone]}`}
-    >
+  const className = `rounded-2xl border px-4 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md text-left w-full ${TONE_STYLES[tone]} ${
+    expanded ? "ring-2 ring-offset-2 ring-[var(--staff-ink)]" : ""
+  }`;
+
+  const content = (
+    <>
       <p className="text-xs font-semibold uppercase tracking-wide opacity-80">
         {label}
       </p>
       <p className="mt-2 text-2xl font-bold tracking-tight">{value}</p>
       {hint ? <p className="mt-1 text-xs opacity-70">{hint}</p> : null}
-    </div>
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-expanded={expanded ?? false}
+        className={className}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return <div className={className}>{content}</div>;
 }
 
 function QueueCard({
@@ -135,6 +190,8 @@ export default function StaffHomeDashboard() {
   const [threads, setThreads] = useState<MessageThreadItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedStanding, setExpandedStanding] =
+    useState<StandingBucket | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -209,23 +266,21 @@ export default function StaffHomeDashboard() {
     let failedCount = 0;
 
     for (const invoice of invoices) {
-      if (invoice.status === "paid") {
+      if (matchesStandingBucket(invoice, "paid", today)) {
         paidCents += invoice.amountCents;
         paidCount += 1;
         continue;
       }
-      if (invoice.status === "failed") {
+      if (matchesStandingBucket(invoice, "failed", today)) {
         failedCount += 1;
         continue;
       }
-      if (invoice.status === "open") {
-        if (isPastDue(invoice, today)) {
-          pastDueCents += invoice.amountCents;
-          pastDueCount += 1;
-        } else {
-          outstandingCents += invoice.amountCents;
-          outstandingCount += 1;
-        }
+      if (matchesStandingBucket(invoice, "pastDue", today)) {
+        pastDueCents += invoice.amountCents;
+        pastDueCount += 1;
+      } else if (matchesStandingBucket(invoice, "outstanding", today)) {
+        outstandingCents += invoice.amountCents;
+        outstandingCount += 1;
       }
     }
 
@@ -239,6 +294,28 @@ export default function StaffHomeDashboard() {
       failedCount,
     };
   }, [invoices, today]);
+
+  const expandedStandingInvoices = useMemo(() => {
+    if (!expandedStanding) return [];
+    const list = invoices.filter((invoice) =>
+      matchesStandingBucket(invoice, expandedStanding, today),
+    );
+    return list.sort((a, b) => {
+      if (expandedStanding === "paid") {
+        const aTime = new Date(a.paidAt ?? a.updatedAt).getTime();
+        const bTime = new Date(b.paidAt ?? b.updatedAt).getTime();
+        return bTime - aTime;
+      }
+      const aDue = parseDateOnly(a.dueDate)?.getTime() ?? 0;
+      const bDue = parseDateOnly(b.dueDate)?.getTime() ?? 0;
+      if (aDue !== bDue) return aDue - bDue;
+      return new Date(b.issuedAt).getTime() - new Date(a.issuedAt).getTime();
+    });
+  }, [expandedStanding, invoices, today]);
+
+  function toggleStanding(bucket: StandingBucket) {
+    setExpandedStanding((current) => (current === bucket ? null : bucket));
+  }
 
   const contractStats = useMemo(() => {
     let active = 0;
@@ -322,6 +399,8 @@ export default function StaffHomeDashboard() {
               loading ? "Loading…" : `${accountStanding.pastDueCount} invoices`
             }
             tone="danger"
+            expanded={expandedStanding === "pastDue"}
+            onClick={() => toggleStanding("pastDue")}
           />
           <KpiCard
             label="Outstanding"
@@ -334,12 +413,16 @@ export default function StaffHomeDashboard() {
                 : `${accountStanding.outstandingCount} open invoices`
             }
             tone="info"
+            expanded={expandedStanding === "outstanding"}
+            onClick={() => toggleStanding("outstanding")}
           />
           <KpiCard
             label="Failed"
             value={loading ? "—" : String(accountStanding.failedCount)}
             hint="Needs follow-up"
             tone="warning"
+            expanded={expandedStanding === "failed"}
+            onClick={() => toggleStanding("failed")}
           />
           <KpiCard
             label="Paid"
@@ -348,8 +431,89 @@ export default function StaffHomeDashboard() {
               loading ? "Loading…" : `${accountStanding.paidCount} payments`
             }
             tone="success"
+            expanded={expandedStanding === "paid"}
+            onClick={() => toggleStanding("paid")}
           />
         </div>
+
+        {expandedStanding ? (
+          <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--staff-border)] bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-4 py-3">
+              <h3 className="text-sm font-semibold text-[var(--staff-ink)]">
+                {STANDING_LABELS[expandedStanding]} invoices
+              </h3>
+              <Link
+                href="/dashboard/orders"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-brand-orange hover:underline"
+              >
+                See all invoices
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+            {expandedStandingInvoices.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-[var(--staff-muted)]">
+                No invoices in this category.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-[var(--staff-border)] text-sm">
+                  <thead className="bg-[var(--staff-cream)]/70">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Invoice
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Customer
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Date
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Amount
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Status
+                      </th>
+                      <th className="px-4 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--staff-border)]">
+                    {expandedStandingInvoices.map((invoice) => (
+                      <tr
+                        key={invoice._id}
+                        className="transition hover:bg-[var(--staff-cream)]/50"
+                      >
+                        <td className="px-4 py-3 font-medium text-[var(--staff-ink)]">
+                          {invoice.number}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--staff-muted)]">
+                          #{invoice.customerId}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--staff-muted)]">
+                          {standingRowDate(invoice, expandedStanding)}
+                        </td>
+                        <td className="px-4 py-3 font-semibold text-[var(--staff-ink)]">
+                          {formatMoney(invoice.amountCents)}
+                        </td>
+                        <td className="px-4 py-3 capitalize text-[var(--staff-muted)]">
+                          {invoice.status}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <Link
+                            href={`/dashboard/orders/detail?id=${invoice._id}`}
+                            className="text-xs font-semibold text-brand-orange hover:underline"
+                          >
+                            View
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : null}
       </section>
 
       {canReadContracts ? (

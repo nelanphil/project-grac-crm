@@ -11,7 +11,7 @@ export default function DashboardNav() {
   const visibleSections = getVisibleNavSections(user?.role);
 
   return (
-    <aside className="hidden w-56 shrink-0 md:block">
+    <aside className="hidden w-56 shrink-0 md:block print:hidden">
       <nav className="sticky top-24 flex flex-col gap-6">
         {visibleSections.map((section) => (
           <div key={section.label}>
