@@ -230,6 +230,13 @@ async function callSquareObtainToken(
   if (!res.ok) {
     const detail =
       json.errors?.[0]?.detail || json.message || `HTTP ${res.status}`;
+    const notAuthorized =
+      /not\s*authorized/i.test(detail) || res.status === 401;
+    if (notAuthorized) {
+      throw new Error(
+        "Square token exchange failed: Not Authorized. Use the Production Application Secret from Square Developer Dashboard → your app → OAuth (not Credentials, and not an access token), then save it under Control Panel → Payment providers → Advanced → Square app settings and try Sign in with Square again.",
+      );
+    }
     throw new Error(`Square token exchange failed: ${detail}`);
   }
   return json;

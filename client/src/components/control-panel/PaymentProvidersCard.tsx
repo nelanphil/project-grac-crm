@@ -630,8 +630,11 @@ export default function PaymentProvidersCard() {
                   </button>
                 </div>
                 <p className="text-xs text-neutral-500">
-                  One-time platform Application ID + secret from the Square
-                  Developer Dashboard. Sellers never see or enter these.
+                  One-time platform Application ID +{" "}
+                  <span className="font-medium">OAuth</span> Application Secret
+                  from Square Developer Dashboard → your app → OAuth. Do not use
+                  Credentials-page secrets or access tokens. Sellers never see
+                  these.
                 </p>
                 {appFormOpen && (
                   <form
@@ -656,6 +659,14 @@ export default function PaymentProvidersCard() {
                         {squareOAuth?.callbackUrl ||
                           "https://YOUR_API_HOST/payment-provider-accounts/square/oauth/callback"}
                       </code>
+                      <p>
+                        A wrong Application Secret (Credentials page or access
+                        token) causes{" "}
+                        <code className="font-mono">
+                          Square token exchange failed: Not Authorized
+                        </code>{" "}
+                        after Sign in with Square succeeds.
+                      </p>
                     </div>
                     {appSaveError && (
                       <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
@@ -679,11 +690,16 @@ export default function PaymentProvidersCard() {
                       </label>
                       <label className="block sm:col-span-2">
                         <span className="text-xs font-medium text-neutral-600">
-                          Production Application Secret
+                          Production OAuth Application Secret
                           {squareOAuth?.app?.hasProductionApplicationSecret
                             ? " (leave blank to keep)"
                             : ""}
                         </span>
+                        <p className="mt-0.5 text-[11px] text-neutral-500">
+                          From Square → OAuth → Application Secret (starts with{" "}
+                          <code>sq0csp-</code>). Not the Credentials secret or
+                          access token.
+                        </p>
                         <PasswordInput
                           value={appProductionSecret}
                           onChange={(e) =>
@@ -714,11 +730,15 @@ export default function PaymentProvidersCard() {
                       </label>
                       <label className="block sm:col-span-2">
                         <span className="text-xs font-medium text-neutral-600">
-                          Sandbox Application Secret
+                          Sandbox OAuth Application Secret
                           {squareOAuth?.app?.hasSandboxApplicationSecret
                             ? " (leave blank to keep)"
                             : ""}
                         </span>
+                        <p className="mt-0.5 text-[11px] text-neutral-500">
+                          From Square → OAuth (Sandbox) → Application Secret
+                          (starts with <code>sandbox-sq0csb-</code>).
+                        </p>
                         <PasswordInput
                           value={appSandboxSecret}
                           onChange={(e) => setAppSandboxSecret(e.target.value)}
