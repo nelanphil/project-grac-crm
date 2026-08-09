@@ -127,11 +127,27 @@ export const startSquareOAuthSchema = z.object({
   friendlyName: z.string().trim().min(1).max(120).optional(),
 });
 
+const squareProductionOAuthSecretSchema = z
+  .string()
+  .trim()
+  .refine(
+    (value) => !value || /^sq0csp-/i.test(value),
+    "Production OAuth Application Secret must come from Square → OAuth and usually starts with sq0csp-. Access tokens (EAAA…) and Credentials-page secrets are not valid here.",
+  );
+
+const squareSandboxOAuthSecretSchema = z
+  .string()
+  .trim()
+  .refine(
+    (value) => !value || /^sandbox-sq0csb-/i.test(value),
+    "Sandbox OAuth Application Secret must come from Square → OAuth (Sandbox) and usually starts with sandbox-sq0csb-. Access tokens are not valid here.",
+  );
+
 export const saveSquareOAuthAppSchema = z.object({
   productionApplicationId: z.string().trim().optional(),
-  productionApplicationSecret: z.string().trim().optional(),
+  productionApplicationSecret: squareProductionOAuthSecretSchema.optional(),
   sandboxApplicationId: z.string().trim().optional(),
-  sandboxApplicationSecret: z.string().trim().optional(),
+  sandboxApplicationSecret: squareSandboxOAuthSecretSchema.optional(),
   /** When true, clear the matching secret if the secret field is blank. */
   clearProductionApplicationSecret: z.boolean().optional(),
   clearSandboxApplicationSecret: z.boolean().optional(),

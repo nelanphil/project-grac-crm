@@ -138,18 +138,15 @@ async function squareOAuthStatusPayload(req?: AuthRequest) {
   const stored = await SquareOAuthApp.findOne({
     slug: SQUARE_OAUTH_APP_SLUG,
   }).lean();
+  // has* reflects usable OAuth secrets only (access tokens are rejected).
   return {
     ...status,
     callbackUrl: squareOAuthCallbackUrl(req),
     app: {
       productionApplicationId: stored?.productionApplicationId ?? "",
       sandboxApplicationId: stored?.sandboxApplicationId ?? "",
-      hasProductionApplicationSecret: Boolean(
-        stored?.productionApplicationSecretEncrypted,
-      ),
-      hasSandboxApplicationSecret: Boolean(
-        stored?.sandboxApplicationSecretEncrypted,
-      ),
+      hasProductionApplicationSecret: status.production,
+      hasSandboxApplicationSecret: status.sandbox,
       envConfigured: {
         production: status.productionSource === "env",
         sandbox: status.sandboxSource === "env",

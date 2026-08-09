@@ -65,55 +65,81 @@ async function loadStoredSquareOAuthApp() {
   return SquareOAuthApp.findOne({ slug: SQUARE_OAUTH_APP_SLUG }).lean();
 }
 
+/** Square OAuth Application Secret (not an access token / Credentials secret). */
+export function isSquareOAuthApplicationSecret(
+  secret: string,
+  environment: PaymentEnvironment,
+): boolean {
+  const value = secret.trim();
+  if (!value || /^EAAA/i.test(value)) return false;
+  return environment === "sandbox"
+    ? /^sandbox-sq0csb-/i.test(value)
+    : /^sq0csp-/i.test(value);
+}
+
+function pairIfValidOAuthSecret(
+  applicationId: string,
+  applicationSecret: string,
+  environment: PaymentEnvironment,
+  source: "env" | "control-panel",
+): SquareAppCredentialPair | null {
+  if (!applicationId?.trim() || !applicationSecret?.trim()) return null;
+  if (!isSquareOAuthApplicationSecret(applicationSecret, environment)) {
+    return null;
+  }
+  return {
+    applicationId: applicationId.trim(),
+    applicationSecret: applicationSecret.trim(),
+    source,
+  };
+}
+
 export async function getSquareAppCredentials(
   environment: PaymentEnvironment,
 ): Promise<SquareAppCredentialPair> {
   if (environment === "sandbox") {
-    if (
-      env.square.sandboxApplicationId &&
-      env.square.sandboxApplicationSecret
-    ) {
-      return {
-        applicationId: env.square.sandboxApplicationId,
-        applicationSecret: env.square.sandboxApplicationSecret,
-        source: "env",
-      };
-    }
+    const fromEnv = pairIfValidOAuthSecret(
+      env.square.sandboxApplicationId,
+      env.square.sandboxApplicationSecret,
+      "sandbox",
+      "env",
+    );
+    if (fromEnv) return fromEnv;
     const stored = await loadStoredSquareOAuthApp();
     if (
       stored?.sandboxApplicationId &&
       stored.sandboxApplicationSecretEncrypted
     ) {
-      return {
-        applicationId: stored.sandboxApplicationId,
-        applicationSecret: decryptCredential(
-          stored.sandboxApplicationSecretEncrypted,
-        ),
-        source: "control-panel",
-      };
+      const fromStore = pairIfValidOAuthSecret(
+        stored.sandboxApplicationId,
+        decryptCredential(stored.sandboxApplicationSecretEncrypted),
+        "sandbox",
+        "control-panel",
+      );
+      if (fromStore) return fromStore;
     }
     return { applicationId: "", applicationSecret: "", source: "none" };
   }
 
-  if (env.square.applicationId && env.square.applicationSecret) {
-    return {
-      applicationId: env.square.applicationId,
-      applicationSecret: env.square.applicationSecret,
-      source: "env",
-    };
-  }
+  const fromEnv = pairIfValidOAuthSecret(
+    env.square.applicationId,
+    env.square.applicationSecret,
+    "production",
+    "env",
+  );
+  if (fromEnv) return fromEnv;
   const stored = await loadStoredSquareOAuthApp();
   if (
     stored?.productionApplicationId &&
     stored.productionApplicationSecretEncrypted
   ) {
-    return {
-      applicationId: stored.productionApplicationId,
-      applicationSecret: decryptCredential(
-        stored.productionApplicationSecretEncrypted,
-      ),
-      source: "control-panel",
-    };
+    const fromStore = pairIfValidOAuthSecret(
+      stored.productionApplicationId,
+      decryptCredential(stored.productionApplicationSecretEncrypted),
+      "production",
+      "control-panel",
+    );
+    if (fromStore) return fromStore;
   }
   return { applicationId: "", applicationSecret: "", source: "none" };
 }
