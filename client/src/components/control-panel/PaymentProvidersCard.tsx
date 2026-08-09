@@ -561,13 +561,15 @@ export default function PaymentProvidersCard() {
                 >
                   Advanced → Square app settings
                 </button>{" "}
-                (or set server env vars), then register redirect URL{" "}
+                (or set server env vars), then register the{" "}
+                <span className="font-medium">OAuth Redirect URL</span>{" "}
                 {squareOAuth?.callbackUrl ? (
                   <code className="break-all">{squareOAuth.callbackUrl}</code>
                 ) : (
                   "(set PUBLIC_API_URL first)"
-                )}
-                . After that, everyone only uses Sign in with Square.
+                )}{" "}
+                on Square Developer Dashboard → OAuth (not Webhooks). After
+                that, everyone only uses Sign in with Square.
               </p>
             ) : (
               <p>
@@ -636,12 +638,25 @@ export default function PaymentProvidersCard() {
                     onSubmit={handleSaveSquareApp}
                     className="rounded-md border border-neutral-200 bg-white px-3 py-3 space-y-3"
                   >
-                    <p className="text-xs text-neutral-600">
-                      Register this redirect URL on the app&apos;s OAuth page:{" "}
-                      <code className="break-all">
-                        {squareOAuth?.callbackUrl || "…"}
+                    <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 space-y-1.5">
+                      <p className="font-semibold">
+                        Square OAuth Redirect URL (required)
+                      </p>
+                      <p>
+                        Paste this exact value under Square Developer Dashboard
+                        → your app →{" "}
+                        <span className="font-medium">OAuth</span> → Redirect
+                        URL. Using the webhook path here causes{" "}
+                        <code className="font-mono">
+                          Invalid value for parameter redirect_uri
+                        </code>
+                        .
+                      </p>
+                      <code className="block break-all rounded bg-white/80 px-2 py-1.5 font-mono text-[11px] text-neutral-800 border border-amber-100">
+                        {squareOAuth?.callbackUrl ||
+                          "https://YOUR_API_HOST/payment-provider-accounts/square/oauth/callback"}
                       </code>
-                    </p>
+                    </div>
                     {appSaveError && (
                       <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
                         {appSaveError}
@@ -734,8 +749,13 @@ export default function PaymentProvidersCard() {
             {isOrgAdmin && webhooks ? (
               <div className="rounded-md border border-neutral-200 bg-white px-3 py-3 text-xs text-neutral-600 space-y-2">
                 <p className="font-semibold text-brand-dark">Webhook URLs</p>
+                <p className="text-neutral-500">
+                  Register these under each provider&apos;s{" "}
+                  <span className="font-medium">Webhooks</span> settings — not
+                  as the Square OAuth Redirect URL.
+                </p>
                 <div>
-                  <span className="font-medium">Square:</span>{" "}
+                  <span className="font-medium">Square (Webhooks only):</span>{" "}
                   <code className="break-all">{webhooks.square}</code>
                 </div>
                 <div>
