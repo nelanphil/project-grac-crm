@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import PasswordInput from "@/components/ui/PasswordInput";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import {
   ApiError,
   createPaymentProviderAccount,
@@ -1138,64 +1140,28 @@ export default function PaymentProvidersCard() {
           above to connect — no API keys required.
         </div>
       ) : (
-        <div className="overflow-x-auto mt-2">
-          <table className="min-w-full divide-y divide-neutral-100 text-sm">
-            <thead className="bg-neutral-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Provider
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Name
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Owner
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Environment
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Status
-                </th>
-                <th className="px-6 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100 bg-white">
-              {accounts.map((account) => (
-                <tr key={account._id}>
-                  <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
-                    {PROVIDER_LABELS[account.provider]}
-                    <div className="mt-0.5 text-xs font-normal text-neutral-400 capitalize">
-                      {account.authMethod}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-neutral-700">
-                    {account.friendlyName}
-                    <div className="mt-0.5 text-xs text-neutral-400">
-                      {account.provider === "square" &&
-                        (account.hasAccessToken
-                          ? "Access token set"
-                          : "Missing access token")}
-                      {account.provider === "stripe" &&
-                        (account.hasSecretKey
-                          ? "Secret key set"
-                          : "Missing secret key")}
-                      {account.provider === "paypal" &&
-                        (account.hasClientSecret
-                          ? "Client secret set"
-                          : "Missing client secret")}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                    {account.owner
-                      ? ownerLabel(account.owner)
-                      : "Global fallback"}
-                  </td>
-                  <td className="px-6 py-4 text-neutral-600 capitalize whitespace-nowrap">
-                    {account.environment}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex flex-wrap gap-1">
+        <div className="px-4 pb-4 mt-2 sm:px-0 sm:pb-0">
+          <ResponsiveDataView
+            mobile={accounts.map((account) => {
+              const credentialHint =
+                account.provider === "square"
+                  ? account.hasAccessToken
+                    ? "Access token set"
+                    : "Missing access token"
+                  : account.provider === "stripe"
+                    ? account.hasSecretKey
+                      ? "Secret key set"
+                      : "Missing secret key"
+                    : account.hasClientSecret
+                      ? "Client secret set"
+                      : "Missing client secret";
+              return (
+                <MobileDataCard
+                  key={account._id}
+                  title={account.friendlyName}
+                  subtitle={`${PROVIDER_LABELS[account.provider]} · ${credentialHint}`}
+                  badges={
+                    <>
                       <span
                         className={
                           account.isActive
@@ -1210,31 +1176,156 @@ export default function PaymentProvidersCard() {
                           Default
                         </span>
                       ) : null}
+                      <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium capitalize text-neutral-600">
+                        {account.environment}
+                      </span>
+                    </>
+                  }
+                  fields={
+                    <>
+                      <DataField
+                        label="Owner"
+                        value={
+                          account.owner
+                            ? ownerLabel(account.owner)
+                            : "Global fallback"
+                        }
+                      />
+                      <DataField
+                        label="Auth"
+                        value={
+                          <span className="capitalize">
+                            {account.authMethod}
+                          </span>
+                        }
+                      />
+                    </>
+                  }
+                  actions={
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => openEdit(account)}
+                        className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+                        aria-label={`Edit ${account.friendlyName}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(account._id)}
+                        disabled={deletingId === account._id}
+                        className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                        aria-label={`Delete ${account.friendlyName}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
-                  </td>
-                  <td className="px-6 py-4 text-right whitespace-nowrap">
-                    <button
-                      type="button"
-                      onClick={() => openEdit(account)}
-                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
-                      aria-label={`Edit ${account.friendlyName}`}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(account._id)}
-                      disabled={deletingId === account._id}
-                      className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                      aria-label={`Delete ${account.friendlyName}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  }
+                />
+              );
+            })}
+            desktop={
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-neutral-100 text-sm">
+                  <thead className="bg-neutral-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Provider
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Name
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Owner
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Environment
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Status
+                      </th>
+                      <th className="px-6 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 bg-white">
+                    {accounts.map((account) => (
+                      <tr key={account._id}>
+                        <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
+                          {PROVIDER_LABELS[account.provider]}
+                          <div className="mt-0.5 text-xs font-normal text-neutral-400 capitalize">
+                            {account.authMethod}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-neutral-700">
+                          {account.friendlyName}
+                          <div className="mt-0.5 text-xs text-neutral-400">
+                            {account.provider === "square" &&
+                              (account.hasAccessToken
+                                ? "Access token set"
+                                : "Missing access token")}
+                            {account.provider === "stripe" &&
+                              (account.hasSecretKey
+                                ? "Secret key set"
+                                : "Missing secret key")}
+                            {account.provider === "paypal" &&
+                              (account.hasClientSecret
+                                ? "Client secret set"
+                                : "Missing client secret")}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          {account.owner
+                            ? ownerLabel(account.owner)
+                            : "Global fallback"}
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600 capitalize whitespace-nowrap">
+                          {account.environment}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex flex-wrap gap-1">
+                            <span
+                              className={
+                                account.isActive
+                                  ? "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
+                                  : "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
+                              }
+                            >
+                              {account.isActive ? "Active" : "Inactive"}
+                            </span>
+                            {account.isDefault ? (
+                              <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                                Default
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(account)}
+                            className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+                            aria-label={`Edit ${account.friendlyName}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(account._id)}
+                            disabled={deletingId === account._id}
+                            className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                            aria-label={`Delete ${account.friendlyName}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            }
+          />
         </div>
       )}
     </div>

@@ -14,6 +14,9 @@ import CustomerAddressesPanel, {
 } from "@/components/customers/CustomerAddressesPanel";
 import MergeCustomersDialog from "@/components/customers/MergeCustomersDialog";
 import ServiceContractsTable from "@/components/contracts/ServiceContractsTable";
+import MobileSectionNav from "@/components/ui/MobileSectionNav";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   getCustomer,
@@ -93,12 +96,12 @@ function WorkOrderInvoiceButton({
         type="button"
         disabled={busy}
         onClick={handleClick}
-        className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
+        className="rounded-md border border-neutral-300 px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
       >
         {busy ? "…" : "Invoice & link"}
       </button>
       {message ? (
-        <div className="mt-1 text-[10px] text-neutral-500 max-w-[10rem] truncate">
+        <div className="mt-1 text-[10px] text-neutral-500 max-w-[12rem] break-words">
           {message}
         </div>
       ) : null}
@@ -222,11 +225,24 @@ function CustomerDetailContent() {
 
   const addresses = customer.addresses ?? [];
   const addressTitle = addressesSectionTitle();
+  const isAdmin = user.role === "admin";
+  const sectionLinks = [
+    { id: "customer-overview", label: "Overview" },
+    { id: "customer-addresses", label: "Addresses" },
+    ...(isAdmin
+      ? [
+          { id: "customer-threads", label: "Threads" },
+          { id: "customer-history", label: "History" },
+        ]
+      : []),
+    { id: "customer-contracts", label: "Contracts" },
+    { id: "customer-work-orders", label: "Work orders" },
+  ];
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
           <Link
             href="/dashboard/customers"
             className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
@@ -234,72 +250,77 @@ function CustomerDetailContent() {
             <ArrowLeft className="h-4 w-4" />
             Back to Customers
           </Link>
-          <h1 className="mt-4 text-2xl font-bold text-brand-dark">
+          <h1 className="mt-4 text-xl font-bold text-brand-dark sm:text-2xl break-words">
             {editingName ? (
-              <span className="flex flex-wrap items-center gap-2">
+              <span className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                 <input
                   value={nameDraft}
                   onChange={(e) => setNameDraft(e.target.value)}
-                  className="rounded-md border border-neutral-200 px-3 py-1.5 text-xl font-bold outline-none focus:border-brand-orange"
+                  className="w-full min-w-0 rounded-md border border-neutral-200 px-3 py-1.5 text-lg font-bold outline-none focus:border-brand-orange sm:max-w-md sm:text-xl"
                   autoFocus
                 />
-                <button
-                  type="button"
-                  disabled={savingName}
-                  onClick={async () => {
-                    if (!token || !customer) return;
-                    setSavingName(true);
-                    setNameError(null);
-                    try {
-                      const { customer: updated } = await updateCustomer(
-                        token,
-                        customer._id,
-                        { accountName: nameDraft.trim() },
-                      );
-                      setCustomer((c) =>
-                        c
-                          ? {
-                              ...c,
-                              accountName: updated.accountName ?? nameDraft.trim(),
-                            }
-                          : c,
-                      );
+                <span className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={savingName}
+                    onClick={async () => {
+                      if (!token || !customer) return;
+                      setSavingName(true);
+                      setNameError(null);
+                      try {
+                        const { customer: updated } = await updateCustomer(
+                          token,
+                          customer._id,
+                          { accountName: nameDraft.trim() },
+                        );
+                        setCustomer((c) =>
+                          c
+                            ? {
+                                ...c,
+                                accountName:
+                                  updated.accountName ?? nameDraft.trim(),
+                              }
+                            : c,
+                        );
+                        setEditingName(false);
+                      } catch (err) {
+                        setNameError(
+                          err instanceof ApiError
+                            ? err.message
+                            : "Failed to update account name.",
+                        );
+                      } finally {
+                        setSavingName(false);
+                      }
+                    }}
+                    className="rounded-md bg-brand-dark p-1.5 text-white hover:bg-brand-dark/90 disabled:opacity-60"
+                    aria-label="Save account name"
+                  >
+                    {savingName ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Check className="h-4 w-4" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingName}
+                    onClick={() => {
                       setEditingName(false);
-                    } catch (err) {
-                      setNameError(
-                        err instanceof ApiError
-                          ? err.message
-                          : "Failed to update account name.",
-                      );
-                    } finally {
-                      setSavingName(false);
-                    }
-                  }}
-                  className="rounded-md bg-brand-dark p-1.5 text-white hover:bg-brand-dark/90 disabled:opacity-60"
-                  aria-label="Save account name"
-                >
-                  {savingName ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Check className="h-4 w-4" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  disabled={savingName}
-                  onClick={() => {
-                    setEditingName(false);
-                    setNameError(null);
-                  }}
-                  className="rounded-md border border-neutral-200 p-1.5 text-neutral-600 hover:bg-neutral-50"
-                  aria-label="Cancel"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+                      setNameError(null);
+                    }}
+                    className="rounded-md border border-neutral-200 p-1.5 text-neutral-600 hover:bg-neutral-50"
+                    aria-label="Cancel"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </span>
               </span>
             ) : (
-              <span className="inline-flex items-center gap-2">
-                {formatCustomerRecordName(customer)}
+              <span className="inline-flex items-start gap-2">
+                <span className="min-w-0">
+                  {formatCustomerRecordName(customer)}
+                </span>
                 {canWrite ? (
                   <button
                     type="button"
@@ -311,7 +332,7 @@ function CustomerDetailContent() {
                       setEditingName(true);
                       setNameError(null);
                     }}
-                    className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark"
+                    className="mt-0.5 shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark"
                     aria-label="Edit account name"
                     title="Edit account name"
                   >
@@ -324,30 +345,35 @@ function CustomerDetailContent() {
           {nameError ? (
             <p className="mt-1 text-sm text-red-600">{nameError}</p>
           ) : null}
-          <p className="mt-1 text-sm text-neutral-500">
+          <p className="mt-1 hidden text-sm text-neutral-500 sm:block">
             Customer details, addresses, and work order history
           </p>
-          <p className="mt-2 text-sm text-neutral-600">
-            <span className="font-medium text-neutral-500">Owner:</span>{" "}
-            {customer.owner
-              ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
-              : "Unassigned"}
-            {" · "}
-            <span className="font-medium text-neutral-500">County:</span>{" "}
-            {customer.county?.trim() || "—"}
-          </p>
+          <div className="mt-2 flex flex-col gap-1 text-sm text-neutral-600 sm:flex-row sm:flex-wrap sm:gap-x-3">
+            <p>
+              <span className="font-medium text-neutral-500">Owner:</span>{" "}
+              {customer.owner
+                ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
+                : "Unassigned"}
+            </p>
+            <p>
+              <span className="font-medium text-neutral-500">County:</span>{" "}
+              {customer.county?.trim() || "—"}
+            </p>
+          </div>
         </div>
         {canWrite ? (
           <button
             type="button"
             onClick={() => setMergeOpen(true)}
-            className="inline-flex items-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange sm:w-auto"
           >
             <GitMerge className="h-4 w-4" />
             Merge customer
           </button>
         ) : null}
       </div>
+
+      <MobileSectionNav sections={sectionLinks} />
 
       {mergeToast ? (
         <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
@@ -356,14 +382,19 @@ function CustomerDetailContent() {
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <ContactCard
-          customer={customer}
-          token={token!}
-          userId={user.id}
-          canWrite={canWrite}
-          onCustomerChange={setCustomer}
-        />
-        <div className="lg:col-span-2 space-y-3">
+        <section id="customer-overview" className="scroll-mt-28 lg:scroll-mt-6">
+          <ContactCard
+            customer={customer}
+            token={token!}
+            userId={user.id}
+            canWrite={canWrite}
+            onCustomerChange={setCustomer}
+          />
+        </section>
+        <section
+          id="customer-addresses"
+          className="scroll-mt-28 space-y-3 lg:col-span-2 lg:scroll-mt-6"
+        >
           <h2 className="text-lg font-semibold text-brand-dark">
             {addressTitle}
             {addresses.length > 0 ? ` (${addresses.length})` : ""}
@@ -382,23 +413,27 @@ function CustomerDetailContent() {
               )
             }
           />
-        </div>
+        </section>
       </div>
 
-      <CustomerThreadsPanel
-        customerId={customer._id}
-        contacts={customer.contacts ?? []}
-        token={token!}
-      />
+      <section id="customer-threads" className="scroll-mt-28 lg:scroll-mt-6">
+        <CustomerThreadsPanel
+          customerId={customer._id}
+          contacts={customer.contacts ?? []}
+          token={token!}
+        />
+      </section>
 
-      <CommunicationHistoryPanel
-        customerId={customer._id}
-        contacts={customer.contacts ?? []}
-        token={token!}
-      />
+      <section id="customer-history" className="scroll-mt-28 lg:scroll-mt-6">
+        <CommunicationHistoryPanel
+          customerId={customer._id}
+          contacts={customer.contacts ?? []}
+          token={token!}
+        />
+      </section>
 
       {addresses.length > 1 ? (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
           <label
             htmlFor="address-filter"
             className="text-sm font-medium text-neutral-600"
@@ -409,7 +444,7 @@ function CustomerDetailContent() {
             id="address-filter"
             value={addressFilter}
             onChange={(e) => setAddressFilter(e.target.value)}
-            className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange sm:w-auto sm:py-1.5"
           >
             <option value="all">All addresses</option>
             {addresses.map((addr) => (
@@ -421,14 +456,17 @@ function CustomerDetailContent() {
         </div>
       ) : null}
 
-      <div className="space-y-4">
+      <section
+        id="customer-contracts"
+        className="scroll-mt-28 space-y-4 lg:scroll-mt-6"
+      >
         <h2 className="text-lg font-semibold text-brand-dark">
           Contracts ({filteredContracts.length})
         </h2>
 
         {filteredContracts.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-12 text-center shadow-sm">
-            <ScrollText className="h-10 w-10 text-neutral-300 mb-4" />
+            <ScrollText className="mb-4 h-10 w-10 text-neutral-300" />
             <p className="text-sm font-medium text-neutral-500">No contracts</p>
             <p className="mt-1 text-xs text-neutral-400">
               Contracts for this customer will appear here.
@@ -441,16 +479,19 @@ function CustomerDetailContent() {
             returnTo={`/dashboard/customers/detail?id=${id}`}
           />
         )}
-      </div>
+      </section>
 
-      <div className="space-y-4">
+      <section
+        id="customer-work-orders"
+        className="scroll-mt-28 space-y-4 lg:scroll-mt-6"
+      >
         <h2 className="text-lg font-semibold text-brand-dark">
           Work Orders ({filteredWorkOrders.length})
         </h2>
 
         {filteredWorkOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-16 text-center shadow-sm">
-            <ClipboardList className="h-10 w-10 text-neutral-300 mb-4" />
+            <ClipboardList className="mb-4 h-10 w-10 text-neutral-300" />
             <p className="text-sm font-medium text-neutral-500">
               No work orders yet
             </p>
@@ -459,83 +500,126 @@ function CustomerDetailContent() {
             </p>
           </div>
         ) : (
-          <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-neutral-100 text-sm">
-                <thead className="bg-neutral-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Date
-                    </th>
-                    {addresses.length > 0 ? (
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                        Address
-                      </th>
-                    ) : null}
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Description
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Technician
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Total
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Billing
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-100 bg-white">
-                  {filteredWorkOrders.map((order) => (
-                    <tr key={order._id}>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {formatDate(order.date)}
-                      </td>
-                      {addresses.length > 0 ? (
-                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                          {formatAddressLabel(order.address)}
-                        </td>
-                      ) : null}
-                      <td className="px-6 py-4 text-neutral-600">
-                        {order.descPerform || order.descPerformed || "—"}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {order.tech || "—"}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {formatCurrency(order.total)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex gap-2">
-                          <StatusBadge label="Paid" active={order.paid} />
-                          <StatusBadge
-                            label="Completed"
-                            active={order.completed}
-                          />
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-right whitespace-nowrap">
-                        {!order.paid && order.total > 0 && token ? (
-                          <WorkOrderInvoiceButton
-                            token={token}
-                            workOrderId={order._id}
-                          />
-                        ) : (
-                          <span className="text-xs text-neutral-400">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <ResponsiveDataView
+            mobile={filteredWorkOrders.map((order) => (
+              <MobileDataCard
+                key={order._id}
+                title={formatDate(order.date)}
+                subtitle={
+                  addresses.length > 0
+                    ? formatAddressLabel(order.address)
+                    : undefined
+                }
+                badges={
+                  <>
+                    <StatusBadge label="Paid" active={order.paid} />
+                    <StatusBadge label="Completed" active={order.completed} />
+                  </>
+                }
+                fields={
+                  <>
+                    <DataField
+                      label="Description"
+                      value={order.descPerform || order.descPerformed || "—"}
+                      className="col-span-2"
+                    />
+                    <DataField label="Technician" value={order.tech || "—"} />
+                    <DataField
+                      label="Total"
+                      value={formatCurrency(order.total)}
+                    />
+                  </>
+                }
+                actions={
+                  !order.paid && order.total > 0 && token ? (
+                    <WorkOrderInvoiceButton
+                      token={token}
+                      workOrderId={order._id}
+                    />
+                  ) : null
+                }
+              />
+            ))}
+            desktop={
+              <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-neutral-100 text-sm">
+                    <thead className="bg-neutral-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                          Date
+                        </th>
+                        {addresses.length > 0 ? (
+                          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                            Address
+                          </th>
+                        ) : null}
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                          Description
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                          Technician
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                          Total
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                          Status
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                          Billing
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100 bg-white">
+                      {filteredWorkOrders.map((order) => (
+                        <tr key={order._id}>
+                          <td className="whitespace-nowrap px-6 py-4 text-neutral-600">
+                            {formatDate(order.date)}
+                          </td>
+                          {addresses.length > 0 ? (
+                            <td className="whitespace-nowrap px-6 py-4 text-neutral-600">
+                              {formatAddressLabel(order.address)}
+                            </td>
+                          ) : null}
+                          <td className="px-6 py-4 text-neutral-600">
+                            {order.descPerform || order.descPerformed || "—"}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-neutral-600">
+                            {order.tech || "—"}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-neutral-600">
+                            {formatCurrency(order.total)}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4">
+                            <div className="flex gap-2">
+                              <StatusBadge label="Paid" active={order.paid} />
+                              <StatusBadge
+                                label="Completed"
+                                active={order.completed}
+                              />
+                            </div>
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-right">
+                            {!order.paid && order.total > 0 && token ? (
+                              <WorkOrderInvoiceButton
+                                token={token}
+                                workOrderId={order._id}
+                              />
+                            ) : (
+                              <span className="text-xs text-neutral-400">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            }
+          />
         )}
-      </div>
+      </section>
 
       <MergeCustomersDialog
         open={mergeOpen}
@@ -564,6 +648,7 @@ function CustomerDetailContent() {
     </div>
   );
 }
+
 
 export default function CustomerDetailPage() {
   return (

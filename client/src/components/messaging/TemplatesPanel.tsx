@@ -60,7 +60,7 @@ export default function TemplatesPanel({
         </div>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)_300px]">
+      <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)_300px]">
         {/* Templates list */}
         <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
@@ -183,7 +183,7 @@ export default function TemplatesPanel({
         </section>
 
         {/* Phone preview */}
-        <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+        <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm lg:col-span-2 xl:col-span-1">
           <h2 className="mb-3 text-sm font-semibold text-brand-dark">
             Phone preview
           </h2>

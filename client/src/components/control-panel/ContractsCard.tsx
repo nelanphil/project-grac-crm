@@ -14,6 +14,8 @@ import {
 } from "@/lib/api";
 import LucideIconByName from "@/components/icons/LucideIconByName";
 import LucideIconPicker from "@/components/icons/LucideIconPicker";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 
 type FormState = {
   label: string;
@@ -340,102 +342,180 @@ export default function ContractsCard() {
           and pricing.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-neutral-100 text-sm">
-            <thead className="bg-neutral-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Contract
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Cost
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Status
-                </th>
-                <th className="px-6 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100 bg-white">
-              {templates.map((template) => {
-                const isDeleted = Boolean(template.deletedAt);
-                return (
-                  <tr
-                    key={template._id}
-                    className={isDeleted ? "bg-neutral-50/80" : undefined}
-                  >
-                    <td className="px-6 py-4">
-                      <div className="flex items-start gap-3">
-                        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-neutral-200 bg-white">
-                          <LucideIconByName
-                            name={template.badgeIcon}
-                            className="h-4 w-4 text-brand-dark"
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-medium text-brand-dark">
-                            {template.label}
-                          </div>
-                          <div className="mt-0.5 text-xs text-neutral-400">
-                            <span className="font-mono">{template.slug}</span>
-                            {template.body?.trim()
-                              ? ` · ${template.body.trim().slice(0, 60)}${template.body.trim().length > 60 ? "…" : ""}`
-                              : " · No body yet"}
-                          </div>
-                        </div>
+        <div className="px-4 pb-4 sm:px-0 sm:pb-0">
+          <ResponsiveDataView
+            mobile={templates.map((template) => {
+              const isDeleted = Boolean(template.deletedAt);
+              return (
+                <MobileDataCard
+                  key={template._id}
+                  title={template.label}
+                  subtitle={
+                    <>
+                      <span className="font-mono">{template.slug}</span>
+                      {template.body?.trim()
+                        ? ` · ${template.body.trim().slice(0, 60)}${template.body.trim().length > 60 ? "…" : ""}`
+                        : " · No body yet"}
+                    </>
+                  }
+                  badges={
+                    <span
+                      className={
+                        isDeleted
+                          ? "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
+                          : "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
+                      }
+                    >
+                      {isDeleted ? "Deleted" : "Active"}
+                    </span>
+                  }
+                  fields={
+                    <DataField
+                      label="Cost"
+                      value={formatCost(template.cost)}
+                    />
+                  }
+                  actions={
+                    !isDeleted ? (
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => openEdit(template)}
+                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+                          aria-label={`Edit ${template.label}`}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDuplicate(template._id)}
+                          disabled={duplicatingId === template._id}
+                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark disabled:opacity-50"
+                          aria-label={`Duplicate ${template.label}`}
+                        >
+                          <Copy className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(template._id)}
+                          disabled={deletingId === template._id}
+                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                          aria-label={`Delete ${template.label}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-neutral-600">
-                      {formatCost(template.cost)}
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4">
-                      <span
-                        className={
-                          isDeleted
-                            ? "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
-                            : "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
-                        }
-                      >
-                        {isDeleted ? "Deleted" : "Active"}
-                      </span>
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-right">
-                      {!isDeleted && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => openEdit(template)}
-                            className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
-                            aria-label={`Edit ${template.label}`}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDuplicate(template._id)}
-                            disabled={duplicatingId === template._id}
-                            className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark disabled:opacity-50"
-                            aria-label={`Duplicate ${template.label}`}
-                          >
-                            <Copy className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(template._id)}
-                            disabled={deletingId === template._id}
-                            className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                            aria-label={`Delete ${template.label}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    ) : null
+                  }
+                />
+              );
+            })}
+            desktop={
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-neutral-100 text-sm">
+                  <thead className="bg-neutral-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Contract
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Cost
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Status
+                      </th>
+                      <th className="px-6 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 bg-white">
+                    {templates.map((template) => {
+                      const isDeleted = Boolean(template.deletedAt);
+                      return (
+                        <tr
+                          key={template._id}
+                          className={
+                            isDeleted ? "bg-neutral-50/80" : undefined
+                          }
+                        >
+                          <td className="px-6 py-4">
+                            <div className="flex items-start gap-3">
+                              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-neutral-200 bg-white">
+                                <LucideIconByName
+                                  name={template.badgeIcon}
+                                  className="h-4 w-4 text-brand-dark"
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-medium text-brand-dark">
+                                  {template.label}
+                                </div>
+                                <div className="mt-0.5 text-xs text-neutral-400">
+                                  <span className="font-mono">
+                                    {template.slug}
+                                  </span>
+                                  {template.body?.trim()
+                                    ? ` · ${template.body.trim().slice(0, 60)}${template.body.trim().length > 60 ? "…" : ""}`
+                                    : " · No body yet"}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-neutral-600">
+                            {formatCost(template.cost)}
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4">
+                            <span
+                              className={
+                                isDeleted
+                                  ? "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
+                                  : "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
+                              }
+                            >
+                              {isDeleted ? "Deleted" : "Active"}
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap px-6 py-4 text-right">
+                            {!isDeleted && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => openEdit(template)}
+                                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+                                  aria-label={`Edit ${template.label}`}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleDuplicate(template._id)
+                                  }
+                                  disabled={duplicatingId === template._id}
+                                  className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark disabled:opacity-50"
+                                  aria-label={`Duplicate ${template.label}`}
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDelete(template._id)}
+                                  disabled={deletingId === template._id}
+                                  className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                                  aria-label={`Delete ${template.label}`}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            }
+          />
         </div>
       )}
     </div>

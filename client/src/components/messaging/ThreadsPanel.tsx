@@ -210,7 +210,11 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
         </div>
 
         <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[240px_1fr]">
-          <div className="max-h-[480px] overflow-y-auto border-r border-neutral-100">
+          <div
+            className={`max-h-[480px] overflow-y-auto border-neutral-100 md:border-r ${
+              selectedThreadId ? "hidden md:block" : "block"
+            }`}
+          >
             {loadingThreads ? (
               <div className="flex items-center gap-2 p-3 text-xs text-neutral-500">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -272,18 +276,33 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
             )}
           </div>
 
-          <div className="flex min-h-[280px] flex-col">
-            <div className="flex items-center justify-between border-b border-neutral-100 px-3 py-2">
-              <span className="text-sm font-medium text-brand-dark">
-                {threadDetail
-                  ? formatCustomerName(
-                      threadDetail.thread.contact?.first,
-                      threadDetail.thread.contact?.last,
-                    ) || "Thread"
-                  : "Select a thread"}
-              </span>
+          <div
+            className={`min-h-[280px] flex-col ${
+              selectedThreadId ? "flex" : "hidden md:flex"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-neutral-100 px-3 py-2">
+              <div className="flex min-w-0 items-center gap-2">
+                {selectedThreadId ? (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedThreadId(null)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50 md:hidden"
+                  >
+                    Back
+                  </button>
+                ) : null}
+                <span className="truncate text-sm font-medium text-brand-dark">
+                  {threadDetail
+                    ? formatCustomerName(
+                        threadDetail.thread.contact?.first,
+                        threadDetail.thread.contact?.last,
+                      ) || "Thread"
+                    : "Select a thread"}
+                </span>
+              </div>
               {threadDetail ? (
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   {threadDetail.thread.status === "open" ? (
                     <button
                       type="button"
@@ -296,7 +315,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                       ) : (
                         <X className="h-3.5 w-3.5" />
                       )}
-                      Close
+                      <span className="hidden sm:inline">Close</span>
                     </button>
                   ) : null}
                   <button
@@ -310,7 +329,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                     ) : (
                       <Phone className="h-3.5 w-3.5" />
                     )}
-                    Call
+                    <span className="hidden sm:inline">Call</span>
                   </button>
                 </div>
               ) : null}

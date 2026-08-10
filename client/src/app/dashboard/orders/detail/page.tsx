@@ -134,7 +134,7 @@ function InvoiceDetailContent() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 print:max-w-none print:space-y-0">
-      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
+      <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <Link
           href="/dashboard/orders"
           className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
@@ -142,11 +142,11 @@ function InvoiceDetailContent() {
           <ArrowLeft className="h-4 w-4" />
           Back to invoices
         </Link>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
           <button
             type="button"
             onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 sm:w-auto"
           >
             <Download className="h-4 w-4" />
             Export to PDF
@@ -156,7 +156,7 @@ function InvoiceDetailContent() {
               type="button"
               disabled={paying}
               onClick={handlePay}
-              className="rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
+              className="w-full rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60 sm:w-auto"
             >
               {paying ? "Redirecting…" : "Pay now"}
             </button>

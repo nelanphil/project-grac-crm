@@ -365,8 +365,8 @@ export default function TerritoryMap({
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <p className="text-sm font-medium text-brand-dark">Territory map</p>
           <p className="text-xs text-neutral-500">
             {selectMode === "county"
@@ -374,7 +374,7 @@ export default function TerritoryMap({
               : "ZIP mode: zoom in, then click an available ZIP to add or remove a carve-out. Claimed ZIPs are hidden."}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-3">
           <div className="inline-flex rounded-md border border-neutral-300 p-0.5 bg-white">
             <button
               type="button"
@@ -405,7 +405,7 @@ export default function TerritoryMap({
               ZIP codes
             </button>
           </div>
-          <div className="flex flex-wrap gap-3 text-[11px] text-neutral-600">
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-neutral-600">
             <span className="inline-flex items-center gap-1.5">
               <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#E87722]" />
               Selected county
@@ -421,6 +421,11 @@ export default function TerritoryMap({
           </div>
         </div>
       </div>
+
+      <p className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600 md:hidden">
+        On small screens the map is compact — use the county checklist and ZIP
+        carve-outs below for easier editing.
+      </p>
 
       {error ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -448,7 +453,7 @@ export default function TerritoryMap({
             Loading map…
           </div>
         ) : null}
-        <div ref={mapEl} className="h-[360px] w-full sm:h-[420px]" />
+        <div ref={mapEl} className="h-[240px] w-full sm:h-[360px] md:h-[420px]" />
       </div>
     </div>
   );

@@ -17,6 +17,8 @@ import { formatCustomerRecordName } from "@/lib/formatName";
 import LucideIconByName from "@/components/icons/LucideIconByName";
 import { formatAddressLabel } from "@/components/customers/CustomerAddressesPanel";
 import { ContractEquipmentSummary } from "@/lib/api";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 
 export function formatEquipmentLabel(
   equipment: ContractEquipmentSummary | null | undefined,
@@ -130,6 +132,80 @@ function ContractRow({
   );
 }
 
+function ContractMobileCard({
+  contract,
+  showCustomer,
+  showAddress,
+  canEdit,
+  returnTo,
+}: ContractRowProps) {
+  const editHref = `/dashboard/contracts/edit?id=${contract._id}&returnTo=${encodeURIComponent(returnTo)}`;
+  const title = showCustomer
+    ? contract.customer
+      ? formatCustomerRecordName(contract.customer)
+      : "Unknown customer"
+    : formatContractCatalogLabel(contract);
+  const subtitle = showAddress
+    ? formatAddressLabel(contract.address)
+    : contract.description || undefined;
+
+  return (
+    <MobileDataCard
+      title={title}
+      subtitle={subtitle}
+      badges={
+        <>
+          <TypeBadge contract={contract} />
+          <StandingBadge contract={contract} />
+        </>
+      }
+      fields={
+        <>
+          {showCustomer && showAddress ? (
+            <DataField
+              label="Equipment"
+              value={formatEquipmentLabel(contract.equipment)}
+              className="col-span-2"
+            />
+          ) : null}
+          <DataField
+            label="Original"
+            value={formatDateOnly(contract.originalContractDate)}
+          />
+          <DataField
+            label="Renewal"
+            value={formatDateOnly(contract.renewalDueDate)}
+          />
+          <DataField
+            label="Duration"
+            value={
+              contract.durationMonths ? `${contract.durationMonths} mo` : "—"
+            }
+          />
+          {contract.description && showCustomer ? (
+            <DataField
+              label="Description"
+              value={contract.description}
+              className="col-span-2"
+            />
+          ) : null}
+        </>
+      }
+      actions={
+        canEdit ? (
+          <Link
+            href={editHref}
+            className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs font-medium text-brand-orange hover:border-brand-orange"
+          >
+            <Pencil className="h-3 w-3" />
+            Edit
+          </Link>
+        ) : null
+      }
+    />
+  );
+}
+
 interface ServiceContractsTableProps {
   contracts: ContractListItem[];
   showCustomer?: boolean;
@@ -149,77 +225,98 @@ export default function ServiceContractsTable({
   const colCount =
     (showCustomer ? 7 : 6) + (showAddress ? 2 : 0) + (canEdit ? 1 : 0);
 
-  return (
-    <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-neutral-100 text-sm">
-          <thead className="bg-neutral-50">
-            <tr>
-              {showCustomer && (
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Customer
-                </th>
-              )}
-              {showAddress && (
-                <>
-                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                    Address
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                    Equipment
-                  </th>
-                </>
-              )}
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Original Date
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Renewal Due
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Duration
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Type
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Standing
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Description
-              </th>
-              {canEdit && (
-                <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Actions
-                </th>
-              )}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-neutral-100 bg-white">
-            {contracts.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={colCount}
-                  className="px-6 py-12 text-center text-neutral-500"
-                >
-                  {emptyMessage}
-                </td>
-              </tr>
-            ) : (
-              contracts.map((contract) => (
-                <ContractRow
-                  key={contract._id}
-                  contract={contract}
-                  showCustomer={showCustomer}
-                  showAddress={showAddress}
-                  canEdit={canEdit}
-                  returnTo={returnTo}
-                />
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+  const empty = (
+    <div className="rounded-xl border border-neutral-200 bg-white px-6 py-12 text-center text-sm text-neutral-500 shadow-sm">
+      {emptyMessage}
     </div>
+  );
+
+  return (
+    <ResponsiveDataView
+      isEmpty={contracts.length === 0}
+      empty={empty}
+      mobile={contracts.map((contract) => (
+        <ContractMobileCard
+          key={contract._id}
+          contract={contract}
+          showCustomer={showCustomer}
+          showAddress={showAddress}
+          canEdit={canEdit}
+          returnTo={returnTo}
+        />
+      ))}
+      desktop={
+        <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-neutral-100 text-sm">
+              <thead className="bg-neutral-50">
+                <tr>
+                  {showCustomer && (
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Customer
+                    </th>
+                  )}
+                  {showAddress && (
+                    <>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Address
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Equipment
+                      </th>
+                    </>
+                  )}
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Original Date
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Renewal Due
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Duration
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Type
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Standing
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Description
+                  </th>
+                  {canEdit && (
+                    <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Actions
+                    </th>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100 bg-white">
+                {contracts.map((contract) => (
+                  <ContractRow
+                    key={contract._id}
+                    contract={contract}
+                    showCustomer={showCustomer}
+                    showAddress={showAddress}
+                    canEdit={canEdit}
+                    returnTo={returnTo}
+                  />
+                ))}
+                {contracts.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={colCount}
+                      className="px-6 py-12 text-center text-neutral-500"
+                    >
+                      {emptyMessage}
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      }
+    />
   );
 }

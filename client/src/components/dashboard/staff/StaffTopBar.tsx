@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LogOut, Menu, Plus, X } from "lucide-react";
 import { COMPANY } from "@/lib/constants";
 import { getVisibleNavSections } from "@/lib/dashboard-nav";
@@ -27,9 +27,18 @@ export default function StaffTopBar() {
     `${user?.first_name?.[0] ?? ""}${user?.last_name?.[0] ?? ""}`.toUpperCase() ||
     "U";
 
+  useEffect(() => {
+    setMobileOpen(false);
+    setNewOpen(false);
+  }, [pathname]);
+
   function handleLogout() {
     logout();
     router.push("/auth/login");
+  }
+
+  function closeMobileNav() {
+    setMobileOpen(false);
   }
 
   return (
@@ -129,8 +138,8 @@ export default function StaffTopBar() {
       />
 
       {mobileOpen && (
-        <div className="border-t border-[var(--staff-border)] bg-[var(--staff-surface)] px-4 pb-4 md:hidden">
-          <nav className="flex flex-col gap-5 pt-4">
+        <div className="border-t border-[var(--staff-border)] bg-[var(--staff-surface)] md:hidden max-h-[min(70dvh,calc(100dvh-7.5rem))] overflow-y-auto overscroll-contain">
+          <nav className="flex flex-col gap-5 px-4 pb-4 pt-4">
             <Link
               href="/dashboard"
               className={`rounded-lg px-3 py-2.5 text-sm font-medium ${
@@ -138,7 +147,7 @@ export default function StaffTopBar() {
                   ? "bg-[var(--staff-ink)] text-white"
                   : "text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
               }`}
-              onClick={() => setMobileOpen(false)}
+              onClick={closeMobileNav}
             >
               Home
             </Link>
@@ -154,7 +163,7 @@ export default function StaffTopBar() {
                       item={item}
                       pathname={pathname}
                       variant="sidebar"
-                      onNavigate={() => setMobileOpen(false)}
+                      onNavigate={closeMobileNav}
                     />
                   ))}
                 </div>
@@ -163,7 +172,7 @@ export default function StaffTopBar() {
             <button
               type="button"
               onClick={() => {
-                setMobileOpen(false);
+                closeMobileNav();
                 handleLogout();
               }}
               className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"

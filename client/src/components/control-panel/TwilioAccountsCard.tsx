@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import PasswordInput from "@/components/ui/PasswordInput";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import {
   ApiError,
   createTwilioAccount,
@@ -456,61 +458,59 @@ export default function TwilioAccountsCard() {
           messaging and calls.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-neutral-100 text-sm">
-            <thead className="bg-neutral-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Name
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Account SID
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Phones
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Status
-                </th>
-                <th className="px-6 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100 bg-white">
-              {accounts.map((account) => (
-                <tr key={account._id}>
-                  <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
-                    {account.friendlyName}
-                    <div className="mt-0.5 text-xs font-normal text-neutral-400">
-                      {account.hasAuthToken
-                        ? "Auth token set"
-                        : "Missing auth token"}
-                      {account.hasTestAuthToken
-                        ? account.testAccountSid
-                          ? " · Test credentials set"
-                          : " · Test token set (missing test SID — will NOT work)"
-                        : ""}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 font-mono text-neutral-600 whitespace-nowrap">
-                    {maskSid(account.accountSid)}
-                  </td>
-                  <td className="px-6 py-4 text-neutral-600">
-                    {account.phoneNumbers.length > 0
-                      ? account.phoneNumbers.join(", ")
-                      : "—"}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span
-                      className={
-                        account.isActive
-                          ? "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
-                          : "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
+        <div className="px-4 pb-4 sm:px-0 sm:pb-0">
+          <ResponsiveDataView
+            mobile={accounts.map((account) => (
+              <MobileDataCard
+                key={account._id}
+                title={account.friendlyName}
+                subtitle={
+                  <>
+                    {account.hasAuthToken
+                      ? "Auth token set"
+                      : "Missing auth token"}
+                    {account.hasTestAuthToken
+                      ? account.testAccountSid
+                        ? " · Test credentials set"
+                        : " · Test token set (missing test SID — will NOT work)"
+                      : ""}
+                  </>
+                }
+                badges={
+                  <span
+                    className={
+                      account.isActive
+                        ? "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
+                        : "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
+                    }
+                  >
+                    {account.isActive ? "Active" : "Inactive"}
+                  </span>
+                }
+                fields={
+                  <>
+                    <DataField
+                      label="Account SID"
+                      value={
+                        <span className="font-mono">
+                          {maskSid(account.accountSid)}
+                        </span>
                       }
-                    >
-                      {account.isActive ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right whitespace-nowrap">
+                      className="col-span-2"
+                    />
+                    <DataField
+                      label="Phones"
+                      value={
+                        account.phoneNumbers.length > 0
+                          ? account.phoneNumbers.join(", ")
+                          : "—"
+                      }
+                      className="col-span-2"
+                    />
+                  </>
+                }
+                actions={
+                  <div className="flex items-center gap-0.5">
                     <button
                       type="button"
                       onClick={() => openEdit(account)}
@@ -523,16 +523,96 @@ export default function TwilioAccountsCard() {
                       type="button"
                       onClick={() => handleDelete(account._id)}
                       disabled={deletingId === account._id}
-                      className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
                       aria-label={`Delete ${account.friendlyName}`}
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                }
+              />
+            ))}
+            desktop={
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-neutral-100 text-sm">
+                  <thead className="bg-neutral-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Name
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Account SID
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Phones
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Status
+                      </th>
+                      <th className="px-6 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 bg-white">
+                    {accounts.map((account) => (
+                      <tr key={account._id}>
+                        <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
+                          {account.friendlyName}
+                          <div className="mt-0.5 text-xs font-normal text-neutral-400">
+                            {account.hasAuthToken
+                              ? "Auth token set"
+                              : "Missing auth token"}
+                            {account.hasTestAuthToken
+                              ? account.testAccountSid
+                                ? " · Test credentials set"
+                                : " · Test token set (missing test SID — will NOT work)"
+                              : ""}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 font-mono text-neutral-600 whitespace-nowrap">
+                          {maskSid(account.accountSid)}
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600">
+                          {account.phoneNumbers.length > 0
+                            ? account.phoneNumbers.join(", ")
+                            : "—"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span
+                            className={
+                              account.isActive
+                                ? "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
+                                : "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
+                            }
+                          >
+                            {account.isActive ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(account)}
+                            className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+                            aria-label={`Edit ${account.friendlyName}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(account._id)}
+                            disabled={deletingId === account._id}
+                            className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                            aria-label={`Delete ${account.friendlyName}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            }
+          />
         </div>
       )}
     </div>

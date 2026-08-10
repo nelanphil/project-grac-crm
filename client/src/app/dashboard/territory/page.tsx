@@ -177,18 +177,18 @@ function TerritoryPageContent() {
         <div
           className={
             isOrgAdmin && owners.length > 1
-              ? "grid gap-6 lg:grid-cols-[240px_1fr]"
+              ? "grid gap-4 md:gap-6 md:grid-cols-[220px_1fr] lg:grid-cols-[240px_1fr]"
               : "space-y-4"
           }
         >
           {isOrgAdmin && owners.length > 1 ? (
-            <aside className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden h-fit">
+            <aside className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden h-fit min-w-0">
               <div className="border-b border-neutral-100 px-4 py-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   Owners
                 </p>
               </div>
-              <ul className="divide-y divide-neutral-100">
+              <ul className="divide-y divide-neutral-100 max-h-56 overflow-y-auto md:max-h-none">
                 {owners.map((owner) => {
                   const active = owner._id === selected?._id;
                   const count =
@@ -226,7 +226,7 @@ function TerritoryPageContent() {
           ) : null}
 
           {selected ? (
-            <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-4">
+            <div className="rounded-xl border border-neutral-200 bg-white p-4 sm:p-6 shadow-sm space-y-4 min-w-0">
               {isOrgAdmin ? (
                 <div>
                   <h2 className="text-lg font-semibold text-brand-dark">

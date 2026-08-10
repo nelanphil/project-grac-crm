@@ -216,8 +216,8 @@ function ContactCardContent({
   }
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm">
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm sm:p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-brand-dark">
           {view === "contact"
             ? `Contacts${contacts.length > 0 ? ` (${contacts.length})` : ""}`

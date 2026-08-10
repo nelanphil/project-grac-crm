@@ -132,7 +132,7 @@ function ContractsContent() {
       </div>
 
       {isAdmin && (
-        <div className="flex gap-2 border-b border-neutral-200">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-neutral-200">
           <button
             type="button"
             onClick={() => setView("customer")}
@@ -162,13 +162,13 @@ function ContractsContent() {
         <ContractsCard />
       ) : (
         <>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
             <p className="text-sm text-neutral-500">
               {search.trim() || typeFilter !== "all"
                 ? `${filteredContracts.length} of ${contracts.length} contracts`
                 : `${contracts.length} total`}
             </p>
-            <div className="relative w-full sm:w-72">
+            <div className="relative w-full min-w-0 sm:max-w-xs sm:w-72">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
               <input
                 type="search"
@@ -181,8 +181,8 @@ function ContractsContent() {
           </div>
 
           <div className="space-y-3">
-            <div className="flex flex-wrap gap-2">
-              <span className="self-center text-xs font-medium uppercase tracking-wide text-neutral-400">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="basis-full text-xs font-medium uppercase tracking-wide text-neutral-400 sm:basis-auto sm:self-center">
                 Standing
               </span>
               {STANDING_TABS.map((tab) => (
@@ -201,8 +201,8 @@ function ContractsContent() {
               ))}
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <span className="self-center text-xs font-medium uppercase tracking-wide text-neutral-400">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="basis-full text-xs font-medium uppercase tracking-wide text-neutral-400 sm:basis-auto sm:self-center">
                 Type
               </span>
               {typeTabs.map((tab) => (
