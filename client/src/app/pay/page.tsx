@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   ApiError,
   getInvoiceByPayToken,
@@ -16,6 +16,19 @@ function formatMoney(cents: number): string {
   }).format(cents / 100);
 }
 
+/** Prefer ?token= (static-export safe); also accept /pay/{token}/ path segments. */
+function resolvePayToken(
+  pathname: string | null,
+  searchToken: string | null,
+): string {
+  const fromQuery = (searchToken ?? "").trim();
+  if (fromQuery) return fromQuery;
+
+  const path = (pathname ?? "").replace(/\/+$/, "");
+  const match = path.match(/^\/pay\/([^/]+)$/);
+  return match?.[1] ? decodeURIComponent(match[1]) : "";
+}
+
 export default function PayLinkPage() {
   return (
     <Suspense fallback={null}>
@@ -25,8 +38,9 @@ export default function PayLinkPage() {
 }
 
 function PayLinkContent() {
+  const pathname = usePathname();
   const searchParams = useSearchParams();
-  const token = searchParams.get("token") ?? "";
+  const token = resolvePayToken(pathname, searchParams.get("token"));
 
   const [invoice, setInvoice] = useState<InvoiceItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,7 +48,12 @@ function PayLinkContent() {
   const [paying, setPaying] = useState(false);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLoading(false);
+      setError("Pay link token is missing.");
+      return;
+    }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     getInvoiceByPayToken(token)

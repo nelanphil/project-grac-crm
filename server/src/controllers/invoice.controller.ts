@@ -20,6 +20,7 @@ import {
   logNotificationAsync,
 } from "../services/notification.service";
 import { resolveCheckoutProviderForInvoice } from "../payments/registry";
+import { resolveCheckoutBuyer } from "../payments/checkoutBuyer";
 import { env } from "../config/env";
 
 const STAFF_ROLES = new Set([
@@ -476,11 +477,13 @@ export async function startInvoiceCheckout(
       invoice.customerRef,
     );
     const redirectUrl = `${env.clientUrl.replace(/\/$/, "")}/checkout/complete?invoiceId=${invoice._id}`;
+    const buyer = await resolveCheckoutBuyer(invoice.customerRef);
 
     const result = await adapter.createCheckout({
       invoice,
       account,
       redirectUrl,
+      buyer,
     });
 
     invoice.paymentProvider = adapter.name;
@@ -525,7 +528,8 @@ export async function createInvoicePayLink(
     invoice.payTokenExpiresAt = expiresAt;
     await invoice.save();
 
-    const payUrl = `${env.clientUrl.replace(/\/$/, "")}/pay/${token}`;
+    // Static export uses query params (not dynamic path segments).
+    const payUrl = `${env.clientUrl.replace(/\/$/, "")}/pay/?token=${encodeURIComponent(token)}`;
     res.json({
       payUrl,
       expiresAt,
@@ -598,10 +602,12 @@ export async function startCheckoutByPayToken(
       invoice.customerRef,
     );
     const redirectUrl = `${env.clientUrl.replace(/\/$/, "")}/checkout/complete?invoiceId=${invoice._id}`;
+    const buyer = await resolveCheckoutBuyer(invoice.customerRef);
     const result = await adapter.createCheckout({
       invoice,
       account,
       redirectUrl,
+      buyer,
     });
 
     invoice.paymentProvider = adapter.name;

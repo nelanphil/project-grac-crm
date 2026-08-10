@@ -65,12 +65,31 @@ export const squareAdapter: PaymentProviderAdapter = {
   async createCheckout(
     input: CreateCheckoutInput,
   ): Promise<CreateCheckoutResult> {
-    const { invoice, account, redirectUrl } = input;
+    const { invoice, account, redirectUrl, buyer } = input;
     const client = squareClient(account);
     const locationId = account.account.locationId!;
 
     const name =
       invoice.lineItems[0]?.description || `Invoice ${invoice.number}`;
+
+    const prePopulatedData: {
+      buyerEmail?: string;
+      buyerPhoneNumber?: string;
+      buyerAddress?: { firstName?: string; lastName?: string };
+    } = {};
+    if (buyer?.email) prePopulatedData.buyerEmail = buyer.email;
+    if (buyer?.phoneE164) {
+      prePopulatedData.buyerPhoneNumber = buyer.phoneE164;
+    }
+    if (buyer?.firstName || buyer?.lastName) {
+      prePopulatedData.buyerAddress = {};
+      if (buyer.firstName) {
+        prePopulatedData.buyerAddress.firstName = buyer.firstName;
+      }
+      if (buyer.lastName) {
+        prePopulatedData.buyerAddress.lastName = buyer.lastName;
+      }
+    }
 
     const response = await client.checkout.paymentLinks.create({
       idempotencyKey: randomUUID(),
@@ -88,6 +107,9 @@ export const squareAdapter: PaymentProviderAdapter = {
         redirectUrl,
         askForShippingAddress: false,
       },
+      ...(Object.keys(prePopulatedData).length > 0
+        ? { prePopulatedData }
+        : {}),
     });
 
     const link = response.paymentLink;
