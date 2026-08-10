@@ -48,12 +48,7 @@ function PayLinkContent() {
   const [paying, setPaying] = useState(false);
 
   useEffect(() => {
-    if (!token) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setLoading(false);
-      setError("Pay link token is missing.");
-      return;
-    }
+    if (!token) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     getInvoiceByPayToken(token)
@@ -83,7 +78,9 @@ function PayLinkContent() {
       <div className="w-full max-w-md rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-4">
         <h1 className="text-xl font-bold text-brand-dark">Pay invoice</h1>
 
-        {loading ? (
+        {!token ? (
+          <p className="text-sm text-red-600">Pay link token is missing.</p>
+        ) : loading ? (
           <p className="text-sm text-neutral-500">Loading…</p>
         ) : error && !invoice ? (
           <p className="text-sm text-red-600">{error}</p>
