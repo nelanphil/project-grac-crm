@@ -52,7 +52,11 @@ function formatConflictMessage(
   return `Territory conflict: ${parts.join("; ")}`;
 }
 
-/** GET /territories — owners see self; admin/super-admin see all owners. */
+/**
+ * GET /territories — all active owners (with territories) for admin/super-admin
+ * and owner. Owners need peer claims so the map/editor can hide unavailable
+ * counties/ZIPs; they can still only PATCH their own territory.
+ */
 export async function listTerritories(
   req: AuthRequest,
   res: Response,
@@ -60,21 +64,6 @@ export async function listTerritories(
   try {
     if (!req.user || !TERRITORY_ROLES.has(req.user.role)) {
       res.status(403).json({ message: "Insufficient role" });
-      return;
-    }
-
-    if (req.user.role === "owner") {
-      const user = await User.findOne({
-        _id: req.user.id,
-        ...activeUserFilter,
-      })
-        .select("-password_hash")
-        .lean();
-      if (!user) {
-        res.status(404).json({ message: "User not found" });
-        return;
-      }
-      res.status(200).json({ owners: [formatOwner(user)] });
       return;
     }
 

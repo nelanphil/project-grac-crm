@@ -83,8 +83,17 @@ export default function TerritoryMap({
     const countyMode = modeRef.current === "county";
     const clickable = countyMode && !selectionRef.current.disabled;
 
+    // Claimed by another owner and not already selected — hide from the map.
+    if (claimedBy && !selected) {
+      return {
+        visible: false,
+        clickable: false,
+      };
+    }
+
     if (selected) {
       return {
+        visible: true,
         fillColor: "#E87722",
         fillOpacity: countyMode ? 0.45 : 0.22,
         strokeColor: "#C45F12",
@@ -93,17 +102,8 @@ export default function TerritoryMap({
         zIndex: 2,
       };
     }
-    if (claimedBy) {
-      return {
-        fillColor: "#6B7280",
-        fillOpacity: countyMode ? 0.35 : 0.12,
-        strokeColor: "#4B5563",
-        strokeWeight: 1,
-        clickable,
-        zIndex: 1,
-      };
-    }
     return {
+      visible: true,
       fillColor: "#94A3B8",
       fillOpacity: countyMode ? 0.12 : 0.04,
       strokeColor: "#64748B",
@@ -122,8 +122,17 @@ export default function TerritoryMap({
     const zipMode = modeRef.current === "zip";
     const clickable = zipMode && !selectionRef.current.disabled;
 
+    // Claimed by another owner and not already selected — hide from the map.
+    if (claimedBy && !selected) {
+      return {
+        visible: false,
+        clickable: false,
+      };
+    }
+
     if (selected) {
       return {
+        visible: true,
         fillColor: "#0EA5E9",
         fillOpacity: 0.35,
         strokeColor: "#0369A1",
@@ -133,18 +142,8 @@ export default function TerritoryMap({
         zIndex: 4,
       };
     }
-    if (claimedBy) {
-      return {
-        fillColor: "#9CA3AF",
-        fillOpacity: 0.22,
-        strokeColor: "#6B7280",
-        strokeWeight: 0.75,
-        strokeOpacity: 0.7,
-        clickable,
-        zIndex: 3,
-      };
-    }
     return {
+      visible: true,
       fillColor: "#38BDF8",
       fillOpacity: 0.1,
       strokeColor: "#0284C7",
@@ -371,8 +370,8 @@ export default function TerritoryMap({
           <p className="text-sm font-medium text-brand-dark">Territory map</p>
           <p className="text-xs text-neutral-500">
             {selectMode === "county"
-              ? "County mode: click a county to add or remove it."
-              : "ZIP mode: zoom in, then click a ZIP to add or remove a carve-out."}
+              ? "County mode: click an available county to add or remove it. Areas held by other owners are hidden."
+              : "ZIP mode: zoom in, then click an available ZIP to add or remove a carve-out. Claimed ZIPs are hidden."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -416,8 +415,8 @@ export default function TerritoryMap({
               Selected ZIP
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#6B7280]" />
-              Claimed by other
+              <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#94A3B8]" />
+              Available
             </span>
           </div>
         </div>
