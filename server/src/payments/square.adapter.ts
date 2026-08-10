@@ -59,36 +59,100 @@ async function verifySquareSignature(
   }
 }
 
+type SquarePrefill = {
+  buyerEmail?: string;
+  buyerPhoneNumber?: string;
+  buyerAddress?: { firstName?: string; lastName?: string };
+};
+
+function buildPrefill(buyer?: CreateCheckoutInput["buyer"]): SquarePrefill {
+  const prePopulatedData: SquarePrefill = {};
+  if (buyer?.email) prePopulatedData.buyerEmail = buyer.email;
+  if (buyer?.phoneE164) {
+    prePopulatedData.buyerPhoneNumber = buyer.phoneE164;
+  }
+  if (buyer?.firstName || buyer?.lastName) {
+    prePopulatedData.buyerAddress = {};
+    if (buyer.firstName) {
+      prePopulatedData.buyerAddress.firstName = buyer.firstName;
+    }
+    if (buyer.lastName) {
+      prePopulatedData.buyerAddress.lastName = buyer.lastName;
+    }
+  }
+  return prePopulatedData;
+}
+
+function squareErrorCodes(err: unknown): string[] {
+  const errors = (err as { errors?: Array<{ code?: string }> })?.errors;
+  if (!Array.isArray(errors)) return [];
+  return errors.map((e) => String(e.code || "")).filter(Boolean);
+}
+
 export const squareAdapter: PaymentProviderAdapter = {
   name: "square",
 
   async createCheckout(
     input: CreateCheckoutInput,
   ): Promise<CreateCheckoutResult> {
-    const { invoice, account, redirectUrl } = input;
+    const { invoice, account, redirectUrl, buyer } = input;
     const client = squareClient(account);
     const locationId = account.account.locationId!;
 
     const name =
       invoice.lineItems[0]?.description || `Invoice ${invoice.number}`;
 
-    const response = await client.checkout.paymentLinks.create({
-      idempotencyKey: randomUUID(),
-      description: `Invoice ${invoice.number}`,
-      quickPay: {
-        name,
-        priceMoney: {
-          amount: BigInt(invoice.amountCents),
-          currency: (invoice.currency || "USD") as "USD",
+    const prePopulatedData = buildPrefill(buyer);
+
+    const createLink = async (prefill: SquarePrefill) =>
+      client.checkout.paymentLinks.create({
+        idempotencyKey: randomUUID(),
+        description: `Invoice ${invoice.number}`,
+        quickPay: {
+          name,
+          priceMoney: {
+            amount: BigInt(invoice.amountCents),
+            currency: (invoice.currency || "USD") as "USD",
+          },
+          locationId,
         },
-        locationId,
-      },
-      paymentNote: `invoice:${invoice._id}`,
-      checkoutOptions: {
-        redirectUrl,
-        askForShippingAddress: false,
-      },
-    });
+        paymentNote: `invoice:${invoice._id}`,
+        checkoutOptions: {
+          redirectUrl,
+          askForShippingAddress: false,
+        },
+        ...(Object.keys(prefill).length > 0
+          ? { prePopulatedData: prefill }
+          : {}),
+      });
+
+    // Invalid CRM contact values must not block checkout — drop rejected
+    // prefill fields and retry (phone and email can both be invalid).
+    let response;
+    for (;;) {
+      try {
+        response = await createLink(prePopulatedData);
+        break;
+      } catch (err) {
+        const codes = squareErrorCodes(err);
+        let stripped = false;
+        if (
+          codes.includes("INVALID_PHONE_NUMBER") &&
+          prePopulatedData.buyerPhoneNumber
+        ) {
+          delete prePopulatedData.buyerPhoneNumber;
+          stripped = true;
+        }
+        if (
+          codes.includes("INVALID_EMAIL_ADDRESS") &&
+          prePopulatedData.buyerEmail
+        ) {
+          delete prePopulatedData.buyerEmail;
+          stripped = true;
+        }
+        if (!stripped) throw err;
+      }
+    }
 
     const link = response.paymentLink;
     if (!link?.url || !link.id) {

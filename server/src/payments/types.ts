@@ -3,10 +3,19 @@ import { IInvoice } from "../models/mongo/Invoice";
 import { PaymentAccountWithSecrets } from "../services/paymentProvider.service";
 import { PaymentProviderName } from "../models/mongo/PaymentProviderAccount";
 
+export type CheckoutBuyer = {
+  email?: string;
+  phoneE164?: string;
+  firstName?: string;
+  lastName?: string;
+};
+
 export type CreateCheckoutInput = {
   invoice: IInvoice;
   account: PaymentAccountWithSecrets;
   redirectUrl: string;
+  /** Optional CRM contact data used to prefill provider checkout forms. */
+  buyer?: CheckoutBuyer;
 };
 
 export type CreateCheckoutResult = {

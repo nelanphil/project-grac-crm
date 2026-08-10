@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   ApiError,
   getInvoiceByPayToken,
@@ -16,6 +16,19 @@ function formatMoney(cents: number): string {
   }).format(cents / 100);
 }
 
+/** Prefer ?token= (static-export safe); also accept /pay/{token}/ path segments. */
+function resolvePayToken(
+  pathname: string | null,
+  searchToken: string | null,
+): string {
+  const fromQuery = (searchToken ?? "").trim();
+  if (fromQuery) return fromQuery;
+
+  const path = (pathname ?? "").replace(/\/+$/, "");
+  const match = path.match(/^\/pay\/([^/]+)$/);
+  return match?.[1] ? decodeURIComponent(match[1]) : "";
+}
+
 export default function PayLinkPage() {
   return (
     <Suspense fallback={null}>
@@ -25,8 +38,9 @@ export default function PayLinkPage() {
 }
 
 function PayLinkContent() {
+  const pathname = usePathname();
   const searchParams = useSearchParams();
-  const token = searchParams.get("token") ?? "";
+  const token = resolvePayToken(pathname, searchParams.get("token"));
 
   const [invoice, setInvoice] = useState<InvoiceItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -64,7 +78,9 @@ function PayLinkContent() {
       <div className="w-full max-w-md rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-4">
         <h1 className="text-xl font-bold text-brand-dark">Pay invoice</h1>
 
-        {loading ? (
+        {!token ? (
+          <p className="text-sm text-red-600">Pay link token is missing.</p>
+        ) : loading ? (
           <p className="text-sm text-neutral-500">Loading…</p>
         ) : error && !invoice ? (
           <p className="text-sm text-red-600">{error}</p>
