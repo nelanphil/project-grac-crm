@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { Mail, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import PasswordInput from "@/components/ui/PasswordInput";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import {
   ApiError,
   createEmailAccount,
@@ -562,66 +564,17 @@ export default function EmailAccountsCard() {
           General notifications to enable password reset and signup emails.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-neutral-100 text-sm">
-            <thead className="bg-neutral-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Name
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  From
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Host
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Roles
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Status
-                </th>
-                <th className="px-6 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100 bg-white">
-              {accounts.map((account) => (
-                <tr key={account._id}>
-                  <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
-                    {account.friendlyName}
-                    <div className="mt-0.5 text-xs font-normal text-neutral-400">
-                      {account.hasPassword
-                        ? "Password set"
-                        : "Missing password"}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-neutral-600">
-                    <div className="whitespace-nowrap">{account.fromName}</div>
-                    <div className="text-xs text-neutral-400">
-                      {account.fromEmail}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 font-mono text-neutral-600 whitespace-nowrap">
-                    {account.host}:{account.port}
-                    {account.secure ? " (TLS)" : ""}
-                  </td>
-                  <td className="px-6 py-4">
-                    {account.roles.length === 0 ? (
-                      <span className="text-neutral-400">—</span>
-                    ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {account.roles.map((role) => (
-                          <span
-                            key={role}
-                            className="inline-flex rounded-full bg-brand-dark/5 px-2 py-0.5 text-xs font-medium text-brand-dark"
-                          >
-                            {ROLE_BADGE_LABELS[role]}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+        <div className="px-4 pb-4 sm:px-0 sm:pb-0">
+          <ResponsiveDataView
+            mobile={accounts.map((account) => (
+              <MobileDataCard
+                key={account._id}
+                title={account.friendlyName}
+                subtitle={
+                  account.hasPassword ? "Password set" : "Missing password"
+                }
+                badges={
+                  <>
                     <span
                       className={
                         account.isActive
@@ -631,8 +584,39 @@ export default function EmailAccountsCard() {
                     >
                       {account.isActive ? "Active" : "Inactive"}
                     </span>
-                  </td>
-                  <td className="px-6 py-4 text-right whitespace-nowrap">
+                    {account.roles.map((role) => (
+                      <span
+                        key={role}
+                        className="inline-flex rounded-full bg-brand-dark/5 px-2 py-0.5 text-xs font-medium text-brand-dark"
+                      >
+                        {ROLE_BADGE_LABELS[role]}
+                      </span>
+                    ))}
+                  </>
+                }
+                fields={
+                  <>
+                    <DataField
+                      label="From"
+                      value={
+                        <>
+                          <span className="block">{account.fromName}</span>
+                          <span className="text-xs text-neutral-500">
+                            {account.fromEmail}
+                          </span>
+                        </>
+                      }
+                      className="col-span-2"
+                    />
+                    <DataField
+                      label="Host"
+                      value={`${account.host}:${account.port}${account.secure ? " (TLS)" : ""}`}
+                      className="col-span-2"
+                    />
+                  </>
+                }
+                actions={
+                  <div className="flex items-center gap-0.5">
                     <button
                       type="button"
                       onClick={() => handleSendTest(account)}
@@ -650,7 +634,7 @@ export default function EmailAccountsCard() {
                     <button
                       type="button"
                       onClick={() => openEdit(account)}
-                      className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
                       aria-label={`Edit ${account.friendlyName}`}
                     >
                       <Pencil className="h-4 w-4" />
@@ -659,19 +643,131 @@ export default function EmailAccountsCard() {
                       type="button"
                       onClick={() => handleDelete(account._id)}
                       disabled={deletingId === account._id}
-                      className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
                       aria-label={`Delete ${account.friendlyName}`}
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                }
+              />
+            ))}
+            desktop={
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-neutral-100 text-sm">
+                  <thead className="bg-neutral-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Name
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        From
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Host
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Roles
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Status
+                      </th>
+                      <th className="px-6 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 bg-white">
+                    {accounts.map((account) => (
+                      <tr key={account._id}>
+                        <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
+                          {account.friendlyName}
+                          <div className="mt-0.5 text-xs font-normal text-neutral-400">
+                            {account.hasPassword
+                              ? "Password set"
+                              : "Missing password"}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600">
+                          <div className="whitespace-nowrap">
+                            {account.fromName}
+                          </div>
+                          <div className="text-xs text-neutral-400">
+                            {account.fromEmail}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 font-mono text-neutral-600 whitespace-nowrap">
+                          {account.host}:{account.port}
+                          {account.secure ? " (TLS)" : ""}
+                        </td>
+                        <td className="px-6 py-4">
+                          {account.roles.length === 0 ? (
+                            <span className="text-neutral-400">—</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {account.roles.map((role) => (
+                                <span
+                                  key={role}
+                                  className="inline-flex rounded-full bg-brand-dark/5 px-2 py-0.5 text-xs font-medium text-brand-dark"
+                                >
+                                  {ROLE_BADGE_LABELS[role]}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span
+                            className={
+                              account.isActive
+                                ? "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
+                                : "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
+                            }
+                          >
+                            {account.isActive ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => handleSendTest(account)}
+                            disabled={
+                              !account.isActive ||
+                              !account.hasPassword ||
+                              testingId === account._id
+                            }
+                            className="inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark disabled:opacity-50"
+                            aria-label={`Send test email via ${account.friendlyName}`}
+                            title="Send test email"
+                          >
+                            <Mail className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openEdit(account)}
+                            className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+                            aria-label={`Edit ${account.friendlyName}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(account._id)}
+                            disabled={deletingId === account._id}
+                            className="ml-1 inline-flex items-center gap-1 rounded px-2 py-1 text-neutral-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                            aria-label={`Delete ${account.friendlyName}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            }
+          />
           {testFeedback && (
             <div
-              className={`mx-6 mb-4 mt-2 rounded-md border px-4 py-3 text-sm ${
+              className={`mx-0 sm:mx-6 mb-4 mt-2 rounded-md border px-4 py-3 text-sm ${
                 testFeedback.ok
                   ? "border-amber-200 bg-amber-50 text-amber-900"
                   : "border-red-200 bg-red-50 text-red-700"

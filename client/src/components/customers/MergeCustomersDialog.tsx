@@ -338,19 +338,19 @@ export default function MergeCustomersDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-3 sm:p-4">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="merge-customers-title"
-        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-xl"
+        className="flex max-h-[min(92dvh,90vh)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-xl"
       >
-        <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4">
-          <div className="flex items-center gap-2">
-            <GitMerge className="h-5 w-5 text-brand-orange" />
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-neutral-100 px-4 py-3 sm:items-center sm:px-5 sm:py-4">
+          <div className="flex min-w-0 items-start gap-2 sm:items-center">
+            <GitMerge className="mt-0.5 h-5 w-5 shrink-0 text-brand-orange sm:mt-0" />
             <h2
               id="merge-customers-title"
-              className="text-lg font-semibold text-brand-dark"
+              className="text-base font-semibold text-brand-dark sm:text-lg break-words"
             >
               Merge into {formatCustomerRecordName(survivor)}
             </h2>
@@ -358,14 +358,14 @@ export default function MergeCustomersDialog({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+            className="shrink-0 rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="space-y-5 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
           <p className="text-sm text-neutral-600">
             Select another customer account to merge. Review how contacts,
             addresses, equipment, work orders, and contracts will sit under this
@@ -648,7 +648,7 @@ export default function MergeCustomersDialog({
           ) : null}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-neutral-100 px-5 py-4">
+        <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-neutral-100 px-4 py-3 sm:px-5 sm:py-4">
           <button
             type="button"
             onClick={onClose}

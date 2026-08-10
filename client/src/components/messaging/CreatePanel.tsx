@@ -25,6 +25,8 @@ import {
   formatCustomerRecordName,
   toProperCase,
 } from "@/lib/formatName";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { formatTime } from "./MessageBubble";
 import PhonePreview from "./PhonePreview";
 
@@ -279,7 +281,7 @@ export default function CreatePanel({
       ) : null}
 
       {/* Step indicator */}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {STEPS.map((s, i) => {
           const active = i === stepIndex;
           const done = i < maxStepIndex;
@@ -290,7 +292,7 @@ export default function CreatePanel({
               type="button"
               disabled={!reachable}
               onClick={() => goToStep(i)}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-medium transition-colors sm:px-3 ${
                 active
                   ? "bg-brand-dark text-white"
                   : reachable
@@ -309,7 +311,7 @@ export default function CreatePanel({
               >
                 {done ? <Check className="h-3 w-3" /> : i + 1}
               </span>
-              {s.label}
+              <span className="hidden sm:inline">{s.label}</span>
             </button>
           );
         })}
@@ -400,70 +402,129 @@ export default function CreatePanel({
                 No contacts with valid phone numbers found.
               </div>
             ) : (
-              <table className="w-full text-left text-sm">
-                <thead className="sticky top-0 bg-neutral-50 text-xs text-neutral-500">
-                  <tr>
-                    <th className="w-8 px-2 py-2" />
-                    <th className="px-2 py-2 font-medium">Contact</th>
-                    <th className="px-2 py-2 font-medium">Phone</th>
-                    <th className="px-2 py-2 font-medium">Customer</th>
-                    {useRenewalsFilter ? (
-                      <th className="px-2 py-2 font-medium">Renewal</th>
-                    ) : null}
-                  </tr>
-                </thead>
-                <tbody>
-                  {contacts.map((c) => {
-                    const checked = selectedIds.has(c._id);
-                    return (
-                      <tr
-                        key={c._id}
-                        className={`border-t border-neutral-100 ${
-                          checked ? "bg-orange-50/50" : "hover:bg-neutral-50"
-                        }`}
-                      >
-                        <td className="px-2 py-2">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => onToggleContact(c)}
+              <ResponsiveDataView
+                className="p-2 md:p-0"
+                mobile={contacts.map((c) => {
+                  const checked = selectedIds.has(c._id);
+                  const labelBits = [
+                    c.label ? toProperCase(c.label) : null,
+                    c.isPrimary ? "Primary" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return (
+                    <MobileDataCard
+                      key={c._id}
+                      title={
+                        <span className="inline-flex items-center gap-2">
+                          {checked ? (
+                            <CheckSquare className="h-4 w-4 shrink-0 text-brand-orange" />
+                          ) : (
+                            <Square className="h-4 w-4 shrink-0 text-neutral-300" />
+                          )}
+                          {formatCustomerName(c.first, c.last) || "—"}
+                        </span>
+                      }
+                      subtitle={labelBits || undefined}
+                      className={
+                        checked
+                          ? "border-brand-orange/40 bg-orange-50/40"
+                          : ""
+                      }
+                      fields={
+                        <>
+                          <DataField
+                            label="Phone"
+                            value={formatPhone(c.phone)}
                           />
-                        </td>
-                        <td className="px-2 py-2">
-                          <div className="font-medium text-brand-dark">
-                            {formatCustomerName(c.first, c.last) || "—"}
-                          </div>
-                          {c.label ? (
-                            <div className="text-[11px] text-neutral-400">
-                              {toProperCase(c.label)}
-                              {c.isPrimary ? " · Primary" : ""}
-                            </div>
+                          <DataField
+                            label="Customer"
+                            value={
+                              formatCustomerRecordName(c.customer) || "—"
+                            }
+                          />
+                          {useRenewalsFilter ? (
+                            <DataField
+                              label="Renewal"
+                              value={formatRenewalDate(c.renewalDueDate)}
+                              className="col-span-2"
+                            />
                           ) : null}
-                        </td>
-                        <td className="px-2 py-2 whitespace-nowrap text-neutral-700">
-                          {formatPhone(c.phone)}
-                        </td>
-                        <td className="px-2 py-2 text-neutral-600">
-                          {formatCustomerRecordName(c.customer) || "—"}
-                        </td>
+                        </>
+                      }
+                      onClick={() => onToggleContact(c)}
+                    />
+                  );
+                })}
+                desktop={
+                  <table className="w-full text-left text-sm">
+                    <thead className="sticky top-0 bg-neutral-50 text-xs text-neutral-500">
+                      <tr>
+                        <th className="w-8 px-2 py-2" />
+                        <th className="px-2 py-2 font-medium">Contact</th>
+                        <th className="px-2 py-2 font-medium">Phone</th>
+                        <th className="px-2 py-2 font-medium">Customer</th>
                         {useRenewalsFilter ? (
-                          <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
-                            {formatRenewalDate(c.renewalDueDate)}
-                          </td>
+                          <th className="px-2 py-2 font-medium">Renewal</th>
                         ) : null}
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {contacts.map((c) => {
+                        const checked = selectedIds.has(c._id);
+                        return (
+                          <tr
+                            key={c._id}
+                            className={`border-t border-neutral-100 ${
+                              checked
+                                ? "bg-orange-50/50"
+                                : "hover:bg-neutral-50"
+                            }`}
+                          >
+                            <td className="px-2 py-2">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => onToggleContact(c)}
+                              />
+                            </td>
+                            <td className="px-2 py-2">
+                              <div className="font-medium text-brand-dark">
+                                {formatCustomerName(c.first, c.last) || "—"}
+                              </div>
+                              {c.label ? (
+                                <div className="text-[11px] text-neutral-400">
+                                  {toProperCase(c.label)}
+                                  {c.isPrimary ? " · Primary" : ""}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="px-2 py-2 whitespace-nowrap text-neutral-700">
+                              {formatPhone(c.phone)}
+                            </td>
+                            <td className="px-2 py-2 text-neutral-600">
+                              {formatCustomerRecordName(c.customer) || "—"}
+                            </td>
+                            {useRenewalsFilter ? (
+                              <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
+                                {formatRenewalDate(c.renewalDueDate)}
+                              </td>
+                            ) : null}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                }
+              />
             )}
           </div>
 
-          <div className="mt-3 flex items-center justify-between text-xs text-neutral-500">
+          <div className="mt-3 flex flex-col gap-2 text-xs text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
             <span>
               {contactsTotal} contact{contactsTotal === 1 ? "" : "s"}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-1">
                 Show
                 <select
@@ -628,7 +689,7 @@ export default function CreatePanel({
       ) : null}
 
       {step === "review" ? (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
           <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold text-brand-dark">
               Review
@@ -674,7 +735,7 @@ export default function CreatePanel({
               ) : null}
             </dl>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <button
                 type="button"
                 disabled={
@@ -717,7 +778,7 @@ export default function CreatePanel({
             />
           </section>
 
-          <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm xl:col-span-2">
+          <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm lg:col-span-2">
             <h2 className="mb-3 text-sm font-semibold text-brand-dark">
               Recipients ({selectedIds.size})
             </h2>
@@ -725,42 +786,84 @@ export default function CreatePanel({
               <p className="text-sm text-neutral-500">No recipients selected.</p>
             ) : (
               <div className="max-h-[320px] overflow-auto rounded-lg border border-neutral-100">
-                <table className="w-full text-left text-sm">
-                  <thead className="sticky top-0 bg-neutral-50 text-xs text-neutral-500">
-                    <tr>
-                      <th className="px-2 py-2 font-medium">Contact</th>
-                      <th className="px-2 py-2 font-medium">Phone</th>
-                      <th className="px-2 py-2 font-medium">Customer</th>
-                      <th className="px-2 py-2 font-medium">Renewal</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedContacts.map((c) => (
-                      <tr key={c._id} className="border-t border-neutral-100">
-                        <td className="px-2 py-2">
-                          <div className="font-medium text-brand-dark">
-                            {formatCustomerName(c.first, c.last) || "—"}
-                          </div>
-                          {c.label ? (
-                            <div className="text-[11px] text-neutral-400">
-                              {toProperCase(c.label)}
-                              {c.isPrimary ? " · Primary" : ""}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="px-2 py-2 whitespace-nowrap text-neutral-700">
-                          {formatPhone(c.phone)}
-                        </td>
-                        <td className="px-2 py-2 text-neutral-600">
-                          {formatCustomerRecordName(c.customer) || "—"}
-                        </td>
-                        <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
-                          {formatRenewalDate(c.renewalDueDate)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <ResponsiveDataView
+                  className="p-2 md:p-0"
+                  mobile={selectedContacts.map((c) => {
+                    const labelBits = [
+                      c.label ? toProperCase(c.label) : null,
+                      c.isPrimary ? "Primary" : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ");
+                    return (
+                      <MobileDataCard
+                        key={c._id}
+                        title={formatCustomerName(c.first, c.last) || "—"}
+                        subtitle={labelBits || undefined}
+                        fields={
+                          <>
+                            <DataField
+                              label="Phone"
+                              value={formatPhone(c.phone)}
+                            />
+                            <DataField
+                              label="Customer"
+                              value={
+                                formatCustomerRecordName(c.customer) || "—"
+                              }
+                            />
+                            <DataField
+                              label="Renewal"
+                              value={formatRenewalDate(c.renewalDueDate)}
+                              className="col-span-2"
+                            />
+                          </>
+                        }
+                      />
+                    );
+                  })}
+                  desktop={
+                    <table className="w-full text-left text-sm">
+                      <thead className="sticky top-0 bg-neutral-50 text-xs text-neutral-500">
+                        <tr>
+                          <th className="px-2 py-2 font-medium">Contact</th>
+                          <th className="px-2 py-2 font-medium">Phone</th>
+                          <th className="px-2 py-2 font-medium">Customer</th>
+                          <th className="px-2 py-2 font-medium">Renewal</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedContacts.map((c) => (
+                          <tr
+                            key={c._id}
+                            className="border-t border-neutral-100"
+                          >
+                            <td className="px-2 py-2">
+                              <div className="font-medium text-brand-dark">
+                                {formatCustomerName(c.first, c.last) || "—"}
+                              </div>
+                              {c.label ? (
+                                <div className="text-[11px] text-neutral-400">
+                                  {toProperCase(c.label)}
+                                  {c.isPrimary ? " · Primary" : ""}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="px-2 py-2 whitespace-nowrap text-neutral-700">
+                              {formatPhone(c.phone)}
+                            </td>
+                            <td className="px-2 py-2 text-neutral-600">
+                              {formatCustomerRecordName(c.customer) || "—"}
+                            </td>
+                            <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
+                              {formatRenewalDate(c.renewalDueDate)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  }
+                />
               </div>
             )}
           </div>

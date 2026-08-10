@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import LucideIconByName from "@/components/icons/LucideIconByName";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   getCustomers,
@@ -80,6 +82,111 @@ function CustomerContractBadges({
         );
       })}
     </span>
+  );
+}
+
+function CustomerMobileCard({
+  customer,
+  isDeleted,
+  canManageCustomers,
+  canReadContracts,
+  deletingId,
+  restoringId,
+  onOpen,
+  onRestore,
+  onDelete,
+}: {
+  customer: CustomerListItem;
+  isDeleted: boolean;
+  canManageCustomers: boolean;
+  canReadContracts: boolean;
+  deletingId: string | null;
+  restoringId: string | null;
+  onOpen: () => void;
+  onRestore: () => void;
+  onDelete: () => void;
+}) {
+  const ownerLabel = customer.owner
+    ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
+    : "\u2014";
+
+  return (
+    <MobileDataCard
+      title={formatCustomerRecordName(customer)}
+      subtitle={formatPhone(customer.phone)}
+      onClick={isDeleted ? undefined : onOpen}
+      badges={
+        <>
+          {isDeleted ? (
+            <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-600 ring-1 ring-inset ring-neutral-300">
+              Deleted
+            </span>
+          ) : null}
+          {!isDeleted && (customer.duplicateCount ?? 0) > 0 ? (
+            <span
+              className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 ring-1 ring-inset ring-amber-600/20"
+              title={`${customer.duplicateCount} other customer(s) share this phone`}
+            >
+              Possible duplicate
+            </span>
+          ) : null}
+          {!isDeleted && canReadContracts ? (
+            <CustomerContractBadges contracts={customer.contracts ?? []} />
+          ) : null}
+        </>
+      }
+      fields={
+        <>
+          <DataField
+            label="Street"
+            value={
+              customer.address ? toProperCase(customer.address) : "\u2014"
+            }
+            className="col-span-2"
+          />
+          <DataField
+            label="City"
+            value={customer.city ? toProperCase(customer.city) : "\u2014"}
+          />
+          <DataField label="State" value={formatCustomerState(customer.state)} />
+          <DataField
+            label="Zip"
+            value={customer.zip?.trim() || "\u2014"}
+          />
+          <DataField
+            label="County"
+            value={customer.county?.trim() || "\u2014"}
+          />
+          <DataField label="Owner" value={ownerLabel} className="col-span-2" />
+        </>
+      }
+      actions={
+        canManageCustomers ? (
+          isDeleted ? (
+            <button
+              type="button"
+              disabled={restoringId === customer._id}
+              onClick={onRestore}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs font-medium text-brand-orange hover:border-brand-orange disabled:opacity-60"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {restoringId === customer._id ? "Restoring\u2026" : "Restore"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={deletingId === customer._id}
+              onClick={onDelete}
+              className="inline-flex items-center justify-center rounded-lg border border-neutral-200 p-2 text-red-600 hover:border-red-200 hover:bg-red-50 disabled:opacity-60"
+              title="Delete customer"
+              aria-label="Delete customer"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )
+        ) : null
+      }
+    />
   );
 }
 
@@ -373,12 +480,32 @@ function CustomersContent() {
     );
   }
 
-  const colCount = canManageCustomers ? 9 : 8;
   const showingDeleted = canManageCustomers && listView === "deleted";
+
+  const emptyMessage = debouncedSearch
+    ? "No customers match your search."
+    : showingDeleted
+      ? "No deleted customers."
+      : "No customers found.";
+
+  const paginationProps = {
+    rangeStart,
+    rangeEnd,
+    total,
+    pageSize,
+    safePage,
+    totalPages,
+    onPageSizeChange: (size: PageSize) => {
+      setPageSize(size);
+      setPage(1);
+    },
+    onPrev: () => setPage((p) => Math.max(1, p - 1)),
+    onNext: () => setPage((p) => Math.min(totalPages, p + 1)),
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-brand-dark">Customers</h1>
           <p className="mt-1 text-sm text-neutral-500">
@@ -387,8 +514,8 @@ function CustomersContent() {
               : `${total} ${showingDeleted ? "deleted" : "total"}`}
           </p>
         </div>
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-          <div className="relative w-full sm:w-72">
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto lg:justify-end">
+          <div className="relative w-full sm:min-w-[16rem] sm:flex-1 lg:w-72 lg:flex-none">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
             <input
               type="search"
@@ -401,7 +528,7 @@ function CustomersContent() {
             />
           </div>
           {canManageCustomers ? (
-            <>
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
               <div className="inline-flex shrink-0 rounded-lg border border-neutral-200 bg-white p-0.5 text-sm">
                 <button
                   type="button"
@@ -436,12 +563,12 @@ function CustomersContent() {
               </div>
               <Link
                 href="/dashboard/customers/create?returnTo=/dashboard/customers"
-                className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark/90"
+                className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark/90 sm:flex-none"
               >
                 <Plus className="h-4 w-4" />
                 Add Customer
               </Link>
-            </>
+            </div>
           ) : null}
         </div>
       </div>
@@ -452,223 +579,232 @@ function CustomersContent() {
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-        {total > 0 && (
-          <CustomersPagination
-            rangeStart={rangeStart}
-            rangeEnd={rangeEnd}
-            total={total}
-            pageSize={pageSize}
-            safePage={safePage}
-            totalPages={totalPages}
-            onPageSizeChange={(size) => {
-              setPageSize(size);
-              setPage(1);
-            }}
-            onPrev={() => setPage((p) => Math.max(1, p - 1))}
-            onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
-            position="top"
-          />
-        )}
+      <div className="space-y-3">
+        {total > 0 ? (
+          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm md:hidden">
+            <CustomersPagination {...paginationProps} position="top" />
+          </div>
+        ) : null}
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-neutral-100 text-sm">
-            <thead className="bg-neutral-50">
-              <tr>
-                <SortHeader
-                  label="Customer"
-                  column="customer"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Phone"
-                  column="phone"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Street"
-                  column="street"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="City"
-                  column="city"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="State"
-                  column="state"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Zip"
-                  column="zip"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  County
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Owner
-                </th>
-                {canManageCustomers ? (
-                  <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                    Actions
-                  </th>
-                ) : null}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100 bg-white">
-              {customers.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={colCount}
-                    className="px-6 py-12 text-center text-neutral-500"
-                  >
-                    {debouncedSearch
-                      ? "No customers match your search."
-                      : showingDeleted
-                        ? "No deleted customers."
-                        : "No customers found."}
-                  </td>
-                </tr>
-              ) : (
-                customers.map((customer) => {
-                  const isDeleted = showingDeleted;
-                  return (
-                    <tr
-                      key={customer._id}
-                      onClick={() => {
-                        if (isDeleted) return;
-                        router.push(
-                          `/dashboard/customers/detail?id=${customer._id}`,
-                        );
-                      }}
-                      className={`transition-colors ${
-                        isDeleted
-                          ? "bg-neutral-50/80"
-                          : "cursor-pointer hover:bg-neutral-50"
-                      }`}
-                    >
-                      <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
-                        <span className="inline-flex items-center gap-2">
-                          {formatCustomerRecordName(customer)}
-                          {isDeleted ? (
-                            <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-600 ring-1 ring-inset ring-neutral-300">
-                              Deleted
-                            </span>
-                          ) : null}
-                          {!isDeleted && (customer.duplicateCount ?? 0) > 0 ? (
-                            <span
-                              className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 ring-1 ring-inset ring-amber-600/20"
-                              title={`${customer.duplicateCount} other customer(s) share this phone`}
-                            >
-                              Possible duplicate
-                            </span>
-                          ) : null}
-                          {!isDeleted && canReadContracts ? (
-                            <CustomerContractBadges
-                              contracts={customer.contracts ?? []}
-                            />
-                          ) : null}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {formatPhone(customer.phone)}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {customer.address
-                          ? toProperCase(customer.address)
-                          : "\u2014"}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {customer.city ? toProperCase(customer.city) : "\u2014"}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {formatCustomerState(customer.state)}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {customer.zip?.trim() || "\u2014"}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {customer.county?.trim() || "\u2014"}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {customer.owner
-                          ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
-                          : "\u2014"}
-                      </td>
+        <ResponsiveDataView
+          isEmpty={customers.length === 0}
+          empty={
+            <div className="rounded-xl border border-neutral-200 bg-white px-6 py-12 text-center text-sm text-neutral-500 shadow-sm">
+              {emptyMessage}
+            </div>
+          }
+          mobile={customers.map((customer) => {
+            const isDeleted = showingDeleted;
+            return (
+              <CustomerMobileCard
+                key={customer._id}
+                customer={customer}
+                isDeleted={isDeleted}
+                canManageCustomers={canManageCustomers}
+                canReadContracts={canReadContracts}
+                deletingId={deletingId}
+                restoringId={restoringId}
+                onOpen={() =>
+                  router.push(
+                    `/dashboard/customers/detail?id=${customer._id}`,
+                  )
+                }
+                onRestore={() => {
+                  void handleRestore(customer);
+                }}
+                onDelete={() => {
+                  void handleSoftDelete(customer);
+                }}
+              />
+            );
+          })}
+          desktop={
+            <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+              {total > 0 ? (
+                <CustomersPagination {...paginationProps} position="top" />
+              ) : null}
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-neutral-100 text-sm">
+                  <thead className="bg-neutral-50">
+                    <tr>
+                      <SortHeader
+                        label="Customer"
+                        column="customer"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="Phone"
+                        column="phone"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="Street"
+                        column="street"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="City"
+                        column="city"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="State"
+                        column="state"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="Zip"
+                        column="zip"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        County
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Owner
+                      </th>
                       {canManageCustomers ? (
-                        <td className="px-6 py-4 text-right whitespace-nowrap">
-                          {isDeleted ? (
-                            <button
-                              type="button"
-                              disabled={restoringId === customer._id}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void handleRestore(customer);
-                              }}
-                              className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-orange hover:underline disabled:opacity-60"
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" />
-                              {restoringId === customer._id
-                                ? "Restoring\u2026"
-                                : "Restore"}
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={deletingId === customer._id}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void handleSoftDelete(customer);
-                              }}
-                              className="inline-flex items-center justify-center rounded p-1 text-red-600 hover:bg-red-50 disabled:opacity-60"
-                              title="Delete customer"
-                              aria-label="Delete customer"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          )}
-                        </td>
+                        <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                          Actions
+                        </th>
                       ) : null}
                     </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 bg-white">
+                    {customers.map((customer) => {
+                      const isDeleted = showingDeleted;
+                      return (
+                        <tr
+                          key={customer._id}
+                          onClick={() => {
+                            if (isDeleted) return;
+                            router.push(
+                              `/dashboard/customers/detail?id=${customer._id}`,
+                            );
+                          }}
+                          className={`transition-colors ${
+                            isDeleted
+                              ? "bg-neutral-50/80"
+                              : "cursor-pointer hover:bg-neutral-50"
+                          }`}
+                        >
+                          <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
+                            <span className="inline-flex items-center gap-2">
+                              {formatCustomerRecordName(customer)}
+                              {isDeleted ? (
+                                <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-600 ring-1 ring-inset ring-neutral-300">
+                                  Deleted
+                                </span>
+                              ) : null}
+                              {!isDeleted &&
+                              (customer.duplicateCount ?? 0) > 0 ? (
+                                <span
+                                  className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 ring-1 ring-inset ring-amber-600/20"
+                                  title={`${customer.duplicateCount} other customer(s) share this phone`}
+                                >
+                                  Possible duplicate
+                                </span>
+                              ) : null}
+                              {!isDeleted && canReadContracts ? (
+                                <CustomerContractBadges
+                                  contracts={customer.contracts ?? []}
+                                />
+                              ) : null}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                            {formatPhone(customer.phone)}
+                          </td>
+                          <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                            {customer.address
+                              ? toProperCase(customer.address)
+                              : "\u2014"}
+                          </td>
+                          <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                            {customer.city
+                              ? toProperCase(customer.city)
+                              : "\u2014"}
+                          </td>
+                          <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                            {formatCustomerState(customer.state)}
+                          </td>
+                          <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                            {customer.zip?.trim() || "\u2014"}
+                          </td>
+                          <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                            {customer.county?.trim() || "\u2014"}
+                          </td>
+                          <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                            {customer.owner
+                              ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
+                              : "\u2014"}
+                          </td>
+                          {canManageCustomers ? (
+                            <td className="px-6 py-4 text-right whitespace-nowrap">
+                              {isDeleted ? (
+                                <button
+                                  type="button"
+                                  disabled={restoringId === customer._id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleRestore(customer);
+                                  }}
+                                  className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-orange hover:underline disabled:opacity-60"
+                                >
+                                  <RotateCcw className="h-3.5 w-3.5" />
+                                  {restoringId === customer._id
+                                    ? "Restoring\u2026"
+                                    : "Restore"}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={deletingId === customer._id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleSoftDelete(customer);
+                                  }}
+                                  className="inline-flex items-center justify-center rounded p-1 text-red-600 hover:bg-red-50 disabled:opacity-60"
+                                  title="Delete customer"
+                                  aria-label="Delete customer"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              )}
+                            </td>
+                          ) : null}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
 
-        {total > 0 && (
-          <CustomersPagination
-            rangeStart={rangeStart}
-            rangeEnd={rangeEnd}
-            total={total}
-            pageSize={pageSize}
-            safePage={safePage}
-            totalPages={totalPages}
-            onPageSizeChange={(size) => {
-              setPageSize(size);
-              setPage(1);
-            }}
-            onPrev={() => setPage((p) => Math.max(1, p - 1))}
-            onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
-            position="bottom"
-          />
-        )}
+              {total > 0 ? (
+                <CustomersPagination {...paginationProps} position="bottom" />
+              ) : null}
+            </div>
+          }
+        />
+
+        {total > 0 ? (
+          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm md:hidden">
+            <CustomersPagination {...paginationProps} position="bottom" />
+          </div>
+        ) : null}
       </div>
     </div>
   );

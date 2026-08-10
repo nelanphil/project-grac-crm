@@ -14,6 +14,8 @@ import {
 } from "@/lib/api";
 import { FLORIDA_COUNTIES } from "@/lib/floridaCounties";
 import UsernameDisplay from "@/components/ui/UsernameDisplay";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 
 type ModalMode = "create" | "edit" | null;
 
@@ -280,7 +282,7 @@ export default function UsersTab() {
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-      <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between gap-4">
+      <div className="px-4 py-4 sm:px-6 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">Users</h2>
           <p className="text-sm text-neutral-500 mt-0.5">
@@ -298,7 +300,7 @@ export default function UsersTab() {
         </button>
       </div>
 
-      <div className="px-6 py-4 border-b border-neutral-100 flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="px-4 py-4 sm:px-6 border-b border-neutral-100 flex flex-col gap-3 sm:flex-row sm:items-center">
         <input
           type="search"
           value={search}
@@ -321,109 +323,160 @@ export default function UsersTab() {
       </div>
 
       {(saveError || deleteError) && !modal && (
-        <div className="mx-6 mt-4 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+        <div className="mx-4 sm:mx-6 mt-4 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {saveError || deleteError}
         </div>
       )}
 
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-neutral-100 text-sm">
-          <thead className="bg-neutral-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Name
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Email
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Username
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Role
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Joined
-              </th>
-              <th className="px-6 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-neutral-100 bg-white">
-            {filteredUsers.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={6}
-                  className="px-6 py-8 text-center text-sm text-neutral-500"
-                >
-                  No users match your search.
-                </td>
-              </tr>
-            ) : (
-              filteredUsers.map((user) => {
-                return (
-                  <tr key={user._id}>
-                    <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
-                      {user.first_name} {user.last_name}
-                    </td>
-                    <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                      {user.email}
-                    </td>
-                    <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+      <div className="p-4 sm:p-0">
+        <ResponsiveDataView
+          isEmpty={filteredUsers.length === 0}
+          empty={
+            <div className="px-2 py-8 text-center text-sm text-neutral-500 sm:px-6">
+              No users match your search.
+            </div>
+          }
+          mobile={filteredUsers.map((user) => (
+            <MobileDataCard
+              key={user._id}
+              title={`${user.first_name} ${user.last_name}`}
+              subtitle={user.email}
+              badges={
+                <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
+                  {getRoleLabel(user.role)}
+                </span>
+              }
+              fields={
+                <>
+                  <DataField
+                    label="Username"
+                    value={
                       <UsernameDisplay
                         username={user.username}
                         usernameNumber={user.usernameNumber}
                       />
-                    </td>
-                    <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
-                      {getRoleLabel(user.role)}
-                    </td>
-                    <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
-                      {new Date(user.createdAt).toLocaleDateString()}
-                    </td>
-                    <td className="px-6 py-4 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-3">
-                        <button
-                          type="button"
-                          onClick={() => openEdit(user)}
-                          className="text-xs font-medium text-brand-orange hover:underline"
-                        >
-                          Edit
-                        </button>
-                        {currentUser?.id !== user._id && (
+                    }
+                  />
+                  <DataField
+                    label="Joined"
+                    value={new Date(user.createdAt).toLocaleDateString()}
+                  />
+                </>
+              }
+              actions={
+                <div className="flex flex-col items-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openEdit(user)}
+                    className="text-xs font-medium text-brand-orange hover:underline"
+                  >
+                    Edit
+                  </button>
+                  {currentUser?.id !== user._id && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(user._id)}
+                      disabled={deletingId === user._id}
+                      className="text-xs font-medium text-red-600 hover:underline disabled:opacity-60"
+                    >
+                      {deletingId === user._id ? "Deleting…" : "Delete"}
+                    </button>
+                  )}
+                </div>
+              }
+            />
+          ))}
+          desktop={
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-neutral-100 text-sm">
+                <thead className="bg-neutral-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Name
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Email
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Username
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Role
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Joined
+                    </th>
+                    <th className="px-6 py-3" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100 bg-white">
+                  {filteredUsers.map((user) => (
+                    <tr key={user._id}>
+                      <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
+                        {user.first_name} {user.last_name}
+                      </td>
+                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                        {user.email}
+                      </td>
+                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                        <UsernameDisplay
+                          username={user.username}
+                          usernameNumber={user.usernameNumber}
+                        />
+                      </td>
+                      <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
+                        {getRoleLabel(user.role)}
+                      </td>
+                      <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
+                        {new Date(user.createdAt).toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-3">
                           <button
                             type="button"
-                            onClick={() => handleDelete(user._id)}
-                            disabled={deletingId === user._id}
-                            className="text-xs font-medium text-red-600 hover:underline disabled:opacity-60"
+                            onClick={() => openEdit(user)}
+                            className="text-xs font-medium text-brand-orange hover:underline"
                           >
-                            {deletingId === user._id ? "Deleting…" : "Delete"}
+                            Edit
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                          {currentUser?.id !== user._id && (
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(user._id)}
+                              disabled={deletingId === user._id}
+                              className="text-xs font-medium text-red-600 hover:underline disabled:opacity-60"
+                            >
+                              {deletingId === user._id
+                                ? "Deleting…"
+                                : "Delete"}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          }
+        />
       </div>
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-3 py-3 sm:px-4 sm:py-6">
           <div
-            className={`w-full rounded-xl bg-white shadow-xl ${
+            className={`flex w-full max-h-[min(92dvh,920px)] flex-col overflow-hidden rounded-xl bg-white shadow-xl ${
               form.role === "owner" ? "max-w-2xl" : "max-w-md"
             }`}
           >
-            <div className="border-b border-neutral-100 px-6 py-4">
+            <div className="shrink-0 border-b border-neutral-100 px-4 py-4 sm:px-6">
               <h3 className="text-lg font-semibold text-brand-dark">
                 {modal === "create" ? "Create user" : "Edit user"}
               </h3>
             </div>
 
             {tempPassword ? (
-              <div className="px-6 py-5 space-y-4">
+              <div className="overflow-y-auto px-4 py-5 sm:px-6 space-y-4">
                 <p className="text-sm text-neutral-700">
                   User created. A temporary password was generated — copy it
                   now. The user can set a new password via Forgot password.
@@ -444,7 +497,7 @@ export default function UsersTab() {
             ) : (
               <form
                 onSubmit={handleSubmit}
-                className="px-6 py-5 space-y-4 max-h-[85vh] overflow-y-auto"
+                className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 space-y-4"
               >
                 {saveError && (
                   <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
@@ -452,7 +505,7 @@ export default function UsersTab() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label className="block text-sm font-medium text-brand-dark">
                       First name

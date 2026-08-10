@@ -11,6 +11,8 @@ import {
   Search,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -295,117 +297,170 @@ function ContactsContent() {
           />
         )}
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-neutral-100 text-sm">
-            <thead className="bg-neutral-50">
-              <tr>
-                <SortHeader
-                  label="Name"
-                  column="name"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Phone"
-                  column="phone"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Email"
-                  column="email"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Label"
-                  column="label"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Primary"
-                  column="primary"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-                <SortHeader
-                  label="Customer"
-                  column="customer"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              {contacts.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-16 text-center">
-                    <Phone className="mx-auto mb-4 h-10 w-10 text-neutral-300" />
-                    <p className="text-sm font-medium text-neutral-500">
-                      No contacts yet
-                    </p>
-                    <p className="mt-1 text-xs text-neutral-400">
-                      Customer contact records will appear here.
-                    </p>
-                  </td>
-                </tr>
-              ) : (
-                contacts.map((contact) => {
-                  const name =
-                    formatCustomerName(contact.first, contact.last) || "\u2014";
-                  const customerName =
-                    formatCustomerRecordName(contact.customer) || "\u2014";
+        <ResponsiveDataView
+          isEmpty={contacts.length === 0}
+          empty={
+            <div className="px-6 py-16 text-center">
+              <Phone className="mx-auto mb-4 h-10 w-10 text-neutral-300" />
+              <p className="text-sm font-medium text-neutral-500">
+                No contacts yet
+              </p>
+              <p className="mt-1 text-xs text-neutral-400">
+                Customer contact records will appear here.
+              </p>
+            </div>
+          }
+          className="p-3 md:p-0"
+          mobile={contacts.map((contact) => {
+            const name =
+              formatCustomerName(contact.first, contact.last) || "\u2014";
+            const customerName =
+              formatCustomerRecordName(contact.customer) || "\u2014";
 
-                  return (
-                    <tr
-                      key={contact._id}
-                      className="hover:bg-neutral-50/80 transition-colors"
-                    >
-                      <td className="whitespace-nowrap px-6 py-3 font-medium text-brand-dark">
-                        {name}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-3 text-neutral-600">
-                        {formatPhone(contact.phone)}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-3 text-neutral-600">
-                        {contact.email?.trim() || "\u2014"}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-3 text-neutral-600">
-                        {contact.label?.trim()
-                          ? toProperCase(contact.label)
-                          : "\u2014"}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-3 text-neutral-600">
-                        {contact.isPrimary ? (
-                          <span className="inline-flex rounded-full bg-brand-dark/5 px-2 py-0.5 text-xs font-medium text-brand-dark">
-                            Primary
-                          </span>
-                        ) : (
-                          "\u2014"
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-3">
+            return (
+              <MobileDataCard
+                key={contact._id}
+                title={name}
+                subtitle={
+                  contact.label?.trim()
+                    ? toProperCase(contact.label)
+                    : undefined
+                }
+                badges={
+                  contact.isPrimary ? (
+                    <span className="inline-flex rounded-full bg-brand-dark/5 px-2 py-0.5 text-xs font-medium text-brand-dark">
+                      Primary
+                    </span>
+                  ) : null
+                }
+                fields={
+                  <>
+                    <DataField
+                      label="Phone"
+                      value={formatPhone(contact.phone)}
+                    />
+                    <DataField
+                      label="Email"
+                      value={contact.email?.trim() || "\u2014"}
+                    />
+                    <DataField
+                      label="Customer"
+                      value={
                         <Link
                           href={`/dashboard/customers/detail?id=${contact.customer._id}`}
                           className="font-medium text-brand-blue hover:underline"
                         >
                           {customerName}
                         </Link>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                      }
+                      className="col-span-2"
+                    />
+                  </>
+                }
+              />
+            );
+          })}
+          desktop={
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-neutral-100 text-sm">
+                <thead className="bg-neutral-50">
+                  <tr>
+                    <SortHeader
+                      label="Name"
+                      column="name"
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortHeader
+                      label="Phone"
+                      column="phone"
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortHeader
+                      label="Email"
+                      column="email"
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortHeader
+                      label="Label"
+                      column="label"
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortHeader
+                      label="Primary"
+                      column="primary"
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortHeader
+                      label="Customer"
+                      column="customer"
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {contacts.map((contact) => {
+                    const name =
+                      formatCustomerName(contact.first, contact.last) ||
+                      "\u2014";
+                    const customerName =
+                      formatCustomerRecordName(contact.customer) || "\u2014";
+
+                    return (
+                      <tr
+                        key={contact._id}
+                        className="hover:bg-neutral-50/80 transition-colors"
+                      >
+                        <td className="whitespace-nowrap px-6 py-3 font-medium text-brand-dark">
+                          {name}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3 text-neutral-600">
+                          {formatPhone(contact.phone)}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3 text-neutral-600">
+                          {contact.email?.trim() || "\u2014"}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3 text-neutral-600">
+                          {contact.label?.trim()
+                            ? toProperCase(contact.label)
+                            : "\u2014"}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3 text-neutral-600">
+                          {contact.isPrimary ? (
+                            <span className="inline-flex rounded-full bg-brand-dark/5 px-2 py-0.5 text-xs font-medium text-brand-dark">
+                              Primary
+                            </span>
+                          ) : (
+                            "\u2014"
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3">
+                          <Link
+                            href={`/dashboard/customers/detail?id=${contact.customer._id}`}
+                            className="font-medium text-brand-blue hover:underline"
+                          >
+                            {customerName}
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          }
+        />
 
         {total > 0 && (
           <ContactsPagination

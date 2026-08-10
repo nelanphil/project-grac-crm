@@ -971,17 +971,17 @@ function CreateCustomerContent() {
           )}
         </section>
 
-        <div className="flex flex-wrap justify-end gap-2 pb-8">
+        <div className="flex flex-col-reverse gap-2 pb-8 sm:flex-row sm:flex-wrap sm:justify-end">
           <Link
             href={returnTo}
-            className="rounded-md border border-neutral-200 px-4 py-2 text-sm font-medium text-brand-dark hover:bg-neutral-50"
+            className="inline-flex items-center justify-center rounded-md border border-neutral-200 px-4 py-2.5 text-sm font-medium text-brand-dark hover:bg-neutral-50 sm:py-2"
           >
             Cancel
           </Link>
           <button
             type="submit"
             disabled={saving || addresses.some((a) => a.validating)}
-            className="btn-primary inline-flex items-center gap-2 px-4 py-2 text-sm disabled:opacity-60"
+            className="btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm disabled:opacity-60 sm:py-2"
           >
             {saving ? (
               <>

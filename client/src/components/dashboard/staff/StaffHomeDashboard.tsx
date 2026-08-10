@@ -25,6 +25,8 @@ import { formatDateOnly, parseDateOnly } from "@/lib/contractDates";
 import { formatCustomerRecordName } from "@/lib/formatName";
 import { useAuthStore } from "@/store/useAuthStore";
 import UpcomingRenewalsTable from "@/components/dashboard/UpcomingRenewalsTable";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 
 function formatMoney(cents: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -450,68 +452,105 @@ export default function StaffHomeDashboard() {
                 <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
-            {expandedStandingInvoices.length === 0 ? (
-              <p className="px-4 py-8 text-center text-sm text-[var(--staff-muted)]">
-                No invoices in this category.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-[var(--staff-border)] text-sm">
-                  <thead className="bg-[var(--staff-cream)]/70">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                        Invoice
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                        Customer
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                        Date
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                        Amount
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                        Status
-                      </th>
-                      <th className="px-4 py-3" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--staff-border)]">
-                    {expandedStandingInvoices.map((invoice) => (
-                      <tr
-                        key={invoice._id}
-                        className="transition hover:bg-[var(--staff-cream)]/50"
-                      >
-                        <td className="px-4 py-3 font-medium text-[var(--staff-ink)]">
-                          {invoice.number}
-                        </td>
-                        <td className="px-4 py-3 text-[var(--staff-muted)]">
-                          #{invoice.customerId}
-                        </td>
-                        <td className="px-4 py-3 text-[var(--staff-muted)]">
-                          {standingRowDate(invoice, expandedStanding)}
-                        </td>
-                        <td className="px-4 py-3 font-semibold text-[var(--staff-ink)]">
-                          {formatMoney(invoice.amountCents)}
-                        </td>
-                        <td className="px-4 py-3 capitalize text-[var(--staff-muted)]">
-                          {invoice.status}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <Link
-                            href={`/dashboard/orders/detail?id=${invoice._id}`}
-                            className="text-xs font-semibold text-brand-orange hover:underline"
-                          >
-                            View
-                          </Link>
-                        </td>
+            <ResponsiveDataView
+              className="p-3 md:p-0"
+              isEmpty={expandedStandingInvoices.length === 0}
+              empty={
+                <p className="px-4 py-8 text-center text-sm text-[var(--staff-muted)]">
+                  No invoices in this category.
+                </p>
+              }
+              mobile={expandedStandingInvoices.map((invoice) => (
+                <MobileDataCard
+                  key={invoice._id}
+                  title={invoice.number}
+                  subtitle={`Customer #${invoice.customerId}`}
+                  badges={
+                    <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium capitalize text-neutral-600">
+                      {invoice.status}
+                    </span>
+                  }
+                  fields={
+                    <>
+                      <DataField
+                        label="Date"
+                        value={standingRowDate(invoice, expandedStanding)}
+                      />
+                      <DataField
+                        label="Amount"
+                        value={formatMoney(invoice.amountCents)}
+                      />
+                    </>
+                  }
+                  actions={
+                    <Link
+                      href={`/dashboard/orders/detail?id=${invoice._id}`}
+                      className="text-xs font-semibold text-brand-orange hover:underline"
+                    >
+                      View
+                    </Link>
+                  }
+                />
+              ))}
+              desktop={
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-[var(--staff-border)] text-sm">
+                    <thead className="bg-[var(--staff-cream)]/70">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                          Invoice
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                          Customer
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                          Date
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                          Amount
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                          Status
+                        </th>
+                        <th className="px-4 py-3" />
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </thead>
+                    <tbody className="divide-y divide-[var(--staff-border)]">
+                      {expandedStandingInvoices.map((invoice) => (
+                        <tr
+                          key={invoice._id}
+                          className="transition hover:bg-[var(--staff-cream)]/50"
+                        >
+                          <td className="px-4 py-3 font-medium text-[var(--staff-ink)]">
+                            {invoice.number}
+                          </td>
+                          <td className="px-4 py-3 text-[var(--staff-muted)]">
+                            #{invoice.customerId}
+                          </td>
+                          <td className="px-4 py-3 text-[var(--staff-muted)]">
+                            {standingRowDate(invoice, expandedStanding)}
+                          </td>
+                          <td className="px-4 py-3 font-semibold text-[var(--staff-ink)]">
+                            {formatMoney(invoice.amountCents)}
+                          </td>
+                          <td className="px-4 py-3 capitalize text-[var(--staff-muted)]">
+                            {invoice.status}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <Link
+                              href={`/dashboard/orders/detail?id=${invoice._id}`}
+                              className="text-xs font-semibold text-brand-orange hover:underline"
+                            >
+                              View
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              }
+            />
           </div>
         ) : null}
       </section>
@@ -679,66 +718,108 @@ export default function StaffHomeDashboard() {
           <p className="px-4 py-8 text-sm text-[var(--staff-muted)]">
             Loading payments…
           </p>
-        ) : recentPayments.length === 0 ? (
-          <p className="px-4 py-8 text-center text-sm text-[var(--staff-muted)]">
-            No payments recorded yet.
-          </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-[var(--staff-border)] text-sm">
-              <thead className="bg-[var(--staff-cream)]/70">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                    Payment
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                    Customer
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                    Date
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                    Amount
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                    Method
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                    Status
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--staff-border)]">
-                {recentPayments.map((invoice) => (
-                  <tr
-                    key={invoice._id}
-                    className="transition hover:bg-[var(--staff-cream)]/50"
-                  >
-                    <td className="px-4 py-3 font-medium text-[var(--staff-ink)]">
-                      {invoice.number}
-                    </td>
-                    <td className="px-4 py-3 text-[var(--staff-muted)]">
-                      #{invoice.customerId}
-                    </td>
-                    <td className="px-4 py-3 text-[var(--staff-muted)]">
-                      {formatDateOnly(invoice.paidAt ?? invoice.updatedAt)}
-                    </td>
-                    <td className="px-4 py-3 font-semibold text-[var(--staff-ink)]">
-                      {formatMoney(invoice.amountCents)}
-                    </td>
-                    <td className="px-4 py-3 capitalize text-[var(--staff-muted)]">
-                      {invoice.paymentProvider ?? "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                        Accepted
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ResponsiveDataView
+            className="p-3 md:p-0"
+            isEmpty={recentPayments.length === 0}
+            empty={
+              <p className="px-4 py-8 text-center text-sm text-[var(--staff-muted)]">
+                No payments recorded yet.
+              </p>
+            }
+            mobile={recentPayments.map((invoice) => (
+              <MobileDataCard
+                key={invoice._id}
+                title={invoice.number}
+                subtitle={`Customer #${invoice.customerId}`}
+                badges={
+                  <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                    Accepted
+                  </span>
+                }
+                fields={
+                  <>
+                    <DataField
+                      label="Date"
+                      value={formatDateOnly(
+                        invoice.paidAt ?? invoice.updatedAt,
+                      )}
+                    />
+                    <DataField
+                      label="Amount"
+                      value={formatMoney(invoice.amountCents)}
+                    />
+                    <DataField
+                      label="Method"
+                      value={
+                        <span className="capitalize">
+                          {invoice.paymentProvider ?? "—"}
+                        </span>
+                      }
+                      className="col-span-2"
+                    />
+                  </>
+                }
+              />
+            ))}
+            desktop={
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-[var(--staff-border)] text-sm">
+                  <thead className="bg-[var(--staff-cream)]/70">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Payment
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Customer
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Date
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Amount
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Method
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--staff-border)]">
+                    {recentPayments.map((invoice) => (
+                      <tr
+                        key={invoice._id}
+                        className="transition hover:bg-[var(--staff-cream)]/50"
+                      >
+                        <td className="px-4 py-3 font-medium text-[var(--staff-ink)]">
+                          {invoice.number}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--staff-muted)]">
+                          #{invoice.customerId}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--staff-muted)]">
+                          {formatDateOnly(invoice.paidAt ?? invoice.updatedAt)}
+                        </td>
+                        <td className="px-4 py-3 font-semibold text-[var(--staff-ink)]">
+                          {formatMoney(invoice.amountCents)}
+                        </td>
+                        <td className="px-4 py-3 capitalize text-[var(--staff-muted)]">
+                          {invoice.paymentProvider ?? "—"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                            Accepted
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            }
+          />
         )}
       </section>
 

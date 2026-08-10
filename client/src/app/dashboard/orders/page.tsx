@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { useAuthStore } from "@/store/useAuthStore";
 import { ApiError, getInvoices, InvoiceItem } from "@/lib/api";
 import { FileText } from "lucide-react";
@@ -70,72 +72,111 @@ function OrdersContent() {
         <div className="rounded-xl border border-neutral-200 bg-white px-6 py-8 text-sm text-neutral-500">
           Loading invoices…
         </div>
-      ) : invoices.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-24 text-center shadow-sm">
-          <FileText className="h-10 w-10 text-neutral-300 mb-4" />
-          <p className="text-sm font-medium text-neutral-500">
-            No invoices yet
-          </p>
-          <p className="mt-1 text-xs text-neutral-400">
-            Invoices for renewals and work orders will appear here.
-          </p>
-        </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
-          <table className="min-w-full divide-y divide-neutral-100 text-sm">
-            <thead className="bg-neutral-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Invoice
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Type
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Amount
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              {invoices.map((inv) => (
-                <tr
-                  key={inv._id}
-                  role="link"
-                  tabIndex={0}
-                  onClick={() =>
-                    router.push(`/dashboard/orders/detail?id=${inv._id}`)
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      router.push(`/dashboard/orders/detail?id=${inv._id}`);
+        <ResponsiveDataView
+          isEmpty={invoices.length === 0}
+          empty={
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-24 text-center shadow-sm">
+              <FileText className="h-10 w-10 text-neutral-300 mb-4" />
+              <p className="text-sm font-medium text-neutral-500">
+                No invoices yet
+              </p>
+              <p className="mt-1 text-xs text-neutral-400">
+                Invoices for renewals and work orders will appear here.
+              </p>
+            </div>
+          }
+          mobile={invoices.map((inv) => (
+            <MobileDataCard
+              key={inv._id}
+              title={inv.number}
+              subtitle={new Date(inv.issuedAt).toLocaleDateString()}
+              badges={
+                <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium capitalize text-neutral-600">
+                  {inv.status}
+                </span>
+              }
+              fields={
+                <>
+                  <DataField
+                    label="Type"
+                    value={
+                      <span className="capitalize">
+                        {inv.sourceType.replace(/_/g, " ")}
+                      </span>
                     }
-                  }}
-                  className="cursor-pointer transition hover:bg-neutral-50 focus-visible:bg-neutral-50 focus-visible:outline-none"
-                >
-                  <td className="px-6 py-4 font-medium text-brand-dark">
-                    {inv.number}
-                    <div className="text-xs font-normal text-neutral-400">
-                      {new Date(inv.issuedAt).toLocaleDateString()}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-neutral-600 capitalize">
-                    {inv.sourceType.replace(/_/g, " ")}
-                  </td>
-                  <td className="px-6 py-4 text-neutral-700">
-                    {formatMoney(inv.amountCents)}
-                  </td>
-                  <td className="px-6 py-4 capitalize text-neutral-600">
-                    {inv.status}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  />
+                  <DataField
+                    label="Amount"
+                    value={formatMoney(inv.amountCents)}
+                  />
+                </>
+              }
+              onClick={() =>
+                router.push(`/dashboard/orders/detail?id=${inv._id}`)
+              }
+            />
+          ))}
+          desktop={
+            <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+              <table className="min-w-full divide-y divide-neutral-100 text-sm">
+                <thead className="bg-neutral-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Invoice
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Type
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Amount
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {invoices.map((inv) => (
+                    <tr
+                      key={inv._id}
+                      role="link"
+                      tabIndex={0}
+                      onClick={() =>
+                        router.push(`/dashboard/orders/detail?id=${inv._id}`)
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          router.push(
+                            `/dashboard/orders/detail?id=${inv._id}`,
+                          );
+                        }
+                      }}
+                      className="cursor-pointer transition hover:bg-neutral-50 focus-visible:bg-neutral-50 focus-visible:outline-none"
+                    >
+                      <td className="px-6 py-4 font-medium text-brand-dark">
+                        {inv.number}
+                        <div className="text-xs font-normal text-neutral-400">
+                          {new Date(inv.issuedAt).toLocaleDateString()}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-neutral-600 capitalize">
+                        {inv.sourceType.replace(/_/g, " ")}
+                      </td>
+                      <td className="px-6 py-4 text-neutral-700">
+                        {formatMoney(inv.amountCents)}
+                      </td>
+                      <td className="px-6 py-4 capitalize text-neutral-600">
+                        {inv.status}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          }
+        />
       )}
     </div>
   );

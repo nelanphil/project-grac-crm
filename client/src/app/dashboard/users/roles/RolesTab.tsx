@@ -367,11 +367,14 @@ function RoleCard({
             {Object.entries(groupPermissions(permissions))
               .sort(([a], [b]) => a.localeCompare(b))
               .map(([resource, perms]) => (
-                <div key={resource} className="flex items-center gap-2">
-                  <span className="w-24 shrink-0 text-right text-xs font-medium text-neutral-400 capitalize">
+                <div
+                  key={resource}
+                  className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2"
+                >
+                  <span className="sm:w-24 shrink-0 sm:text-right text-xs font-medium text-neutral-400 capitalize">
                     {resource}
                   </span>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1.5 min-w-0">
                     {perms.map((perm) => (
                       <DraggableChip
                         key={`${role.slug}:${perm}`}
@@ -578,21 +581,22 @@ export default function RolesTab() {
 
   return (
     <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-        {/* Left: role cards */}
-        <div className="flex-1 min-w-0 space-y-4">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start">
+        {/* Role cards */}
+        <div className="flex-1 min-w-0 space-y-4 order-2 md:order-1">
           {/* Header + add role */}
-          <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
+          <div className="rounded-xl border border-neutral-200 bg-white p-4 sm:p-5 shadow-sm">
             <h2 className="text-base font-semibold text-brand-dark">
               Roles & Permissions
             </h2>
             <p className="text-sm text-neutral-500 mt-0.5">
               Drag permissions onto a role, click × to remove, then Save. Rename
-              or delete custom roles with the inline controls.
+              or delete custom roles with the inline controls. On phones, tap ×
+              to remove — drag works best with a mouse or larger screen.
             </p>
 
             {/* Add new role */}
-            <div className="mt-4 flex items-center gap-2">
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
               <input
                 value={newRoleLabel}
                 onChange={(e) => {
@@ -601,12 +605,12 @@ export default function RolesTab() {
                 }}
                 onKeyDown={(e) => e.key === "Enter" && handleAddRole()}
                 placeholder="New role name…"
-                className="w-48 rounded-md border border-neutral-200 px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                className="w-full sm:w-48 rounded-md border border-neutral-200 px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
               />
               <button
                 onClick={handleAddRole}
                 disabled={addingRole || !newRoleLabel.trim()}
-                className="flex items-center gap-1.5 rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:bg-brand-dark/90 disabled:opacity-50 transition-colors"
+                className="inline-flex items-center justify-center gap-1.5 rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:bg-brand-dark/90 disabled:opacity-50 transition-colors"
               >
                 <Plus className="h-4 w-4" />
                 {addingRole ? "Adding…" : "Add Role"}
@@ -639,16 +643,16 @@ export default function RolesTab() {
           ))}
         </div>
 
-        {/* Right: permissions palette */}
-        <div className="w-full lg:w-60 shrink-0">
-          <div className="sticky top-24 rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
+        {/* Permissions palette — stacked above roles on small screens */}
+        <div className="w-full md:w-60 shrink-0 order-1 md:order-2">
+          <div className="md:sticky md:top-24 rounded-xl border border-neutral-200 bg-white p-4 sm:p-5 shadow-sm">
             <h3 className="text-sm font-semibold text-brand-dark mb-1">
               All Permissions
             </h3>
-            <p className="text-xs text-neutral-400 mb-4">
+            <p className="text-xs text-neutral-400 mb-3">
               Drag any permission onto a role card.
             </p>
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-wrap gap-1.5 max-h-[40vh] overflow-y-auto md:max-h-[calc(100vh-10rem)] md:flex-col md:flex-nowrap">
               {ALL_PERMISSIONS.map((perm) => (
                 <DraggableChip
                   key={perm}

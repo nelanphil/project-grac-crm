@@ -65,13 +65,13 @@ export default function InvoiceDocument({
     : [];
 
   return (
-    <article className="invoice-document rounded-xl border border-neutral-200 bg-white px-6 py-8 shadow-sm sm:px-10 sm:py-10 print:rounded-none print:border-0 print:shadow-none print:px-0 print:py-0">
-      <header className="flex flex-wrap items-start justify-between gap-8 border-b border-neutral-200 pb-6">
+    <article className="invoice-document rounded-xl border border-neutral-200 bg-white px-4 py-6 shadow-sm sm:px-10 sm:py-10 print:rounded-none print:border-0 print:shadow-none print:px-0 print:py-0">
+      <header className="flex flex-col gap-6 border-b border-neutral-200 pb-6 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-8">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">
             Invoice
           </p>
-          <p className="mt-1 text-2xl font-bold text-brand-dark">
+          <p className="mt-1 text-2xl font-bold text-brand-dark break-words">
             {invoice.number}
           </p>
           <p className="mt-1 text-sm capitalize text-neutral-500">
@@ -99,7 +99,7 @@ export default function InvoiceDocument({
           </div>
         </div>
 
-        <div className="min-w-[12rem] text-right sm:max-w-xs">
+        <div className="min-w-0 w-full text-left sm:min-w-[12rem] sm:w-auto sm:max-w-xs sm:text-right">
           <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
             Bill to
           </p>
@@ -131,7 +131,7 @@ export default function InvoiceDocument({
         </div>
       </header>
 
-      <div className="mt-6 grid gap-4 border-b border-neutral-200 pb-6 sm:grid-cols-4">
+      <div className="mt-6 grid grid-cols-2 gap-4 border-b border-neutral-200 pb-6 sm:grid-cols-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
             Issued
@@ -209,7 +209,9 @@ export default function InvoiceDocument({
                   key={`${item.description}-${index}`}
                   className="border-b border-neutral-100"
                 >
-                  <td className="py-3 text-neutral-700">{item.description}</td>
+                  <td className="py-3 pr-3 text-neutral-700 break-words">
+                    {item.description}
+                  </td>
                   <td className="py-3 text-right font-medium text-brand-dark">
                     {formatMoney(item.amountCents)}
                   </td>

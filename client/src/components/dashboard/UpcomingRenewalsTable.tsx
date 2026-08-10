@@ -24,6 +24,8 @@ import {
   toProperCase,
 } from "@/lib/formatName";
 import LucideIconByName from "@/components/icons/LucideIconByName";
+import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
+import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200] as const;
 type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
@@ -411,164 +413,253 @@ export default function UpcomingRenewalsTable() {
             />
           )}
 
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-neutral-100 text-sm">
-              <thead className="bg-neutral-50">
-                <tr>
-                  <SortHeader
-                    label="Customer"
-                    column="customer"
-                    sortKey={sortKey}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    label="Phone"
-                    column="phone"
-                    sortKey={sortKey}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    label="Street"
-                    column="street"
-                    sortKey={sortKey}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    label="City"
-                    column="city"
-                    sortKey={sortKey}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    label="State"
-                    column="state"
-                    sortKey={sortKey}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    label="Zip"
-                    column="zip"
-                    sortKey={sortKey}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    label="Contract Type"
-                    column="contractType"
-                    sortKey={sortKey}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    label="Renewal Due"
-                    column="renewalDue"
-                    sortKey={sortKey}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    label="Status"
-                    column="status"
-                    sortKey={sortKey}
-                    sortDir={sortDir}
-                    onSort={handleSort}
-                  />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100 bg-white">
-                {sortedRenewals.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={9}
-                      className="px-6 py-12 text-center text-neutral-500"
-                    >
-                      No renewals due in {monthLabel}.
-                    </td>
-                  </tr>
-                ) : (
-                  pagedRenewals.map((contract) => (
-                    <tr
-                      key={contract._id}
-                      onClick={() =>
-                        contract.customer &&
-                        router.push(
-                          `/dashboard/customers/detail?id=${contract.customer._id}`,
-                        )
-                      }
-                      className="cursor-pointer transition-colors hover:bg-neutral-50"
-                    >
-                      <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
-                        {contract.customer ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            {formatCustomerRecordName(contract.customer)}
-                            {(contract.customer.duplicateCount ?? 0) > 0 ? (
-                              <span
-                                className="inline-flex text-amber-700"
-                                title={`${contract.customer.duplicateCount} other customer(s) share this phone`}
-                                aria-label="Possible duplicate"
-                              >
-                                <GitMerge className="h-3.5 w-3.5" />
-                              </span>
-                            ) : null}
-                          </span>
-                        ) : (
-                          `Customer #${contract.customerId}`
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {formatPhone(contract.customer?.phone)}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {contract.customer?.address
-                          ? toProperCase(contract.customer.address)
-                          : "—"}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {contract.customer?.city
-                          ? toProperCase(contract.customer.city)
-                          : "—"}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {formatCustomerState(contract.customer?.state)}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {contract.customer?.zip?.trim() || "—"}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1.5">
-                          {contract.template?.badgeIcon ? (
-                            <LucideIconByName
-                              name={contract.template.badgeIcon}
-                              className="h-3.5 w-3.5 text-neutral-500"
-                              size={14}
-                            />
-                          ) : null}
-                          {formatContractCatalogLabel(contract)}
+          <ResponsiveDataView
+            className="px-3 py-3 md:px-0 md:py-0"
+            isEmpty={sortedRenewals.length === 0}
+            empty={
+              <div className="px-6 py-12 text-center text-sm text-neutral-500">
+                No renewals due in {monthLabel}.
+              </div>
+            }
+            mobile={pagedRenewals.map((contract) => {
+              const customerName = contract.customer
+                ? formatCustomerRecordName(contract.customer)
+                : `Customer #${contract.customerId}`;
+              const street = contract.customer?.address
+                ? toProperCase(contract.customer.address)
+                : "—";
+              const city = contract.customer?.city
+                ? toProperCase(contract.customer.city)
+                : "—";
+              const location = [
+                city !== "—" ? city : null,
+                formatCustomerState(contract.customer?.state) || null,
+                contract.customer?.zip?.trim() || null,
+              ]
+                .filter(Boolean)
+                .join(", ");
+
+              return (
+                <MobileDataCard
+                  key={contract._id}
+                  title={
+                    <span className="inline-flex items-center gap-1.5">
+                      {customerName}
+                      {(contract.customer?.duplicateCount ?? 0) > 0 ? (
+                        <span
+                          className="inline-flex text-amber-700"
+                          title={`${contract.customer?.duplicateCount} other customer(s) share this phone`}
+                          aria-label="Possible duplicate"
+                        >
+                          <GitMerge className="h-3.5 w-3.5" />
                         </span>
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {contract.renewalDueDate
-                          ? new Date(
-                              contract.renewalDueDate,
-                            ).toLocaleDateString()
-                          : "—"}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <StandingBadge
-                          standing={contract.standing ?? "expired"}
-                        />
-                      </td>
+                      ) : null}
+                    </span>
+                  }
+                  subtitle={formatPhone(contract.customer?.phone)}
+                  badges={
+                    <StandingBadge standing={contract.standing ?? "expired"} />
+                  }
+                  fields={
+                    <>
+                      <DataField
+                        label="Street"
+                        value={street}
+                        className="col-span-2"
+                      />
+                      <DataField
+                        label="Location"
+                        value={location || "—"}
+                        className="col-span-2"
+                      />
+                      <DataField
+                        label="Contract"
+                        value={
+                          <span className="inline-flex items-center gap-1.5">
+                            {contract.template?.badgeIcon ? (
+                              <LucideIconByName
+                                name={contract.template.badgeIcon}
+                                className="h-3.5 w-3.5 text-neutral-500"
+                                size={14}
+                              />
+                            ) : null}
+                            {formatContractCatalogLabel(contract)}
+                          </span>
+                        }
+                      />
+                      <DataField
+                        label="Renewal due"
+                        value={
+                          contract.renewalDueDate
+                            ? new Date(
+                                contract.renewalDueDate,
+                              ).toLocaleDateString()
+                            : "—"
+                        }
+                      />
+                    </>
+                  }
+                  onClick={
+                    contract.customer
+                      ? () =>
+                          router.push(
+                            `/dashboard/customers/detail?id=${contract.customer!._id}`,
+                          )
+                      : undefined
+                  }
+                />
+              );
+            })}
+            desktop={
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-neutral-100 text-sm">
+                  <thead className="bg-neutral-50">
+                    <tr>
+                      <SortHeader
+                        label="Customer"
+                        column="customer"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="Phone"
+                        column="phone"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="Street"
+                        column="street"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="City"
+                        column="city"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="State"
+                        column="state"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="Zip"
+                        column="zip"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="Contract Type"
+                        column="contractType"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="Renewal Due"
+                        column="renewalDue"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                      <SortHeader
+                        label="Status"
+                        column="status"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 bg-white">
+                    {pagedRenewals.map((contract) => (
+                      <tr
+                        key={contract._id}
+                        onClick={() =>
+                          contract.customer &&
+                          router.push(
+                            `/dashboard/customers/detail?id=${contract.customer._id}`,
+                          )
+                        }
+                        className="cursor-pointer transition-colors hover:bg-neutral-50"
+                      >
+                        <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
+                          {contract.customer ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              {formatCustomerRecordName(contract.customer)}
+                              {(contract.customer.duplicateCount ?? 0) > 0 ? (
+                                <span
+                                  className="inline-flex text-amber-700"
+                                  title={`${contract.customer.duplicateCount} other customer(s) share this phone`}
+                                  aria-label="Possible duplicate"
+                                >
+                                  <GitMerge className="h-3.5 w-3.5" />
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : (
+                            `Customer #${contract.customerId}`
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          {formatPhone(contract.customer?.phone)}
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          {contract.customer?.address
+                            ? toProperCase(contract.customer.address)
+                            : "—"}
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          {contract.customer?.city
+                            ? toProperCase(contract.customer.city)
+                            : "—"}
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          {formatCustomerState(contract.customer?.state)}
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          {contract.customer?.zip?.trim() || "—"}
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1.5">
+                            {contract.template?.badgeIcon ? (
+                              <LucideIconByName
+                                name={contract.template.badgeIcon}
+                                className="h-3.5 w-3.5 text-neutral-500"
+                                size={14}
+                              />
+                            ) : null}
+                            {formatContractCatalogLabel(contract)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          {contract.renewalDueDate
+                            ? new Date(
+                                contract.renewalDueDate,
+                              ).toLocaleDateString()
+                            : "—"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <StandingBadge
+                            standing={contract.standing ?? "expired"}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            }
+          />
 
           {sortedRenewals.length > 0 && (
             <RenewalsPagination
