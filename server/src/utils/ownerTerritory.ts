@@ -510,10 +510,13 @@ const unassignedOwnerClause = {
 };
 
 /**
- * Mongo filter for owner-scoped customer lists.
- * Matches assigned owner OR (unassigned + location in territory) so owners
- * still see customers if denormalized ownerUserRef lags behind.
+ * Mongo filter for customer lists / search.
+ * Admin, super-admin, and owner are org-wide (null = no territory clause).
+ * Territory still drives assignCustomerOwner / reassignment elsewhere.
  *
+ * Legacy owner-scoped branch below is unused while owner is unrestricted;
+ * kept for reference if list visibility is re-scoped later.
+ * Matches assigned owner OR (unassigned + location in territory).
  * Statewide owners (all 67 FL counties) also see unassigned customers with
  * missing county data — otherwise most legacy records are invisible.
  */
@@ -521,7 +524,13 @@ export async function buildOwnerCustomerFilter(user: {
   id: string;
   role: string;
 }): Promise<Record<string, unknown> | null> {
-  if (user.role === "super-admin" || user.role === "admin") return null;
+  if (
+    user.role === "super-admin" ||
+    user.role === "admin" ||
+    user.role === "owner"
+  ) {
+    return null;
+  }
   if (user.role !== "owner") return null;
 
   const ownerId = new Types.ObjectId(user.id);
@@ -591,7 +600,13 @@ export async function assertOwnerCanAccessCustomer(
     state?: string | null;
   },
 ): Promise<boolean> {
-  if (user.role === "super-admin" || user.role === "admin") return true;
+  if (
+    user.role === "super-admin" ||
+    user.role === "admin" ||
+    user.role === "owner"
+  ) {
+    return true;
+  }
   if (user.role !== "owner") return true;
 
   const ref = customer.ownerUserRef;

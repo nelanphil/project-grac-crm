@@ -64,7 +64,6 @@ function InvoiceDetailContent() {
     setError(null);
     try {
       const { url } = await startInvoiceCheckout(token, invoice._id);
-      // eslint-disable-next-line react-hooks/immutability
       window.location.href = url;
     } catch (err) {
       setError(
