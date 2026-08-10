@@ -121,7 +121,7 @@ export default function CustomerThreadsPanel({
               <h3 className="mb-2 text-sm font-medium text-neutral-600">
                 {contactNameById.get(contactId) || "Contact"}
               </h3>
-              <ul className="grid gap-2 sm:grid-cols-2">
+              <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {contactThreads.map((t) => (
                   <li key={t._id}>
                     <Link

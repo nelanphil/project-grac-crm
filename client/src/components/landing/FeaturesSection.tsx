@@ -29,7 +29,7 @@ export default function FeaturesSection() {
           <h2 className="section-heading mt-2">In Central & South Florida</h2>
         </div>
 
-        <div className="mt-16 grid gap-8 md:grid-cols-3">
+        <div className="mt-16 grid grid-cols-1 gap-8 md:grid-cols-3">
           {SERVICES.map((service) => (
             <div
               key={service.title}

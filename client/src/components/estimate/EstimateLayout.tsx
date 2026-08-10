@@ -35,7 +35,7 @@ export default function EstimateLayout({
           <span className="text-brand-dark">Get an Estimate</span>
         </nav>
 
-        <div className="grid gap-12 lg:grid-cols-2 lg:gap-16">
+        <div className="grid grid-cols-1 gap-12 lg:grid-cols-2 lg:gap-16">
           <div className="flex items-center">
             <h1 className="text-4xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-6xl">
               <span className="text-brand-midnight">Get Your</span>

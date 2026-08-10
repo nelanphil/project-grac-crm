@@ -381,7 +381,7 @@ function CustomerDetailContent() {
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <section id="customer-overview" className="scroll-mt-28 lg:scroll-mt-6">
           <ContactCard
             customer={customer}

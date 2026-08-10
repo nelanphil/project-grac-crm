@@ -492,7 +492,7 @@ function CreateCustomerContent() {
                   ) : null}
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="block text-sm font-medium text-brand-dark">
                     First name
                     <input
@@ -616,7 +616,7 @@ function CreateCustomerContent() {
                     </button>
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block text-sm font-medium text-brand-dark sm:col-span-2">
                       Label
                       <input
@@ -888,7 +888,7 @@ function CreateCustomerContent() {
                         {addr.equipment.map((eq) => (
                           <div
                             key={eq.key}
-                            className="grid gap-3 rounded-md border border-neutral-200 bg-white p-3 sm:grid-cols-3"
+                            className="grid grid-cols-1 gap-3 rounded-md border border-neutral-200 bg-white p-3 sm:grid-cols-3"
                           >
                             <label className="block text-xs font-medium text-brand-dark">
                               Generator model

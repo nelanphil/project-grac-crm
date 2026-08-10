@@ -15,7 +15,7 @@ export default function ServiceAreasSection() {
           </p>
         </div>
 
-        <div className="mt-16 grid gap-12 md:grid-cols-2">
+        <div className="mt-16 grid grid-cols-1 gap-12 md:grid-cols-2">
           <div>
             <h3 className="text-lg font-bold text-brand-dark">
               Central Florida

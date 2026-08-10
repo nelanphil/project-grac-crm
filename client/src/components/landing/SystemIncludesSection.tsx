@@ -8,7 +8,7 @@ export default function SystemIncludesSection() {
           <h2 className="section-heading">Every Generator System Includes</h2>
         </div>
 
-        <div className="mt-16 grid gap-8 md:grid-cols-3">
+        <div className="mt-16 grid grid-cols-1 gap-8 md:grid-cols-3">
           {SYSTEM_INCLUDES.map((item) => (
             <div
               key={item.title}
