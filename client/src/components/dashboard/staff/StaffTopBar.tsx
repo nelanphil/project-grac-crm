@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { LogOut, Menu, Plus, X } from "lucide-react";
 import { COMPANY } from "@/lib/constants";
 import { getVisibleNavSections } from "@/lib/dashboard-nav";
@@ -27,18 +27,14 @@ export default function StaffTopBar() {
     `${user?.first_name?.[0] ?? ""}${user?.last_name?.[0] ?? ""}`.toUpperCase() ||
     "U";
 
-  useEffect(() => {
-    setMobileOpen(false);
-    setNewOpen(false);
-  }, [pathname]);
-
   function handleLogout() {
     logout();
     router.push("/auth/login");
   }
 
-  function closeMobileNav() {
+  function closeMenus() {
     setMobileOpen(false);
+    setNewOpen(false);
   }
 
   return (
@@ -86,7 +82,7 @@ export default function StaffTopBar() {
                     <Link
                       href="/dashboard/customers/create"
                       className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-                      onClick={() => setNewOpen(false)}
+                      onClick={closeMenus}
                     >
                       Customer
                     </Link>
@@ -94,14 +90,14 @@ export default function StaffTopBar() {
                   <Link
                     href="/dashboard/contracts"
                     className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-                    onClick={() => setNewOpen(false)}
+                    onClick={closeMenus}
                   >
                     Contracts
                   </Link>
                   <Link
                     href="/dashboard/orders"
                     className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-                    onClick={() => setNewOpen(false)}
+                    onClick={closeMenus}
                   >
                     Invoices
                   </Link>
@@ -147,7 +143,7 @@ export default function StaffTopBar() {
                   ? "bg-[var(--staff-ink)] text-white"
                   : "text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
               }`}
-              onClick={closeMobileNav}
+              onClick={closeMenus}
             >
               Home
             </Link>
@@ -163,7 +159,7 @@ export default function StaffTopBar() {
                       item={item}
                       pathname={pathname}
                       variant="sidebar"
-                      onNavigate={closeMobileNav}
+                      onNavigate={closeMenus}
                     />
                   ))}
                 </div>
@@ -172,7 +168,7 @@ export default function StaffTopBar() {
             <button
               type="button"
               onClick={() => {
-                closeMobileNav();
+                closeMenus();
                 handleLogout();
               }}
               className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
