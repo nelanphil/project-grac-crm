@@ -38,11 +38,11 @@ export default function StaffTopBar() {
   }
 
   return (
-    <header className="sticky top-0 z-30 border-b border-[var(--staff-border)] bg-[var(--staff-surface)]/95 backdrop-blur">
-      <div className="flex items-center gap-3 px-3 py-3 sm:px-5 lg:px-6">
+    <header className="sticky top-0 z-30 w-full border-b border-[var(--staff-border)] bg-[var(--staff-surface)]/95 backdrop-blur">
+      <div className="flex w-full items-center gap-2 px-3 py-3 sm:gap-3 sm:px-5 lg:px-6">
         <button
           type="button"
-          className="rounded-lg p-2 text-[var(--staff-muted)] transition-colors hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)] md:hidden"
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[var(--staff-muted)] transition-colors hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)] md:hidden"
           onClick={() => setMobileOpen((v) => !v)}
           aria-label="Toggle menu"
           aria-expanded={mobileOpen}
@@ -59,12 +59,12 @@ export default function StaffTopBar() {
 
         <CustomerHeaderSearch className="mx-auto hidden min-w-0 max-w-xl flex-1 md:block" />
 
-        <div className="ml-auto flex items-center gap-1 sm:gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
           <div className="relative">
             <button
               type="button"
               onClick={() => setNewOpen((v) => !v)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--staff-ink)] px-3 py-2 text-sm font-semibold text-white transition hover:bg-black"
+              className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-[var(--staff-ink)] px-3 text-sm font-semibold text-white transition hover:bg-black sm:h-auto sm:py-2"
             >
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New</span>
@@ -129,8 +129,8 @@ export default function StaffTopBar() {
       </div>
 
       <CustomerHeaderSearch
-        className="border-t border-[var(--staff-border)] px-3 py-2 md:hidden"
-        inputClassName="w-full rounded-xl border border-[var(--staff-border)] bg-white py-2 pl-10 pr-3 text-sm outline-none focus:border-brand-orange focus:ring-2 focus:ring-brand-orange/20"
+        className="w-full border-t border-[var(--staff-border)] px-3 py-2 md:hidden"
+        inputClassName="w-full rounded-xl border border-[var(--staff-border)] bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-brand-orange focus:ring-2 focus:ring-brand-orange/20"
       />
 
       {mobileOpen && (

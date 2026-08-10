@@ -108,17 +108,21 @@ function KpiCard({
   onClick?: () => void;
   expanded?: boolean;
 }) {
-  const className = `rounded-2xl border px-4 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md text-left w-full ${TONE_STYLES[tone]} ${
+  const className = `block w-full min-w-0 rounded-2xl border px-3 py-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md sm:px-4 sm:py-4 ${TONE_STYLES[tone]} ${
     expanded ? "ring-2 ring-offset-2 ring-[var(--staff-ink)]" : ""
   }`;
 
   const content = (
     <>
-      <p className="text-xs font-semibold uppercase tracking-wide opacity-80">
+      <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80 sm:text-xs">
         {label}
       </p>
-      <p className="mt-2 text-2xl font-bold tracking-tight">{value}</p>
-      {hint ? <p className="mt-1 text-xs opacity-70">{hint}</p> : null}
+      <p className="mt-2 text-xl font-bold tracking-tight break-words sm:text-2xl">
+        {value}
+      </p>
+      {hint ? (
+        <p className="mt-1 text-xs opacity-70 break-words">{hint}</p>
+      ) : null}
     </>
   );
 
@@ -360,9 +364,9 @@ export default function StaffHomeDashboard() {
   }, [invoices]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
+    <div className="w-full max-w-full space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+        <div className="min-w-0">
           <p className="text-sm text-[var(--staff-muted)]">Welcome back</p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-[var(--staff-ink)] sm:text-3xl">
             {user?.first_name} {user?.last_name}
@@ -373,7 +377,7 @@ export default function StaffHomeDashboard() {
         </div>
         <Link
           href="/dashboard/customers"
-          className="inline-flex items-center gap-2 rounded-xl bg-[var(--staff-ink)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--staff-ink)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black sm:w-auto"
         >
           View customers
           <ArrowRight className="h-4 w-4" />
@@ -393,7 +397,7 @@ export default function StaffHomeDashboard() {
             Account standing
           </h2>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid w-full grid-cols-2 gap-3 xl:grid-cols-4">
           <KpiCard
             label="Past due"
             value={loading ? "—" : formatMoney(accountStanding.pastDueCents)}
@@ -563,7 +567,7 @@ export default function StaffHomeDashboard() {
               Contract stats
             </h2>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid w-full grid-cols-2 gap-3 xl:grid-cols-4">
             <KpiCard
               label="Total"
               value={loading ? "—" : String(contractStats.total)}
@@ -588,7 +592,7 @@ export default function StaffHomeDashboard() {
         </section>
       ) : null}
 
-      <section className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+      <section className="grid w-full grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
         {canReadContracts ? (
           <QueueCard
             title="Upcoming renewals"
