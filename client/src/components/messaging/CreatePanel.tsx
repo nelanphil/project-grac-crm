@@ -689,7 +689,7 @@ export default function CreatePanel({
       ) : null}
 
       {step === "review" ? (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
           <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold text-brand-dark">
               Review

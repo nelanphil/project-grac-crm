@@ -341,7 +341,7 @@ function ContactCardContent({
               <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
                 {editingId ? "Edit contact" : "New contact"}
               </p>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <input
                   type="text"
                   placeholder="First name"

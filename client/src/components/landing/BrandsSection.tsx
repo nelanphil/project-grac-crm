@@ -49,7 +49,7 @@ export default function BrandsSection() {
           <h3 className="text-center text-2xl font-bold text-brand-dark">
             When You Choose Generac, You Choose Peace of Mind
           </h3>
-          <div className="mt-10 grid gap-8 md:grid-cols-3">
+          <div className="mt-10 grid grid-cols-1 gap-8 md:grid-cols-3">
             {GENERAC_HOME_STANDBY.benefits.map((benefit) => (
               <div
                 key={benefit.title}
