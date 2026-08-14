@@ -28,7 +28,7 @@ export default function AuthCard({
               href="/"
               className="text-xl font-bold tracking-tight text-brand-dark"
             >
-              GRAC<span className="text-brand-orange">CRM</span>
+              Generator Maintenance <span className="text-brand-orange">of Florida</span>
             </Link>
             <h1 className="mt-6 text-2xl font-bold text-brand-dark">
               {title}

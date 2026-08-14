@@ -5,7 +5,7 @@ export default function SignupPage() {
   return (
     <AuthCard
       title="Create Your Account"
-      subtitle="Get started with GRAC CRM today"
+      subtitle="Get started with GMOF today"
       footerText="Already have an account?"
       footerLinkText="Sign in"
       footerLinkHref="/auth/login"

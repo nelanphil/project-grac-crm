@@ -7,7 +7,7 @@ export default function LoginPage() {
     <GuestGuard>
       <AuthCard
         title="Welcome Back"
-        subtitle="Sign in to your GRAC CRM account"
+        subtitle="Sign in to your GMOF account"
         footerText="Don't have an account?"
         footerLinkText="Sign up"
         footerLinkHref="/auth/signup"
