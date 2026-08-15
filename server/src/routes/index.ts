@@ -1,6 +1,10 @@
 import { Router, Request, Response } from "express";
 import { getMongoStatus } from "../config/mongodb";
 import { getMySQLStatus } from "../config/mysql";
+import {
+  getPublicAssetBySlug,
+  publicAssetHealth,
+} from "../controllers/publicAsset.controller";
 import authRoutes from "./auth.routes";
 import leadRoutes from "./lead.routes";
 import userRoutes from "./user.routes";
@@ -19,6 +23,8 @@ import messagingRoutes from "./messaging.routes";
 import paymentProviderAccountRoutes from "./paymentProviderAccount.routes";
 import invoiceRoutes from "./invoice.routes";
 import payLinkRoutes from "./payLink.routes";
+import cloudinaryCredentialsRoutes from "./cloudinaryCredentials.routes";
+import publicAssetRoutes from "./publicAsset.routes";
 
 const router = Router();
 
@@ -48,5 +54,9 @@ router.use("/notifications", notificationRoutes);
 router.use("/payment-provider-accounts", paymentProviderAccountRoutes);
 router.use("/invoices", invoiceRoutes);
 router.use("/pay", payLinkRoutes);
+router.use("/cloudinary-credentials", cloudinaryCredentialsRoutes);
+router.get("/public-assets/:slug/health", publicAssetHealth);
+router.get("/public-assets/:slug", getPublicAssetBySlug);
+router.use("/public-assets", publicAssetRoutes);
 
 export default router;

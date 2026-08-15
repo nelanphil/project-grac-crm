@@ -8,6 +8,7 @@ import {
   Settings2,
   MessageSquare,
   Map,
+  ShieldCheck,
   LucideIcon,
 } from "lucide-react";
 
@@ -37,8 +38,18 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Admin",
     items: [
-      { href: "/dashboard/customers", label: "Customers", icon: Users, excludeRoles: ["customer"] },
-      { href: "/dashboard/contracts", label: "Contracts", icon: ScrollText, excludeRoles: ["customer"] },
+      {
+        href: "/dashboard/customers",
+        label: "Customers",
+        icon: Users,
+        excludeRoles: ["customer"],
+      },
+      {
+        href: "/dashboard/contracts",
+        label: "Contracts",
+        icon: ScrollText,
+        excludeRoles: ["customer"],
+      },
       {
         href: "/dashboard/territory",
         label: "Territory",
@@ -69,6 +80,12 @@ export const NAV_SECTIONS: NavSection[] = [
             includeRoles: ["super-admin"],
           },
         ],
+      },
+      {
+        href: "/dashboard/admin",
+        label: "Admin",
+        icon: ShieldCheck,
+        includeRoles: ["super-admin"],
       },
     ],
   },
@@ -110,7 +127,11 @@ export function getVisibleNavSections(role: string | undefined): NavSection[] {
 }
 
 /** Parent is active only on its exact path (children have their own links). */
-export function isNavItemActive(pathname: string, href: string, hasChildren?: boolean): boolean {
+export function isNavItemActive(
+  pathname: string,
+  href: string,
+  hasChildren?: boolean,
+): boolean {
   if (hasChildren) {
     return pathname === href;
   }

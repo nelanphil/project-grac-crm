@@ -54,14 +54,19 @@ async function authRequest<T>(
   endpoint: string,
   options: RequestInit,
 ): Promise<T> {
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
+
   let res: Response;
   try {
     res = await fetch(`${API_URL}${endpoint}`, {
       ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers ?? {}),
-      },
+      headers: isFormData
+        ? { ...(options.headers ?? {}) }
+        : {
+            "Content-Type": "application/json",
+            ...(options.headers ?? {}),
+          },
     });
   } catch {
     throw new ApiError(
@@ -307,7 +312,9 @@ export async function updateTerritories(
   data: UserTerritories,
 ): Promise<{
   owner: TerritoryOwner;
-  reassignment?: { status: "started" } | { processed: number; assigned: number };
+  reassignment?:
+    | { status: "started" }
+    | { processed: number; assigned: number };
 }> {
   return authRequest<{
     owner: TerritoryOwner;
@@ -321,9 +328,7 @@ export async function updateTerritories(
   });
 }
 
-export async function recalculateTerritories(
-  token: string,
-): Promise<{
+export async function recalculateTerritories(token: string): Promise<{
   message: string;
   reassignment: { processed: number; assigned: number };
 }> {
@@ -1964,6 +1969,125 @@ export async function deleteGoogleCredentials(
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Cloudinary credentials and public image assets
+// ---------------------------------------------------------------------------
+
+export interface CloudinaryCredentialsItem {
+  _id: string;
+  cloudName: string;
+  uploadPreset?: string;
+  isActive: boolean;
+  hasApiKey: boolean;
+  hasApiSecret: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CloudinaryCredentialsInput {
+  cloudName?: string;
+  apiKey?: string;
+  apiSecret?: string;
+  uploadPreset?: string;
+  isActive?: boolean;
+}
+
+export async function getCloudinaryCredentials(
+  token: string,
+): Promise<{ credentials: CloudinaryCredentialsItem | null }> {
+  return authRequest<{ credentials: CloudinaryCredentialsItem | null }>(
+    "/cloudinary-credentials",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function saveCloudinaryCredentials(
+  token: string,
+  data: CloudinaryCredentialsInput,
+): Promise<{ credentials: CloudinaryCredentialsItem }> {
+  return authRequest<{ credentials: CloudinaryCredentialsItem }>(
+    "/cloudinary-credentials",
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deleteCloudinaryCredentials(
+  token: string,
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>("/cloudinary-credentials", {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface PublicAssetItem {
+  _id: string;
+  slug: string;
+  title: string;
+  mimeType: string;
+  publicUrl: string;
+  isActive: boolean;
+  uploadedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PublicAssetUploadInput {
+  file: File;
+  slug?: string;
+  title?: string;
+}
+
+export async function listPublicAssets(
+  token: string,
+): Promise<{ assets: PublicAssetItem[] }> {
+  return authRequest<{ assets: PublicAssetItem[] }>("/public-assets", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function uploadPublicAsset(
+  token: string,
+  input: PublicAssetUploadInput,
+): Promise<{ asset: PublicAssetItem }> {
+  const payload = new FormData();
+  payload.append("file", input.file);
+  if (input.slug) payload.append("slug", input.slug);
+  if (input.title) payload.append("title", input.title);
+
+  return authRequest<{ asset: PublicAssetItem }>("/public-assets", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: payload,
+  });
+}
+
+export async function togglePublicAssetStatus(
+  token: string,
+  id: string,
+  isActive: boolean,
+): Promise<{ asset: PublicAssetItem }> {
+  return authRequest<{ asset: PublicAssetItem }>(
+    `/public-assets/${id}/status`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ isActive }),
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
