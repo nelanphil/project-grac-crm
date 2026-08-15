@@ -9,9 +9,13 @@ import {
   legalConsentSchema,
   updateProfileSchema,
   updatePasswordSchema,
+  navOrderSchema,
   LEGAL_DOCS_VERSION,
 } from "../schemas/auth.schema";
-import { forgotPasswordSchema, resetPasswordSchema } from "../schemas/user.schema";
+import {
+  forgotPasswordSchema,
+  resetPasswordSchema,
+} from "../schemas/user.schema";
 import { User, UserRole, activeUserFilter } from "../models/mongo/User";
 import { PasswordResetToken } from "../models/mongo/PasswordResetToken";
 import { getPermissionsForRole } from "../models/mongo/RolePermission";
@@ -52,6 +56,12 @@ function buildUserPayload(user: {
   smsOptIn?: boolean;
   smsOptInAt?: Date | string | null;
   legalDocsVersion?: string | null;
+  uiPreferences?: {
+    navOrder?: {
+      order: string[];
+      children: Record<string, string[]>;
+    };
+  };
   permissions: string[];
 }) {
   const termsAcceptedAt = toIsoOrNull(user.termsAcceptedAt);
@@ -69,6 +79,9 @@ function buildUserPayload(user: {
     smsOptIn: Boolean(user.smsOptIn),
     smsOptInAt: toIsoOrNull(user.smsOptInAt),
     legalDocsVersion: user.legalDocsVersion ?? null,
+    uiPreferences: {
+      navOrder: user.uiPreferences?.navOrder ?? { order: [], children: {} },
+    },
     needsLegalConsent: user.role === "customer" && !termsAcceptedAt,
   };
 }
@@ -81,7 +94,7 @@ function applyLegalConsent(
     smsOptInAt: Date | null;
     legalDocsVersion: string | null;
   },
-  smsOptIn: boolean
+  smsOptIn: boolean,
 ) {
   const now = new Date();
   user.termsAcceptedAt = now;
@@ -100,11 +113,15 @@ const LOGIN_AMBIGUOUS = {
 export async function register(req: Request, res: Response): Promise<void> {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ message: "Validation error", errors: parsed.error.flatten().fieldErrors });
+    res.status(400).json({
+      message: "Validation error",
+      errors: parsed.error.flatten().fieldErrors,
+    });
     return;
   }
 
-  const { email, password, first_name, last_name, role, smsOptIn } = parsed.data;
+  const { email, password, first_name, last_name, role, smsOptIn } =
+    parsed.data;
 
   try {
     const existing = await User.findOne({
@@ -206,7 +223,7 @@ async function sendSignupConfirmationEmail(opts: {
 /** POST /auth/legal-consent — first-login terms / privacy / SMS for customers */
 export async function acceptLegalConsent(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   if (!req.user) {
     res.status(401).json({ message: "Unauthorized" });
@@ -245,7 +262,10 @@ export async function acceptLegalConsent(
 export async function login(req: Request, res: Response): Promise<void> {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ message: "Validation error", errors: parsed.error.flatten().fieldErrors });
+    res.status(400).json({
+      message: "Validation error",
+      errors: parsed.error.flatten().fieldErrors,
+    });
     return;
   }
 
@@ -310,7 +330,7 @@ export async function login(req: Request, res: Response): Promise<void> {
         permissions,
       },
       env.jwt.secret,
-      { expiresIn: env.jwt.expiresIn } as jwt.SignOptions
+      { expiresIn: env.jwt.expiresIn } as jwt.SignOptions,
     );
 
     res.status(200).json({
@@ -331,7 +351,10 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
 
   const parsed = updateProfileSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ message: "Validation error", errors: parsed.error.flatten().fieldErrors });
+    res.status(400).json({
+      message: "Validation error",
+      errors: parsed.error.flatten().fieldErrors,
+    });
     return;
   }
 
@@ -392,7 +415,7 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
 /** GET /auth/username-check?username=foo — live preview before save */
 export async function checkUsername(
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> {
   if (!req.user) {
     res.status(401).json({ message: "Unauthorized" });
@@ -408,7 +431,8 @@ export async function checkUsername(
       return;
     }
 
-    const raw = typeof req.query.username === "string" ? req.query.username : "";
+    const raw =
+      typeof req.query.username === "string" ? req.query.username : "";
     const preview = await previewUsernameAssignment(raw, {
       _id: String(user._id),
       createdAt: user.createdAt,
@@ -421,7 +445,10 @@ export async function checkUsername(
   }
 }
 
-export async function updatePassword(req: AuthRequest, res: Response): Promise<void> {
+export async function updatePassword(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
   if (!req.user) {
     res.status(401).json({ message: "Unauthorized" });
     return;
@@ -429,7 +456,10 @@ export async function updatePassword(req: AuthRequest, res: Response): Promise<v
 
   const parsed = updatePasswordSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ message: "Validation error", errors: parsed.error.flatten().fieldErrors });
+    res.status(400).json({
+      message: "Validation error",
+      errors: parsed.error.flatten().fieldErrors,
+    });
     return;
   }
 
@@ -465,7 +495,10 @@ export async function me(req: AuthRequest, res: Response): Promise<void> {
   }
 
   try {
-    const user = await User.findOne({ _id: req.user.id, ...activeUserFilter }).lean();
+    const user = await User.findOne({
+      _id: req.user.id,
+      ...activeUserFilter,
+    }).lean();
     if (!user) {
       res.status(404).json({ message: "User not found" });
       return;
@@ -482,7 +515,48 @@ export async function me(req: AuthRequest, res: Response): Promise<void> {
   }
 }
 
-export async function forgotPassword(req: Request, res: Response): Promise<void> {
+export async function updateMyNavOrder(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  const parsed = navOrderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "Validation error",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  try {
+    const user = await User.findOneAndUpdate(
+      { _id: req.user.id, ...activeUserFilter },
+      { $set: { "uiPreferences.navOrder": parsed.data } },
+      { new: true },
+    ).lean();
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    res
+      .status(200)
+      .json({ navOrder: user.uiPreferences?.navOrder ?? parsed.data });
+  } catch (err) {
+    console.error("updateMyNavOrder error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function forgotPassword(
+  req: Request,
+  res: Response,
+): Promise<void> {
   const parsed = forgotPasswordSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -506,7 +580,10 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
     }
 
     const rawToken = crypto.randomBytes(32).toString("hex");
-    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(rawToken)
+      .digest("hex");
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
     await PasswordResetToken.create({
@@ -553,7 +630,9 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
         mailError =
           mailErr instanceof Error ? mailErr.message : "SMTP send failed";
         console.error("[mail] Failed to send password reset email:", mailErr);
-        console.warn(`[mail] Fallback reset URL for ${user.email}: ${resetUrl}`);
+        console.warn(
+          `[mail] Fallback reset URL for ${user.email}: ${resetUrl}`,
+        );
       }
     }
 
@@ -571,7 +650,10 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
   }
 }
 
-export async function resetPassword(req: Request, res: Response): Promise<void> {
+export async function resetPassword(
+  req: Request,
+  res: Response,
+): Promise<void> {
   const parsed = resetPasswordSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -596,7 +678,10 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const user = await User.findOne({ _id: record.userId, ...activeUserFilter });
+    const user = await User.findOne({
+      _id: record.userId,
+      ...activeUserFilter,
+    });
     if (!user) {
       res.status(400).json({ message: "Invalid or expired reset token" });
       return;
@@ -611,7 +696,7 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
     // Invalidate any other outstanding tokens for this user
     await PasswordResetToken.updateMany(
       { userId: user._id, usedAt: null, _id: { $ne: record._id } },
-      { $set: { usedAt: new Date() } }
+      { $set: { usedAt: new Date() } },
     );
 
     res.status(200).json({ message: "Password has been reset successfully" });

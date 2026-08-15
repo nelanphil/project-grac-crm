@@ -82,9 +82,17 @@ export const updateRoleSchema = z.object({
   role: z.string().min(1),
 });
 
+const navOrderHrefList = z.array(z.string().max(200)).max(50);
+
+export const navOrderSchema = z.object({
+  order: navOrderHrefList.default([]),
+  children: z.record(z.string().max(200), navOrderHrefList).default({}),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LegalConsentInput = z.infer<typeof legalConsentSchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export type UpdatePasswordInput = z.infer<typeof updatePasswordSchema>;
 export type UpdateRoleInput = z.infer<typeof updateRoleSchema>;
+export type NavOrderInput = z.infer<typeof navOrderSchema>;

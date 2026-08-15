@@ -2,10 +2,23 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
-import { LogOut, Menu, Plus, X } from "lucide-react";
-import { getVisibleNavSections } from "@/lib/dashboard-nav";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, LogOut, Menu, Plus, X } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { applyNavOrder, getVisibleNavSections } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
+import { updateNavOrder } from "@/lib/api";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import NavItemGroup from "@/components/dashboard/NavItemGroup";
 import CustomerHeaderSearch from "@/components/dashboard/staff/CustomerHeaderSearch";
@@ -14,17 +27,108 @@ export default function StaffTopBar() {
   const router = useRouter();
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
+  const token = useAuthStore((s) => s.token);
+  const navOrder = useAuthStore((s) => s.user?.uiPreferences?.navOrder);
+  const setNavOrder = useAuthStore((s) => s.setNavOrder);
   const logout = useAuthStore((s) => s.logout);
   const canWriteCustomers = useAuthStore((s) =>
     s.hasPermission("customers:write"),
   );
   const [mobileOpen, setMobileOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const [editMode, setEditMode] = useState(false);
 
-  const visibleSections = getVisibleNavSections(user?.role);
+  const baseSections = useMemo(
+    () => getVisibleNavSections(user?.role),
+    [user?.role],
+  );
+  const visibleItems = useMemo(
+    () => applyNavOrder(baseSections, navOrder),
+    [baseSections, navOrder],
+  );
+  const sensors = useSensors(
+    // Press and hold ~500ms to start wiggling; once wiggling, a small move re-grabs instantly.
+    useSensor(PointerSensor, {
+      activationConstraint: editMode
+        ? { distance: 4 }
+        : { delay: 500, tolerance: 8 },
+    }),
+  );
   const initials =
     `${user?.first_name?.[0] ?? ""}${user?.last_name?.[0] ?? ""}`.toUpperCase() ||
     "U";
+
+  const persistNavOrder = useCallback(
+    (next: { order: string[]; children: Record<string, string[]> }) => {
+      setNavOrder(next);
+      if (token) {
+        updateNavOrder(token, next).catch((err) => {
+          console.error("Failed to save nav order:", err);
+        });
+      }
+    },
+    [setNavOrder, token],
+  );
+
+  const handleDragStart = useCallback(() => {
+    setEditMode(true);
+  }, []);
+
+  const mobileNavRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!editMode) return;
+    // Belt-and-suspenders: dnd-kit's own click-suppression after a drag can race with the
+    // browser's click dispatch, so block every click inside the wiggling nav at capture time.
+    const blockNavClicks = (e: globalThis.MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("[data-nav-allow-click]")) return;
+      if (mobileNavRef.current?.contains(target)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    document.addEventListener("click", blockNavClicks, true);
+    return () => document.removeEventListener("click", blockNavClicks, true);
+  }, [editMode]);
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const activeId = String(active.id);
+      const overId = String(over.id);
+      const current = navOrder ?? { order: [], children: {} };
+
+      const hrefs = visibleItems.map((i) => i.href);
+      if (hrefs.includes(activeId) && hrefs.includes(overId)) {
+        const newHrefs = arrayMove(
+          hrefs,
+          hrefs.indexOf(activeId),
+          hrefs.indexOf(overId),
+        );
+        persistNavOrder({ ...current, order: newHrefs });
+        return;
+      }
+
+      for (const item of visibleItems) {
+        const childHrefs = item.children?.map((c) => c.href) ?? [];
+        if (childHrefs.includes(activeId) && childHrefs.includes(overId)) {
+          const newHrefs = arrayMove(
+            childHrefs,
+            childHrefs.indexOf(activeId),
+            childHrefs.indexOf(overId),
+          );
+          persistNavOrder({
+            ...current,
+            children: { ...current.children, [item.href]: newHrefs },
+          });
+          return;
+        }
+      }
+    },
+    [navOrder, visibleItems, persistNavOrder],
+  );
 
   function handleLogout() {
     logout();
@@ -179,7 +283,10 @@ export default function StaffTopBar() {
 
       {mobileOpen && (
         <div className="border-t border-[var(--staff-border)] bg-[var(--staff-surface)] md:hidden max-h-[min(70dvh,calc(100dvh-7.5rem))] overflow-y-auto overscroll-contain">
-          <nav className="flex flex-col gap-5 px-4 pb-4 pt-4">
+          <nav
+            ref={mobileNavRef}
+            className="flex flex-col gap-5 px-4 pb-4 pt-4"
+          >
             <Link
               href="/dashboard"
               className={`rounded-lg px-3 py-2.5 text-sm font-medium ${
@@ -191,24 +298,43 @@ export default function StaffTopBar() {
             >
               Home
             </Link>
-            {visibleSections.map((section) => (
-              <div key={section.label}>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                  {section.label}
-                </p>
-                <div className="flex flex-col gap-1">
-                  {section.items.map((item) => (
-                    <NavItemGroup
-                      key={item.href}
-                      item={item}
-                      pathname={pathname}
-                      variant="sidebar"
-                      onNavigate={closeMenus}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
+            {editMode ? (
+              <button
+                type="button"
+                onClick={() => setEditMode(false)}
+                data-nav-allow-click
+                className="flex items-center justify-center gap-1.5 rounded-lg bg-brand-orange px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-orange/90"
+              >
+                <Check className="h-4 w-4" />
+                Done
+              </button>
+            ) : null}
+            {visibleItems.length ? (
+              <DndContext
+                sensors={sensors}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={visibleItems.map((item) => item.href)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="flex flex-col gap-1">
+                    {visibleItems.map((item) => (
+                      <NavItemGroup
+                        key={item.href}
+                        item={item}
+                        pathname={pathname}
+                        variant="sidebar"
+                        onNavigate={closeMenus}
+                        editable
+                        editMode={editMode}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            ) : null}
             <button
               type="button"
               onClick={() => {

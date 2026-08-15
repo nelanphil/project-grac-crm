@@ -50,6 +50,34 @@ body {
   }
 }
 
+/* iOS-style "shake to reorder" nav item indicator during dashboard nav edit mode. */
+@keyframes nav-wiggle {
+  0% {
+    transform: rotate(-1.5deg);
+  }
+  50% {
+    transform: rotate(1.5deg);
+  }
+  100% {
+    transform: rotate(-1.5deg);
+  }
+}
+
+.nav-wiggle {
+  animation: nav-wiggle 180ms ease-in-out infinite;
+}
+
+.nav-wiggle:nth-child(odd) {
+  animation-delay: -90ms;
+}
+
+/* Prevents native text-selection/scroll from hijacking the long-press-to-drag gesture. */
+.nav-draggable {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 @layer components {
   .btn-primary {
     @apply inline-flex items-center justify-center rounded-full bg-brand-orange px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-orange/90;

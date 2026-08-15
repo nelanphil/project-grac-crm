@@ -126,6 +126,53 @@ export function getVisibleNavSections(role: string | undefined): NavSection[] {
   })).filter((section) => section.items.length > 0);
 }
 
+/** Order items by a stored hrefs list, appending anything not yet in that list. */
+function orderByHrefs<T extends { href: string }>(
+  items: T[],
+  order: string[] | undefined,
+): T[] {
+  if (!order?.length) return items;
+  const byHref = new globalThis.Map(items.map((item) => [item.href, item]));
+  const ordered: T[] = [];
+  for (const href of order) {
+    const item = byHref.get(href);
+    if (item) {
+      ordered.push(item);
+      byHref.delete(href);
+    }
+  }
+  return [...ordered, ...byHref.values()];
+}
+
+export interface NavOrder {
+  /** Flat order of top-level item hrefs across every section. */
+  order: string[];
+  /** parentHref -> ordered child item hrefs within that parent. */
+  children: Record<string, string[]>;
+}
+
+/**
+ * Flattens all sections into a single reorderable list (no section boundaries) and applies
+ * the user's custom order. Section labels are dropped since items may move between them.
+ */
+export function applyNavOrder(
+  sections: NavSection[],
+  navOrder: NavOrder | undefined,
+): NavItem[] {
+  const allItems = sections.flatMap((section) => section.items);
+  return orderByHrefs(allItems, navOrder?.order).map((item) =>
+    item.children?.length
+      ? {
+          ...item,
+          children: orderByHrefs(
+            item.children,
+            navOrder?.children?.[item.href],
+          ),
+        }
+      : item,
+  );
+}
+
 /** Parent is active only on its exact path (children have their own links). */
 export function isNavItemActive(
   pathname: string,

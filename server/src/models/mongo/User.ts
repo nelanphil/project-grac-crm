@@ -32,9 +32,22 @@ export interface IUser extends Document {
   smsOptInAt: Date | null;
   /** Version string of the legal docs accepted (e.g. "2026-08-03"). */
   legalDocsVersion: string | null;
+  /** Per-user dashboard nav customization. */
+  uiPreferences: IUserUiPreferences;
   deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IUserNavOrder {
+  /** Flat order of top-level item hrefs across every section. */
+  order: string[];
+  /** parentHref -> ordered child item hrefs within that parent. */
+  children: Record<string, string[]>;
+}
+
+export interface IUserUiPreferences {
+  navOrder: IUserNavOrder;
 }
 
 const territoriesSchema = new Schema<IUserTerritories>(
@@ -42,17 +55,47 @@ const territoriesSchema = new Schema<IUserTerritories>(
     counties: { type: [String], default: [] },
     zips: { type: [String], default: [] },
   },
-  { _id: false }
+  { _id: false },
+);
+
+const navOrderSchema = new Schema<IUserNavOrder>(
+  {
+    order: { type: [String], default: [] },
+    children: { type: Schema.Types.Mixed, default: () => ({}) },
+  },
+  { _id: false },
+);
+
+const uiPreferencesSchema = new Schema<IUserUiPreferences>(
+  {
+    navOrder: {
+      type: navOrderSchema,
+      default: () => ({ order: [], children: {} }),
+    },
+  },
+  { _id: false },
 );
 
 const userSchema = new Schema<IUser>(
   {
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
     password_hash: { type: String, required: true },
     first_name: { type: String, required: true, trim: true },
     last_name: { type: String, required: true, trim: true },
     role: { type: String, default: "agent", required: true },
-    username: { type: String, default: null, lowercase: true, trim: true, index: true },
+    username: {
+      type: String,
+      default: null,
+      lowercase: true,
+      trim: true,
+      index: true,
+    },
     usernameKey: { type: String, default: null, lowercase: true, trim: true },
     territories: {
       type: territoriesSchema,
@@ -63,14 +106,21 @@ const userSchema = new Schema<IUser>(
     smsOptIn: { type: Boolean, default: false },
     smsOptInAt: { type: Date, default: null },
     legalDocsVersion: { type: String, default: null },
+    uiPreferences: {
+      type: uiPreferencesSchema,
+      default: () => ({ navOrder: { order: [], children: {} } }),
+    },
     deletedAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 userSchema.index(
   { usernameKey: 1 },
-  { unique: true, partialFilterExpression: { usernameKey: { $type: "string" } } }
+  {
+    unique: true,
+    partialFilterExpression: { usernameKey: { $type: "string" } },
+  },
 );
 
 export const User = mongoose.model<IUser>("User", userSchema);

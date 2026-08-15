@@ -4,6 +4,13 @@ import type { CookieConsentStatus } from "@/store/useConsentStore";
 
 export type UserRole = string;
 
+export interface NavOrder {
+  /** Flat order of top-level item hrefs across every section. */
+  order: string[];
+  /** parentHref -> ordered child item hrefs within that parent. */
+  children: Record<string, string[]>;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -28,6 +35,8 @@ export interface AuthUser {
   legalDocsVersion?: string | null;
   /** True when a customer must accept legal terms before using the app. */
   needsLegalConsent?: boolean;
+  /** Per-user dashboard nav customization. */
+  uiPreferences?: { navOrder: NavOrder };
 }
 
 interface AuthStore {
@@ -39,14 +48,18 @@ interface AuthStore {
   logout: () => void;
   setRedirectAfterAuth: (path: string | null) => void;
   setCookieConsentStatus: (status: CookieConsentStatus) => void;
+  setNavOrder: (navOrder: NavOrder) => void;
   hasPermission: (permission: string) => boolean;
   hasRole: (...roles: UserRole[]) => boolean;
 }
 
 /** Customers without terms acceptance must complete the legal consent gate. */
-export function userNeedsLegalConsent(user: AuthUser | null | undefined): boolean {
+export function userNeedsLegalConsent(
+  user: AuthUser | null | undefined,
+): boolean {
   if (!user) return false;
-  if (typeof user.needsLegalConsent === "boolean") return user.needsLegalConsent;
+  if (typeof user.needsLegalConsent === "boolean")
+    return user.needsLegalConsent;
   return user.role === "customer" && !user.termsAcceptedAt;
 }
 
@@ -72,8 +85,7 @@ export const useAuthStore = create<AuthStore>()(
         });
       },
 
-      logout: () =>
-        set({ token: null, user: null, isAuthenticated: false }),
+      logout: () => set({ token: null, user: null, isAuthenticated: false }),
 
       setRedirectAfterAuth: (path) => set({ redirectAfterAuth: path }),
 
@@ -81,6 +93,12 @@ export const useAuthStore = create<AuthStore>()(
         const { user } = get();
         if (!user) return;
         set({ user: { ...user, cookieConsentStatus: status } });
+      },
+
+      setNavOrder: (navOrder) => {
+        const { user } = get();
+        if (!user) return;
+        set({ user: { ...user, uiPreferences: { navOrder } } });
       },
 
       hasPermission: (permission) => {
@@ -95,7 +113,11 @@ export const useAuthStore = create<AuthStore>()(
     }),
     {
       name: "grac-auth",
-      partialize: (state) => ({ token: state.token, user: state.user, isAuthenticated: state.isAuthenticated }),
-    }
-  )
+      partialize: (state) => ({
+        token: state.token,
+        user: state.user,
+        isAuthenticated: state.isAuthenticated,
+      }),
+    },
+  ),
 );

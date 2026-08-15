@@ -1,5 +1,5 @@
 import type { EstimatePayload } from "./estimate-types";
-import type { AuthUser } from "@/store/useAuthStore";
+import type { AuthUser, NavOrder } from "@/store/useAuthStore";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4009";
 
@@ -149,6 +149,17 @@ export async function updateProfile(
     method: "PATCH",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
+  });
+}
+
+export async function updateNavOrder(
+  token: string,
+  navOrder: NavOrder,
+): Promise<{ navOrder: NavOrder }> {
+  return authRequest<{ navOrder: NavOrder }>("/auth/me/nav-order", {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(navOrder),
   });
 }
 
