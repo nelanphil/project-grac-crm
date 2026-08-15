@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, { Schema, Document, Types } from "mongoose";
 
 export interface ILead extends Document {
   firstName: string;
@@ -19,6 +19,13 @@ export interface ILead extends Document {
   source?: string;
   assignedTo?: string;
   metadata?: Record<string, unknown>;
+  /** Customer this lead was linked/converted to, once converted. */
+  customerRef: Types.ObjectId | null;
+  /** True when conversion matched an existing customer instead of creating one. */
+  matchedExisting: boolean;
+  convertedAt: Date | null;
+  /** Soft delete \u2014 excluded from default lists when set. */
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -50,8 +57,20 @@ const leadSchema = new Schema<ILead>(
     source: { type: String },
     assignedTo: { type: String },
     metadata: { type: Schema.Types.Mixed },
+    customerRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Customer",
+      default: null,
+      index: true,
+    },
+    matchedExisting: { type: Boolean, default: false },
+    convertedAt: { type: Date, default: null },
+    deletedAt: { type: Date, default: null, index: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export const Lead = mongoose.model<ILead>("Lead", leadSchema);
+
+/** Active (non\u2013soft-deleted) leads only. */
+export const activeLeadFilter = { deletedAt: null } as const;

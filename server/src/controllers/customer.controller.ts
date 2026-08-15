@@ -141,7 +141,9 @@ async function findSerialConflicts(
       ? (() => {
           const account = (cust.accountName ?? "").trim();
           if (account) return account;
-          return [cust.first, cust.last].filter(Boolean).join(" ").trim() || null;
+          return (
+            [cust.first, cust.last].filter(Boolean).join(" ").trim() || null
+          );
         })()
       : null;
     const base = {
@@ -425,7 +427,11 @@ function buildSortKeyExpr(sortKey: string): Record<string, unknown> {
             $cond: [
               {
                 $gt: [
-                  { $strLenCP: { $trim: { input: { $ifNull: ["$accountName", ""] } } } },
+                  {
+                    $strLenCP: {
+                      $trim: { input: { $ifNull: ["$accountName", ""] } },
+                    },
+                  },
                   0,
                 ],
               },
@@ -952,7 +958,12 @@ export async function createCustomer(
       const manualCounty = normalizeCountyName(addr.county);
       const countyManualInput = addr.countyManual === true;
       const hasAny =
-        street || city || state || zip || trimStr(addr.label) || manualCounty ||
+        street ||
+        city ||
+        state ||
+        zip ||
+        trimStr(addr.label) ||
+        manualCounty ||
         (addr.equipment?.length ?? 0) > 0;
       if (!hasAny) continue;
 
@@ -1129,7 +1140,9 @@ export async function createCustomer(
             atsSerial,
           });
           if (blocking.length > 0) {
-            const conflictErr = new Error(serialConflictMessage(blocking)) as Error & {
+            const conflictErr = new Error(
+              serialConflictMessage(blocking),
+            ) as Error & {
               status: number;
               conflicts: SerialConflict[];
             };
@@ -1298,7 +1311,11 @@ export async function updateCustomer(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1353,6 +1370,56 @@ export async function updateCustomer(
     });
   } catch (err) {
     console.error("PATCH /customers/:id error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// PATCH /customers/:id/promote — clear the temporary/lead-origin flag
+export async function promoteCustomer(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const id = String(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      res.status(400).json({ message: "Invalid customer id" });
+      return;
+    }
+
+    const customer = await Customer.findOne({
+      _id: id,
+      ...activeCustomerFilter,
+      ...notMergedFilter,
+    });
+    if (!customer) {
+      res.status(404).json({ message: "Customer not found" });
+      return;
+    }
+
+    if (customer.isTemporary) {
+      customer.isTemporary = false;
+      await customer.save();
+
+      const custName = customerDisplayName(customer);
+      logNotificationAsync({
+        entityType: "customer",
+        action: "updated",
+        entityId: String(customer._id),
+        customerRef: customer._id,
+        summary: `Customer ${custName} promoted from lead`,
+        metadata: { customerName: custName },
+        ...actorFromRequest(req.user),
+      });
+    }
+
+    res.status(200).json({
+      customer: {
+        _id: customer._id.toString(),
+        isTemporary: customer.isTemporary,
+      },
+    });
+  } catch (err) {
+    console.error("PATCH /customers/:id/promote error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }
@@ -1530,7 +1597,11 @@ export async function getCustomerById(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
 
     if (customer.mergedIntoRef) {
@@ -1573,7 +1644,10 @@ export async function getCustomerById(
 
     // Lazy ZIP→county + owner fill so detail never stays blank after imports
     // when bulk Recalculate hasn't finished yet.
-    if (!String(customer.county ?? "").trim() || customer.ownerUserRef == null) {
+    if (
+      !String(customer.county ?? "").trim() ||
+      customer.ownerUserRef == null
+    ) {
       await assignCustomerOwner(customer._id, {
         fillMissingCounty: true,
         allowCensus: false,
@@ -1640,7 +1714,11 @@ export async function getCustomerAddresses(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1661,7 +1739,11 @@ export async function createCustomerAddress(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1734,7 +1816,11 @@ export async function updateCustomerAddress(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1841,7 +1927,11 @@ export async function deleteCustomerAddress(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1920,7 +2010,11 @@ export async function checkEquipmentSerial(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -1953,7 +2047,11 @@ export async function createEquipment(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2034,7 +2132,11 @@ export async function updateEquipment(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2143,7 +2245,11 @@ export async function deleteEquipment(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2204,7 +2310,11 @@ export async function getCustomerContacts(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2226,7 +2336,11 @@ export async function createCustomerContact(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2292,7 +2406,11 @@ export async function updateCustomerContact(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2386,7 +2504,11 @@ export async function deleteCustomerContact(
   res: Response,
 ): Promise<void> {
   try {
-    const customer = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!customer) return;
     if (customer.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2457,7 +2579,11 @@ export async function getMergePreview(
   res: Response,
 ): Promise<void> {
   try {
-    const survivor = await findActiveCustomerOr404(String(req.params.id), res, req.user);
+    const survivor = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
     if (!survivor) return;
     if (survivor.mergedIntoRef) {
       res.status(404).json({ message: "Customer not found" });
@@ -2465,7 +2591,11 @@ export async function getMergePreview(
     }
 
     const sourceCustomerId = String(req.query.sourceCustomerId ?? "");
-    const source = await findActiveCustomerOr404(sourceCustomerId, res, req.user);
+    const source = await findActiveCustomerOr404(
+      sourceCustomerId,
+      res,
+      req.user,
+    );
     if (!source) return;
 
     if (survivor._id.equals(source._id)) {

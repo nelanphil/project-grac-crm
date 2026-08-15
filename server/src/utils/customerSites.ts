@@ -10,6 +10,21 @@ export function normalizePhoneDigits(phone: string | null | undefined): string {
   return (phone ?? "").replace(/\D/g, "");
 }
 
+/** Normalized street+zip key for text-based address duplicate matching (no geocoding). */
+export function normalizeAddressKey(
+  street: string | null | undefined,
+  zip: string | null | undefined,
+): string {
+  const normalizedStreet = (street ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const normalizedZip = (zip ?? "").trim();
+  if (!normalizedStreet || !normalizedZip) return "";
+  return `${normalizedStreet}|${normalizedZip}`;
+}
+
 export function customerHasSiteData(customer: {
   address?: string;
   city?: string;
@@ -24,15 +39,15 @@ export function customerHasSiteData(customer: {
 }): boolean {
   return Boolean(
     customer.address?.trim() ||
-      customer.city?.trim() ||
-      customer.state?.trim() ||
-      customer.zip?.trim() ||
-      customer.generatorModel?.trim() ||
-      customer.serial?.trim() ||
-      customer.atsSerial?.trim() ||
-      customer.exday?.trim() ||
-      customer.extime?.trim() ||
-      customer.lastSvc
+    customer.city?.trim() ||
+    customer.state?.trim() ||
+    customer.zip?.trim() ||
+    customer.generatorModel?.trim() ||
+    customer.serial?.trim() ||
+    customer.atsSerial?.trim() ||
+    customer.exday?.trim() ||
+    customer.extime?.trim() ||
+    customer.lastSvc,
   );
 }
 
@@ -46,11 +61,11 @@ export function customerHasEquipmentData(customer: {
 }): boolean {
   return Boolean(
     customer.generatorModel?.trim() ||
-      customer.serial?.trim() ||
-      customer.atsSerial?.trim() ||
-      customer.exday?.trim() ||
-      customer.extime?.trim() ||
-      customer.lastSvc
+    customer.serial?.trim() ||
+    customer.atsSerial?.trim() ||
+    customer.exday?.trim() ||
+    customer.extime?.trim() ||
+    customer.lastSvc,
   );
 }
 
@@ -64,7 +79,7 @@ export function defaultAddressLabel(city?: string, address?: string): string {
 
 /** Refresh denormalized primary address/equipment fields on the customer. */
 export async function syncCustomerPrimaryFields(
-  customerId: Types.ObjectId | string
+  customerId: Types.ObjectId | string,
 ): Promise<void> {
   const primaryAddress = await CustomerAddress.findOne({
     customerRef: customerId,
@@ -97,7 +112,10 @@ export async function syncCustomerPrimaryFields(
   }
 
   if (!address.isPrimary) {
-    await CustomerAddress.updateOne({ _id: address._id }, { $set: { isPrimary: true } });
+    await CustomerAddress.updateOne(
+      { _id: address._id },
+      { $set: { isPrimary: true } },
+    );
   }
 
   const equipment = await Equipment.findOne({ addressRef: address._id })
@@ -141,7 +159,7 @@ export async function ensureCustomerSiteFromFlat(
     | "exday"
     | "extime"
   >,
-  options?: { propertyType?: CustomerAddressPropertyType }
+  options?: { propertyType?: CustomerAddressPropertyType },
 ): Promise<{ addressId: Types.ObjectId; created: boolean }> {
   const existing = await CustomerAddress.findOne({
     customerRef: customer._id,

@@ -3,6 +3,7 @@ import {
   Wrench,
   Phone,
   Users,
+  UserPlus,
   UserCog,
   ScrollText,
   Settings2,
@@ -42,6 +43,12 @@ export const NAV_SECTIONS: NavSection[] = [
         href: "/dashboard/customers",
         label: "Customers",
         icon: Users,
+        excludeRoles: ["customer"],
+      },
+      {
+        href: "/dashboard/leads",
+        label: "Leads",
+        icon: UserPlus,
         excludeRoles: ["customer"],
       },
       {

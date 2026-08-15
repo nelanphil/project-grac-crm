@@ -30,6 +30,10 @@ export interface ICustomer extends Document {
   /** Set when this customer was merged into another; excluded from default lists. */
   mergedIntoRef?: Types.ObjectId | null;
   mergedAt?: Date | null;
+  /** True until promoted from a converted lead into a full customer record. */
+  isTemporary: boolean;
+  /** Lead this customer was created from via conversion, if any. */
+  leadRef?: Types.ObjectId | null;
   /** Soft delete — excluded from default lists when set. */
   deletedAt: Date | null;
   createdAt: Date;
@@ -70,6 +74,13 @@ const customerSchema = new Schema<ICustomer>(
       index: true,
     },
     mergedAt: { type: Date, default: null },
+    isTemporary: { type: Boolean, default: false, index: true },
+    leadRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Lead",
+      default: null,
+      index: true,
+    },
     deletedAt: { type: Date, default: null, index: true },
   },
   { timestamps: true },

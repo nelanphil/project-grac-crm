@@ -21,6 +21,7 @@ import {
   listContacts,
   listCustomers,
   mergeCustomers,
+  promoteCustomer,
   restoreCustomer,
   softDeleteCustomer,
   updateCustomer,
@@ -149,6 +150,11 @@ router.post("/:id/restore", adminRoles, restoreCustomer);
 router.delete("/:id", adminRoles, softDeleteCustomer);
 
 // Detail + account name update
+router.patch(
+  "/:id/promote",
+  requirePermission("customers:write"),
+  promoteCustomer,
+);
 router.patch("/:id", requirePermission("customers:write"), updateCustomer);
 router.get("/:id", requirePermission("customers:read"), getCustomerById);
 

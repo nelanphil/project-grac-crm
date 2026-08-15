@@ -1,4 +1,5 @@
 import type { EstimatePayload } from "./estimate-types";
+import type { LeadListItem, LeadStatus } from "./lead-types";
 import type { AuthUser, NavOrder } from "@/store/useAuthStore";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4009";
@@ -34,6 +35,79 @@ export async function submitLead(
   }
 
   return body;
+}
+
+// ---------------------------------------------------------------------------
+// Leads
+// ---------------------------------------------------------------------------
+
+export interface GetLeadsParams {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: LeadStatus;
+}
+
+export interface LeadsResponse {
+  leads: LeadListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export async function getLeads(
+  token: string,
+  options?: GetLeadsParams,
+): Promise<LeadsResponse> {
+  const params = new URLSearchParams();
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined)
+    params.set("pageSize", String(options.pageSize));
+  if (options?.search) params.set("search", options.search);
+  if (options?.status) params.set("status", options.status);
+  const qs = params.toString();
+  return authRequest<LeadsResponse>(`/leads${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function updateLeadStatus(
+  token: string,
+  id: string,
+  status: LeadStatus,
+): Promise<{ lead: LeadListItem }> {
+  return authRequest<{ lead: LeadListItem }>(`/leads/${id}/status`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function convertLead(
+  token: string,
+  id: string,
+): Promise<{ matchedExisting: boolean; customerId: string }> {
+  return authRequest<{ matchedExisting: boolean; customerId: string }>(
+    `/leads/${id}/convert`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function deleteLead(
+  token: string,
+  id: string,
+): Promise<{ message: string; lead: { _id: string; deletedAt: string } }> {
+  return authRequest<{
+    message: string;
+    lead: { _id: string; deletedAt: string };
+  }>(`/leads/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +683,19 @@ export async function updateCustomer(
   });
 }
 
+export async function promoteCustomer(
+  token: string,
+  id: string,
+): Promise<{ customer: { _id: string; isTemporary: boolean } }> {
+  return authRequest<{ customer: { _id: string; isTemporary: boolean } }>(
+    `/customers/${id}/promote`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export interface ValidatedAddress {
   address: string;
   city: string;
@@ -695,6 +782,7 @@ export interface CustomerDetail {
   exday: string;
   extime: string;
   mergedIntoRef?: string | null;
+  isTemporary?: boolean;
   addresses: CustomerAddress[];
   contacts: CustomerContact[];
 }

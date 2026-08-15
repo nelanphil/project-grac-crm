@@ -21,3 +21,9 @@ export const createEstimateLeadSchema = z.object({
 });
 
 export type CreateEstimateLeadInput = z.infer<typeof createEstimateLeadSchema>;
+
+export const updateLeadStatusSchema = z.object({
+  status: z.enum(["new", "contacted", "qualified", "lost", "won"]),
+});
+
+export type UpdateLeadStatusInput = z.infer<typeof updateLeadStatusSchema>;

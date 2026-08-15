@@ -3,7 +3,16 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Check, ClipboardList, GitMerge, Loader2, Pencil, ScrollText, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  ClipboardList,
+  GitMerge,
+  Loader2,
+  Pencil,
+  ScrollText,
+  X,
+} from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ContactCard from "@/components/customers/ContactCard";
 import CommunicationHistoryPanel from "@/components/customers/CommunicationHistoryPanel";
@@ -25,6 +34,7 @@ import {
   createInvoice,
   createInvoicePayLink,
   updateCustomer,
+  promoteCustomer,
   CustomerDetail,
   WorkOrderListItem,
   ContractListItem,
@@ -144,6 +154,8 @@ function CustomerDetailContent() {
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [promoting, setPromoting] = useState(false);
+  const [promoteError, setPromoteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user?.role === "customer") {
@@ -360,17 +372,54 @@ function CustomerDetailContent() {
               {customer.county?.trim() || "—"}
             </p>
           </div>
+          {customer.isTemporary ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <StatusBadge label="Temporary Lead" active={false} />
+              {promoteError ? (
+                <span className="text-xs text-red-600">{promoteError}</span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-        {canWrite ? (
-          <button
-            type="button"
-            onClick={() => setMergeOpen(true)}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange sm:w-auto"
-          >
-            <GitMerge className="h-4 w-4" />
-            Merge customer
-          </button>
-        ) : null}
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          {canWrite && customer.isTemporary ? (
+            <button
+              type="button"
+              disabled={promoting}
+              onClick={async () => {
+                if (!token || !customer) return;
+                setPromoting(true);
+                setPromoteError(null);
+                try {
+                  await promoteCustomer(token, customer._id);
+                  setCustomer((c) => (c ? { ...c, isTemporary: false } : c));
+                } catch (err) {
+                  setPromoteError(
+                    err instanceof ApiError
+                      ? err.message
+                      : "Failed to promote customer.",
+                  );
+                } finally {
+                  setPromoting(false);
+                }
+              }}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange disabled:opacity-60 sm:w-auto"
+            >
+              {promoting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Promote to full customer
+            </button>
+          ) : null}
+          {canWrite ? (
+            <button
+              type="button"
+              onClick={() => setMergeOpen(true)}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange sm:w-auto"
+            >
+              <GitMerge className="h-4 w-4" />
+              Merge customer
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <MobileSectionNav sections={sectionLinks} />
@@ -607,7 +656,9 @@ function CustomerDetailContent() {
                                 workOrderId={order._id}
                               />
                             ) : (
-                              <span className="text-xs text-neutral-400">—</span>
+                              <span className="text-xs text-neutral-400">
+                                —
+                              </span>
                             )}
                           </td>
                         </tr>
@@ -648,7 +699,6 @@ function CustomerDetailContent() {
     </div>
   );
 }
-
 
 export default function CustomerDetailPage() {
   return (

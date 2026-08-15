@@ -540,8 +540,13 @@ function PublicAssetManagerCard({ token }: { token: string | null }) {
   }
 
   const publicBaseUrl = useMemo(() => {
+    // Prefer the actual runtime origin so links are correct regardless of the
+    // build-time NEXT_PUBLIC_SITE_URL value (this is a static export).
+    const runtimeOrigin =
+      typeof window !== "undefined" ? window.location.origin : undefined;
     const envUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3009";
-    return `${envUrl.replace(/\/$/, "")}/public-assets`;
+    const base = runtimeOrigin ?? envUrl;
+    return `${base.replace(/\/$/, "")}/public-assets`;
   }, []);
 
   return (
