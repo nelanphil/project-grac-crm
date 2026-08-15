@@ -12,7 +12,6 @@ import {
 } from "react";
 import {
   ChevronRight,
-  Home,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
@@ -196,11 +195,14 @@ export default function StaffIconSidebar() {
   const pathname = usePathname();
   const role = useAuthStore((s) => s.user?.role);
   const sections = getVisibleNavSections(role);
-  const homeActive = pathname === "/dashboard";
   const settingsActive = pathname.startsWith("/dashboard/settings");
 
   const [expanded, setExpanded] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
+  const [homeMenu, setHomeMenu] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
 
   useEffect(() => {
     try {
@@ -238,6 +240,17 @@ export default function StaffIconSidebar() {
     setTooltip(null);
   }, []);
 
+  const handleHomeContextMenu = useCallback(
+    (e: MouseEvent<HTMLAnchorElement>) => {
+      e.preventDefault();
+      setTooltip(null);
+      setHomeMenu({ top: e.clientY, left: e.clientX });
+    },
+    [],
+  );
+
+  const closeHomeMenu = useCallback(() => setHomeMenu(null), []);
+
   return (
     <aside
       className={`sticky top-0 z-40 flex h-screen shrink-0 flex-col bg-[var(--staff-shell)] py-3 text-white transition-[width] duration-200 ease-out ${
@@ -246,6 +259,7 @@ export default function StaffIconSidebar() {
     >
       <Link
         href="/dashboard"
+        onContextMenu={handleHomeContextMenu}
         className={`mb-4 flex h-11 items-center rounded-xl bg-brand-orange text-sm font-bold tracking-tight text-black shadow-sm ${
           expanded ? "mx-2 justify-center px-3" : "w-11 justify-center"
         }`}
@@ -268,17 +282,6 @@ export default function StaffIconSidebar() {
           expanded ? "items-stretch" : "items-center"
         }`}
       >
-        <NavLink
-          href="/dashboard"
-          label="Home"
-          active={homeActive}
-          expanded={expanded}
-          onShowTooltip={showTooltip}
-          onHideTooltip={hideTooltip}
-        >
-          <Home className="h-5 w-5" />
-        </NavLink>
-
         {sections.map((section) =>
           section.items.map((item) => (
             <StaffNavItem
@@ -337,6 +340,33 @@ export default function StaffIconSidebar() {
         >
           {tooltip.label}
         </span>
+      ) : null}
+
+      {homeMenu ? (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 cursor-default"
+            aria-label="Close menu"
+            onClick={closeHomeMenu}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              closeHomeMenu();
+            }}
+          />
+          <div
+            className="fixed z-50 w-48 overflow-hidden rounded-xl border border-neutral-200 bg-white py-1 text-sm text-brand-dark shadow-lg"
+            style={{ top: homeMenu.top, left: homeMenu.left }}
+          >
+            <Link
+              href="/"
+              className="block px-4 py-2.5 hover:bg-neutral-50"
+              onClick={closeHomeMenu}
+            >
+              Visit main site
+            </Link>
+          </div>
+        </>
       ) : null}
     </aside>
   );

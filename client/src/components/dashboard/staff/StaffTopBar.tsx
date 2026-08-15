@@ -38,7 +38,7 @@ export default function StaffTopBar() {
 
   return (
     <header className="sticky top-0 z-30 w-full border-b border-[var(--staff-border)] bg-[var(--staff-surface)]/95 backdrop-blur">
-      <div className="flex w-full items-center gap-2 px-3 py-3 sm:gap-3 sm:px-5 lg:px-6">
+      <div className="relative flex w-full items-center gap-2 px-3 py-3 sm:gap-3 sm:px-5 lg:px-6">
         <button
           type="button"
           className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[var(--staff-muted)] transition-colors hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)] md:hidden"
@@ -53,10 +53,58 @@ export default function StaffTopBar() {
           )}
         </button>
 
-        <CustomerHeaderSearch className="mx-auto hidden min-w-0 max-w-xl flex-1 md:block" />
+        <div className="absolute left-1/2 hidden w-full max-w-2xl -translate-x-1/2 items-center gap-2 px-3 md:flex">
+          <CustomerHeaderSearch className="min-w-0 max-w-xl flex-1" />
+
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setNewOpen((v) => !v)}
+              className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-[var(--staff-ink)] px-3 text-sm font-semibold text-white transition hover:bg-black sm:h-auto sm:py-2"
+            >
+              <Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">New</span>
+            </button>
+            {newOpen && (
+              <>
+                <button
+                  type="button"
+                  className="fixed inset-0 z-40 cursor-default"
+                  aria-label="Close new menu"
+                  onClick={() => setNewOpen(false)}
+                />
+                <div className="absolute left-0 z-50 mt-2 w-48 overflow-hidden rounded-xl border border-[var(--staff-border)] bg-white py-1 shadow-lg">
+                  {canWriteCustomers ? (
+                    <Link
+                      href="/dashboard/customers/create"
+                      className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                      onClick={closeMenus}
+                    >
+                      Customer
+                    </Link>
+                  ) : null}
+                  <Link
+                    href="/dashboard/contracts"
+                    className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                    onClick={closeMenus}
+                  >
+                    Contracts
+                  </Link>
+                  <Link
+                    href="/dashboard/orders"
+                    className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                    onClick={closeMenus}
+                  >
+                    Invoices
+                  </Link>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
-          <div className="relative">
+          <div className="relative md:hidden">
             <button
               type="button"
               onClick={() => setNewOpen((v) => !v)}

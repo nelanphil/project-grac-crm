@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ServiceContractsTable from "@/components/contracts/ServiceContractsTable";
+import ContractStatsCard from "@/components/contracts/ContractStatsCard";
 import ContractsCard from "@/components/control-panel/ContractsCard";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
@@ -57,6 +58,8 @@ function ContractsContent() {
   const user = useAuthStore((s) => s.user);
 
   const [contracts, setContracts] = useState<ContractListItem[]>([]);
+  const [statsContracts, setStatsContracts] = useState<ContractListItem[]>([]);
+  const [statsLoading, setStatsLoading] = useState(true);
   const [templates, setTemplates] = useState<ContractTemplateItem[]>([]);
   const [search, setSearch] = useState("");
   const [standingFilter, setStandingFilter] = useState<StandingFilter>("all");
@@ -111,6 +114,18 @@ function ContractsContent() {
       .finally(() => setLoading(false));
   }, [token, user, standingFilter]);
 
+  useEffect(() => {
+    if (!token || user?.role === "customer") return;
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setStatsLoading(true);
+
+    getContracts(token, "all")
+      .then(({ contracts: list }) => setStatsContracts(list))
+      .catch(() => {})
+      .finally(() => setStatsLoading(false));
+  }, [token, user]);
+
   if (!user || user.role === "customer") return null;
 
   if (loading)
@@ -130,6 +145,8 @@ function ContractsContent() {
       <div>
         <h1 className="text-2xl font-bold text-brand-dark">Contracts</h1>
       </div>
+
+      <ContractStatsCard contracts={statsContracts} loading={statsLoading} />
 
       {isAdmin && (
         <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-neutral-200">
