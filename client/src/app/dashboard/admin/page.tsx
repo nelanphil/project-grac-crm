@@ -540,7 +540,7 @@ function PublicAssetManagerCard({ token }: { token: string | null }) {
   }
 
   const publicBaseUrl = useMemo(() => {
-    const envUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4009";
+    const envUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3009";
     return `${envUrl.replace(/\/$/, "")}/public-assets`;
   }, []);
 

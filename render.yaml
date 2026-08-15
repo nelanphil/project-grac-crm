@@ -77,3 +77,11 @@ services:
       # URL of the deployed backend API (baked into the bundle at build time)
       - key: NEXT_PUBLIC_API_URL
         sync: false
+      # Canonical frontend origin used for public image links
+      - key: NEXT_PUBLIC_SITE_URL
+        value: https://genmaintoffl.com
+    routes:
+      # Keep the public link on the frontend domain while the API resolves the asset.
+      - type: rewrite
+        source: /public-assets/:slug
+        destination: https://gmof-server.onrender.com/public-assets/:slug

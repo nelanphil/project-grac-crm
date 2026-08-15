@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { LogOut, Menu, Plus, X } from "lucide-react";
-import { COMPANY } from "@/lib/constants";
 import { getVisibleNavSections } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
 import NotificationBell from "@/components/notifications/NotificationBell";
@@ -47,15 +46,12 @@ export default function StaffTopBar() {
           aria-label="Toggle menu"
           aria-expanded={mobileOpen}
         >
-          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          {mobileOpen ? (
+            <X className="h-5 w-5" />
+          ) : (
+            <Menu className="h-5 w-5" />
+          )}
         </button>
-
-        <div className="min-w-0 shrink">
-          <p className="truncate text-sm font-semibold text-[var(--staff-ink)] sm:text-base">
-            <span className="md:hidden">{COMPANY.shortName}</span>
-            <span className="hidden md:inline">{COMPANY.name}</span>
-          </p>
-        </div>
 
         <CustomerHeaderSearch className="mx-auto hidden min-w-0 max-w-xl flex-1 md:block" />
 

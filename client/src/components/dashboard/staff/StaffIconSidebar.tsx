@@ -132,7 +132,11 @@ function StaffNavItem({
             : undefined
         }
       >
-        <div className={sidebarExpanded && hasChildren ? "min-w-0 flex-1" : undefined}>
+        <div
+          className={
+            sidebarExpanded && hasChildren ? "min-w-0 flex-1" : undefined
+          }
+        >
           <NavLink
             href={item.href}
             label={item.label}
@@ -242,18 +246,21 @@ export default function StaffIconSidebar() {
     >
       <Link
         href="/dashboard"
-        className={`mb-4 flex h-11 items-center rounded-xl bg-brand-orange text-sm font-bold tracking-tight text-white shadow-sm ${
-          expanded ? "mx-2 gap-3 px-3" : "w-11 justify-center"
+        className={`mb-4 flex h-11 items-center rounded-xl bg-brand-orange text-sm font-bold tracking-tight text-black shadow-sm ${
+          expanded ? "mx-2 justify-center px-3" : "w-11 justify-center"
         }`}
         title={expanded ? undefined : COMPANY.name}
         aria-label="Dashboard home"
       >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-          {COMPANY.shortName.slice(0, 1)}
-        </span>
         {expanded ? (
-          <span className="truncate">{COMPANY.shortName}</span>
-        ) : null}
+          <span className="truncate text-xl font-extrabold tracking-widest">
+            GMOF
+          </span>
+        ) : (
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+            {COMPANY.shortName.slice(0, 1)}
+          </span>
+        )}
       </Link>
 
       <nav
