@@ -13,6 +13,7 @@ import {
   listPublicAssets,
   uploadPublicAsset,
   togglePublicAssetStatus,
+  API_URL,
   CloudinaryCredentialsItem,
   PublicAssetItem,
 } from "@/lib/api";
@@ -464,6 +465,9 @@ function PublicAssetManagerCard({ token }: { token: string | null }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [slug, setSlug] = useState(randomSlug());
   const [title, setTitle] = useState("Public image");
+  const [statusFilter, setStatusFilter] = useState<"active" | "inactive">(
+    "active",
+  );
 
   useEffect(() => {
     if (!token) return;
@@ -511,6 +515,7 @@ function PublicAssetManagerCard({ token }: { token: string | null }) {
         title: title.trim() || "Public image",
       });
       setAssets((prev) => [saved.asset, ...prev]);
+      setStatusFilter("active");
       setSelectedFile(null);
       setSlug(randomSlug());
       setTitle("Public image");
@@ -539,15 +544,15 @@ function PublicAssetManagerCard({ token }: { token: string | null }) {
     }
   }
 
-  const publicBaseUrl = useMemo(() => {
-    // Prefer the actual runtime origin so links are correct regardless of the
-    // build-time NEXT_PUBLIC_SITE_URL value (this is a static export).
-    const runtimeOrigin =
-      typeof window !== "undefined" ? window.location.origin : undefined;
-    const envUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3009";
-    const base = runtimeOrigin ?? envUrl;
-    return `${base.replace(/\/$/, "")}/public-assets`;
-  }, []);
+  const filteredAssets = useMemo(
+    () =>
+      assets.filter((asset) =>
+        statusFilter === "active" ? asset.isActive : !asset.isActive,
+      ),
+    [assets, statusFilter],
+  );
+
+  const publicBaseUrl = `${API_URL.replace(/\/$/, "")}/public-assets`;
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
@@ -641,37 +646,74 @@ function PublicAssetManagerCard({ token }: { token: string | null }) {
           </div>
         ) : (
           <div className="space-y-3">
-            {assets.map((asset) => (
-              <div
-                key={asset._id}
-                className="rounded-lg border border-neutral-200 p-4"
+            <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5 text-sm">
+              <button
+                type="button"
+                onClick={() => setStatusFilter("active")}
+                className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+                  statusFilter === "active"
+                    ? "bg-brand-dark text-white"
+                    : "text-neutral-600 hover:text-brand-dark"
+                }`}
               >
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-brand-dark">
-                      {asset.title}
-                    </p>
-                    <p className="mt-1 break-all text-xs text-neutral-500">
+                Active
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("inactive")}
+                className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+                  statusFilter === "inactive"
+                    ? "bg-brand-dark text-white"
+                    : "text-neutral-600 hover:text-brand-dark"
+                }`}
+              >
+                Inactive
+              </button>
+            </div>
+            {filteredAssets.length === 0 ? (
+              <div className="text-sm text-neutral-500">
+                {statusFilter === "active"
+                  ? "No active public image links."
+                  : "No inactive public image links."}
+              </div>
+            ) : (
+              filteredAssets.map((asset) => (
+                <div
+                  key={asset._id}
+                  className="rounded-lg border border-neutral-200 p-4"
+                >
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-brand-dark">
+                        {asset.title}
+                      </p>
+                    <a
+                      href={`${publicBaseUrl}/${asset.slug}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 break-all text-xs text-neutral-500 hover:text-brand-dark hover:underline"
+                    >
                       {publicBaseUrl}/{asset.slug}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`rounded-full px-2 py-1 text-xs font-medium ${asset.isActive ? "bg-emerald-100 text-emerald-700" : "bg-neutral-200 text-neutral-700"}`}
-                    >
-                      {asset.isActive ? "Active" : "Inactive"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleToggle(asset._id, !asset.isActive)}
-                      className="rounded-md border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                    >
-                      {asset.isActive ? "Deactivate" : "Restore"}
-                    </button>
+                    </a>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs font-medium ${asset.isActive ? "bg-emerald-100 text-emerald-700" : "bg-neutral-200 text-neutral-700"}`}
+                      >
+                        {asset.isActive ? "Active" : "Inactive"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleToggle(asset._id, !asset.isActive)}
+                        className="rounded-md border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                      >
+                        {asset.isActive ? "Deactivate" : "Restore"}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         )}
       </div>

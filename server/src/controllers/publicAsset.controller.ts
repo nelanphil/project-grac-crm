@@ -14,6 +14,13 @@ function slugIsValid(value: string): boolean {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
 }
 
+function normalizeSlug(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
 function toPublic(doc: any) {
   return {
     _id: doc._id,
@@ -146,21 +153,23 @@ export async function getPublicAssetBySlug(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const slug = (req.params.slug ?? "").toString();
+  const slug = normalizeSlug(req.params.slug);
   const asset = await PublicAsset.findOne({ slug, isActive: true }).lean();
   if (!asset) {
     res.status(404).json({ message: "Public asset not found or inactive." });
     return;
   }
 
-  res.redirect(asset.publicUrl);
+  // Allow <img> embeds from the marketing site and other origins.
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.redirect(302, asset.publicUrl);
 }
 
 export async function publicAssetHealth(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const slug = (req.params.slug ?? "").toString();
+  const slug = normalizeSlug(req.params.slug);
   const asset = await PublicAsset.findOne({ slug }).lean();
   if (!asset) {
     res.status(404).json({ message: "Public asset not found." });

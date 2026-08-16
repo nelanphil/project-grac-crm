@@ -2,7 +2,7 @@ import type { EstimatePayload } from "./estimate-types";
 import type { LeadListItem, LeadStatus } from "./lead-types";
 import type { AuthUser, NavOrder } from "@/store/useAuthStore";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4009";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4009";
 
 export class ApiError extends Error {
   constructor(
