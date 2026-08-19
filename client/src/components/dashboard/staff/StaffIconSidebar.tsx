@@ -20,15 +20,17 @@ import {
   Settings,
 } from "lucide-react";
 import {
+  closestCorners,
   DndContext,
   PointerSensor,
+  pointerWithin,
+  type CollisionDetection,
   type DragEndEvent,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
 import {
   SortableContext,
-  arrayMove,
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
@@ -37,12 +39,18 @@ import { useAuthStore } from "@/store/useAuthStore";
 import {
   applyNavOrder,
   getVisibleNavSections,
-  isNavChildActive,
   isNavItemActive,
+  isNavSubtreeActive,
+  MAX_NAV_DEPTH,
+  moveNavItem,
   type NavItem,
 } from "@/lib/dashboard-nav";
 import { COMPANY } from "@/lib/constants";
 import { updateNavOrder } from "@/lib/api";
+import {
+  NestPlaceholder,
+  RootDropZone,
+} from "@/components/dashboard/NavDropTargets";
 
 /** Press and hold ~500ms (dnd-kit's own activation delay) starts both the wiggle and the drag. */
 const LONG_PRESS_ACTIVATION = { delay: 500, tolerance: 8 };
@@ -116,53 +124,45 @@ function NavLink({
   );
 }
 
-function SortableChild({
+const navCollision: CollisionDetection = (args) => {
+  const pointerHits = pointerWithin(args);
+  if (pointerHits.length > 0) return pointerHits;
+  return closestCorners(args);
+};
+
+function ChildNavLink({
   href,
   label,
+  Icon,
   active,
   editMode,
+  depth,
 }: {
   href: string;
   label: string;
+  Icon?: NavItem["icon"];
   active: boolean;
   editMode: boolean;
+  depth: number;
 }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: href });
-
   return (
-    <div
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.4 : 1,
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      onClick={(e) => {
+        if (editMode) e.preventDefault();
       }}
-      {...attributes}
-      {...listeners}
-      className={editMode ? "nav-draggable nav-wiggle" : "nav-draggable"}
+      className={`flex h-9 items-center gap-2 rounded-lg px-3 text-sm transition-colors ${
+        depth >= 2 ? "ml-8" : "ml-4"
+      } ${
+        active
+          ? "bg-brand-orange text-white"
+          : "text-white/60 hover:bg-white/10 hover:text-white"
+      }`}
     >
-      <Link
-        href={href}
-        aria-current={active ? "page" : undefined}
-        onClick={(e) => {
-          if (editMode) e.preventDefault();
-        }}
-        className={`ml-4 flex h-9 items-center rounded-lg px-3 text-sm transition-colors ${
-          active
-            ? "bg-brand-orange text-white"
-            : "text-white/60 hover:bg-white/10 hover:text-white"
-        }`}
-      >
-        <span className="truncate font-medium">{label}</span>
-      </Link>
-    </div>
+      {Icon ? <Icon className="h-3.5 w-3.5 shrink-0" /> : null}
+      <span className="truncate font-medium">{label}</span>
+    </Link>
   );
 }
 
@@ -173,6 +173,7 @@ function StaffNavItem({
   editMode,
   onShowTooltip,
   onHideTooltip,
+  depth = 0,
 }: {
   item: NavItem;
   pathname: string;
@@ -180,24 +181,30 @@ function StaffNavItem({
   editMode: boolean;
   onShowTooltip: (label: string, el: HTMLElement) => void;
   onHideTooltip: () => void;
+  depth?: number;
 }) {
   const hasChildren = Boolean(item.children?.length);
-  const childActive = Boolean(
-    item.children?.some((child) => isNavChildActive(pathname, child.href)),
-  );
+  const descendantActive = isNavSubtreeActive(pathname, item);
   const parentActive = isNavItemActive(pathname, item.href, hasChildren);
   const Icon = item.icon;
+  const canNestInside = depth < MAX_NAV_DEPTH;
+  const showChevron =
+    sidebarExpanded && (hasChildren || (editMode && canNestInside));
 
-  // Collapsed by default; open when a child route is active.
   const [childrenOpen, setChildrenOpen] = useState(false);
-  const [prevChildActive, setPrevChildActive] = useState(childActive);
+  const [prevDescendantActive, setPrevDescendantActive] =
+    useState(descendantActive);
 
-  if (childActive !== prevChildActive) {
-    setPrevChildActive(childActive);
-    if (childActive) {
-      setChildrenOpen(true);
-    }
+  if (descendantActive !== prevDescendantActive) {
+    setPrevDescendantActive(descendantActive);
+    if (descendantActive) setChildrenOpen(true);
   }
+
+  const listOpen = editMode || childrenOpen;
+  const showChildList =
+    sidebarExpanded &&
+    (hasChildren || (editMode && canNestInside)) &&
+    listOpen;
 
   const {
     attributes,
@@ -208,82 +215,173 @@ function StaffNavItem({
     isDragging,
   } = useSortable({ id: item.href });
 
-  return (
-    <div
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.4 : 1,
-      }}
-      {...attributes}
-      {...listeners}
-      className={`nav-draggable ${sidebarExpanded && hasChildren ? "flex w-full flex-col gap-0.5" : ""}`}
-    >
-      <div className={editMode ? "nav-wiggle" : undefined}>
+  if (depth > 0) {
+    return (
+      <div className={showChildList ? "flex w-full flex-col gap-0.5" : undefined}>
         <div
-          className={
-            sidebarExpanded && hasChildren
-              ? "flex w-full items-center gap-0.5"
-              : undefined
-          }
+          ref={setNodeRef}
+          style={{
+            transform: CSS.Transform.toString(transform),
+            transition,
+            opacity: isDragging ? 0.4 : 1,
+          }}
+          {...attributes}
+          {...listeners}
+          className={`nav-draggable ${editMode ? "nav-wiggle" : ""}`}
         >
+          <div className="flex w-full items-center gap-0.5">
+            <div className="min-w-0 flex-1">
+              <ChildNavLink
+                href={item.href}
+                label={item.label}
+                Icon={Icon}
+                active={
+                  hasChildren ? parentActive : parentActive || descendantActive
+                }
+                editMode={editMode}
+                depth={depth}
+              />
+            </div>
+            {showChevron ? (
+              <button
+                type="button"
+                aria-label={
+                  listOpen ? `Collapse ${item.label}` : `Expand ${item.label}`
+                }
+                aria-expanded={listOpen}
+                onClick={() => {
+                  if (!editMode) setChildrenOpen((v) => !v);
+                }}
+                data-nav-allow-click
+                className="flex h-9 w-8 shrink-0 items-center justify-center rounded-lg text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <ChevronRight
+                  className={`h-3.5 w-3.5 transition-transform ${
+                    listOpen ? "rotate-90" : ""
+                  }`}
+                />
+              </button>
+            ) : null}
+          </div>
+        </div>
+        {showChildList ? (
+          <div className="flex flex-col gap-0.5">
+            <SortableContext
+              items={(item.children ?? []).map((child) => child.href)}
+              strategy={verticalListSortingStrategy}
+            >
+              {(item.children ?? []).map((child) => (
+                <StaffNavItem
+                  key={child.href}
+                  item={child}
+                  pathname={pathname}
+                  sidebarExpanded={sidebarExpanded}
+                  editMode={editMode}
+                  onShowTooltip={onShowTooltip}
+                  onHideTooltip={onHideTooltip}
+                  depth={depth + 1}
+                />
+              ))}
+            </SortableContext>
+            <div className={depth >= 1 ? "ml-8" : "ml-4"}>
+              <NestPlaceholder
+                parentHref={item.href}
+                editMode={editMode && canNestInside}
+                className="rounded-lg border border-dashed border-white/25 px-3 py-2 text-[11px] font-medium text-white/40"
+              />
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className={showChevron ? "flex w-full flex-col gap-0.5" : undefined}>
+      <div
+        ref={setNodeRef}
+        style={{
+          transform: CSS.Transform.toString(transform),
+          transition,
+          opacity: isDragging ? 0.4 : 1,
+        }}
+        {...attributes}
+        {...listeners}
+        className="nav-draggable"
+      >
+        <div className={editMode ? "nav-wiggle" : undefined}>
           <div
             className={
-              sidebarExpanded && hasChildren ? "min-w-0 flex-1" : undefined
+              showChevron ? "flex w-full items-center gap-0.5" : undefined
             }
           >
-            <NavLink
-              href={item.href}
-              label={item.label}
-              active={
-                hasChildren
-                  ? parentActive || (!sidebarExpanded && childActive)
-                  : parentActive || childActive
-              }
-              expanded={sidebarExpanded}
-              editMode={editMode}
-              onShowTooltip={onShowTooltip}
-              onHideTooltip={onHideTooltip}
-            >
-              <Icon className="h-5 w-5" />
-            </NavLink>
+            <div className={showChevron ? "min-w-0 flex-1" : undefined}>
+              <NavLink
+                href={item.href}
+                label={item.label}
+                active={
+                  hasChildren
+                    ? parentActive || (!sidebarExpanded && descendantActive)
+                    : parentActive || descendantActive
+                }
+                expanded={sidebarExpanded}
+                editMode={editMode}
+                onShowTooltip={onShowTooltip}
+                onHideTooltip={onHideTooltip}
+              >
+                <Icon className="h-5 w-5" />
+              </NavLink>
+            </div>
+            {showChevron ? (
+              <button
+                type="button"
+                aria-label={
+                  listOpen ? `Collapse ${item.label}` : `Expand ${item.label}`
+                }
+                aria-expanded={listOpen}
+                onClick={() => {
+                  if (!editMode) setChildrenOpen((v) => !v);
+                }}
+                data-nav-allow-click
+                className="flex h-11 w-9 shrink-0 items-center justify-center rounded-xl text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <ChevronRight
+                  className={`h-4 w-4 transition-transform ${
+                    listOpen ? "rotate-90" : ""
+                  }`}
+                />
+              </button>
+            ) : null}
           </div>
-          {sidebarExpanded && hasChildren ? (
-            <button
-              type="button"
-              aria-label={
-                childrenOpen ? `Collapse ${item.label}` : `Expand ${item.label}`
-              }
-              aria-expanded={childrenOpen}
-              onClick={() => setChildrenOpen((v) => !v)}
-              data-nav-allow-click
-              className="flex h-11 w-9 shrink-0 items-center justify-center rounded-xl text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <ChevronRight
-                className={`h-4 w-4 transition-transform ${
-                  childrenOpen ? "rotate-90" : ""
-                }`}
-              />
-            </button>
-          ) : null}
         </div>
       </div>
-      {sidebarExpanded && hasChildren && childrenOpen ? (
-        <SortableContext
-          items={item.children!.map((child) => child.href)}
-          strategy={verticalListSortingStrategy}
-        >
-          {item.children!.map((child) => (
-            <SortableChild
-              key={child.href}
-              href={child.href}
-              label={child.label}
-              active={isNavChildActive(pathname, child.href)}
+      {showChildList ? (
+        <div className="flex flex-col gap-0.5">
+          <SortableContext
+            items={(item.children ?? []).map((child) => child.href)}
+            strategy={verticalListSortingStrategy}
+          >
+            {(item.children ?? []).map((child) => (
+              <StaffNavItem
+                key={child.href}
+                item={child}
+                pathname={pathname}
+                sidebarExpanded={sidebarExpanded}
+                editMode={editMode}
+                onShowTooltip={onShowTooltip}
+                onHideTooltip={onHideTooltip}
+                depth={1}
+              />
+            ))}
+          </SortableContext>
+          <div className="ml-4">
+            <NestPlaceholder
+              parentHref={item.href}
               editMode={editMode}
+              className="rounded-lg border border-dashed border-white/25 px-3 py-2 text-[11px] font-medium text-white/40"
             />
-          ))}
-        </SortableContext>
+          </div>
+        </div>
       ) : null}
     </div>
   );
@@ -361,6 +459,12 @@ export default function StaffIconSidebar() {
   const handleDragStart = useCallback(() => {
     setTooltip(null);
     setEditMode(true);
+    setExpanded(true);
+    try {
+      localStorage.setItem(STORAGE_KEY, "1");
+    } catch {
+      // ignore storage access errors
+    }
   }, []);
 
   const exitEditMode = useCallback(() => setEditMode(false), []);
@@ -399,38 +503,10 @@ export default function StaffIconSidebar() {
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const activeId = String(active.id);
-      const overId = String(over.id);
-      const current = navOrder ?? { order: [], children: {} };
-
-      const hrefs = items.map((i) => i.href);
-      if (hrefs.includes(activeId) && hrefs.includes(overId)) {
-        const newHrefs = arrayMove(
-          hrefs,
-          hrefs.indexOf(activeId),
-          hrefs.indexOf(overId),
-        );
-        persistNavOrder({ ...current, order: newHrefs });
-        return;
-      }
-
-      for (const item of items) {
-        const childHrefs = item.children?.map((c) => c.href) ?? [];
-        if (childHrefs.includes(activeId) && childHrefs.includes(overId)) {
-          const newHrefs = arrayMove(
-            childHrefs,
-            childHrefs.indexOf(activeId),
-            childHrefs.indexOf(overId),
-          );
-          persistNavOrder({
-            ...current,
-            children: { ...current.children, [item.href]: newHrefs },
-          });
-          return;
-        }
-      }
+      const next = moveNavItem(items, String(active.id), String(over.id));
+      if (next) persistNavOrder(next);
     },
-    [navOrder, items, persistNavOrder],
+    [items, persistNavOrder],
   );
 
   const handleHomeContextMenu = useCallback(
@@ -492,9 +568,14 @@ export default function StaffIconSidebar() {
         ) : null}
         <DndContext
           sensors={sensors}
+          collisionDetection={navCollision}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
+          <RootDropZone
+            editMode={editMode}
+            className="mb-1 rounded-lg border border-dashed border-white/25 px-3 py-2 text-center text-[11px] font-medium text-white/40"
+          />
           <SortableContext
             items={items.map((item) => item.href)}
             strategy={verticalListSortingStrategy}
@@ -511,6 +592,10 @@ export default function StaffIconSidebar() {
               />
             ))}
           </SortableContext>
+          <RootDropZone
+            editMode={editMode}
+            className="mt-1 rounded-lg border border-dashed border-white/25 px-3 py-2 text-center text-[11px] font-medium text-white/40"
+          />
         </DndContext>
       </nav>
 

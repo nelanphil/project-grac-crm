@@ -8,23 +8,16 @@ import {
   updateUser,
   deleteUser,
   getRoles,
-  validateCustomerAddress,
   UserListItem,
   RoleItem,
   ApiError,
   UserWeeklyHours,
-  UserHomeLocation,
 } from "@/lib/api";
 import { FLORIDA_COUNTIES } from "@/lib/floridaCounties";
 import UsernameDisplay from "@/components/ui/UsernameDisplay";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
-import {
-  WEEKDAY_KEYS,
-  WEEKDAY_LABELS,
-  defaultWeeklyHours,
-  emptyHomeLocation,
-} from "@/lib/schedule";
+import { defaultWeeklyHours, weeklyHoursNeverEnabled } from "@/lib/schedule";
 
 type ModalMode = "create" | "edit" | null;
 
@@ -39,7 +32,6 @@ const emptyForm = {
   zips: [] as string[],
   schedulable: false,
   weeklyHours: defaultWeeklyHours(false),
-  home: emptyHomeLocation(),
 };
 
 function normalizeZipInput(raw: string): string {
@@ -60,8 +52,6 @@ export default function UsersTab() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [zipDraft, setZipDraft] = useState("");
-  const [homeValidating, setHomeValidating] = useState(false);
-  const [homeMsg, setHomeMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
@@ -90,29 +80,37 @@ export default function UsersTab() {
     return roleList.find((r) => r.slug === slug)?.label ?? slug;
   }
 
+  const staffRoles = useMemo(
+    () => roleList.filter((r) => r.slug !== "customer"),
+    [roleList],
+  );
+
+  const staffUsers = useMemo(
+    () => users.filter((user) => user.role !== "customer"),
+    [users],
+  );
+
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return users.filter((user) => {
+    return staffUsers.filter((user) => {
       if (roleFilter !== "all" && user.role !== roleFilter) return false;
       if (!q) return true;
       const haystack =
         `${user.first_name} ${user.last_name} ${user.email} ${user.username ?? ""}`.toLowerCase();
       return haystack.includes(q);
     });
-  }, [users, search, roleFilter]);
+  }, [staffUsers, search, roleFilter]);
 
   function openCreate() {
-    const role = roleList[0]?.slug ?? "agent";
+    const role = staffRoles[0]?.slug ?? "agent";
     const schedulable = role === "tech";
     setForm({
       ...emptyForm,
       role,
       schedulable,
       weeklyHours: defaultWeeklyHours(schedulable),
-      home: emptyHomeLocation(),
     });
     setZipDraft("");
-    setHomeMsg(null);
     setEditingId(null);
     setSaveError(null);
     setTempPassword(null);
@@ -131,10 +129,8 @@ export default function UsersTab() {
       zips: user.territories?.zips ?? [],
       schedulable: user.schedulable ?? user.role === "tech",
       weeklyHours: user.weeklyHours ?? defaultWeeklyHours(Boolean(user.schedulable)),
-      home: user.homeLocation ?? emptyHomeLocation(),
     });
     setZipDraft("");
-    setHomeMsg(null);
     setEditingId(user._id);
     setSaveError(null);
     setTempPassword(null);
@@ -173,63 +169,6 @@ export default function UsersTab() {
 
   function removeZip(zip: string) {
     setForm((f) => ({ ...f, zips: f.zips.filter((z) => z !== zip) }));
-  }
-
-  async function validateHome() {
-    if (!token) return;
-    const street = form.home.address.trim();
-    if (!street) {
-      setHomeMsg(null);
-      setForm((f) => ({ ...f, home: emptyHomeLocation() }));
-      return;
-    }
-    setHomeValidating(true);
-    setHomeMsg(null);
-    try {
-      const result = await validateCustomerAddress(token, {
-        address: street,
-        city: form.home.city.trim(),
-        state: form.home.state.trim(),
-        zip: form.home.zip.trim(),
-      });
-      if (!result.valid || !result.address) {
-        setHomeMsg(result.message || "Home address could not be validated.");
-        return;
-      }
-      const matched = result.address;
-      setForm((f) => ({
-        ...f,
-        home: {
-          address: matched.address,
-          city: matched.city,
-          state: matched.state,
-          zip: matched.zip,
-          lat: result.coordinates?.lat ?? null,
-          lng: result.coordinates?.lng ?? null,
-        },
-      }));
-      setHomeMsg(
-        result.coordinates
-          ? "Home address verified."
-          : "Address verified (no map coordinates).",
-      );
-    } catch (err) {
-      setHomeMsg(
-        err instanceof ApiError ? err.message : "Address validation failed.",
-      );
-    } finally {
-      setHomeValidating(false);
-    }
-  }
-
-  function patchWeekly(day: keyof UserWeeklyHours, patch: Partial<UserWeeklyHours[typeof day]>) {
-    setForm((f) => ({
-      ...f,
-      weeklyHours: {
-        ...f.weeklyHours,
-        [day]: { ...f.weeklyHours[day], ...patch },
-      },
-    }));
   }
 
   function onZipKeyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -274,7 +213,6 @@ export default function UsersTab() {
           territories?: { counties: string[]; zips: string[] };
           schedulable?: boolean;
           weeklyHours?: UserWeeklyHours;
-          homeLocation?: UserHomeLocation;
         } = {
           email: form.email.trim(),
           first_name: form.first_name.trim(),
@@ -286,10 +224,11 @@ export default function UsersTab() {
           payload.password = form.password;
         }
         if (territories) payload.territories = territories;
-        if (form.role !== "customer") {
-          payload.schedulable = form.schedulable;
-          payload.weeklyHours = form.weeklyHours;
-          payload.homeLocation = form.home;
+        payload.schedulable = form.schedulable;
+        if (form.schedulable) {
+          payload.weeklyHours = weeklyHoursNeverEnabled(form.weeklyHours)
+            ? defaultWeeklyHours(true)
+            : form.weeklyHours;
         }
         const { user, temporaryPassword } = await createUser(token, payload);
         setUsers((prev) => [user, ...prev]);
@@ -309,7 +248,6 @@ export default function UsersTab() {
           territories?: { counties: string[]; zips: string[] };
           schedulable?: boolean;
           weeklyHours?: UserWeeklyHours;
-          homeLocation?: UserHomeLocation;
         } = {
           email: form.email.trim(),
           first_name: form.first_name.trim(),
@@ -328,12 +266,11 @@ export default function UsersTab() {
         } else {
           payload.territories = { counties: [], zips: [] };
         }
-        if (form.role !== "customer") {
-          payload.schedulable = form.schedulable;
-          payload.weeklyHours = form.weeklyHours;
-          payload.homeLocation = form.home;
-        } else {
-          payload.schedulable = false;
+        payload.schedulable = form.schedulable;
+        if (form.schedulable) {
+          payload.weeklyHours = weeklyHoursNeverEnabled(form.weeklyHours)
+            ? defaultWeeklyHours(true)
+            : form.weeklyHours;
         }
         const { user } = await updateUser(token, editingId, payload);
         setUsers((prev) => prev.map((u) => (u._id === editingId ? user : u)));
@@ -388,9 +325,9 @@ export default function UsersTab() {
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">Users</h2>
           <p className="text-sm text-neutral-500 mt-0.5">
-            {filteredUsers.length === users.length
-              ? `${users.length} total`
-              : `${filteredUsers.length} of ${users.length}`}
+            {filteredUsers.length === staffUsers.length
+              ? `${staffUsers.length} staff`
+              : `${filteredUsers.length} of ${staffUsers.length}`}
           </p>
         </div>
         <button
@@ -416,7 +353,7 @@ export default function UsersTab() {
           className="w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange sm:w-auto"
         >
           <option value="all">All roles</option>
-          {roleList.map((r) => (
+          {staffRoles.map((r) => (
             <option key={r.slug} value={r.slug}>
               {r.label}
             </option>
@@ -458,6 +395,10 @@ export default function UsersTab() {
                         usernameNumber={user.usernameNumber}
                       />
                     }
+                  />
+                  <DataField
+                    label="Work schedule"
+                    value={user.schedulable ? "On" : "Off"}
                   />
                   <DataField
                     label="Joined"
@@ -506,6 +447,9 @@ export default function UsersTab() {
                       Role
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Work schedule
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Joined
                     </th>
                     <th className="px-6 py-3" />
@@ -528,6 +472,9 @@ export default function UsersTab() {
                       </td>
                       <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
                         {getRoleLabel(user.role)}
+                      </td>
+                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                        {user.schedulable ? "On" : "Off"}
                       </td>
                       <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
                         {new Date(user.createdAt).toLocaleDateString()}
@@ -568,9 +515,7 @@ export default function UsersTab() {
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-3 py-3 sm:px-4 sm:py-6">
           <div
             className={`flex w-full max-h-[min(92dvh,920px)] flex-col overflow-hidden rounded-xl bg-white shadow-xl ${
-              form.role === "owner" || form.role !== "customer"
-                ? "max-w-2xl"
-                : "max-w-md"
+              form.role === "owner" ? "max-w-2xl" : "max-w-md"
             }`}
           >
             <div className="shrink-0 border-b border-neutral-100 px-4 py-4 sm:px-6">
@@ -681,13 +626,9 @@ export default function UsersTab() {
                     value={form.role}
                     onChange={(e) => {
                       const role = e.target.value;
-                      const schedulable =
-                        role === "customer" ? false : role === "tech";
                       setForm((f) => ({
                         ...f,
                         role,
-                        schedulable,
-                        weeklyHours: defaultWeeklyHours(schedulable),
                         ...(role !== "owner"
                           ? { counties: [], zips: [] }
                           : {}),
@@ -695,7 +636,7 @@ export default function UsersTab() {
                     }}
                     className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
                   >
-                    {roleList.map((r) => (
+                    {staffRoles.map((r) => (
                       <option key={r.slug} value={r.slug}>
                         {r.label}
                       </option>
@@ -807,173 +748,36 @@ export default function UsersTab() {
                   </div>
                 )}
 
-                {form.role !== "customer" && (
-                  <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4">
-                    <div>
-                      <p className="text-sm font-medium text-brand-dark">
-                        Schedule
-                      </p>
-                      <p className="mt-0.5 text-xs text-neutral-500">
-                        Availability and home location for dispatch and routing.
-                      </p>
-                    </div>
-                    <label className="flex items-center gap-2 text-sm text-neutral-700">
-                      <input
-                        type="checkbox"
-                        checked={form.schedulable}
-                        onChange={(e) =>
-                          setForm((f) => ({
-                            ...f,
-                            schedulable: e.target.checked,
-                          }))
-                        }
-                        className="rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
-                      />
-                      Appear on the schedule board
-                    </label>
-
-                    {form.schedulable && (
-                      <>
-                        <div className="overflow-x-auto rounded-md border border-neutral-200 bg-white">
-                          <table className="min-w-full text-xs">
-                            <thead className="bg-neutral-50 text-neutral-500">
-                              <tr>
-                                <th className="px-2 py-1.5 text-left font-medium">
-                                  Day
-                                </th>
-                                <th className="px-2 py-1.5 text-left font-medium">
-                                  On
-                                </th>
-                                <th className="px-2 py-1.5 text-left font-medium">
-                                  Start
-                                </th>
-                                <th className="px-2 py-1.5 text-left font-medium">
-                                  End
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {WEEKDAY_KEYS.map((key) => {
-                                const day = form.weeklyHours[key];
-                                return (
-                                  <tr
-                                    key={key}
-                                    className="border-t border-neutral-100"
-                                  >
-                                    <td className="px-2 py-1.5 text-neutral-700">
-                                      {WEEKDAY_LABELS[key]}
-                                    </td>
-                                    <td className="px-2 py-1.5">
-                                      <input
-                                        type="checkbox"
-                                        checked={day.enabled}
-                                        onChange={(e) =>
-                                          patchWeekly(key, {
-                                            enabled: e.target.checked,
-                                          })
-                                        }
-                                      />
-                                    </td>
-                                    <td className="px-2 py-1.5">
-                                      <input
-                                        type="time"
-                                        value={day.start}
-                                        disabled={!day.enabled}
-                                        onChange={(e) =>
-                                          patchWeekly(key, {
-                                            start: e.target.value,
-                                          })
-                                        }
-                                        className="rounded border border-neutral-200 px-1 py-0.5 disabled:opacity-40"
-                                      />
-                                    </td>
-                                    <td className="px-2 py-1.5">
-                                      <input
-                                        type="time"
-                                        value={day.end}
-                                        disabled={!day.enabled}
-                                        onChange={(e) =>
-                                          patchWeekly(key, {
-                                            end: e.target.value,
-                                          })
-                                        }
-                                        className="rounded border border-neutral-200 px-1 py-0.5 disabled:opacity-40"
-                                      />
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-
-                        <div className="space-y-2">
-                          <p className="text-xs font-medium text-neutral-600">
-                            Home location
-                          </p>
-                          <input
-                            value={form.home.address}
-                            onChange={(e) =>
-                              setForm((f) => ({
-                                ...f,
-                                home: { ...f.home, address: e.target.value },
-                              }))
-                            }
-                            onBlur={() => void validateHome()}
-                            placeholder="Street address"
-                            className="block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                          />
-                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                            <input
-                              value={form.home.city}
-                              onChange={(e) =>
-                                setForm((f) => ({
-                                  ...f,
-                                  home: { ...f.home, city: e.target.value },
-                                }))
-                              }
-                              onBlur={() => void validateHome()}
-                              placeholder="City"
-                              className="rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                            />
-                            <input
-                              value={form.home.state}
-                              onChange={(e) =>
-                                setForm((f) => ({
-                                  ...f,
-                                  home: { ...f.home, state: e.target.value },
-                                }))
-                              }
-                              onBlur={() => void validateHome()}
-                              placeholder="State"
-                              className="rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                            />
-                            <input
-                              value={form.home.zip}
-                              onChange={(e) =>
-                                setForm((f) => ({
-                                  ...f,
-                                  home: { ...f.home, zip: e.target.value },
-                                }))
-                              }
-                              onBlur={() => void validateHome()}
-                              placeholder="ZIP"
-                              className="col-span-2 rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange sm:col-span-1"
-                            />
-                          </div>
-                          {homeValidating && (
-                            <p className="text-xs text-neutral-400">
-                              Validating address…
-                            </p>
-                          )}
-                          {homeMsg && (
-                            <p className="text-xs text-neutral-500">{homeMsg}</p>
-                          )}
-                        </div>
-                      </>
-                    )}
+                <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4">
+                  <div>
+                    <p className="text-sm font-medium text-brand-dark">
+                      Work schedule
+                    </p>
+                    <p className="mt-0.5 text-xs text-neutral-500">
+                      When on, this user appears as a technician on the Schedule
+                      page. Set weekly hours and home location there.
+                    </p>
                   </div>
-                )}
+                  <label className="flex items-center gap-2 text-sm text-neutral-700">
+                    <input
+                      type="checkbox"
+                      checked={form.schedulable}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setForm((f) => ({
+                          ...f,
+                          schedulable: checked,
+                          weeklyHours:
+                            checked && weeklyHoursNeverEnabled(f.weeklyHours)
+                              ? defaultWeeklyHours(true)
+                              : f.weeklyHours,
+                        }));
+                      }}
+                      className="rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
+                    />
+                    On work schedule
+                  </label>
+                </div>
 
                 {(modal === "create" || (modal === "edit" && isSuperAdmin)) && (
                   <div>

@@ -1244,6 +1244,8 @@ export interface WorkOrderListItem {
   scheduledStart?: string | null;
   scheduledEnd?: string | null;
   estimatedMinutes?: number;
+  appointmentCanceledAt?: string | null;
+  appointmentCanceledBy?: string | null;
   customerName?: string | null;
   assignee?: WorkOrderAssignee | null;
   warnings?: string[];
@@ -1296,6 +1298,35 @@ export async function updateWorkOrder(
   });
 }
 
+export interface ScheduleQueue {
+  unscheduled: WorkOrderListItem[];
+  today: WorkOrderListItem[];
+  upcoming: WorkOrderListItem[];
+  pastDue: WorkOrderListItem[];
+}
+
+export async function getScheduleQueue(
+  token: string,
+): Promise<ScheduleQueue> {
+  return authRequest<ScheduleQueue>("/schedule/queue", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function cancelWorkOrderAppointment(
+  token: string,
+  id: string,
+): Promise<WorkOrderListItem> {
+  return authRequest<WorkOrderListItem>(
+    `/work-orders/${id}/cancel-appointment`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export interface ScheduleStaffMember {
   _id: string;
   first_name: string;
@@ -1335,6 +1366,9 @@ export interface ScheduleSuggestion {
   fits: boolean;
   reason: string;
   driveSource: "google" | "haversine" | "none";
+  driveFrom: "previousJob" | "home" | "unknown";
+  driveFromLabel: string;
+  driveKnown: boolean;
 }
 
 export async function suggestScheduleAssignee(

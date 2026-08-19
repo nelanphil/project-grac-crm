@@ -204,3 +204,29 @@ export const DISPATCHER_ROLES = ["super-admin", "admin", "owner"];
 export function isDispatcherRole(role: string | null | undefined): boolean {
   return Boolean(role && DISPATCHER_ROLES.includes(role));
 }
+
+export function weeklyHoursNeverEnabled(hours: UserWeeklyHours): boolean {
+  return WEEKDAY_KEYS.every((key) => !hours[key].enabled);
+}
+
+export function weeklyHoursSummary(hours: UserWeeklyHours): string {
+  const enabledKeys = WEEKDAY_KEYS.filter((key) => hours[key].enabled);
+  const firstKey = enabledKeys[0];
+  if (!firstKey) return "Hours not set";
+  const first = hours[firstKey];
+  const same = enabledKeys.every(
+    (key) => hours[key].start === first.start && hours[key].end === first.end,
+  );
+  const days = enabledKeys.map((key) => WEEKDAY_LABELS[key].slice(0, 3)).join(", ");
+  if (same) return `${days} ${first.start}–${first.end}`;
+  return `${enabledKeys.length} days set`;
+}
+
+export function workOrderLocalDate(job: {
+  scheduledStart?: string | null;
+  date?: string | null;
+}): string | null {
+  if (job.scheduledStart) return formatLocalDate(new Date(job.scheduledStart));
+  if (job.date) return job.date.slice(0, 10);
+  return null;
+}

@@ -225,7 +225,8 @@ export default function WeekBoard({
         </div>
         {staff.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-neutral-500">
-            No schedulable staff. Mark users as schedulable under Users.
+            No schedulable staff. Turn on work schedule under Users, then set
+            hours on the Technicians tab.
           </div>
         ) : (
           staff.map((person) => (

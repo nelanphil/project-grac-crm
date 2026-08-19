@@ -361,6 +361,8 @@ export async function updateWorkOrder(
           return;
         }
         workOrder.scheduledStart = start;
+        workOrder.appointmentCanceledAt = null;
+        workOrder.appointmentCanceledBy = null;
       }
     }
 
@@ -432,12 +434,71 @@ export async function updateWorkOrder(
       ...actorFromRequest(req.user),
     });
 
-    const lean = workOrder.toObject();
+    const lean = workOrder.toObject() as unknown as Record<string, unknown>;
     const [enriched] = await enrichWithAddress([lean]);
     res.json({ ...enriched, warnings });
   } catch (err) {
     console.error("PATCH /work-orders/:id error:", err);
     res.status(500).json({ message: "Failed to update work order" });
+  }
+}
+
+export async function cancelWorkOrderAppointment(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!hasJobsPermission(req, "jobs:write")) {
+      res.status(403).json({ message: "Missing permission: jobs:write" });
+      return;
+    }
+    if (!isDispatcherRole(req.user?.role)) {
+      res.status(403).json({
+        message: "Only dispatchers can cancel appointments",
+      });
+      return;
+    }
+
+    const workOrder = await WorkOrder.findById(req.params.id);
+    if (!workOrder) {
+      res.status(404).json({ message: "Work order not found" });
+      return;
+    }
+    if (workOrder.completed) {
+      res.status(400).json({ message: "Completed work orders cannot be canceled" });
+      return;
+    }
+    if (!workOrder.scheduledStart) {
+      res.status(400).json({ message: "This work order has no appointment to cancel" });
+      return;
+    }
+
+    workOrder.scheduledStart = null;
+    workOrder.scheduledEnd = null;
+    workOrder.assignedUserRef = null;
+    workOrder.tech = "";
+    workOrder.appointmentCanceledAt = new Date();
+    workOrder.appointmentCanceledBy = req.user?.id
+      ? new mongoose.Types.ObjectId(req.user.id)
+      : null;
+
+    await workOrder.save();
+
+    logNotificationAsync({
+      entityType: "work_order",
+      action: "updated",
+      entityId: String(workOrder._id),
+      customerRef: workOrder.customerRef ?? null,
+      summary: "Work order appointment canceled",
+      ...actorFromRequest(req.user),
+    });
+
+    const lean = workOrder.toObject() as unknown as Record<string, unknown>;
+    const [enriched] = await enrichWithAddress([lean]);
+    res.json(enriched);
+  } catch (err) {
+    console.error("POST /work-orders/:id/cancel-appointment error:", err);
+    res.status(500).json({ message: "Failed to cancel appointment" });
   }
 }
 

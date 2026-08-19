@@ -5,6 +5,7 @@ import {
   dayRouteForUser,
   isDispatcherRole,
   listSchedulableStaff,
+  listScheduleQueue,
   suggestAssignees,
   toPublicStaff,
   enrichScheduleWorkOrders,
@@ -20,6 +21,27 @@ const suggestSchema = z.object({
   date: z.string().regex(localDateRe),
   estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
 });
+
+export async function getScheduleQueue(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!req.user?.permissions.includes("jobs:read")) {
+      res.status(403).json({ message: "Missing permission: jobs:read" });
+      return;
+    }
+
+    const queue = await listScheduleQueue({
+      dispatcher: isDispatcherRole(req.user.role),
+      userId: req.user.id,
+    });
+    res.json(queue);
+  } catch (err) {
+    console.error("GET /schedule/queue error:", err);
+    res.status(500).json({ message: "Failed to load schedule queue" });
+  }
+}
 
 export async function getScheduleStaff(
   req: AuthRequest,

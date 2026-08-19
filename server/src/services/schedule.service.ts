@@ -22,6 +22,7 @@ import {
   computeDriveMinutes,
   type LatLng,
 } from "../utils/googleRoutes";
+import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
 
 export const DISPATCHER_ROLES = ["super-admin", "admin", "owner"] as const;
 
@@ -270,32 +271,84 @@ export async function listSchedulableStaff(): Promise<LeanUser[]> {
     .lean();
 }
 
-function homeCoords(home?: HomeLocation | null): LatLng | null {
-  if (
-    home &&
-    typeof home.lat === "number" &&
-    typeof home.lng === "number" &&
-    Number.isFinite(home.lat) &&
-    Number.isFinite(home.lng)
-  ) {
-    return { lat: home.lat, lng: home.lng };
+function parseCoord(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
   }
   return null;
 }
 
+function latLngFrom(obj: { lat?: unknown; lng?: unknown } | null | undefined): LatLng | null {
+  if (!obj) return null;
+  const lat = parseCoord(obj.lat);
+  const lng = parseCoord(obj.lng);
+  if (lat == null || lng == null) return null;
+  return { lat, lng };
+}
+
+function homeCoords(home?: HomeLocation | null): LatLng | null {
+  return latLngFrom(home);
+}
+
 function addressCoords(
-  addr: { lat?: number | null; lng?: number | null } | null,
+  addr: { lat?: unknown; lng?: unknown } | null,
 ): LatLng | null {
-  if (
-    addr &&
-    typeof addr.lat === "number" &&
-    typeof addr.lng === "number" &&
-    Number.isFinite(addr.lat) &&
-    Number.isFinite(addr.lng)
-  ) {
-    return { lat: addr.lat, lng: addr.lng };
+  return latLngFrom(addr);
+}
+
+function geocodeCacheKey(input: {
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+}): string {
+  return [
+    input.address ?? "",
+    input.city ?? "",
+    input.state ?? "",
+    input.zip ?? "",
+  ]
+    .join("|")
+    .trim()
+    .toLowerCase();
+}
+
+async function geocodeToLatLng(
+  input: {
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+  },
+  cache: Map<string, LatLng | null>,
+): Promise<LatLng | null> {
+  const street = (input.address ?? "").trim();
+  if (!street) return null;
+  const key = geocodeCacheKey(input);
+  if (cache.has(key)) return cache.get(key) ?? null;
+  try {
+    const result = await resolveGeocodedAddress({
+      street,
+      city: (input.city ?? "").trim(),
+      state: (input.state ?? "").trim(),
+      zip: (input.zip ?? "").trim(),
+    });
+    const coords =
+      result.ok && result.match.coordinates
+        ? {
+            lat: result.match.coordinates.lat,
+            lng: result.match.coordinates.lng,
+          }
+        : null;
+    cache.set(key, coords);
+    return coords;
+  } catch (err) {
+    console.error("suggestAssignees geocode error:", err);
+    cache.set(key, null);
+    return null;
   }
-  return null;
 }
 
 export type SuggestCandidate = {
@@ -310,7 +363,25 @@ export type SuggestCandidate = {
   fits: boolean;
   reason: string;
   driveSource: "google" | "haversine" | "none";
+  driveFrom: "previousJob" | "home" | "unknown";
+  driveFromLabel: string;
+  driveKnown: boolean;
 };
+
+function emptyDriveFields(): Pick<
+  SuggestCandidate,
+  "driveFrom" | "driveFromLabel" | "driveKnown"
+> {
+  return { driveFrom: "unknown", driveFromLabel: "", driveKnown: false };
+}
+
+function formatShortAddress(addr: {
+  address?: string;
+  city?: string;
+} | null): string {
+  if (!addr) return "";
+  return [addr.address?.trim(), addr.city?.trim()].filter(Boolean).join(", ");
+}
 
 export async function suggestAssignees(opts: {
   workOrderId: string;
@@ -330,12 +401,41 @@ export async function suggestAssignees(opts: {
   const estimatedMinutes =
     opts.estimatedMinutes ?? estimatedMinutesForWorkOrder(workOrder);
 
+  const geocodeCache = new Map<string, LatLng | null>();
+
   let dest: LatLng | null = null;
   if (workOrder.addressRef) {
     const site = await CustomerAddress.findById(workOrder.addressRef)
-      .select("lat lng")
+      .select("lat lng address city state zip")
       .lean();
     dest = addressCoords(site);
+    if (!dest && site) {
+      dest = await geocodeToLatLng(site, geocodeCache);
+      if (dest) {
+        await CustomerAddress.updateOne(
+          { _id: site._id },
+          { $set: { lat: dest.lat, lng: dest.lng } },
+        );
+      }
+    }
+  }
+  if (!dest && workOrder.customerRef) {
+    const fallback = await CustomerAddress.findOne({
+      customerRef: workOrder.customerRef,
+    })
+      .sort({ isPrimary: -1 })
+      .select("lat lng address city state zip")
+      .lean();
+    dest = addressCoords(fallback);
+    if (!dest && fallback) {
+      dest = await geocodeToLatLng(fallback, geocodeCache);
+      if (dest) {
+        await CustomerAddress.updateOne(
+          { _id: fallback._id },
+          { $set: { lat: dest.lat, lng: dest.lng } },
+        );
+      }
+    }
   }
 
   const staff = await listSchedulableStaff();
@@ -348,7 +448,7 @@ export async function suggestAssignees(opts: {
     _id: { $ne: workOrder._id },
   })
     .select(
-      "assignedUserRef scheduledStart scheduledEnd estimatedMinutes addressRef",
+      "assignedUserRef scheduledStart scheduledEnd estimatedMinutes addressRef customerRef",
     )
     .sort({ scheduledStart: 1 })
     .lean();
@@ -367,15 +467,48 @@ export async function suggestAssignees(opts: {
       dayJobs.map((j) => j.addressRef?.toString()).filter(Boolean) as string[],
     ),
   ];
-  const jobAddresses =
+  const jobCustomerIds = [
+    ...new Set(
+      dayJobs.map((j) => j.customerRef?.toString()).filter(Boolean) as string[],
+    ),
+  ];
+  const [jobAddresses, jobCustomers] = await Promise.all([
     jobAddressIds.length > 0
-      ? await CustomerAddress.find({ _id: { $in: jobAddressIds } })
-          .select("_id lat lng")
+      ? CustomerAddress.find({ _id: { $in: jobAddressIds } })
+          .select("_id lat lng address city state zip")
           .lean()
-      : [];
+      : [],
+    jobCustomerIds.length > 0
+      ? Customer.find({ _id: { $in: jobCustomerIds } })
+          .select("_id accountName first last")
+          .lean()
+      : [],
+  ]);
   const jobCoords = new Map(
     jobAddresses.map((a) => [a._id.toString(), addressCoords(a)]),
   );
+  const jobAddressLabel = new Map(
+    jobAddresses.map((a) => [a._id.toString(), formatShortAddress(a)]),
+  );
+  const jobCustomerName = new Map(
+    jobCustomers.map((c) => [c._id.toString(), customerDisplayName(c)]),
+  );
+  const jobAddressById = new Map(
+    jobAddresses.map((a) => [a._id.toString(), a]),
+  );
+
+  for (const [id, coords] of [...jobCoords.entries()]) {
+    if (coords) continue;
+    const addr = jobAddressById.get(id);
+    if (!addr) continue;
+    const geocoded = await geocodeToLatLng(addr, geocodeCache);
+    if (!geocoded) continue;
+    jobCoords.set(id, geocoded);
+    await CustomerAddress.updateOne(
+      { _id: addr._id },
+      { $set: { lat: geocoded.lat, lng: geocoded.lng } },
+    );
+  }
 
   const suggestions: SuggestCandidate[] = [];
 
@@ -399,6 +532,7 @@ export async function suggestAssignees(opts: {
         fits: false,
         reason: window.off ? "Marked off this day" : "Not working this weekday",
         driveSource: "none",
+        ...emptyDriveFields(),
       });
       continue;
     }
@@ -427,13 +561,47 @@ export async function suggestAssignees(opts: {
     const lastEnd = lastJob?.scheduledEnd
       ? new Date(lastJob.scheduledEnd)
       : range.start;
-    const fromCoords = lastJob?.addressRef
-      ? (jobCoords.get(lastJob.addressRef.toString()) ??
-        homeCoords(tech.homeLocation))
-      : homeCoords(tech.homeLocation);
+    const lastJobCoords = lastJob?.addressRef
+      ? (jobCoords.get(lastJob.addressRef.toString()) ?? null)
+      : null;
+    let home = homeCoords(tech.homeLocation);
+    if (!home && tech.homeLocation?.address?.trim()) {
+      home = await geocodeToLatLng(tech.homeLocation, geocodeCache);
+      if (home) {
+        await User.updateOne(
+          { _id: tech._id },
+          {
+            $set: {
+              "homeLocation.lat": home.lat,
+              "homeLocation.lng": home.lng,
+            },
+          },
+        );
+      }
+    }
+
+    let driveFrom: SuggestCandidate["driveFrom"] = "unknown";
+    let driveFromLabel = "";
+    let fromCoords: LatLng | null = null;
+    if (lastJobCoords) {
+      driveFrom = "previousJob";
+      fromCoords = lastJobCoords;
+      const name = lastJob?.customerRef
+        ? (jobCustomerName.get(lastJob.customerRef.toString()) ?? "")
+        : "";
+      const addr = lastJob?.addressRef
+        ? (jobAddressLabel.get(lastJob.addressRef.toString()) ?? "")
+        : "";
+      driveFromLabel = [name, addr].filter(Boolean).join(" · ");
+    } else if (home) {
+      driveFrom = "home";
+      fromCoords = home;
+      driveFromLabel = "Home";
+    }
 
     let driveMinutes = 0;
     let driveSource: SuggestCandidate["driveSource"] = "none";
+    const driveKnown = Boolean(fromCoords && dest);
     if (fromCoords && dest) {
       const drive = await computeDriveMinutes(fromCoords, dest);
       driveMinutes = drive.minutes;
@@ -458,6 +626,22 @@ export async function suggestAssignees(opts: {
           ),
       );
 
+    let reason: string;
+    if (fits && driveKnown) {
+      reason =
+        driveFrom === "previousJob"
+          ? `${driveMinutes} min from last job`
+          : `${driveMinutes} min from home`;
+    } else if (fits) {
+      reason = existing.length
+        ? "Fits after existing jobs"
+        : "Fits this day";
+    } else if (remainingMinutes < estimatedMinutes) {
+      reason = "Not enough remaining capacity";
+    } else {
+      reason = "Does not fit before end of day";
+    }
+
     suggestions.push({
       userId: String(tech._id),
       first_name: tech.first_name,
@@ -468,21 +652,21 @@ export async function suggestAssignees(opts: {
       remainingMinutes,
       existingJobCount: existing.length,
       fits,
-      reason: fits
-        ? "Fits after existing jobs"
-        : remainingMinutes < estimatedMinutes
-          ? "Not enough remaining capacity"
-          : "Does not fit before end of day",
+      reason,
       driveSource,
+      driveFrom,
+      driveFromLabel,
+      driveKnown,
     });
   }
 
   suggestions.sort((a, b) => {
     if (a.fits !== b.fits) return a.fits ? -1 : 1;
-    if (a.driveMinutes !== b.driveMinutes) {
+    if (a.driveKnown !== b.driveKnown) return a.driveKnown ? -1 : 1;
+    if (a.driveKnown && b.driveKnown && a.driveMinutes !== b.driveMinutes) {
       return a.driveMinutes - b.driveMinutes;
     }
-    return a.existingJobCount - b.existingJobCount;
+    return b.remainingMinutes - a.remainingMinutes;
   });
 
   return {
@@ -603,4 +787,101 @@ export async function applyAssignmentSideEffects(
   if (assignee) {
     workOrder.tech = staffDisplayName(assignee);
   }
+}
+
+export const PAST_DUE_LIMIT = 75;
+
+export type ScheduleQueue = {
+  unscheduled: EnrichedWorkOrder[];
+  today: EnrichedWorkOrder[];
+  upcoming: EnrichedWorkOrder[];
+  pastDue: EnrichedWorkOrder[];
+};
+
+function isCanceledAppointment(wo: {
+  appointmentCanceledAt?: Date | null;
+}): boolean {
+  return Boolean(wo.appointmentCanceledAt);
+}
+
+function pastDueSortKey(wo: {
+  appointmentCanceledAt?: Date | null;
+  scheduledStart?: Date | null;
+  updatedAt?: Date;
+}): number {
+  const stamp =
+    wo.appointmentCanceledAt ?? wo.scheduledStart ?? wo.updatedAt ?? new Date(0);
+  return new Date(stamp).getTime();
+}
+
+export async function listScheduleQueue(opts: {
+  dispatcher: boolean;
+  userId: string;
+}): Promise<ScheduleQueue> {
+  const today = formatLocalDate(new Date());
+  const { start: todayStart, end: todayEnd } = rangeUtc(today, today);
+
+  const base: Record<string, unknown> = { completed: { $ne: true } };
+  if (!opts.dispatcher) {
+    base.assignedUserRef = opts.userId;
+  }
+
+  const unscheduledQuery = opts.dispatcher
+    ? WorkOrder.find({
+        ...base,
+        scheduledStart: null,
+        $or: [
+          { appointmentCanceledAt: null },
+          { appointmentCanceledAt: { $exists: false } },
+        ],
+      })
+        .sort({ date: 1, createdAt: 1 })
+        .lean()
+    : Promise.resolve([]);
+
+  const [unscheduledRows, todayRows, upcomingRows, pastDueRows] =
+    await Promise.all([
+      unscheduledQuery,
+      WorkOrder.find({
+        ...base,
+        scheduledStart: { $gte: todayStart, $lte: todayEnd },
+      })
+        .sort({ scheduledStart: 1 })
+        .lean(),
+      WorkOrder.find({
+        ...base,
+        scheduledStart: { $gt: todayEnd },
+      })
+        .sort({ scheduledStart: 1 })
+        .lean(),
+      WorkOrder.find({
+        ...base,
+        $or: [
+          { appointmentCanceledAt: { $type: "date" } },
+          { scheduledStart: { $ne: null, $lt: todayStart } },
+        ],
+      })
+        .sort({ updatedAt: -1 })
+        .limit(200)
+        .lean(),
+    ]);
+
+  const pastDueSorted = [...pastDueRows]
+    .filter(
+      (wo) =>
+        isCanceledAppointment(wo) ||
+        (wo.scheduledStart != null &&
+          new Date(wo.scheduledStart).getTime() < todayStart.getTime()),
+    )
+    .sort((a, b) => pastDueSortKey(b) - pastDueSortKey(a))
+    .slice(0, PAST_DUE_LIMIT);
+
+  const [unscheduled, todayJobs, upcoming, pastDue] = await Promise.all([
+    enrichScheduleWorkOrders(unscheduledRows as Array<Record<string, unknown>>),
+    enrichScheduleWorkOrders(todayRows as Array<Record<string, unknown>>),
+    enrichScheduleWorkOrders(upcomingRows as Array<Record<string, unknown>>),
+    enrichScheduleWorkOrders(pastDueSorted as Array<Record<string, unknown>>),
+  ]);
+
+  return { unscheduled, today: todayJobs, upcoming, pastDue };
 }

@@ -5,23 +5,36 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, LogOut, Menu, Plus, X } from "lucide-react";
 import {
+  closestCorners,
   DndContext,
   PointerSensor,
+  pointerWithin,
+  type CollisionDetection,
   type DragEndEvent,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
 import {
   SortableContext,
-  arrayMove,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { applyNavOrder, getVisibleNavSections } from "@/lib/dashboard-nav";
+import {
+  applyNavOrder,
+  getVisibleNavSections,
+  moveNavItem,
+} from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
 import { updateNavOrder } from "@/lib/api";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import NavItemGroup from "@/components/dashboard/NavItemGroup";
+import { RootDropZone } from "@/components/dashboard/NavDropTargets";
 import CustomerHeaderSearch from "@/components/dashboard/staff/CustomerHeaderSearch";
+
+const navCollision: CollisionDetection = (args) => {
+  const pointerHits = pointerWithin(args);
+  if (pointerHits.length > 0) return pointerHits;
+  return closestCorners(args);
+};
 
 export default function StaffTopBar() {
   const router = useRouter();
@@ -96,38 +109,10 @@ export default function StaffTopBar() {
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const activeId = String(active.id);
-      const overId = String(over.id);
-      const current = navOrder ?? { order: [], children: {} };
-
-      const hrefs = visibleItems.map((i) => i.href);
-      if (hrefs.includes(activeId) && hrefs.includes(overId)) {
-        const newHrefs = arrayMove(
-          hrefs,
-          hrefs.indexOf(activeId),
-          hrefs.indexOf(overId),
-        );
-        persistNavOrder({ ...current, order: newHrefs });
-        return;
-      }
-
-      for (const item of visibleItems) {
-        const childHrefs = item.children?.map((c) => c.href) ?? [];
-        if (childHrefs.includes(activeId) && childHrefs.includes(overId)) {
-          const newHrefs = arrayMove(
-            childHrefs,
-            childHrefs.indexOf(activeId),
-            childHrefs.indexOf(overId),
-          );
-          persistNavOrder({
-            ...current,
-            children: { ...current.children, [item.href]: newHrefs },
-          });
-          return;
-        }
-      }
+      const next = moveNavItem(visibleItems, String(active.id), String(over.id));
+      if (next) persistNavOrder(next);
     },
-    [navOrder, visibleItems, persistNavOrder],
+    [visibleItems, persistNavOrder],
   );
 
   function handleLogout() {
@@ -312,14 +297,19 @@ export default function StaffTopBar() {
             {visibleItems.length ? (
               <DndContext
                 sensors={sensors}
+                collisionDetection={navCollision}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
               >
-                <SortableContext
-                  items={visibleItems.map((item) => item.href)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-1">
+                  <RootDropZone
+                    editMode={editMode}
+                    className="rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-center text-[11px] font-medium text-neutral-400"
+                  />
+                  <SortableContext
+                    items={visibleItems.map((item) => item.href)}
+                    strategy={verticalListSortingStrategy}
+                  >
                     {visibleItems.map((item) => (
                       <NavItemGroup
                         key={item.href}
@@ -331,8 +321,12 @@ export default function StaffTopBar() {
                         editMode={editMode}
                       />
                     ))}
-                  </div>
-                </SortableContext>
+                  </SortableContext>
+                  <RootDropZone
+                    editMode={editMode}
+                    className="rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-center text-[11px] font-medium text-neutral-400"
+                  />
+                </div>
               </DndContext>
             ) : null}
             <button

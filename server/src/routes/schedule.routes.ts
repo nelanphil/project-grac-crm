@@ -5,6 +5,7 @@ import {
   AuthRequest,
 } from "../middleware/auth.middleware";
 import {
+  getScheduleQueue,
   getScheduleStaff,
   postScheduleSuggest,
   getScheduleRoute,
@@ -13,6 +14,10 @@ import {
 const router = Router();
 
 router.use(authenticate);
+
+router.get("/queue", requirePermission("jobs:read"), (req, res: Response) =>
+  getScheduleQueue(req as AuthRequest, res),
+);
 
 router.get("/staff", requirePermission("jobs:read"), (req, res: Response) =>
   getScheduleStaff(req as AuthRequest, res),

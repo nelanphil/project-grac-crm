@@ -10,10 +10,12 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  isNavChildActive,
   isNavItemActive,
+  isNavSubtreeActive,
+  MAX_NAV_DEPTH,
   type NavItem,
 } from "@/lib/dashboard-nav";
+import { NestPlaceholder } from "@/components/dashboard/NavDropTargets";
 
 type NavItemGroupProps = {
   item: NavItem;
@@ -23,61 +25,8 @@ type NavItemGroupProps = {
   /** Enables long-press wiggle + drag reordering (staff-only surfaces). */
   editable?: boolean;
   editMode?: boolean;
+  depth?: number;
 };
-
-function SortableChildLink({
-  href,
-  label,
-  Icon,
-  active,
-  activeClass,
-  idleClass,
-  editMode,
-}: {
-  href: string;
-  label: string;
-  Icon?: NavItem["icon"];
-  active: boolean;
-  activeClass: string;
-  idleClass: string;
-  editMode: boolean;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: href });
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.4 : 1,
-      }}
-      {...attributes}
-      {...listeners}
-      className={editMode ? "nav-draggable nav-wiggle" : "nav-draggable"}
-    >
-      <Link
-        href={href}
-        onClick={(e) => {
-          if (editMode) e.preventDefault();
-        }}
-        className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-          active ? activeClass : idleClass
-        }`}
-      >
-        {Icon ? <Icon className="h-3.5 w-3.5 shrink-0" /> : null}
-        {label}
-      </Link>
-    </div>
-  );
-}
 
 export default function NavItemGroup({
   item,
@@ -86,36 +35,39 @@ export default function NavItemGroup({
   onNavigate,
   editable = false,
   editMode = false,
+  depth = 0,
 }: NavItemGroupProps) {
   const { href, label, icon: Icon, children } = item;
   const hasChildren = Boolean(children && children.length > 0);
   const active = isNavItemActive(pathname, href, hasChildren);
-  const childActive = hasChildren
-    ? children!.some((c) => isNavChildActive(pathname, c.href))
-    : false;
+  const descendantActive = isNavSubtreeActive(pathname, item);
+  const canNestInside = depth < MAX_NAV_DEPTH;
 
-  // Collapsed by default; open when a child route is active.
   const [expanded, setExpanded] = useState(false);
-  const [prevChildActive, setPrevChildActive] = useState(childActive);
+  const [prevDescendantActive, setPrevDescendantActive] =
+    useState(descendantActive);
 
-  if (childActive !== prevChildActive) {
-    setPrevChildActive(childActive);
-    if (childActive) {
-      setExpanded(true);
-    }
+  if (descendantActive !== prevDescendantActive) {
+    setPrevDescendantActive(descendantActive);
+    if (descendantActive) setExpanded(true);
   }
+
+  const listOpen = editMode || expanded;
+  const showChevron = hasChildren || (editable && editMode && canNestInside);
+  const showChildList =
+    (hasChildren || (editable && editMode && canNestInside)) && listOpen;
 
   const isSidebar = variant === "sidebar";
 
   const parentClass = isSidebar
     ? active
       ? "bg-brand-dark text-white"
-      : childActive
+      : descendantActive
         ? "bg-neutral-100 text-brand-dark"
         : "text-neutral-600 hover:bg-neutral-100"
     : active
       ? "bg-brand-orange text-white"
-      : childActive
+      : descendantActive
         ? "bg-white/15 text-white"
         : "text-white/90 hover:bg-white/10";
 
@@ -128,6 +80,9 @@ export default function NavItemGroup({
     : "bg-brand-orange text-white";
 
   const borderClass = isSidebar ? "border-neutral-200" : "border-white/15";
+  const placeholderClass = isSidebar
+    ? "rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-[11px] font-medium text-neutral-400"
+    : "rounded-lg border border-dashed border-white/25 px-3 py-2 text-[11px] font-medium text-white/40";
 
   const {
     attributes,
@@ -138,107 +93,117 @@ export default function NavItemGroup({
     isDragging,
   } = useSortable({ id: href, disabled: !editable });
 
+  const rowClass =
+    depth === 0
+      ? `flex min-w-0 flex-1 items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${parentClass} ${
+          isSidebar ? "" : "px-3"
+        }`
+      : `flex min-w-0 flex-1 items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+          active ? childActiveClass : childIdleClass
+        }`;
+
   return (
-    <div
-      ref={editable ? setNodeRef : undefined}
-      style={
-        editable
-          ? {
-              transform: CSS.Transform.toString(transform),
-              transition,
-              opacity: isDragging ? 0.4 : 1,
-            }
-          : undefined
-      }
-      {...(editable ? attributes : {})}
-      {...(editable ? listeners : {})}
-      className={editable ? "nav-draggable" : undefined}
-    >
-      <div className={editable && editMode ? "nav-wiggle" : undefined}>
-        <div className="flex items-center gap-0.5">
-          <Link
-            href={href}
-            onClick={(e) => {
-              // Wiggling items are only for reordering; block navigation until "Done" is pressed.
-              if (editable && editMode) {
-                e.preventDefault();
-                return;
+    <div>
+      <div
+        ref={editable ? setNodeRef : undefined}
+        style={
+          editable
+            ? {
+                transform: CSS.Transform.toString(transform),
+                transition,
+                opacity: isDragging ? 0.4 : 1,
               }
-              onNavigate?.();
-            }}
-            className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${parentClass} ${
-              isSidebar ? "" : "px-3"
-            }`}
-          >
-            <Icon className="h-4 w-4 shrink-0" />
-            <span className="truncate">{label}</span>
-          </Link>
-          {hasChildren ? (
-            <button
-              type="button"
-              aria-label={expanded ? `Collapse ${label}` : `Expand ${label}`}
-              aria-expanded={expanded}
-              onClick={() => setExpanded((v) => !v)}
-              data-nav-allow-click
-              className={`shrink-0 rounded-md p-2 transition-colors ${
-                isSidebar
-                  ? "text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
-                  : "text-white/70 hover:bg-white/10 hover:text-white"
-              }`}
+            : undefined
+        }
+        {...(editable ? attributes : {})}
+        {...(editable ? listeners : {})}
+        className={editable ? "nav-draggable" : undefined}
+      >
+        <div className={editable && editMode ? "nav-wiggle" : undefined}>
+          <div className="flex items-center gap-0.5">
+            <Link
+              href={href}
+              onClick={(e) => {
+                if (editable && editMode) {
+                  e.preventDefault();
+                  return;
+                }
+                onNavigate?.();
+              }}
+              className={rowClass}
             >
-              <ChevronRight
-                className={`h-4 w-4 transition-transform ${
-                  expanded ? "rotate-90" : ""
-                }`}
+              <Icon
+                className={`${depth === 0 ? "h-4 w-4" : "h-3.5 w-3.5"} shrink-0`}
               />
-            </button>
-          ) : null}
+              <span className="truncate">{label}</span>
+            </Link>
+            {showChevron ? (
+              <button
+                type="button"
+                aria-label={listOpen ? `Collapse ${label}` : `Expand ${label}`}
+                aria-expanded={listOpen}
+                onClick={() => {
+                  if (!editMode) setExpanded((v) => !v);
+                }}
+                data-nav-allow-click
+                className={`shrink-0 rounded-md p-2 transition-colors ${
+                  isSidebar
+                    ? "text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+                    : "text-white/70 hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <ChevronRight
+                  className={`h-4 w-4 transition-transform ${
+                    listOpen ? "rotate-90" : ""
+                  }`}
+                />
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      {hasChildren && expanded ? (
+      {showChildList ? (
         <div
           className={`mt-1 ml-4 flex flex-col gap-0.5 border-l pl-2 ${borderClass}`}
         >
           {editable ? (
             <SortableContext
-              items={children!.map((child) => child.href)}
+              items={(children ?? []).map((child) => child.href)}
               strategy={verticalListSortingStrategy}
             >
-              {children!.map((child) => (
-                <SortableChildLink
+              {(children ?? []).map((child) => (
+                <NavItemGroup
                   key={child.href}
-                  href={child.href}
-                  label={child.label}
-                  Icon={child.icon}
-                  active={isNavChildActive(pathname, child.href)}
-                  activeClass={childActiveClass}
-                  idleClass={childIdleClass}
+                  item={child}
+                  pathname={pathname}
+                  variant={variant}
+                  onNavigate={onNavigate}
+                  editable
                   editMode={editMode}
+                  depth={depth + 1}
                 />
               ))}
             </SortableContext>
           ) : (
-            children!.map((child) => {
-              const ChildIcon = child.icon;
-              const childIsActive = isNavChildActive(pathname, child.href);
-              return (
-                <Link
-                  key={child.href}
-                  href={child.href}
-                  onClick={onNavigate}
-                  className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                    childIsActive ? childActiveClass : childIdleClass
-                  }`}
-                >
-                  {ChildIcon ? (
-                    <ChildIcon className="h-3.5 w-3.5 shrink-0" />
-                  ) : null}
-                  {child.label}
-                </Link>
-              );
-            })
+            (children ?? []).map((child) => (
+              <NavItemGroup
+                key={child.href}
+                item={child}
+                pathname={pathname}
+                variant={variant}
+                onNavigate={onNavigate}
+                depth={depth + 1}
+              />
+            ))
           )}
+          {editable && canNestInside ? (
+            <NestPlaceholder
+              parentHref={href}
+              editMode={editMode}
+              className={placeholderClass}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>

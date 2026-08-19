@@ -17,6 +17,8 @@ export interface IWorkOrder extends Document {
   scheduledStart: Date | null;
   scheduledEnd: Date | null;
   estimatedMinutes: number;
+  appointmentCanceledAt: Date | null;
+  appointmentCanceledBy?: Types.ObjectId | null;
   descPerformed: string;
   totalParts: number;
   totalLabor: number;
@@ -63,6 +65,12 @@ const workOrderSchema = new Schema<IWorkOrder>(
     scheduledStart: { type: Date, default: null, index: true },
     scheduledEnd: { type: Date, default: null },
     estimatedMinutes: { type: Number, default: 60 },
+    appointmentCanceledAt: { type: Date, default: null, index: true },
+    appointmentCanceledBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     descPerformed: { type: String, default: "" },
     totalParts: { type: Number, default: 0 },
     totalLabor: { type: Number, default: 0 },
