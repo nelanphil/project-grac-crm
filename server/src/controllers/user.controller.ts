@@ -2,9 +2,22 @@ import { Response } from "express";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { User, activeUserFilter, IUserTerritories } from "../models/mongo/User";
+import {
+  User,
+  activeUserFilter,
+  IUserTerritories,
+  IUserHomeLocation,
+  IWeeklyHours,
+  IScheduleException,
+} from "../models/mongo/User";
 import { Role } from "../models/mongo/Role";
 import { createUserSchema, updateUserSchema } from "../schemas/user.schema";
+import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
+import {
+  defaultSchedulableForRole,
+  defaultWeeklyHours,
+  emptyHomeLocation,
+} from "../utils/scheduleTime";
 import { updateRoleSchema } from "../schemas/auth.schema";
 import {
   applyUsername,
@@ -35,6 +48,81 @@ function formatTerritories(
   };
 }
 
+function formatHomeLocation(
+  loc?: IUserHomeLocation | null,
+): IUserHomeLocation {
+  return {
+    address: loc?.address ?? "",
+    city: loc?.city ?? "",
+    state: loc?.state ?? "",
+    zip: loc?.zip ?? "",
+    lat: typeof loc?.lat === "number" ? loc.lat : null,
+    lng: typeof loc?.lng === "number" ? loc.lng : null,
+  };
+}
+
+function formatWeeklyHours(hours?: IWeeklyHours | null): IWeeklyHours {
+  const fallback = defaultWeeklyHours(false);
+  if (!hours) return fallback;
+  return {
+    sun: hours.sun ?? fallback.sun,
+    mon: hours.mon ?? fallback.mon,
+    tue: hours.tue ?? fallback.tue,
+    wed: hours.wed ?? fallback.wed,
+    thu: hours.thu ?? fallback.thu,
+    fri: hours.fri ?? fallback.fri,
+    sat: hours.sat ?? fallback.sat,
+  };
+}
+
+async function geocodeHomeLocation(input: {
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  lat?: number | null;
+  lng?: number | null;
+}): Promise<{ location: IUserHomeLocation; error?: string }> {
+  const address = (input.address ?? "").trim();
+  const city = (input.city ?? "").trim();
+  const state = (input.state ?? "").trim();
+  const zip = (input.zip ?? "").trim();
+  if (!address) {
+    return { location: emptyHomeLocation() };
+  }
+
+  if (
+    typeof input.lat === "number" &&
+    typeof input.lng === "number" &&
+    Number.isFinite(input.lat) &&
+    Number.isFinite(input.lng)
+  ) {
+    return {
+      location: { address, city, state, zip, lat: input.lat, lng: input.lng },
+    };
+  }
+
+  const geocode = await resolveGeocodedAddress({ street: address, city, state, zip });
+  if (!geocode.ok) {
+    return {
+      location: emptyHomeLocation(),
+      error: geocode.message || "Home address could not be validated",
+    };
+  }
+  const coords = geocode.match.coordinates;
+  const normalized = geocode.match.normalized;
+  return {
+    location: {
+      address: normalized.address || address,
+      city: normalized.city || city,
+      state: normalized.state || state,
+      zip: normalized.zip || zip,
+      lat: coords?.lat ?? null,
+      lng: coords?.lng ?? null,
+    },
+  };
+}
+
 function formatUser(user: {
   _id: unknown;
   email: string;
@@ -44,6 +132,10 @@ function formatUser(user: {
   username?: string | null;
   usernameKey?: string | null;
   territories?: IUserTerritories | null;
+  schedulable?: boolean;
+  homeLocation?: IUserHomeLocation | null;
+  weeklyHours?: IWeeklyHours | null;
+  scheduleExceptions?: IScheduleException[] | null;
   createdAt: Date;
   updatedAt?: Date;
 }) {
@@ -56,6 +148,10 @@ function formatUser(user: {
     username: user.username ?? null,
     usernameNumber: usernameNumberFromKey(user.username, user.usernameKey),
     territories: formatTerritories(user.territories),
+    schedulable: Boolean(user.schedulable),
+    homeLocation: formatHomeLocation(user.homeLocation),
+    weeklyHours: formatWeeklyHours(user.weeklyHours),
+    scheduleExceptions: user.scheduleExceptions ?? [],
     createdAt: user.createdAt,
     ...(user.updatedAt ? { updatedAt: user.updatedAt } : {}),
   };
@@ -138,6 +234,25 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
 
     const password_hash = await bcrypt.hash(plainPassword, 10);
 
+    const isCustomer = role === "customer";
+    const schedulable = isCustomer
+      ? false
+      : (parsed.data.schedulable ?? defaultSchedulableForRole(role));
+    const weeklyHours =
+      parsed.data.weeklyHours ?? defaultWeeklyHours(schedulable);
+
+    let homeLocation = emptyHomeLocation();
+    if (parsed.data.homeLocation) {
+      const geo = await geocodeHomeLocation(parsed.data.homeLocation);
+      if (geo.error) {
+        res.status(422).json({ message: geo.error });
+        return;
+      }
+      homeLocation = geo.location;
+    }
+
+    const scheduleExceptions = parsed.data.scheduleExceptions ?? [];
+
     const softDeleted = await User.findOne({
       email: email.toLowerCase(),
       deletedAt: { $ne: null },
@@ -150,6 +265,10 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       softDeleted.last_name = last_name;
       softDeleted.role = role;
       softDeleted.territories = territories;
+      softDeleted.schedulable = schedulable;
+      softDeleted.weeklyHours = weeklyHours;
+      softDeleted.homeLocation = homeLocation;
+      softDeleted.scheduleExceptions = scheduleExceptions;
       softDeleted.deletedAt = null;
       if (username !== undefined) {
         try {
@@ -171,6 +290,10 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
         last_name,
         role,
         territories,
+        schedulable,
+        weeklyHours,
+        homeLocation,
+        scheduleExceptions,
       });
       if (username !== undefined && username !== "" && username !== null) {
         try {
@@ -286,6 +409,29 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
 
     if (password !== undefined) {
       user.password_hash = await bcrypt.hash(password, 10);
+    }
+
+    if (nextRole === "customer") {
+      user.schedulable = false;
+    } else if (parsed.data.schedulable !== undefined) {
+      user.schedulable = parsed.data.schedulable;
+    }
+
+    if (parsed.data.weeklyHours !== undefined) {
+      user.weeklyHours = parsed.data.weeklyHours;
+    }
+
+    if (parsed.data.homeLocation !== undefined) {
+      const geo = await geocodeHomeLocation(parsed.data.homeLocation);
+      if (geo.error) {
+        res.status(422).json({ message: geo.error });
+        return;
+      }
+      user.homeLocation = geo.location;
+    }
+
+    if (parsed.data.scheduleExceptions !== undefined) {
+      user.scheduleExceptions = parsed.data.scheduleExceptions;
     }
 
     await user.save();

@@ -13,6 +13,10 @@ export interface IWorkOrder extends Document {
   laborHours: number;
   date: Date | null;
   tech: string;
+  assignedUserRef?: Types.ObjectId | null;
+  scheduledStart: Date | null;
+  scheduledEnd: Date | null;
+  estimatedMinutes: number;
   descPerformed: string;
   totalParts: number;
   totalLabor: number;
@@ -50,6 +54,15 @@ const workOrderSchema = new Schema<IWorkOrder>(
     laborHours: { type: Number, default: 0 },
     date: { type: Date, default: null },
     tech: { type: String, default: "" },
+    assignedUserRef: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
+    scheduledStart: { type: Date, default: null, index: true },
+    scheduledEnd: { type: Date, default: null },
+    estimatedMinutes: { type: Number, default: 60 },
     descPerformed: { type: String, default: "" },
     totalParts: { type: Number, default: 0 },
     totalLabor: { type: Number, default: 0 },
@@ -65,6 +78,8 @@ const workOrderSchema = new Schema<IWorkOrder>(
 
 // Allow lookup by customer's legacy SQL id
 workOrderSchema.index({ customerId: 1, date: -1 });
+workOrderSchema.index({ assignedUserRef: 1, scheduledStart: 1 });
+workOrderSchema.index({ scheduledStart: 1 });
 
 export const WorkOrder = mongoose.model<IWorkOrder>(
   "WorkOrder",

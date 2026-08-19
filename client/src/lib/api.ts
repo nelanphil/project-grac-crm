@@ -299,6 +299,33 @@ export interface UserTerritories {
   zips: string[];
 }
 
+export interface UserHomeLocation {
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  lat: number | null;
+  lng: number | null;
+}
+
+export interface WeeklyDayHours {
+  enabled: boolean;
+  start: string;
+  end: string;
+}
+
+export type WeekdayKey = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
+
+export type UserWeeklyHours = Record<WeekdayKey, WeeklyDayHours>;
+
+export interface ScheduleException {
+  date: string;
+  type: "off" | "custom";
+  start?: string;
+  end?: string;
+  note?: string;
+}
+
 export interface UserListItem {
   _id: string;
   email: string;
@@ -308,6 +335,10 @@ export interface UserListItem {
   username: string | null;
   usernameNumber: number | null;
   territories: UserTerritories;
+  schedulable: boolean;
+  homeLocation: UserHomeLocation;
+  weeklyHours: UserWeeklyHours;
+  scheduleExceptions: ScheduleException[];
   createdAt: string;
   updatedAt?: string;
 }
@@ -331,6 +362,10 @@ export async function createUser(
     role: string;
     username?: string | null;
     territories?: UserTerritories;
+    schedulable?: boolean;
+    weeklyHours?: UserWeeklyHours;
+    homeLocation?: UserHomeLocation;
+    scheduleExceptions?: ScheduleException[];
   },
 ): Promise<{ user: UserListItem; temporaryPassword?: string }> {
   return authRequest<{ user: UserListItem; temporaryPassword?: string }>(
@@ -354,6 +389,10 @@ export async function updateUser(
     username?: string | null;
     password?: string;
     territories?: UserTerritories;
+    schedulable?: boolean;
+    weeklyHours?: UserWeeklyHours;
+    homeLocation?: UserHomeLocation;
+    scheduleExceptions?: ScheduleException[];
   },
 ): Promise<{ user: UserListItem }> {
   return authRequest<{ user: UserListItem }>(`/users/${id}`, {
@@ -435,6 +474,8 @@ export interface CustomerAddressSummary {
   state: string;
   zip: string;
   isPrimary?: boolean;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface CustomerEquipment {
@@ -1181,6 +1222,12 @@ export async function deleteCustomerNote(
   );
 }
 
+export interface WorkOrderAssignee {
+  _id: string;
+  first_name: string;
+  last_name: string;
+}
+
 export interface WorkOrderListItem {
   _id: string;
   legacyId: number;
@@ -1193,6 +1240,13 @@ export interface WorkOrderListItem {
   completed: boolean;
   addressRef?: string | null;
   address?: CustomerAddressSummary | null;
+  assignedUserRef?: string | null;
+  scheduledStart?: string | null;
+  scheduledEnd?: string | null;
+  estimatedMinutes?: number;
+  customerName?: string | null;
+  assignee?: WorkOrderAssignee | null;
+  warnings?: string[];
 }
 
 export async function getWorkOrdersForCustomer(
@@ -1203,6 +1257,135 @@ export async function getWorkOrdersForCustomer(
   const params = new URLSearchParams({ customerId: String(legacyId) });
   if (addressId) params.set("addressId", addressId);
   return authRequest<WorkOrderListItem[]>(`/work-orders?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getScheduleWorkOrders(
+  token: string,
+  opts: {
+    from: string;
+    to: string;
+    assignedUserId?: string;
+    unscheduled?: boolean;
+  },
+): Promise<WorkOrderListItem[]> {
+  const params = new URLSearchParams({ from: opts.from, to: opts.to });
+  if (opts.assignedUserId) params.set("assignedUserId", opts.assignedUserId);
+  if (opts.unscheduled) params.set("unscheduled", "1");
+  return authRequest<WorkOrderListItem[]>(`/work-orders?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function updateWorkOrder(
+  token: string,
+  id: string,
+  data: {
+    assignedUserRef?: string | null;
+    scheduledStart?: string | null;
+    estimatedMinutes?: number;
+  },
+): Promise<WorkOrderListItem> {
+  return authRequest<WorkOrderListItem>(`/work-orders/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export interface ScheduleStaffMember {
+  _id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  role: string;
+  schedulable: boolean;
+  homeLocation: UserHomeLocation;
+  weeklyHours: UserWeeklyHours;
+  scheduleExceptions: ScheduleException[];
+}
+
+export async function getScheduleStaff(
+  token: string,
+  from: string,
+  to: string,
+): Promise<{ staff: ScheduleStaffMember[]; workOrders: WorkOrderListItem[] }> {
+  const params = new URLSearchParams({ from, to });
+  return authRequest<{
+    staff: ScheduleStaffMember[];
+    workOrders: WorkOrderListItem[];
+  }>(`/schedule/staff?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface ScheduleSuggestion {
+  userId: string;
+  first_name: string;
+  last_name: string;
+  proposedStart: string;
+  proposedEnd: string;
+  driveMinutes: number;
+  remainingMinutes: number;
+  existingJobCount: number;
+  fits: boolean;
+  reason: string;
+  driveSource: "google" | "haversine" | "none";
+}
+
+export async function suggestScheduleAssignee(
+  token: string,
+  data: { workOrderId: string; date: string; estimatedMinutes?: number },
+): Promise<{
+  workOrderId: string;
+  date: string;
+  estimatedMinutes: number;
+  suggestions: ScheduleSuggestion[];
+}> {
+  return authRequest(`/schedule/suggest`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export interface ScheduleRouteStop {
+  kind: "home" | "job";
+  label: string;
+  lat: number | null;
+  lng: number | null;
+  workOrderId?: string;
+  scheduledStart?: string | null;
+}
+
+export interface ScheduleRouteLeg {
+  durationMinutes: number;
+  distanceMeters: number;
+  encodedPolyline?: string;
+}
+
+export async function getScheduleRoute(
+  token: string,
+  userId: string,
+  date: string,
+): Promise<{
+  user: ScheduleStaffMember;
+  date: string;
+  stops: ScheduleRouteStop[];
+  route: {
+    durationMinutes: number;
+    distanceMeters: number;
+    encodedPolyline?: string;
+    legs: ScheduleRouteLeg[];
+    source: "google" | "haversine";
+  } | null;
+}> {
+  const params = new URLSearchParams({ userId, date });
+  return authRequest(`/schedule/route?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });

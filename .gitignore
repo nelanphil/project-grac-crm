@@ -25,6 +25,8 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+xcuserdata/
+*.xcuserstate
 
 # TypeScript
 *.tsbuildinfo

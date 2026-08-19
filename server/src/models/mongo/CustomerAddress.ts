@@ -17,6 +17,8 @@ export interface ICustomerAddress extends Document {
   propertyType: CustomerAddressPropertyType;
   /** Legacy customer id this site originated from (migration/merge). */
   legacyCustomerId?: number | null;
+  lat: number | null;
+  lng: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +45,8 @@ const customerAddressSchema = new Schema<ICustomerAddress>(
       default: "residential",
     },
     legacyCustomerId: { type: Number, default: null, index: true },
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
   },
   { timestamps: true }
 );

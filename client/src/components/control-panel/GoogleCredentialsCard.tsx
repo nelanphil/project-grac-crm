@@ -157,9 +157,11 @@ export default function GoogleCredentialsCard() {
             Google credentials
           </h2>
           <p className="text-sm text-neutral-500 mt-0.5">
-            Server key for Address Validation, plus an optional Maps JavaScript
-            API key (HTTP-referrer restricted) for the Territory map. Do not
-            reuse the Address Validation key in the browser.
+            Server key for Address Validation and Routes (schedule drive times),
+            plus an optional Maps JavaScript API key (HTTP-referrer restricted)
+            for Territory and day-route maps. Enable Address Validation, Routes,
+            and Maps JavaScript on the GCP project. Do not reuse the Address
+            Validation key in the browser.
           </p>
         </div>
         {!formOpen && !credentials && (

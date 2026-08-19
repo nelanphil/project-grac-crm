@@ -1,7 +1,17 @@
 import mongoose, { Schema, Document } from "mongoose";
+import {
+  defaultWeeklyHours,
+  type HomeLocation,
+  type ScheduleException,
+  type WeeklyHours,
+} from "../../utils/scheduleTime";
 
 // UserRole is now an open string to support dynamic roles
 export type UserRole = string;
+
+export type IUserHomeLocation = HomeLocation;
+export type IWeeklyHours = WeeklyHours;
+export type IScheduleException = ScheduleException;
 
 export interface IUserTerritories {
   /** FL county names (no "County" suffix), e.g. "Orange". */
@@ -22,6 +32,11 @@ export interface IUser extends Document {
   usernameKey: string | null;
   /** Geographic territories for owner-role users. */
   territories: IUserTerritories;
+  /** When true, this staff user appears on the dispatcher board. */
+  schedulable: boolean;
+  homeLocation: IUserHomeLocation;
+  weeklyHours: IWeeklyHours;
+  scheduleExceptions: IScheduleException[];
   /** When the user accepted the Terms of Service. */
   termsAcceptedAt: Date | null;
   /** When the user accepted the Privacy Policy. */
@@ -54,6 +69,51 @@ const territoriesSchema = new Schema<IUserTerritories>(
   {
     counties: { type: [String], default: [] },
     zips: { type: [String], default: [] },
+  },
+  { _id: false },
+);
+
+const weeklyDaySchema = new Schema(
+  {
+    enabled: { type: Boolean, default: false },
+    start: { type: String, default: "08:00" },
+    end: { type: String, default: "17:00" },
+  },
+  { _id: false },
+);
+
+const weeklyHoursSchema = new Schema<IWeeklyHours>(
+  {
+    sun: { type: weeklyDaySchema, default: () => ({ enabled: false, start: "08:00", end: "17:00" }) },
+    mon: { type: weeklyDaySchema, default: () => ({ enabled: true, start: "08:00", end: "17:00" }) },
+    tue: { type: weeklyDaySchema, default: () => ({ enabled: true, start: "08:00", end: "17:00" }) },
+    wed: { type: weeklyDaySchema, default: () => ({ enabled: true, start: "08:00", end: "17:00" }) },
+    thu: { type: weeklyDaySchema, default: () => ({ enabled: true, start: "08:00", end: "17:00" }) },
+    fri: { type: weeklyDaySchema, default: () => ({ enabled: true, start: "08:00", end: "17:00" }) },
+    sat: { type: weeklyDaySchema, default: () => ({ enabled: false, start: "08:00", end: "17:00" }) },
+  },
+  { _id: false },
+);
+
+const homeLocationSchema = new Schema<IUserHomeLocation>(
+  {
+    address: { type: String, default: "" },
+    city: { type: String, default: "" },
+    state: { type: String, default: "" },
+    zip: { type: String, default: "" },
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
+  },
+  { _id: false },
+);
+
+const scheduleExceptionSchema = new Schema<IScheduleException>(
+  {
+    date: { type: String, required: true },
+    type: { type: String, enum: ["off", "custom"], required: true },
+    start: { type: String, default: undefined },
+    end: { type: String, default: undefined },
+    note: { type: String, default: "" },
   },
   { _id: false },
 );
@@ -101,6 +161,23 @@ const userSchema = new Schema<IUser>(
       type: territoriesSchema,
       default: () => ({ counties: [], zips: [] }),
     },
+    schedulable: { type: Boolean, default: false, index: true },
+    homeLocation: {
+      type: homeLocationSchema,
+      default: () => ({
+        address: "",
+        city: "",
+        state: "",
+        zip: "",
+        lat: null,
+        lng: null,
+      }),
+    },
+    weeklyHours: {
+      type: weeklyHoursSchema,
+      default: () => defaultWeeklyHours(false),
+    },
+    scheduleExceptions: { type: [scheduleExceptionSchema], default: [] },
     termsAcceptedAt: { type: Date, default: null },
     privacyAcceptedAt: { type: Date, default: null },
     smsOptIn: { type: Boolean, default: false },

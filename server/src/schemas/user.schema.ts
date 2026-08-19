@@ -34,6 +34,47 @@ const territoriesSchema = z
   })
   .optional();
 
+const hhMm = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, "Time must be HH:mm");
+
+const weeklyDaySchema = z.object({
+  enabled: z.boolean(),
+  start: hhMm,
+  end: hhMm,
+});
+
+const weeklyHoursSchema = z
+  .object({
+    sun: weeklyDaySchema,
+    mon: weeklyDaySchema,
+    tue: weeklyDaySchema,
+    wed: weeklyDaySchema,
+    thu: weeklyDaySchema,
+    fri: weeklyDaySchema,
+    sat: weeklyDaySchema,
+  })
+  .optional();
+
+const homeLocationSchema = z
+  .object({
+    address: z.string().trim().max(300).optional().default(""),
+    city: z.string().trim().max(120).optional().default(""),
+    state: z.string().trim().max(40).optional().default(""),
+    zip: z.string().trim().max(20).optional().default(""),
+    lat: z.number().nullable().optional(),
+    lng: z.number().nullable().optional(),
+  })
+  .optional();
+
+const scheduleExceptionSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
+  type: z.enum(["off", "custom"]),
+  start: hhMm.optional(),
+  end: hhMm.optional(),
+  note: z.string().trim().max(200).optional().default(""),
+});
+
 export const createUserSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z
@@ -46,6 +87,10 @@ export const createUserSchema = z.object({
   role: z.string().min(1, "Role is required"),
   username: usernameField,
   territories: territoriesSchema,
+  schedulable: z.boolean().optional(),
+  weeklyHours: weeklyHoursSchema,
+  homeLocation: homeLocationSchema,
+  scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
 });
 
 export const updateUserSchema = z.object({
@@ -60,6 +105,10 @@ export const updateUserSchema = z.object({
     .max(100, "Password is too long")
     .optional(),
   territories: territoriesSchema,
+  schedulable: z.boolean().optional(),
+  weeklyHours: weeklyHoursSchema,
+  homeLocation: homeLocationSchema,
+  scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
 });
 
 export const forgotPasswordSchema = z.object({

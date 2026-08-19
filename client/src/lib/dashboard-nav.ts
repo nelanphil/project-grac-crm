@@ -1,6 +1,6 @@
 import {
   ShoppingCart,
-  Wrench,
+  Calendar,
   Phone,
   Users,
   UserPlus,
@@ -100,7 +100,12 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "General",
     items: [
       { href: "/dashboard/orders", label: "Invoices", icon: ShoppingCart },
-      { href: "/dashboard/services", label: "Services", icon: Wrench },
+      {
+        href: "/dashboard/schedule",
+        label: "Schedule",
+        icon: Calendar,
+        excludeRoles: ["customer", "agent"],
+      },
       {
         href: "/dashboard/contact",
         label: "Contacts",
@@ -139,9 +144,12 @@ function orderByHrefs<T extends { href: string }>(
   order: string[] | undefined,
 ): T[] {
   if (!order?.length) return items;
+  const mapped = order.map((href) =>
+    href === "/dashboard/services" ? "/dashboard/schedule" : href,
+  );
   const byHref = new globalThis.Map(items.map((item) => [item.href, item]));
   const ordered: T[] = [];
-  for (const href of order) {
+  for (const href of mapped) {
     const item = byHref.get(href);
     if (item) {
       ordered.push(item);

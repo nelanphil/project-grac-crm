@@ -1,7 +1,16 @@
 import dotenv from "dotenv";
 import path from "path";
 
-dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+// First path that defines a variable wins (dotenv does not override).
+// Prefer server/.env; repo-root .env is a fallback for older setups.
+const envCandidates = [
+  path.resolve(__dirname, "../../.env"),
+  path.resolve(process.cwd(), ".env"),
+  path.resolve(__dirname, "../../../.env"),
+];
+for (const envPath of envCandidates) {
+  dotenv.config({ path: envPath });
+}
 
 const isProd = process.env.NODE_ENV === "production";
 const DEFAULT_DB = "grac-crm";

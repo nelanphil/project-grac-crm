@@ -190,6 +190,8 @@ function formatAddress(doc: {
   isPrimary?: boolean;
   propertyType?: CustomerAddressPropertyType;
   legacyCustomerId?: number | null;
+  lat?: number | null;
+  lng?: number | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -206,6 +208,8 @@ function formatAddress(doc: {
     isPrimary: Boolean(doc.isPrimary),
     propertyType: doc.propertyType ?? "residential",
     legacyCustomerId: doc.legacyCustomerId ?? null,
+    lat: typeof doc.lat === "number" ? doc.lat : null,
+    lng: typeof doc.lng === "number" ? doc.lng : null,
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
   };
@@ -947,6 +951,8 @@ export async function createCustomer(
       countyManual: boolean;
       propertyType: CustomerAddressPropertyType;
       isPrimary: boolean;
+      lat: number | null;
+      lng: number | null;
       equipment: CreateCustomerAddressNested["equipment"];
     }> = [];
 
@@ -1013,6 +1019,8 @@ export async function createCustomer(
         propertyType:
           addr.propertyType === "commercial" ? "commercial" : "residential",
         isPrimary: addr.isPrimary === true,
+        lat: geocode.match.coordinates?.lat ?? null,
+        lng: geocode.match.coordinates?.lng ?? null,
         equipment: addr.equipment ?? [],
       });
     }
@@ -1115,6 +1123,8 @@ export async function createCustomer(
           isPrimary: addr.isPrimary,
           propertyType: addr.propertyType,
           legacyCustomerId: legacyId,
+          lat: addr.lat,
+          lng: addr.lng,
         });
 
         for (const eq of addr.equipment ?? []) {
@@ -1770,6 +1780,22 @@ export async function createCustomerAddress(
     const county = normalizeCountyName(parsed.data.county);
     const countyManual = parsed.data.countyManual === true || Boolean(county);
 
+    let lat: number | null = null;
+    let lng: number | null = null;
+    const street = trimStr(parsed.data.address);
+    if (street) {
+      const geocode = await resolveGeocodedAddress({
+        street,
+        city: trimStr(parsed.data.city),
+        state: trimStr(parsed.data.state),
+        zip: trimStr(parsed.data.zip),
+      });
+      if (geocode.ok) {
+        lat = geocode.match.coordinates?.lat ?? null;
+        lng = geocode.match.coordinates?.lng ?? null;
+      }
+    }
+
     const address = await CustomerAddress.create({
       customerRef: customer._id,
       label: parsed.data.label,
@@ -1782,6 +1808,8 @@ export async function createCustomerAddress(
       isPrimary: makePrimary,
       propertyType: parsed.data.propertyType,
       legacyCustomerId: null,
+      lat,
+      lng,
     });
 
     await syncCustomerPrimaryFields(customer._id);
@@ -1856,6 +1884,24 @@ export async function updateCustomerAddress(
     if (parsed.data.city !== undefined) address.city = parsed.data.city;
     if (parsed.data.state !== undefined) address.state = parsed.data.state;
     if (parsed.data.zip !== undefined) address.zip = parsed.data.zip;
+
+    const addressFieldsChanged =
+      parsed.data.address !== undefined ||
+      parsed.data.city !== undefined ||
+      parsed.data.state !== undefined ||
+      parsed.data.zip !== undefined;
+    if (addressFieldsChanged && trimStr(address.address)) {
+      const geocode = await resolveGeocodedAddress({
+        street: trimStr(address.address),
+        city: trimStr(address.city),
+        state: trimStr(address.state),
+        zip: trimStr(address.zip),
+      });
+      if (geocode.ok) {
+        address.lat = geocode.match.coordinates?.lat ?? null;
+        address.lng = geocode.match.coordinates?.lng ?? null;
+      }
+    }
     if (parsed.data.propertyType !== undefined)
       address.propertyType = parsed.data.propertyType;
     if (parsed.data.county !== undefined) {
