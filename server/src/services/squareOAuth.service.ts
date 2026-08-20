@@ -181,6 +181,71 @@ export function squareOAuthCallbackUrl(req?: Request): string {
   return `${base}/payment-provider-accounts/square/oauth/callback`;
 }
 
+function emptyToUndefined(value: string | undefined | null): string | undefined {
+  if (value == null || value.trim() === "") return undefined;
+  return value.trim();
+}
+
+export async function upsertSquareOAuthAppCredentials(data: {
+  productionApplicationId?: string;
+  productionApplicationSecret?: string;
+  sandboxApplicationId?: string;
+  sandboxApplicationSecret?: string;
+  clearProductionApplicationSecret?: boolean;
+  clearSandboxApplicationSecret?: boolean;
+}): Promise<void> {
+  let doc = await SquareOAuthApp.findOne({ slug: SQUARE_OAUTH_APP_SLUG });
+  if (!doc) {
+    doc = new SquareOAuthApp({ slug: SQUARE_OAUTH_APP_SLUG });
+  }
+
+  if (data.productionApplicationId !== undefined) {
+    doc.productionApplicationId =
+      emptyToUndefined(data.productionApplicationId) || undefined;
+  }
+  if (data.sandboxApplicationId !== undefined) {
+    doc.sandboxApplicationId =
+      emptyToUndefined(data.sandboxApplicationId) || undefined;
+  }
+
+  const prodSecret = emptyToUndefined(data.productionApplicationSecret);
+  if (prodSecret) {
+    doc.productionApplicationSecretEncrypted = encryptCredential(prodSecret);
+  } else if (data.clearProductionApplicationSecret) {
+    doc.productionApplicationSecretEncrypted = undefined;
+  }
+
+  const sandboxSecret = emptyToUndefined(data.sandboxApplicationSecret);
+  if (sandboxSecret) {
+    doc.sandboxApplicationSecretEncrypted = encryptCredential(sandboxSecret);
+  } else if (data.clearSandboxApplicationSecret) {
+    doc.sandboxApplicationSecretEncrypted = undefined;
+  }
+
+  await doc.save();
+}
+
+export async function squareOAuthAppPublicPayload(req?: Request) {
+  const status = await isSquareOAuthConfigured();
+  const stored = await SquareOAuthApp.findOne({
+    slug: SQUARE_OAUTH_APP_SLUG,
+  }).lean();
+  return {
+    ...status,
+    callbackUrl: squareOAuthCallbackUrl(req),
+    app: {
+      productionApplicationId: stored?.productionApplicationId ?? "",
+      sandboxApplicationId: stored?.sandboxApplicationId ?? "",
+      hasProductionApplicationSecret: status.production,
+      hasSandboxApplicationSecret: status.sandbox,
+      envConfigured: {
+        production: status.productionSource === "env",
+        sandbox: status.sandboxSource === "env",
+      },
+    },
+  };
+}
+
 export async function buildSquareAuthorizeUrl(params: {
   environment: PaymentEnvironment;
   state: string;
@@ -189,7 +254,7 @@ export async function buildSquareAuthorizeUrl(params: {
   const { applicationId } = await getSquareAppCredentials(params.environment);
   if (!applicationId) {
     throw new Error(
-      `Square OAuth is not configured for ${params.environment}. Add Application ID + secret in Control Panel, or set SQUARE_${params.environment === "sandbox" ? "SANDBOX_" : ""}APPLICATION_ID and matching secret.`,
+      `Square OAuth is not configured for ${params.environment}. Add Application ID + secret in Admin Panel → Payment platforms, or set SQUARE_${params.environment === "sandbox" ? "SANDBOX_" : ""}APPLICATION_ID and matching secret.`,
     );
   }
   const { authorizeBase } = squareHosts(params.environment);
@@ -260,7 +325,7 @@ async function callSquareObtainToken(
       /not\s*authorized/i.test(detail) || res.status === 401;
     if (notAuthorized) {
       throw new Error(
-        "Square token exchange failed: Not Authorized. Use the Production Application Secret from Square Developer Dashboard → your app → OAuth (not Credentials, and not an access token), then save it under Control Panel → Payment providers → Advanced → Square app settings and try Sign in with Square again.",
+        "Square token exchange failed: Not Authorized. Use the Production Application Secret from Square Developer Dashboard → your app → OAuth (not Credentials, and not an access token), then save it under Admin Panel → Payment platforms and try Sign in with Square again.",
       );
     }
     throw new Error(`Square token exchange failed: ${detail}`);

@@ -83,7 +83,7 @@ export async function getMapsBrowserApiKey(
   if (!apiKey) {
     res.status(404).json({
       message:
-        "Maps JavaScript API key not configured. Add one in Control Panel → Google credentials.",
+        "Maps JavaScript API key not configured. Add one in Control Panel → API Services.",
     });
     return;
   }

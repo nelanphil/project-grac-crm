@@ -32,9 +32,21 @@ export async function getScheduleQueue(
       return;
     }
 
+    const from = typeof req.query.from === "string" ? req.query.from : "";
+    const to = typeof req.query.to === "string" ? req.query.to : "";
+    if ((from && !localDateRe.test(from)) || (to && !localDateRe.test(to))) {
+      res.status(400).json({ message: "from and to must be YYYY-MM-DD" });
+      return;
+    }
+    if ((from && !to) || (!from && to)) {
+      res.status(400).json({ message: "from and to are required together" });
+      return;
+    }
+
     const queue = await listScheduleQueue({
       dispatcher: isDispatcherRole(req.user.role),
       userId: req.user.id,
+      ...(from && to ? { from, to } : {}),
     });
     res.json(queue);
   } catch (err) {

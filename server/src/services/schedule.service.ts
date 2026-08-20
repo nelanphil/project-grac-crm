@@ -174,6 +174,7 @@ type AssigneeSummary = {
 export type EnrichedWorkOrder = Record<string, unknown> & {
   address: AddressSummary | null;
   customerName: string | null;
+  customerRef: string | null;
   assignee: AssigneeSummary | null;
 };
 
@@ -252,6 +253,7 @@ export async function enrichScheduleWorkOrders(
 
   return workOrders.map((wo) => ({
     ...wo,
+    customerRef: wo.customerRef?.toString() ?? null,
     address: addressById.get(wo.addressRef?.toString() ?? "") ?? null,
     customerName: customerById.get(wo.customerRef?.toString() ?? "") ?? null,
     assignee: userById.get(wo.assignedUserRef?.toString() ?? "") ?? null,
@@ -817,6 +819,8 @@ function pastDueSortKey(wo: {
 export async function listScheduleQueue(opts: {
   dispatcher: boolean;
   userId: string;
+  from?: string;
+  to?: string;
 }): Promise<ScheduleQueue> {
   const today = formatLocalDate(new Date());
   const { start: todayStart, end: todayEnd } = rangeUtc(today, today);
@@ -826,17 +830,30 @@ export async function listScheduleQueue(opts: {
     base.assignedUserRef = opts.userId;
   }
 
+  const dateWindow =
+    opts.from && opts.to
+      ? {
+          date: {
+            $gte: new Date(`${opts.from}T00:00:00.000Z`),
+            $lte: new Date(`${opts.to}T23:59:59.999Z`),
+          },
+        }
+      : null;
+
+  const unscheduledFilter: Record<string, unknown> = {
+    ...base,
+    scheduledStart: null,
+    ...(dateWindow ?? {}),
+  };
+  if (!dateWindow) {
+    unscheduledFilter.$or = [
+      { appointmentCanceledAt: null },
+      { appointmentCanceledAt: { $exists: false } },
+    ];
+  }
+
   const unscheduledQuery = opts.dispatcher
-    ? WorkOrder.find({
-        ...base,
-        scheduledStart: null,
-        $or: [
-          { appointmentCanceledAt: null },
-          { appointmentCanceledAt: { $exists: false } },
-        ],
-      })
-        .sort({ date: 1, createdAt: 1 })
-        .lean()
+    ? WorkOrder.find(unscheduledFilter).sort({ date: 1, createdAt: 1 }).lean()
     : Promise.resolve([]);
 
   const [unscheduledRows, todayRows, upcomingRows, pastDueRows] =

@@ -43,7 +43,7 @@ router.post(
 );
 router.put(
   "/square/oauth/app",
-  requireRole("admin", "super-admin"),
+  requireRole("super-admin"),
   requirePermission("integrations:write"),
   saveSquareOAuthApp,
 );

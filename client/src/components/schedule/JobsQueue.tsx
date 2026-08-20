@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -20,6 +21,7 @@ import {
   isDispatcherRole,
   minutesToLabel,
   workOrderLocalDate,
+  workOrderViewHref,
 } from "@/lib/schedule";
 import SuggestAssigneeModal from "@/components/schedule/SuggestAssigneeModal";
 
@@ -224,16 +226,32 @@ export default function JobsQueue({
 
   const canDispatch = dispatcher && canWrite;
 
+  function viewLink(job: WorkOrderListItem) {
+    const href = workOrderViewHref(job);
+    if (!href) return null;
+    return (
+      <Link
+        href={href}
+        className="text-xs font-medium text-brand-orange hover:underline"
+      >
+        View
+      </Link>
+    );
+  }
+
   function actionsFor(bucket: BucketId, job: WorkOrderListItem) {
     if (!canDispatch) {
       return (
-        <button
-          type="button"
-          onClick={() => openCalendarFor(job)}
-          className="text-xs font-medium text-brand-orange hover:underline"
-        >
-          Open calendar
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {viewLink(job)}
+          <button
+            type="button"
+            onClick={() => openCalendarFor(job)}
+            className="text-xs font-medium text-brand-orange hover:underline"
+          >
+            Open calendar
+          </button>
+        </div>
       );
     }
 
@@ -243,6 +261,7 @@ export default function JobsQueue({
 
     return (
       <div className="flex flex-wrap items-center justify-end gap-3">
+        {viewLink(job)}
         {showSuggest && (
           <button
             type="button"

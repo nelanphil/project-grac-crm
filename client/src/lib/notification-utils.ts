@@ -37,11 +37,14 @@ export function notificationHref(item: NotificationItem): string | null {
     case "role":
       return "/dashboard/settings";
     case "contract_template":
+      return "/dashboard/control-panel";
     case "twilio_account":
     case "email_account":
+      return "/dashboard/control-panel?tab=communications";
     case "google_credentials":
+      return "/dashboard/control-panel?tab=api-services";
     case "payment_provider_account":
-      return "/dashboard/control-panel";
+      return "/dashboard/control-panel?tab=payments";
     case "invoice":
       return "/dashboard/orders";
     case "lead":

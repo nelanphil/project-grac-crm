@@ -20,6 +20,10 @@ import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { defaultWeeklyHours, weeklyHoursNeverEnabled } from "@/lib/schedule";
 
 type ModalMode = "create" | "edit" | null;
+type UserView = "staff" | "customers";
+
+const PAGE_SIZE_OPTIONS = [25, 50, 150, 250, 500] as const;
+type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 
 const emptyForm = {
   first_name: "",
@@ -36,6 +40,83 @@ const emptyForm = {
 
 function normalizeZipInput(raw: string): string {
   return raw.replace(/\D/g, "").slice(0, 5);
+}
+
+function UsersPagination({
+  rangeStart,
+  rangeEnd,
+  total,
+  pageSize,
+  safePage,
+  totalPages,
+  onPageSizeChange,
+  onPrev,
+  onNext,
+  position,
+}: {
+  rangeStart: number;
+  rangeEnd: number;
+  total: number;
+  pageSize: PageSize;
+  safePage: number;
+  totalPages: number;
+  onPageSizeChange: (size: PageSize) => void;
+  onPrev: () => void;
+  onNext: () => void;
+  position: "top" | "bottom";
+}) {
+  return (
+    <div
+      className={`flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 ${
+        position === "top"
+          ? "border-b border-neutral-100"
+          : "border-t border-neutral-100"
+      }`}
+    >
+      <p className="text-xs text-neutral-500">
+        Showing {rangeStart}&ndash;{rangeEnd} of {total}
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-xs text-neutral-500">
+          Rows
+          <select
+            value={pageSize}
+            onChange={(e) =>
+              onPageSizeChange(Number(e.target.value) as PageSize)
+            }
+            className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs text-brand-dark outline-none focus:border-brand-orange"
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            disabled={safePage <= 1}
+            onClick={onPrev}
+            className="rounded-md border border-neutral-200 px-2.5 py-1 text-xs font-medium text-brand-dark transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <span className="px-2 text-xs text-neutral-500">
+            Page {safePage} of {totalPages}
+          </span>
+          <button
+            type="button"
+            disabled={safePage >= totalPages}
+            onClick={onNext}
+            className="rounded-md border border-neutral-200 px-2.5 py-1 text-xs font-medium text-brand-dark transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function UsersTab() {
@@ -61,6 +142,9 @@ export default function UsersTab() {
 
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
+  const [view, setView] = useState<UserView>("staff");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(25);
 
   useEffect(() => {
     Promise.all([getUsers(token!), getRoles(token!)])
@@ -90,16 +174,58 @@ export default function UsersTab() {
     [users],
   );
 
+  const customerUsers = useMemo(
+    () => users.filter((user) => user.role === "customer"),
+    [users],
+  );
+
+  const visibleUsers = view === "staff" ? staffUsers : customerUsers;
+  const isCustomerView = view === "customers";
+  const isCustomerForm = form.role === "customer";
+
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return staffUsers.filter((user) => {
-      if (roleFilter !== "all" && user.role !== roleFilter) return false;
+    return visibleUsers.filter((user) => {
+      if (view === "staff" && roleFilter !== "all" && user.role !== roleFilter) {
+        return false;
+      }
       if (!q) return true;
       const haystack =
         `${user.first_name} ${user.last_name} ${user.email} ${user.username ?? ""}`.toLowerCase();
       return haystack.includes(q);
     });
-  }, [staffUsers, search, roleFilter]);
+  }, [visibleUsers, search, roleFilter, view]);
+
+  const total = filteredUsers.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const rangeStart = total === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const rangeEnd = Math.min(safePage * pageSize, total);
+  const pagedUsers = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredUsers.slice(start, start + pageSize);
+  }, [filteredUsers, safePage, pageSize]);
+
+  const paginationProps = {
+    rangeStart,
+    rangeEnd,
+    total,
+    pageSize,
+    safePage,
+    totalPages,
+    onPageSizeChange: (size: PageSize) => {
+      setPageSize(size);
+      setPage(1);
+    },
+    onPrev: () => setPage((p) => Math.max(1, p - 1)),
+    onNext: () => setPage((p) => Math.min(totalPages, p + 1)),
+  };
+
+  function setUserView(next: UserView) {
+    setView(next);
+    setRoleFilter("all");
+    setPage(1);
+  }
 
   function openCreate() {
     const role = staffRoles[0]?.slug ?? "agent";
@@ -127,7 +253,10 @@ export default function UsersTab() {
       password: "",
       counties: user.territories?.counties ?? [],
       zips: user.territories?.zips ?? [],
-      schedulable: user.schedulable ?? user.role === "tech",
+      schedulable:
+        user.role === "customer"
+          ? false
+          : (user.schedulable ?? user.role === "tech"),
       weeklyHours: user.weeklyHours ?? defaultWeeklyHours(Boolean(user.schedulable)),
     });
     setZipDraft("");
@@ -258,19 +387,24 @@ export default function UsersTab() {
         if (isSuperAdmin && form.password.trim()) {
           payload.password = form.password;
         }
-        if (form.role === "owner") {
-          payload.territories = {
-            counties: form.counties,
-            zips: form.zips,
-          };
-        } else {
+        if (form.role === "customer") {
+          payload.schedulable = false;
           payload.territories = { counties: [], zips: [] };
-        }
-        payload.schedulable = form.schedulable;
-        if (form.schedulable) {
-          payload.weeklyHours = weeklyHoursNeverEnabled(form.weeklyHours)
-            ? defaultWeeklyHours(true)
-            : form.weeklyHours;
+        } else {
+          if (form.role === "owner") {
+            payload.territories = {
+              counties: form.counties,
+              zips: form.zips,
+            };
+          } else {
+            payload.territories = { counties: [], zips: [] };
+          }
+          payload.schedulable = form.schedulable;
+          if (form.schedulable) {
+            payload.weeklyHours = weeklyHoursNeverEnabled(form.weeklyHours)
+              ? defaultWeeklyHours(true)
+              : form.weeklyHours;
+          }
         }
         const { user } = await updateUser(token, editingId, payload);
         setUsers((prev) => prev.map((u) => (u._id === editingId ? user : u)));
@@ -325,9 +459,9 @@ export default function UsersTab() {
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">Users</h2>
           <p className="text-sm text-neutral-500 mt-0.5">
-            {filteredUsers.length === staffUsers.length
-              ? `${staffUsers.length} staff`
-              : `${filteredUsers.length} of ${staffUsers.length}`}
+            {filteredUsers.length === visibleUsers.length
+              ? `${visibleUsers.length} ${view === "staff" ? "staff" : "customers"}`
+              : `${filteredUsers.length} of ${visibleUsers.length}`}
           </p>
         </div>
         <button
@@ -340,25 +474,57 @@ export default function UsersTab() {
       </div>
 
       <div className="px-4 py-4 sm:px-6 border-b border-neutral-100 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="inline-flex shrink-0 rounded-lg border border-neutral-200 bg-white p-0.5 text-sm">
+          <button
+            type="button"
+            onClick={() => setUserView("staff")}
+            className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+              view === "staff"
+                ? "bg-brand-dark text-white"
+                : "text-neutral-600 hover:text-brand-dark"
+            }`}
+          >
+            Staff
+          </button>
+          <button
+            type="button"
+            onClick={() => setUserView("customers")}
+            className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+              view === "customers"
+                ? "bg-brand-dark text-white"
+                : "text-neutral-600 hover:text-brand-dark"
+            }`}
+          >
+            Customers
+          </button>
+        </div>
         <input
           type="search"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
           placeholder="Search by name, email, or username…"
           className="w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange sm:max-w-xs"
         />
-        <select
-          value={roleFilter}
-          onChange={(e) => setRoleFilter(e.target.value)}
-          className="w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange sm:w-auto"
-        >
-          <option value="all">All roles</option>
-          {staffRoles.map((r) => (
-            <option key={r.slug} value={r.slug}>
-              {r.label}
-            </option>
-          ))}
-        </select>
+        {view === "staff" && (
+          <select
+            value={roleFilter}
+            onChange={(e) => {
+              setRoleFilter(e.target.value);
+              setPage(1);
+            }}
+            className="w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange sm:w-auto"
+          >
+            <option value="all">All roles</option>
+            {staffRoles.map((r) => (
+              <option key={r.slug} value={r.slug}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {(saveError || deleteError) && !modal && (
@@ -366,6 +532,8 @@ export default function UsersTab() {
           {saveError || deleteError}
         </div>
       )}
+
+      {total > 0 ? <UsersPagination {...paginationProps} position="top" /> : null}
 
       <div className="p-4 sm:p-0">
         <ResponsiveDataView
@@ -375,31 +543,37 @@ export default function UsersTab() {
               No users match your search.
             </div>
           }
-          mobile={filteredUsers.map((user) => (
+          mobile={pagedUsers.map((user) => (
             <MobileDataCard
               key={user._id}
               title={`${user.first_name} ${user.last_name}`}
               subtitle={user.email}
               badges={
-                <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
-                  {getRoleLabel(user.role)}
-                </span>
+                isCustomerView ? undefined : (
+                  <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
+                    {getRoleLabel(user.role)}
+                  </span>
+                )
               }
               fields={
                 <>
-                  <DataField
-                    label="Username"
-                    value={
-                      <UsernameDisplay
-                        username={user.username}
-                        usernameNumber={user.usernameNumber}
-                      />
-                    }
-                  />
-                  <DataField
-                    label="Work schedule"
-                    value={user.schedulable ? "On" : "Off"}
-                  />
+                  {!isCustomerView && (
+                    <DataField
+                      label="Username"
+                      value={
+                        <UsernameDisplay
+                          username={user.username}
+                          usernameNumber={user.usernameNumber}
+                        />
+                      }
+                    />
+                  )}
+                  {!isCustomerView && (
+                    <DataField
+                      label="Work schedule"
+                      value={user.schedulable ? "On" : "Off"}
+                    />
+                  )}
                   <DataField
                     label="Joined"
                     value={new Date(user.createdAt).toLocaleDateString()}
@@ -440,15 +614,21 @@ export default function UsersTab() {
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Email
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Username
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Role
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Work schedule
-                    </th>
+                    {!isCustomerView && (
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Username
+                      </th>
+                    )}
+                    {!isCustomerView && (
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Role
+                      </th>
+                    )}
+                    {!isCustomerView && (
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Work schedule
+                      </th>
+                    )}
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Joined
                     </th>
@@ -456,7 +636,7 @@ export default function UsersTab() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100 bg-white">
-                  {filteredUsers.map((user) => (
+                  {pagedUsers.map((user) => (
                     <tr key={user._id}>
                       <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
                         {user.first_name} {user.last_name}
@@ -464,18 +644,24 @@ export default function UsersTab() {
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {user.email}
                       </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        <UsernameDisplay
-                          username={user.username}
-                          usernameNumber={user.usernameNumber}
-                        />
-                      </td>
-                      <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
-                        {getRoleLabel(user.role)}
-                      </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {user.schedulable ? "On" : "Off"}
-                      </td>
+                      {!isCustomerView && (
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          <UsernameDisplay
+                            username={user.username}
+                            usernameNumber={user.usernameNumber}
+                          />
+                        </td>
+                      )}
+                      {!isCustomerView && (
+                        <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
+                          {getRoleLabel(user.role)}
+                        </td>
+                      )}
+                      {!isCustomerView && (
+                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                          {user.schedulable ? "On" : "Off"}
+                        </td>
+                      )}
                       <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
                         {new Date(user.createdAt).toLocaleDateString()}
                       </td>
@@ -510,6 +696,10 @@ export default function UsersTab() {
           }
         />
       </div>
+
+      {total > 0 ? (
+        <UsersPagination {...paginationProps} position="bottom" />
+      ) : null}
 
       {modal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-3 py-3 sm:px-4 sm:py-6">
@@ -622,26 +812,34 @@ export default function UsersTab() {
                   <label className="block text-sm font-medium text-brand-dark">
                     Role
                   </label>
-                  <select
-                    value={form.role}
-                    onChange={(e) => {
-                      const role = e.target.value;
-                      setForm((f) => ({
-                        ...f,
-                        role,
-                        ...(role !== "owner"
-                          ? { counties: [], zips: [] }
-                          : {}),
-                      }));
-                    }}
-                    className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                  >
-                    {staffRoles.map((r) => (
-                      <option key={r.slug} value={r.slug}>
-                        {r.label}
-                      </option>
-                    ))}
-                  </select>
+                  {isCustomerForm ? (
+                    <input
+                      readOnly
+                      value={getRoleLabel("customer")}
+                      className="mt-1 block w-full rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700"
+                    />
+                  ) : (
+                    <select
+                      value={form.role}
+                      onChange={(e) => {
+                        const role = e.target.value;
+                        setForm((f) => ({
+                          ...f,
+                          role,
+                          ...(role !== "owner"
+                            ? { counties: [], zips: [] }
+                            : {}),
+                        }));
+                      }}
+                      className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+                    >
+                      {staffRoles.map((r) => (
+                        <option key={r.slug} value={r.slug}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 {form.role === "owner" && (
@@ -748,36 +946,38 @@ export default function UsersTab() {
                   </div>
                 )}
 
-                <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4">
-                  <div>
-                    <p className="text-sm font-medium text-brand-dark">
-                      Work schedule
-                    </p>
-                    <p className="mt-0.5 text-xs text-neutral-500">
-                      When on, this user appears as a technician on the Schedule
-                      page. Set weekly hours and home location there.
-                    </p>
+                {!isCustomerForm && (
+                  <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4">
+                    <div>
+                      <p className="text-sm font-medium text-brand-dark">
+                        Work schedule
+                      </p>
+                      <p className="mt-0.5 text-xs text-neutral-500">
+                        When on, this user appears as a technician on the Schedule
+                        page. Set weekly hours and home location there.
+                      </p>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-neutral-700">
+                      <input
+                        type="checkbox"
+                        checked={form.schedulable}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setForm((f) => ({
+                            ...f,
+                            schedulable: checked,
+                            weeklyHours:
+                              checked && weeklyHoursNeverEnabled(f.weeklyHours)
+                                ? defaultWeeklyHours(true)
+                                : f.weeklyHours,
+                          }));
+                        }}
+                        className="rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
+                      />
+                      On work schedule
+                    </label>
                   </div>
-                  <label className="flex items-center gap-2 text-sm text-neutral-700">
-                    <input
-                      type="checkbox"
-                      checked={form.schedulable}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setForm((f) => ({
-                          ...f,
-                          schedulable: checked,
-                          weeklyHours:
-                            checked && weeklyHoursNeverEnabled(f.weeklyHours)
-                              ? defaultWeeklyHours(true)
-                              : f.weeklyHours,
-                        }));
-                      }}
-                      className="rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
-                    />
-                    On work schedule
-                  </label>
-                </div>
+                )}
 
                 {(modal === "create" || (modal === "edit" && isSuperAdmin)) && (
                   <div>

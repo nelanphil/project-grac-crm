@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -13,9 +14,9 @@ import {
   deletePaymentProviderAccount,
   getPaymentProviderAccounts,
   getUsers,
+  PaymentPlatformsReady,
   PaymentProviderAccountItem,
   PaymentProviderName,
-  saveSquareOAuthApp,
   SquareOAuthStatus,
   startSquareOAuth,
   updatePaymentProviderAccount,
@@ -83,10 +84,14 @@ export default function PaymentProvidersCard() {
   const searchParams = useSearchParams();
   const isOrgAdmin = user ? ORG_ADMIN_ROLES.includes(user.role) : false;
   const isOwner = user?.role === "owner";
+  const isSuperAdmin = user?.role === "super-admin";
 
   const [accounts, setAccounts] = useState<PaymentProviderAccountItem[]>([]);
   const [webhooks, setWebhooks] = useState<Record<string, string> | null>(null);
   const [squareOAuth, setSquareOAuth] = useState<SquareOAuthStatus | null>(null);
+  const [platforms, setPlatforms] = useState<PaymentPlatformsReady | null>(
+    null,
+  );
   const [owners, setOwners] = useState<UserListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -104,14 +109,6 @@ export default function PaymentProvidersCard() {
   const [oauthOwnerUserId, setOauthOwnerUserId] = useState("");
   const [oauthConnecting, setOauthConnecting] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
-
-  const [appFormOpen, setAppFormOpen] = useState(false);
-  const [appProductionId, setAppProductionId] = useState("");
-  const [appProductionSecret, setAppProductionSecret] = useState("");
-  const [appSandboxId, setAppSandboxId] = useState("");
-  const [appSandboxSecret, setAppSandboxSecret] = useState("");
-  const [appSaving, setAppSaving] = useState(false);
-  const [appSaveError, setAppSaveError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const editingAccount = useMemo(
@@ -134,6 +131,19 @@ export default function PaymentProvidersCard() {
   );
 
   const hasConnectedSquare = connectedSquareAccounts.length > 0;
+
+  const availableProviders = useMemo(() => {
+    const list: PaymentProviderName[] = [];
+    if (platforms?.square.configured || squareOAuth?.sandbox || squareOAuth?.production) {
+      list.push("square");
+    }
+    if (platforms?.stripe.configured) list.push("stripe");
+    if (platforms?.paypal.configured) list.push("paypal");
+    return list;
+  }, [platforms, squareOAuth]);
+
+  const stripeReady = Boolean(platforms?.stripe.configured);
+  const paypalReady = Boolean(platforms?.paypal.configured);
 
   const oauthReturnStatus = searchParams.get("square_oauth");
   const oauthReturnMessage = searchParams.get("message");
@@ -168,7 +178,10 @@ export default function PaymentProvidersCard() {
 
     const load = async () => {
       try {
-        const [{ accounts: list, webhooks: hooks, squareOAuth: oauth }, usersRes] =
+        const [
+          { accounts: list, webhooks: hooks, squareOAuth: oauth, platforms: ready },
+          usersRes,
+        ] =
           await Promise.all([
             getPaymentProviderAccounts(token),
             isOrgAdmin
@@ -178,8 +191,7 @@ export default function PaymentProvidersCard() {
         setAccounts(list);
         setWebhooks(hooks);
         setSquareOAuth(oauth);
-        setAppProductionId(oauth.app?.productionApplicationId ?? "");
-        setAppSandboxId(oauth.app?.sandboxApplicationId ?? "");
+        setPlatforms(ready);
         // Prefer whichever environment is already configured for one-click sign-in.
         if (oauth.production) {
           setOauthEnvironment("production");
@@ -201,10 +213,15 @@ export default function PaymentProvidersCard() {
     void load();
   }, [token, isOrgAdmin]);
 
-  function openCreate() {
+  function openCreate(provider?: PaymentProviderName) {
+    const nextProvider =
+      provider && availableProviders.includes(provider)
+        ? provider
+        : (availableProviders[0] ?? "square");
     setEditingId(null);
     setForm({
       ...EMPTY_FORM,
+      provider: nextProvider,
       ownerUserId: isOwner && user ? user.id : "",
     });
     setSaveError(null);
@@ -372,42 +389,6 @@ export default function PaymentProvidersCard() {
     }
   }
 
-  async function handleSaveSquareApp(e: FormEvent) {
-    e.preventDefault();
-    if (!token || !isOrgAdmin) return;
-    setAppSaving(true);
-    setAppSaveError(null);
-    try {
-      const { squareOAuth: oauth } = await saveSquareOAuthApp(token, {
-        productionApplicationId: appProductionId.trim(),
-        sandboxApplicationId: appSandboxId.trim(),
-        productionApplicationSecret: appProductionSecret.trim() || undefined,
-        sandboxApplicationSecret: appSandboxSecret.trim() || undefined,
-      });
-      setSquareOAuth(oauth);
-      setAppProductionId(oauth.app?.productionApplicationId ?? "");
-      setAppSandboxId(oauth.app?.sandboxApplicationId ?? "");
-      setAppProductionSecret("");
-      setAppSandboxSecret("");
-      setAppFormOpen(false);
-    } catch (err) {
-      if (err instanceof ApiError) {
-        const fieldMessages = err.errors
-          ? Object.values(err.errors).flat().filter(Boolean)
-          : [];
-        setAppSaveError(
-          fieldMessages.length > 0
-            ? fieldMessages.join(" ")
-            : err.message,
-        );
-      } else {
-        setAppSaveError("Failed to save Square application credentials.");
-      }
-    } finally {
-      setAppSaving(false);
-    }
-  }
-
   if (loading) {
     return (
       <div className="rounded-xl border border-neutral-200 bg-white shadow-sm px-6 py-8 text-sm text-neutral-500">
@@ -421,16 +402,27 @@ export default function PaymentProvidersCard() {
       <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-neutral-100">
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">
-            Payment providers
+            Payment accounts
           </h2>
           <p className="text-sm text-neutral-500 mt-0.5">
-            Sign in with Square to link a seller account — no access tokens or
-            API keys to paste.{" "}
+            Connect seller accounts for owners via Sign in with Square, or add
+            an account assigned to an owner.{" "}
             {isOrgAdmin
               ? "Admins can assign the connection to an owner or keep it as a global fallback."
               : "This connects payments for your territory customers."}
           </p>
         </div>
+        {!formOpen && (
+          <button
+            type="button"
+            onClick={() => openCreate()}
+            disabled={availableProviders.length === 0}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark/90 disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" />
+            Add account
+          </button>
+        )}
       </div>
 
       {banner && (
@@ -557,33 +549,29 @@ export default function PaymentProvidersCard() {
               Square sign-in is not available yet for{" "}
               <span className="font-medium">{oauthEnvironment}</span>.
             </p>
-            {isOrgAdmin ? (
+            {isSuperAdmin ? (
               <p>
-                A one-time platform setup is required: open{" "}
-                <button
-                  type="button"
+                Add the Square Application ID and OAuth secret in{" "}
+                <Link
+                  href="/dashboard/admin"
                   className="underline font-medium"
-                  onClick={() => {
-                    setAdvancedOpen(true);
-                    setAppFormOpen(true);
-                  }}
                 >
-                  Advanced → Square app settings
-                </button>{" "}
-                (or set server env vars), then register the{" "}
+                  Admin Panel → Payment platforms
+                </Link>
+                , then register the{" "}
                 <span className="font-medium">OAuth Redirect URL</span>{" "}
                 {squareOAuth?.callbackUrl ? (
                   <code className="break-all">{squareOAuth.callbackUrl}</code>
                 ) : (
                   "(set PUBLIC_API_URL first)"
                 )}{" "}
-                on Square Developer Dashboard → OAuth (not Webhooks). After
-                that, everyone only uses Sign in with Square.
+                on Square Developer Dashboard → OAuth (not Webhooks).
               </p>
             ) : (
               <p>
-                Ask an admin to finish Square app setup. You will only need to
-                sign in with Square — no keys to enter.
+                Ask a super-admin to add Square keys in Admin Panel → Payment
+                platforms. You will only need to sign in with Square — no keys
+                to enter.
               </p>
             )}
           </div>
@@ -603,6 +591,44 @@ export default function PaymentProvidersCard() {
         </button>
       </div>
 
+      {stripeReady && (
+        <div className="mx-6 mt-4 rounded-lg border border-neutral-200 bg-white px-4 py-5 space-y-3">
+          <div>
+            <p className="text-base font-semibold text-brand-dark">Stripe</p>
+            <p className="text-sm text-neutral-600 mt-1">
+              Stripe is available. Seller sign-in via OAuth is coming soon —
+              add an account for an owner in the meantime.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled
+            className="inline-flex w-full sm:w-auto items-center justify-center rounded-md bg-[#635BFF] px-4 py-2.5 text-sm font-semibold text-white opacity-60"
+          >
+            Connect with Stripe (coming soon)
+          </button>
+        </div>
+      )}
+
+      {paypalReady && (
+        <div className="mx-6 mt-4 rounded-lg border border-neutral-200 bg-white px-4 py-5 space-y-3">
+          <div>
+            <p className="text-base font-semibold text-brand-dark">PayPal</p>
+            <p className="text-sm text-neutral-600 mt-1">
+              PayPal is available. Seller sign-in via OAuth is coming soon —
+              add an account for an owner in the meantime.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled
+            className="inline-flex w-full sm:w-auto items-center justify-center rounded-md bg-[#003087] px-4 py-2.5 text-sm font-semibold text-white opacity-60"
+          >
+            Connect with PayPal (coming soon)
+          </button>
+        </div>
+      )}
+
       <div className="mx-6 mt-4 border border-neutral-200 rounded-lg overflow-hidden">
         <button
           type="button"
@@ -614,167 +640,13 @@ export default function PaymentProvidersCard() {
             {advancedOpen
               ? "Hide"
               : isOrgAdmin
-                ? "App settings, webhooks, manual keys"
+                ? "Webhooks and manual credentials"
                 : "Manual credentials (optional)"}
           </span>
         </button>
 
         {advancedOpen && (
           <div className="border-t border-neutral-100 px-4 py-4 space-y-4 bg-neutral-50/80">
-            {isOrgAdmin && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-brand-dark">
-                    Square app settings
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAppFormOpen((open) => !open);
-                      setAppSaveError(null);
-                    }}
-                    className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
-                  >
-                    {appFormOpen ? "Close" : "Configure"}
-                  </button>
-                </div>
-                <p className="text-xs text-neutral-500">
-                  One-time platform Application ID +{" "}
-                  <span className="font-medium">OAuth</span> Application Secret
-                  from Square Developer Dashboard → your app → OAuth. Do not use
-                  Credentials-page secrets or access tokens. Sellers never see
-                  these.
-                </p>
-                {appFormOpen && (
-                  <form
-                    onSubmit={handleSaveSquareApp}
-                    className="rounded-md border border-neutral-200 bg-white px-3 py-3 space-y-3"
-                  >
-                    <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 space-y-1.5">
-                      <p className="font-semibold">
-                        Square OAuth Redirect URL (required)
-                      </p>
-                      <p>
-                        Paste this exact value under Square Developer Dashboard
-                        → your app →{" "}
-                        <span className="font-medium">OAuth</span> → Redirect
-                        URL. Using the webhook path here causes{" "}
-                        <code className="font-mono">
-                          Invalid value for parameter redirect_uri
-                        </code>
-                        .
-                      </p>
-                      <code className="block break-all rounded bg-white/80 px-2 py-1.5 font-mono text-[11px] text-neutral-800 border border-amber-100">
-                        {squareOAuth?.callbackUrl ||
-                          "https://YOUR_API_HOST/payment-provider-accounts/square/oauth/callback"}
-                      </code>
-                      <p>
-                        A wrong Application Secret (Credentials page or access
-                        token) causes{" "}
-                        <code className="font-mono">
-                          Square token exchange failed: Not Authorized
-                        </code>{" "}
-                        after Sign in with Square succeeds.
-                      </p>
-                    </div>
-                    {appSaveError && (
-                      <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-                        {appSaveError}
-                      </div>
-                    )}
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <label className="block sm:col-span-2">
-                        <span className="text-xs font-medium text-neutral-600">
-                          Production Application ID
-                          {squareOAuth?.app?.envConfigured.production
-                            ? " (overridden by server env)"
-                            : ""}
-                        </span>
-                        <input
-                          value={appProductionId}
-                          onChange={(e) => setAppProductionId(e.target.value)}
-                          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
-                          placeholder="sq0idp-…"
-                        />
-                      </label>
-                      <label className="block sm:col-span-2">
-                        <span className="text-xs font-medium text-neutral-600">
-                          Production OAuth Application Secret
-                          {squareOAuth?.app?.hasProductionApplicationSecret
-                            ? " (leave blank to keep)"
-                            : ""}
-                        </span>
-                        <p className="mt-0.5 text-[11px] text-neutral-500">
-                          From Square → OAuth → Application Secret (starts with{" "}
-                          <code>sq0csp-</code>). Not the Credentials secret or
-                          access token.
-                        </p>
-                        <PasswordInput
-                          value={appProductionSecret}
-                          onChange={(e) =>
-                            setAppProductionSecret(e.target.value)
-                          }
-                          autoComplete="new-password"
-                          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
-                          placeholder={
-                            squareOAuth?.app?.hasProductionApplicationSecret
-                              ? "••••••••"
-                              : "sq0csp-…"
-                          }
-                        />
-                      </label>
-                      <label className="block sm:col-span-2">
-                        <span className="text-xs font-medium text-neutral-600">
-                          Sandbox Application ID
-                          {squareOAuth?.app?.envConfigured.sandbox
-                            ? " (overridden by server env)"
-                            : ""}
-                        </span>
-                        <input
-                          value={appSandboxId}
-                          onChange={(e) => setAppSandboxId(e.target.value)}
-                          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
-                          placeholder="sandbox-sq0idb-…"
-                        />
-                      </label>
-                      <label className="block sm:col-span-2">
-                        <span className="text-xs font-medium text-neutral-600">
-                          Sandbox OAuth Application Secret
-                          {squareOAuth?.app?.hasSandboxApplicationSecret
-                            ? " (leave blank to keep)"
-                            : ""}
-                        </span>
-                        <p className="mt-0.5 text-[11px] text-neutral-500">
-                          From Square → OAuth (Sandbox) → Application Secret
-                          (starts with <code>sandbox-sq0csb-</code>).
-                        </p>
-                        <PasswordInput
-                          value={appSandboxSecret}
-                          onChange={(e) => setAppSandboxSecret(e.target.value)}
-                          autoComplete="new-password"
-                          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
-                          placeholder={
-                            squareOAuth?.app?.hasSandboxApplicationSecret
-                              ? "••••••••"
-                              : "sandbox-sq0csb-…"
-                          }
-                        />
-                      </label>
-                    </div>
-                    <div className="flex justify-end">
-                      <button
-                        type="submit"
-                        disabled={appSaving}
-                        className="rounded-md bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark/90 disabled:opacity-60"
-                      >
-                        {appSaving ? "Saving…" : "Save Square app"}
-                      </button>
-                    </div>
-                  </form>
-                )}
-              </div>
-            )}
-
             {isOrgAdmin && webhooks ? (
               <div className="rounded-md border border-neutral-200 bg-white px-3 py-3 text-xs text-neutral-600 space-y-2">
                 <p className="font-semibold text-brand-dark">Webhook URLs</p>
@@ -799,26 +671,13 @@ export default function PaymentProvidersCard() {
             ) : null}
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <p className="text-sm font-semibold text-brand-dark">
-                    Manual credentials
-                  </p>
-                  <p className="text-xs text-neutral-500">
-                    Optional fallback if you cannot use Square sign-in.
-                  </p>
-                </div>
-                {!formOpen && (
-                  <button
-                    type="button"
-                    onClick={openCreate}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Add manually
-                  </button>
-                )}
-              </div>
+              <p className="text-sm font-semibold text-brand-dark">
+                Manual credentials
+              </p>
+              <p className="text-xs text-neutral-500">
+                Optional fallback if you cannot use provider sign-in. Use Add
+                account above to create a seller account for an owner.
+              </p>
             </div>
           </div>
         )}
@@ -867,9 +726,14 @@ export default function PaymentProvidersCard() {
                 }
                 className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark disabled:bg-neutral-50"
               >
-                <option value="square">Square</option>
-                <option value="stripe">Stripe</option>
-                <option value="paypal">PayPal</option>
+                {(editingId
+                  ? (["square", "stripe", "paypal"] as PaymentProviderName[])
+                  : availableProviders
+                ).map((provider) => (
+                  <option key={provider} value={provider}>
+                    {PROVIDER_LABELS[provider]}
+                  </option>
+                ))}
               </select>
             </label>
 
@@ -1135,9 +999,35 @@ export default function PaymentProvidersCard() {
 
       {accounts.length === 0 ? (
         <div className="px-6 py-8 text-sm text-neutral-500">
-          No Square account linked yet. Use{" "}
-          <span className="font-medium text-neutral-700">Sign in with Square</span>{" "}
-          above to connect — no API keys required.
+          {availableProviders.length === 0 ? (
+            <>
+              No payment platforms are configured yet.{" "}
+              {isSuperAdmin ? (
+                <>
+                  Add Square, Stripe, or PayPal keys in{" "}
+                  <Link
+                    href="/dashboard/admin"
+                    className="font-medium text-brand-dark underline"
+                  >
+                    Admin Panel → Payment platforms
+                  </Link>
+                  .
+                </>
+              ) : (
+                <>
+                  Ask a super-admin to add platform keys in Admin Panel.
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              No seller accounts linked yet. Use{" "}
+              <span className="font-medium text-neutral-700">
+                Sign in with Square
+              </span>{" "}
+              or Add account to connect one.
+            </>
+          )}
         </div>
       ) : (
         <div className="px-4 pb-4 mt-2 sm:px-0 sm:pb-0">

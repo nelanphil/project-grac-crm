@@ -230,3 +230,10 @@ export function workOrderLocalDate(job: {
   if (job.date) return job.date.slice(0, 10);
   return null;
 }
+
+export function workOrderViewHref(job: {
+  customerRef?: string | null;
+}): string | null {
+  if (!job.customerRef) return null;
+  return `/dashboard/customers/detail?id=${job.customerRef}#customer-work-orders`;
+}

@@ -18,10 +18,6 @@ import {
   logNotificationAsync,
 } from "../services/notification.service";
 import {
-  SQUARE_OAUTH_APP_SLUG,
-  SquareOAuthApp,
-} from "../models/mongo/SquareOAuthApp";
-import {
   resolveClientBaseUrl,
   resolvePublicApiBase,
 } from "../utils/publicUrl";
@@ -33,10 +29,13 @@ import {
   pickDefaultSquareLocation,
   revokeSquareToken,
   signSquareOAuthState,
+  squareOAuthAppPublicPayload,
   squareOAuthCallbackUrl,
   upsertSquareOAuthAccount,
+  upsertSquareOAuthAppCredentials,
   verifySquareOAuthState,
 } from "../services/squareOAuth.service";
+import { getPaymentPlatformsReady } from "../services/paymentPlatform.service";
 
 function emptyToUndefined(value: string | undefined | null): string | undefined {
   if (value == null || value.trim() === "") return undefined;
@@ -134,25 +133,7 @@ function buildWebhookUrls(req?: AuthRequest) {
 }
 
 async function squareOAuthStatusPayload(req?: AuthRequest) {
-  const status = await isSquareOAuthConfigured();
-  const stored = await SquareOAuthApp.findOne({
-    slug: SQUARE_OAUTH_APP_SLUG,
-  }).lean();
-  // has* reflects usable OAuth secrets only (access tokens are rejected).
-  return {
-    ...status,
-    callbackUrl: squareOAuthCallbackUrl(req),
-    app: {
-      productionApplicationId: stored?.productionApplicationId ?? "",
-      sandboxApplicationId: stored?.sandboxApplicationId ?? "",
-      hasProductionApplicationSecret: status.production,
-      hasSandboxApplicationSecret: status.sandbox,
-      envConfigured: {
-        production: status.productionSource === "env",
-        sandbox: status.sandboxSource === "env",
-      },
-    },
-  };
+  return squareOAuthAppPublicPayload(req);
 }
 
 async function resolveOwnerUserIdForWrite(
@@ -238,6 +219,7 @@ export async function getPaymentProviderAccounts(
     ),
     webhooks: buildWebhookUrls(req),
     squareOAuth: await squareOAuthStatusPayload(req),
+    platforms: await getPaymentPlatformsReady(),
   });
 }
 
@@ -553,7 +535,7 @@ export async function startSquareOAuth(
   const oauthStatus = await isSquareOAuthConfigured(environment);
   if (!oauthStatus.forEnvironment) {
     res.status(503).json({
-      message: `Square OAuth is not configured for ${environment}. Add the Square Application ID and secret in Control Panel (Payment providers), or set SQUARE_${environment === "sandbox" ? "SANDBOX_" : ""}APPLICATION_ID and the matching secret on the API server.`,
+      message: `Square OAuth is not configured for ${environment}. Add the Square Application ID and secret in Admin Panel → Payment platforms, or set SQUARE_${environment === "sandbox" ? "SANDBOX_" : ""}APPLICATION_ID and the matching secret on the API server.`,
     });
     return;
   }
@@ -608,9 +590,9 @@ export async function saveSquareOAuthApp(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
-  if (!isOrgAdmin(req.user?.role)) {
+  if (req.user?.role !== "super-admin") {
     res.status(403).json({
-      message: "Only admin or super-admin can configure Square OAuth app credentials",
+      message: "Only a super-admin can configure Square OAuth app credentials",
     });
     return;
   }
@@ -628,41 +610,12 @@ export async function saveSquareOAuthApp(
     return;
   }
 
-  const data = parsed.data;
-  let doc = await SquareOAuthApp.findOne({ slug: SQUARE_OAUTH_APP_SLUG });
-  if (!doc) {
-    doc = new SquareOAuthApp({ slug: SQUARE_OAUTH_APP_SLUG });
-  }
-
-  if (data.productionApplicationId !== undefined) {
-    doc.productionApplicationId =
-      emptyToUndefined(data.productionApplicationId) || undefined;
-  }
-  if (data.sandboxApplicationId !== undefined) {
-    doc.sandboxApplicationId =
-      emptyToUndefined(data.sandboxApplicationId) || undefined;
-  }
-
-  const prodSecret = emptyToUndefined(data.productionApplicationSecret);
-  if (prodSecret) {
-    doc.productionApplicationSecretEncrypted = encryptCredential(prodSecret);
-  } else if (data.clearProductionApplicationSecret) {
-    doc.productionApplicationSecretEncrypted = undefined;
-  }
-
-  const sandboxSecret = emptyToUndefined(data.sandboxApplicationSecret);
-  if (sandboxSecret) {
-    doc.sandboxApplicationSecretEncrypted = encryptCredential(sandboxSecret);
-  } else if (data.clearSandboxApplicationSecret) {
-    doc.sandboxApplicationSecretEncrypted = undefined;
-  }
-
-  await doc.save();
+  await upsertSquareOAuthAppCredentials(parsed.data);
 
   logNotificationAsync({
     entityType: "payment_provider_account",
     action: "updated",
-    entityId: String(doc._id),
+    entityId: "square-oauth",
     summary: "Square OAuth application credentials updated",
     metadata: { authMethod: "oauth", scope: "platform-app" },
     ...actorFromRequest(req.user),
@@ -680,7 +633,10 @@ export async function squareOAuthCallback(
 ): Promise<void> {
   const clientBase = resolveClientBaseUrl();
   const redirect = (status: "success" | "error", message?: string) => {
-    const params = new URLSearchParams({ square_oauth: status });
+    const params = new URLSearchParams({
+      tab: "payments",
+      square_oauth: status,
+    });
     if (message) params.set("message", message);
     const path = `/dashboard/control-panel?${params.toString()}`;
     if (!clientBase) {

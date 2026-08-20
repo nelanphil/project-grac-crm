@@ -8,6 +8,7 @@
     "build": "tsc",
     "lint": "eslint .",
     "migrate": "node dist/migrations/run.js",
+    "copy-prod-to-dev": "tsx src/scripts/copy-prod-to-dev.ts --yes --drop",
     "start:server": "node dist/index.js",
     "start": "npm run start:server"
   },

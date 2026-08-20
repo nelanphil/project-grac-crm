@@ -1247,6 +1247,7 @@ export interface WorkOrderListItem {
   appointmentCanceledAt?: string | null;
   appointmentCanceledBy?: string | null;
   customerName?: string | null;
+  customerRef?: string | null;
   assignee?: WorkOrderAssignee | null;
   warnings?: string[];
 }
@@ -1307,11 +1308,19 @@ export interface ScheduleQueue {
 
 export async function getScheduleQueue(
   token: string,
+  opts?: { from?: string; to?: string },
 ): Promise<ScheduleQueue> {
-  return authRequest<ScheduleQueue>("/schedule/queue", {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const params = new URLSearchParams();
+  if (opts?.from) params.set("from", opts.from);
+  if (opts?.to) params.set("to", opts.to);
+  const qs = params.toString();
+  return authRequest<ScheduleQueue>(
+    `/schedule/queue${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function cancelWorkOrderAppointment(
@@ -2123,15 +2132,29 @@ export interface PaymentProviderAccountInput {
   webhookId?: string;
 }
 
+export interface PaymentPlatformReady {
+  sandbox: boolean;
+  production: boolean;
+  configured: boolean;
+}
+
+export interface PaymentPlatformsReady {
+  square: PaymentPlatformReady;
+  stripe: PaymentPlatformReady;
+  paypal: PaymentPlatformReady;
+}
+
 export async function getPaymentProviderAccounts(token: string): Promise<{
   accounts: PaymentProviderAccountItem[];
   webhooks: Record<string, string>;
   squareOAuth: SquareOAuthStatus;
+  platforms: PaymentPlatformsReady;
 }> {
   return authRequest<{
     accounts: PaymentProviderAccountItem[];
     webhooks: Record<string, string>;
     squareOAuth: SquareOAuthStatus;
+    platforms: PaymentPlatformsReady;
   }>("/payment-provider-accounts", {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
@@ -2150,27 +2173,6 @@ export async function startSquareOAuth(
     "/payment-provider-accounts/square/oauth/start",
     {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: JSON.stringify(data),
-    },
-  );
-}
-
-export async function saveSquareOAuthApp(
-  token: string,
-  data: {
-    productionApplicationId?: string;
-    productionApplicationSecret?: string;
-    sandboxApplicationId?: string;
-    sandboxApplicationSecret?: string;
-    clearProductionApplicationSecret?: boolean;
-    clearSandboxApplicationSecret?: boolean;
-  },
-): Promise<{ squareOAuth: SquareOAuthStatus }> {
-  return authRequest<{ squareOAuth: SquareOAuthStatus }>(
-    "/payment-provider-accounts/square/oauth/app",
-    {
-      method: "PUT",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify(data),
     },
@@ -2214,6 +2216,56 @@ export async function deletePaymentProviderAccount(
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Payment platform apps (Admin Panel)
+// ---------------------------------------------------------------------------
+
+export interface StripePlatformAppStatus extends PaymentPlatformReady {
+  productionPublishableKey: string;
+  sandboxPublishableKey: string;
+  productionClientId: string;
+  sandboxClientId: string;
+  hasProductionSecretKey: boolean;
+  hasSandboxSecretKey: boolean;
+}
+
+export interface PayPalPlatformAppStatus extends PaymentPlatformReady {
+  productionClientId: string;
+  sandboxClientId: string;
+  hasProductionClientSecret: boolean;
+  hasSandboxClientSecret: boolean;
+}
+
+export interface PaymentPlatformAppsPayload {
+  square: SquareOAuthStatus;
+  stripe: StripePlatformAppStatus;
+  paypal: PayPalPlatformAppStatus;
+}
+
+export async function getPaymentPlatformApps(
+  token: string,
+): Promise<PaymentPlatformAppsPayload> {
+  return authRequest<PaymentPlatformAppsPayload>("/payment-platform-apps", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function savePaymentPlatformApp(
+  token: string,
+  provider: PaymentProviderName,
+  data: Record<string, string | boolean | undefined>,
+): Promise<PaymentPlatformAppsPayload> {
+  return authRequest<PaymentPlatformAppsPayload>(
+    `/payment-platform-apps/${provider}`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------

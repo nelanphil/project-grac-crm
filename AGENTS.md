@@ -30,8 +30,8 @@ only cover non-obvious caveats for running things in this environment.
   (defaults to `http://localhost:4009` if absent). The `.env.example` files referenced in
   `README.md` are not committed.
 - Square **OAuth** (Connect with Square in Control Panel) needs platform app credentials
-  (Square Developer Dashboard application). Prefer configuring them in Control Panel →
-  Payment providers → Square app settings. Env vars also work:
+  (Square Developer Dashboard application). Prefer configuring them in Admin Panel →
+  Payment platforms. Env vars also work:
   `SQUARE_APPLICATION_ID` / `SQUARE_APPLICATION_SECRET` and optional
   `SQUARE_SANDBOX_*` pair. Set `PUBLIC_API_URL` to the deployed API origin (required in
   production so the OAuth callback is not `localhost`). Register the redirect URL

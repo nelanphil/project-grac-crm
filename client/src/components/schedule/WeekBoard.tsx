@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { CSSProperties } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import type { ScheduleStaffMember, WorkOrderListItem } from "@/lib/api";
@@ -11,6 +13,7 @@ import {
   formatLocalTime,
   minutesToLabel,
   nyDateParts,
+  workOrderViewHref,
 } from "@/lib/schedule";
 
 const HOURS = Array.from(
@@ -18,7 +21,70 @@ const HOURS = Array.from(
   (_, i) => BOARD_HOUR_START + i,
 );
 
-export function UnscheduledCard({
+function UnscheduledCardShell({
+  order,
+  selected,
+  onSelect,
+  isDragging,
+  setNodeRef,
+  style,
+  dragHandle,
+}: {
+  order: WorkOrderListItem;
+  selected: boolean;
+  onSelect: () => void;
+  isDragging?: boolean;
+  setNodeRef?: (node: HTMLElement | null) => void;
+  style?: CSSProperties;
+  dragHandle?: {
+    attributes: ReturnType<typeof useDraggable>["attributes"];
+    listeners: ReturnType<typeof useDraggable>["listeners"];
+  };
+}) {
+  const href = workOrderViewHref(order);
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`w-full rounded-lg border px-3 py-2 text-left text-xs shadow-sm ${
+        selected
+          ? "border-brand-orange bg-orange-50"
+          : "border-neutral-200 bg-white"
+      } ${isDragging ? "opacity-40" : ""}`}
+    >
+      <button
+        type="button"
+        {...(dragHandle?.listeners ?? {})}
+        {...(dragHandle?.attributes ?? {})}
+        onClick={onSelect}
+        className="w-full text-left"
+      >
+        <div className="font-semibold text-brand-dark truncate">
+          {order.customerName || "Customer"}
+        </div>
+        <div className="mt-0.5 text-neutral-500 truncate">
+          {formatAddressLine(order.address)}
+        </div>
+        <div className="mt-1 text-neutral-400">
+          {order.date ? order.date.slice(0, 10) : "No date"} ·{" "}
+          {minutesToLabel(order.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES)}
+        </div>
+      </button>
+      {href ? (
+        <Link
+          href={href}
+          onPointerDown={(event) => event.stopPropagation()}
+          className="mt-1.5 inline-block text-[11px] font-medium text-brand-orange hover:underline"
+        >
+          View
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+function DraggableUnscheduledCard({
   order,
   selected,
   onSelect,
@@ -34,30 +100,44 @@ export function UnscheduledCard({
     : undefined;
 
   return (
-    <button
-      type="button"
-      ref={setNodeRef}
+    <UnscheduledCardShell
+      order={order}
+      selected={selected}
+      onSelect={onSelect}
+      isDragging={isDragging}
+      setNodeRef={setNodeRef}
       style={style}
-      {...listeners}
-      {...attributes}
-      onClick={onSelect}
-      className={`w-full rounded-lg border px-3 py-2 text-left text-xs shadow-sm ${
-        selected
-          ? "border-brand-orange bg-orange-50"
-          : "border-neutral-200 bg-white"
-      } ${isDragging ? "opacity-40" : ""}`}
-    >
-      <div className="font-semibold text-brand-dark truncate">
-        {order.customerName || "Customer"}
-      </div>
-      <div className="mt-0.5 text-neutral-500 truncate">
-        {formatAddressLine(order.address)}
-      </div>
-      <div className="mt-1 text-neutral-400">
-        {order.date ? order.date.slice(0, 10) : "No date"} ·{" "}
-        {minutesToLabel(order.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES)}
-      </div>
-    </button>
+      dragHandle={{ attributes, listeners }}
+    />
+  );
+}
+
+export function UnscheduledCard({
+  order,
+  selected,
+  onSelect,
+  draggable = true,
+}: {
+  order: WorkOrderListItem;
+  selected: boolean;
+  onSelect: () => void;
+  draggable?: boolean;
+}) {
+  if (!draggable) {
+    return (
+      <UnscheduledCardShell
+        order={order}
+        selected={selected}
+        onSelect={onSelect}
+      />
+    );
+  }
+  return (
+    <DraggableUnscheduledCard
+      order={order}
+      selected={selected}
+      onSelect={onSelect}
+    />
   );
 }
 

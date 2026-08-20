@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   DndContext,
   DragEndEvent,
@@ -35,6 +36,7 @@ import {
   minutesToHhMm,
   startOfMonth,
   startOfWeekSunday,
+  workOrderViewHref,
 } from "@/lib/schedule";
 import WeekBoard, {
   UnscheduledCard,
@@ -67,20 +69,6 @@ function emptyQueue() {
   };
 }
 
-function railJobsFromQueue(queue: {
-  unscheduled: WorkOrderListItem[];
-  pastDue: WorkOrderListItem[];
-}): WorkOrderListItem[] {
-  const seen = new Set<string>();
-  const rail: WorkOrderListItem[] = [];
-  for (const job of [...queue.unscheduled, ...queue.pastDue]) {
-    if (job.scheduledStart || seen.has(job._id)) continue;
-    seen.add(job._id);
-    rail.push(job);
-  }
-  return rail;
-}
-
 async function fetchCalendarData(
   token: string,
   from: string,
@@ -89,13 +77,66 @@ async function fetchCalendarData(
 ) {
   const [board, queue] = await Promise.all([
     getScheduleStaff(token, from, to),
-    dispatcher ? getScheduleQueue(token) : Promise.resolve(emptyQueue()),
+    dispatcher
+      ? getScheduleQueue(token, { from, to })
+      : Promise.resolve(emptyQueue()),
   ]);
   return {
     staff: board.staff,
     jobs: board.workOrders,
-    rail: railJobsFromQueue(queue),
+    rail: queue.unscheduled,
   };
+}
+
+function NeedsSchedulingRail({
+  jobs,
+  selectedId,
+  onSelect,
+  onSuggest,
+  suggesting,
+  draggable,
+}: {
+  jobs: WorkOrderListItem[];
+  selectedId: string | null;
+  onSelect: (job: WorkOrderListItem) => void;
+  onSuggest: () => void;
+  suggesting: boolean;
+  draggable: boolean;
+}) {
+  return (
+    <aside className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-brand-dark">
+          Needs scheduling
+        </h2>
+        <button
+          type="button"
+          disabled={!selectedId || suggesting}
+          onClick={onSuggest}
+          className="text-xs font-medium text-brand-orange hover:underline disabled:opacity-40"
+        >
+          {suggesting ? "Suggesting…" : "Suggest tech"}
+        </button>
+      </div>
+      {jobs.length === 0 ? (
+        <p className="text-xs text-neutral-400">
+          No work orders waiting to be scheduled.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {jobs.map((order) => (
+            <UnscheduledCard
+              key={order._id}
+              order={order}
+              selected={selectedId === order._id}
+              onSelect={() => onSelect(order)}
+              draggable={draggable}
+            />
+          ))}
+        </div>
+      )}
+    </aside>
+  );
 }
 
 export default function CalendarTab({
@@ -353,6 +394,7 @@ export default function CalendarTab({
   }
 
   const monthJobs = view === "month" ? [...jobs, ...railJobs] : jobs;
+  const editingViewHref = editingJob ? workOrderViewHref(editingJob) : null;
 
   return (
     <div className="space-y-4">
@@ -481,37 +523,14 @@ export default function CalendarTab({
         <DndContext sensors={sensors} onDragEnd={(e) => void handleDragEnd(e)}>
           <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
             {dispatcher && (
-              <aside className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-brand-dark">
-                    Needs scheduling
-                  </h2>
-                  <button
-                    type="button"
-                    disabled={!selectedUnscheduled || suggesting}
-                    onClick={() => void handleSuggest()}
-                    className="text-xs font-medium text-brand-orange hover:underline disabled:opacity-40"
-                  >
-                    {suggesting ? "Suggesting…" : "Suggest tech"}
-                  </button>
-                </div>
-                {railJobs.length === 0 ? (
-                  <p className="text-xs text-neutral-400">
-                    No work orders waiting to be scheduled.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {railJobs.map((order) => (
-                      <UnscheduledCard
-                        key={order._id}
-                        order={order}
-                        selected={selectedUnscheduled?._id === order._id}
-                        onSelect={() => setSelectedUnscheduled(order)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </aside>
+              <NeedsSchedulingRail
+                jobs={railJobs}
+                selectedId={selectedUnscheduled?._id ?? null}
+                onSelect={setSelectedUnscheduled}
+                onSuggest={() => void handleSuggest()}
+                suggesting={suggesting}
+                draggable={canWrite}
+              />
             )}
             <WeekBoard
               staff={staff}
@@ -528,27 +547,41 @@ export default function CalendarTab({
             />
           </div>
         </DndContext>
-      ) : monthMode === "calendar" ? (
-        <MonthCalendar
-          monthDate={anchorDate}
-          jobs={monthJobs}
-          selectedDate={selectedDate}
-          onSelectDate={(date) => {
-            setSelectedDate(date);
-            setView("week");
-            setAnchorDate(date);
-          }}
-        />
       ) : (
-        <MonthTable
-          jobs={monthJobs}
-          onJobClick={(job) => {
-            setEditingJob(job);
-            setDurationDraft(
-              job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
-            );
-          }}
-        />
+        <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
+          {dispatcher && (
+            <NeedsSchedulingRail
+              jobs={railJobs}
+              selectedId={selectedUnscheduled?._id ?? null}
+              onSelect={setSelectedUnscheduled}
+              onSuggest={() => void handleSuggest()}
+              suggesting={suggesting}
+              draggable={false}
+            />
+          )}
+          {monthMode === "calendar" ? (
+            <MonthCalendar
+              monthDate={anchorDate}
+              jobs={monthJobs}
+              selectedDate={selectedDate}
+              onSelectDate={(date) => {
+                setSelectedDate(date);
+                setView("week");
+                setAnchorDate(date);
+              }}
+            />
+          ) : (
+            <MonthTable
+              jobs={monthJobs}
+              onJobClick={(job) => {
+                setEditingJob(job);
+                setDurationDraft(
+                  job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                );
+              }}
+            />
+          )}
+        </div>
       )}
 
       {suggestions && selectedUnscheduled && (
@@ -572,6 +605,14 @@ export default function CalendarTab({
             <p className="mt-1 text-sm text-neutral-500">
               {formatAddressLine(editingJob.address)}
             </p>
+            {editingViewHref ? (
+              <Link
+                href={editingViewHref}
+                className="mt-2 inline-block text-sm font-medium text-brand-orange hover:underline"
+              >
+                View
+              </Link>
+            ) : null}
             <label className="mt-4 block text-sm font-medium text-brand-dark">
               Estimated time (minutes)
             </label>

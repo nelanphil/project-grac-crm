@@ -25,6 +25,7 @@ import paymentProviderAccountRoutes from "./paymentProviderAccount.routes";
 import invoiceRoutes from "./invoice.routes";
 import payLinkRoutes from "./payLink.routes";
 import cloudinaryCredentialsRoutes from "./cloudinaryCredentials.routes";
+import paymentPlatformAppRoutes from "./paymentPlatformApp.routes";
 import publicAssetRoutes from "./publicAsset.routes";
 
 const router = Router();
@@ -57,6 +58,7 @@ router.use("/payment-provider-accounts", paymentProviderAccountRoutes);
 router.use("/invoices", invoiceRoutes);
 router.use("/pay", payLinkRoutes);
 router.use("/cloudinary-credentials", cloudinaryCredentialsRoutes);
+router.use("/payment-platform-apps", paymentPlatformAppRoutes);
 router.get("/public-assets/:slug/health", publicAssetHealth);
 router.get("/public-assets/:slug", getPublicAssetBySlug);
 router.use("/public-assets", publicAssetRoutes);

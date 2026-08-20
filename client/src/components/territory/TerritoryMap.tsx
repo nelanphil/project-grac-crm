@@ -430,7 +430,7 @@ export default function TerritoryMap({
       {error ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           {error.includes("not configured") || error.includes("404")
-            ? "Add a Maps JavaScript API key in Control Panel → Google credentials (or set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY)."
+            ? "Add a Maps JavaScript API key in Control Panel → API Services (or set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY)."
             : error}
         </div>
       ) : null}
