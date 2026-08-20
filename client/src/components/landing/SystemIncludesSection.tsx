@@ -2,8 +2,18 @@ import { SYSTEM_INCLUDES, UPGRADES } from "@/lib/constants";
 
 export default function SystemIncludesSection() {
   return (
-    <section className="py-20">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <section>
+      <div className="bg-white pt-10 px-4 sm:px-6 lg:px-8">
+        <img
+          src="/images/generac-product-lineup.jpg"
+          alt="Generac home standby and portable generators"
+          width={1024}
+          height={340}
+          className="mx-auto h-auto w-full max-w-5xl object-contain"
+        />
+      </div>
+
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="text-center">
           <h2 className="section-heading">Every Generator System Includes</h2>
         </div>

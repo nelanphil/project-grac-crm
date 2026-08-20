@@ -59,7 +59,6 @@ const publicAssetSchema = new Schema<IPublicAsset>(
   { timestamps: true },
 );
 
-publicAssetSchema.index({ slug: 1 }, { unique: true });
 publicAssetSchema.index({ isActive: 1, createdAt: -1 });
 
 export const PublicAsset = mongoose.model<IPublicAsset>(

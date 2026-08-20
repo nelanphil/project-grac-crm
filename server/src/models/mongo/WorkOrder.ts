@@ -87,7 +87,6 @@ const workOrderSchema = new Schema<IWorkOrder>(
 // Allow lookup by customer's legacy SQL id
 workOrderSchema.index({ customerId: 1, date: -1 });
 workOrderSchema.index({ assignedUserRef: 1, scheduledStart: 1 });
-workOrderSchema.index({ scheduledStart: 1 });
 
 export const WorkOrder = mongoose.model<IWorkOrder>(
   "WorkOrder",
