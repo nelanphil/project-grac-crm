@@ -94,8 +94,8 @@ export function computeTicketTotals(input: {
   return { totalParts, totalLabor, miscExp, subtotal, shipping, total };
 }
 
-export async function nextPrefixedNumber(
-  model: Model<{ number?: string }>,
+export async function nextPrefixedNumber<T extends { number?: string | null }>(
+  model: Model<T>,
   prefix: string,
 ): Promise<string> {
   const year = new Date().getUTCFullYear();
