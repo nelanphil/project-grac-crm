@@ -15,6 +15,46 @@ for (const envPath of envCandidates) {
 const isProd = process.env.NODE_ENV === "production";
 const DEFAULT_DB = "grac-crm";
 
+/** Hardcoded local-dev defaults — never allowed in production. */
+const DEV_JWT_SECRET = "dev-secret-change-in-production";
+const DEV_CREDENTIALS_ENCRYPTION_KEY =
+  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+function requireProdSecret(
+  name: "JWT_SECRET" | "CREDENTIALS_ENCRYPTION_KEY",
+  value: string | undefined,
+  forbiddenDefault: string,
+): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed || trimmed === forbiddenDefault) {
+    throw new Error(
+      `Refusing to start in production: ${name} must be set to a non-default value. ` +
+        `Set it on the Render API web service (grac-crm-server), not the static client.`,
+    );
+  }
+  return trimmed;
+}
+
+function resolveJwtSecret(): string {
+  const raw = process.env.JWT_SECRET;
+  if (isProd) {
+    return requireProdSecret("JWT_SECRET", raw, DEV_JWT_SECRET);
+  }
+  return raw?.trim() || DEV_JWT_SECRET;
+}
+
+function resolveCredentialsEncryptionKey(): string {
+  const raw = process.env.CREDENTIALS_ENCRYPTION_KEY;
+  if (isProd) {
+    return requireProdSecret(
+      "CREDENTIALS_ENCRYPTION_KEY",
+      raw,
+      DEV_CREDENTIALS_ENCRYPTION_KEY,
+    );
+  }
+  return raw?.trim() || DEV_CREDENTIALS_ENCRYPTION_KEY;
+}
+
 function resolveMongoUri(): string {
   const raw =
     (isProd
@@ -47,14 +87,12 @@ export const env = {
   ),
   mongodbUri: resolveMongoUri(),
   jwt: {
-    secret: process.env.JWT_SECRET || "dev-secret-change-in-production",
+    secret: resolveJwtSecret(),
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   },
   // AES-256 key for encrypting third-party credentials at rest.
   // Production must set CREDENTIALS_ENCRYPTION_KEY (64-char hex or 32-byte base64).
-  credentialsEncryptionKey:
-    process.env.CREDENTIALS_ENCRYPTION_KEY ||
-    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  credentialsEncryptionKey: resolveCredentialsEncryptionKey(),
   /**
    * Square OAuth application credentials (platform app in Square Developer Dashboard).
    * Sandbox uses SQUARE_SANDBOX_* when set; otherwise falls back to the production pair.
