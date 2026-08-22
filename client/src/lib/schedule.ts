@@ -232,8 +232,10 @@ export function workOrderLocalDate(job: {
 }
 
 export function workOrderViewHref(job: {
+  _id?: string;
   customerRef?: string | null;
 }): string | null {
+  if (job._id) return `/dashboard/work-orders/detail?id=${job._id}`;
   if (!job.customerRef) return null;
   return `/dashboard/customers/detail?id=${job.customerRef}#customer-work-orders`;
 }

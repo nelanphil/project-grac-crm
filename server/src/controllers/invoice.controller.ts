@@ -23,6 +23,61 @@ import { resolveCheckoutProviderForInvoice } from "../payments/registry";
 import { resolveCheckoutBuyer } from "../payments/checkoutBuyer";
 import { env } from "../config/env";
 
+function workOrderInvoiceLineItems(wo: {
+  parts?: Array<{
+    partNumber?: string;
+    description?: string;
+    quantity?: number;
+    amount?: number;
+  }>;
+  totalLabor?: number;
+  miscExp?: number;
+  shipping?: number;
+  total?: number;
+  descPerform?: string;
+  number?: string;
+}): { description: string; amountCents: number }[] {
+  const items: { description: string; amountCents: number }[] = [];
+  const parts = wo.parts ?? [];
+  for (const part of parts) {
+    const cents = dollarsToCents(part.amount || 0);
+    if (cents <= 0) continue;
+    const qty = part.quantity && part.quantity !== 1 ? `${part.quantity} × ` : "";
+    const label =
+      part.description?.trim() ||
+      part.partNumber?.trim() ||
+      "Part";
+    items.push({
+      description: `${qty}${label}${part.partNumber && part.description ? ` (${part.partNumber})` : ""}`,
+      amountCents: cents,
+    });
+  }
+  const laborCents = dollarsToCents(wo.totalLabor || 0);
+  if (laborCents > 0) {
+    items.push({ description: "Labor", amountCents: laborCents });
+  }
+  const miscCents = dollarsToCents(wo.miscExp || 0);
+  if (miscCents > 0) {
+    items.push({ description: "Miscellaneous", amountCents: miscCents });
+  }
+  const shippingCents = dollarsToCents(wo.shipping || 0);
+  if (shippingCents > 0) {
+    items.push({ description: "Shipping", amountCents: shippingCents });
+  }
+  if (items.length > 0) return items;
+  const lump = dollarsToCents(wo.total || 0);
+  if (lump > 0) {
+    return [
+      {
+        description:
+          `Work order${wo.number ? ` ${wo.number}` : ""}${wo.descPerform ? `: ${wo.descPerform}` : ""}`.trim(),
+        amountCents: lump,
+      },
+    ];
+  }
+  return [];
+}
+
 const STAFF_ROLES = new Set([
   "admin",
   "super-admin",
@@ -388,14 +443,21 @@ export async function createInvoice(
         });
         return;
       }
-      lineItems = [
-        {
-          description:
-            data.description ||
-            `Work order${wo.descPerform ? `: ${wo.descPerform}` : ""}`,
-          amountCents,
-        },
-      ];
+      const builtItems = workOrderInvoiceLineItems(wo);
+      lineItems =
+        builtItems.length > 0
+          ? builtItems
+          : [
+              {
+                description:
+                  data.description ||
+                  `Work order${wo.descPerform ? `: ${wo.descPerform}` : ""}`,
+                amountCents,
+              },
+            ];
+      if (data.description && lineItems.length === 1) {
+        lineItems[0].description = data.description;
+      }
 
       const existingOpen = await Invoice.findOne({
         workOrderRef: wo._id,

@@ -17,6 +17,8 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   google_credentials: "Google",
   payment_provider_account: "Payment provider",
   invoice: "Invoice",
+  product: "Product",
+  estimate: "Estimate",
 };
 
 export function notificationEntityLabel(type: NotificationEntityType): string {
@@ -32,7 +34,7 @@ export function notificationHref(item: NotificationItem): string | null {
     case "contract":
       return "/dashboard/contracts";
     case "work_order":
-      return "/dashboard/orders";
+      return "/dashboard/work-orders";
     case "user":
     case "role":
       return "/dashboard/settings";
@@ -47,6 +49,10 @@ export function notificationHref(item: NotificationItem): string | null {
       return "/dashboard/control-panel?tab=payments";
     case "invoice":
       return "/dashboard/orders";
+    case "product":
+      return "/dashboard/products";
+    case "estimate":
+      return "/dashboard/estimates";
     case "lead":
       return "/dashboard";
     default:

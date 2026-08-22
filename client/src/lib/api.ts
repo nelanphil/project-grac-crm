@@ -1222,6 +1222,15 @@ export async function deleteCustomerNote(
   );
 }
 
+export interface WorkOrderPart {
+  productRef?: string | null;
+  partNumber: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+}
+
 export interface WorkOrderAssignee {
   _id: string;
   first_name: string;
@@ -1230,15 +1239,41 @@ export interface WorkOrderAssignee {
 
 export interface WorkOrderListItem {
   _id: string;
-  legacyId: number;
+  legacyId?: number;
+  number?: string;
   date: string | null;
   descPerform: string;
   descPerformed: string;
   tech: string;
   total: number;
+  totalParts?: number;
+  totalLabor?: number;
+  miscExp?: number;
+  subtotal?: number;
+  shipping?: number;
   paid: boolean;
   completed: boolean;
+  laborHours?: number;
+  runHours?: number;
+  parts?: WorkOrderPart[];
+  customerName?: string | null;
+  customerAddress?: string;
+  customerCity?: string;
+  customerZip?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+  workPhone?: string;
+  serialNumber?: string;
+  generatorModel?: string;
+  exerciseDay?: string;
+  exerciseTime?: string;
+  signatureDataUrl?: string;
+  signedAt?: string | null;
+  signedByName?: string;
+  laborOverridden?: boolean;
   addressRef?: string | null;
+  equipmentRef?: string | null;
+  estimateRef?: string | null;
   address?: CustomerAddressSummary | null;
   assignedUserRef?: string | null;
   scheduledStart?: string | null;
@@ -1246,10 +1281,113 @@ export interface WorkOrderListItem {
   estimatedMinutes?: number;
   appointmentCanceledAt?: string | null;
   appointmentCanceledBy?: string | null;
-  customerName?: string | null;
   customerRef?: string | null;
+  customerId?: number;
   assignee?: WorkOrderAssignee | null;
   warnings?: string[];
+}
+
+export type ServiceTicketPayload = {
+  customerId: number;
+  addressRef?: string | null;
+  equipmentRef?: string | null;
+  estimateRef?: string | null;
+  descPerform?: string;
+  descPerformed?: string;
+  date?: string | null;
+  tech?: string;
+  paid?: boolean;
+  completed?: boolean;
+  certify?: boolean;
+  runHours?: number;
+  laborHours?: number;
+  totalLabor?: number;
+  laborOverridden?: boolean;
+  miscExp?: number;
+  shipping?: number;
+  parts?: WorkOrderPart[];
+  customerName?: string;
+  customerAddress?: string;
+  customerCity?: string;
+  customerZip?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+  workPhone?: string;
+  serialNumber?: string;
+  generatorModel?: string;
+  exerciseDay?: string;
+  exerciseTime?: string;
+  signatureDataUrl?: string | null;
+  signedByName?: string;
+  status?: "draft" | "sent" | "accepted" | "declined" | "converted";
+};
+
+export async function getWorkOrders(
+  token: string,
+  opts?: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    paid?: boolean;
+    completed?: boolean;
+    from?: string;
+    to?: string;
+    customerId?: number;
+  },
+): Promise<{
+  workOrders: WorkOrderListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (opts?.page != null) params.set("page", String(opts.page));
+  if (opts?.pageSize != null) params.set("pageSize", String(opts.pageSize));
+  if (opts?.search) params.set("search", opts.search);
+  if (opts?.paid === true) params.set("paid", "1");
+  if (opts?.paid === false) params.set("paid", "0");
+  if (opts?.completed === true) params.set("completed", "1");
+  if (opts?.completed === false) params.set("completed", "0");
+  if (opts?.from) params.set("from", opts.from);
+  if (opts?.to) params.set("to", opts.to);
+  if (opts?.customerId != null) params.set("customerId", String(opts.customerId));
+  return authRequest<{
+    workOrders: WorkOrderListItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/work-orders?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getWorkOrder(
+  token: string,
+  id: string,
+): Promise<WorkOrderListItem> {
+  return authRequest<WorkOrderListItem>(`/work-orders/${id}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createWorkOrder(
+  token: string,
+  data: ServiceTicketPayload,
+): Promise<WorkOrderListItem> {
+  return authRequest<WorkOrderListItem>("/work-orders", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteWorkOrder(token: string, id: string): Promise<void> {
+  await authRequest<void>(`/work-orders/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 export async function getWorkOrdersForCustomer(
@@ -1286,7 +1424,7 @@ export async function getScheduleWorkOrders(
 export async function updateWorkOrder(
   token: string,
   id: string,
-  data: {
+  data: Partial<ServiceTicketPayload> & {
     assignedUserRef?: string | null;
     scheduledStart?: string | null;
     estimatedMinutes?: number;
@@ -1767,6 +1905,257 @@ export async function startCheckoutByPayToken(
   return authRequest<{ url: string; invoice: InvoiceItem }>(
     `/pay/${token}/checkout`,
     { method: "POST" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Products
+// ---------------------------------------------------------------------------
+
+export interface ProductItem {
+  _id: string;
+  partNumber: string;
+  name: string;
+  unitPrice: number;
+  active: boolean;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getProducts(
+  token: string,
+  opts?: { search?: string; active?: boolean },
+): Promise<{ products: ProductItem[] }> {
+  const params = new URLSearchParams();
+  if (opts?.search) params.set("search", opts.search);
+  if (opts?.active) params.set("active", "1");
+  const qs = params.toString();
+  return authRequest<{ products: ProductItem[] }>(
+    `/products${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function createProduct(
+  token: string,
+  data: {
+    partNumber: string;
+    name: string;
+    unitPrice?: number;
+    active?: boolean;
+    notes?: string;
+  },
+): Promise<{ product: ProductItem }> {
+  return authRequest<{ product: ProductItem }>("/products", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateProduct(
+  token: string,
+  id: string,
+  data: {
+    partNumber?: string;
+    name?: string;
+    unitPrice?: number;
+    active?: boolean;
+    notes?: string;
+  },
+): Promise<{ product: ProductItem }> {
+  return authRequest<{ product: ProductItem }>(`/products/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteProduct(token: string, id: string): Promise<void> {
+  await authRequest<void>(`/products/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Estimates
+// ---------------------------------------------------------------------------
+
+export type EstimateStatus =
+  | "draft"
+  | "sent"
+  | "accepted"
+  | "declined"
+  | "converted";
+
+export interface EstimateItem {
+  _id: string;
+  number: string;
+  status: EstimateStatus;
+  customerId: number;
+  customerRef?: string | null;
+  addressRef?: string | null;
+  equipmentRef?: string | null;
+  workOrderRef?: string | null;
+  descPerform: string;
+  laborHours: number;
+  date: string | null;
+  tech: string;
+  parts: WorkOrderPart[];
+  customerName: string;
+  customerAddress: string;
+  customerCity: string;
+  customerZip: string;
+  customerPhone: string;
+  customerEmail: string;
+  workPhone: string;
+  serialNumber: string;
+  generatorModel: string;
+  exerciseDay: string;
+  exerciseTime: string;
+  totalParts: number;
+  totalLabor: number;
+  laborOverridden: boolean;
+  miscExp: number;
+  subtotal: number;
+  shipping: number;
+  total: number;
+  signatureDataUrl?: string;
+  signedAt?: string | null;
+  signedByName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getEstimates(
+  token: string,
+  opts?: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    status?: EstimateStatus;
+    customerId?: number;
+  },
+): Promise<{
+  estimates: EstimateItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (opts?.page != null) params.set("page", String(opts.page));
+  if (opts?.pageSize != null) params.set("pageSize", String(opts.pageSize));
+  if (opts?.search) params.set("search", opts.search);
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.customerId != null) params.set("customerId", String(opts.customerId));
+  return authRequest<{
+    estimates: EstimateItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/estimates?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getEstimate(
+  token: string,
+  id: string,
+): Promise<{ estimate: EstimateItem }> {
+  return authRequest<{ estimate: EstimateItem }>(`/estimates/${id}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createEstimate(
+  token: string,
+  data: ServiceTicketPayload & { status?: EstimateStatus },
+): Promise<{ estimate: EstimateItem }> {
+  return authRequest<{ estimate: EstimateItem }>("/estimates", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateEstimate(
+  token: string,
+  id: string,
+  data: Partial<ServiceTicketPayload> & { status?: EstimateStatus },
+): Promise<{ estimate: EstimateItem }> {
+  return authRequest<{ estimate: EstimateItem }>(`/estimates/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function convertEstimate(
+  token: string,
+  id: string,
+): Promise<{ estimate: EstimateItem; workOrder: WorkOrderListItem }> {
+  return authRequest<{ estimate: EstimateItem; workOrder: WorkOrderListItem }>(
+    `/estimates/${id}/convert`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function deleteEstimate(token: string, id: string): Promise<void> {
+  await authRequest<void>(`/estimates/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface FinancialsSummary {
+  from: string | null;
+  to: string | null;
+  invoices: {
+    count: number;
+    invoicedCents: number;
+    paidCents: number;
+    outstandingCents: number;
+    pastDueCents: number;
+    openCount: number;
+    paidCount: number;
+  };
+  workOrders: {
+    count: number;
+    openCount: number;
+    completedCount: number;
+    unbilledCents: number;
+    laborHours: number;
+  };
+  estimates: {
+    count: number;
+    byStatus: Record<string, { count: number; cents: number }>;
+  };
+}
+
+export async function getFinancialsSummary(
+  token: string,
+  opts?: { from?: string; to?: string },
+): Promise<FinancialsSummary> {
+  const params = new URLSearchParams();
+  if (opts?.from) params.set("from", opts.from);
+  if (opts?.to) params.set("to", opts.to);
+  const qs = params.toString();
+  return authRequest<FinancialsSummary>(
+    `/financials/summary${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
   );
 }
 
@@ -3020,7 +3409,9 @@ export type NotificationEntityType =
   | "lead"
   | "google_credentials"
   | "payment_provider_account"
-  | "invoice";
+  | "invoice"
+  | "product"
+  | "estimate";
 
 export type NotificationAction =
   | "created"

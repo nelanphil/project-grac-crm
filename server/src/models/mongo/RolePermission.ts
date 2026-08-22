@@ -26,6 +26,8 @@ const ALL_PERMISSIONS = [
   "users:read", "users:write", "users:delete",
   "permissions:manage",
   "jobs:read", "jobs:write", "jobs:delete",
+  "estimates:read", "estimates:write", "estimates:delete",
+  "products:read", "products:write", "products:delete",
   "reports:read",
   "integrations:read", "integrations:write", "integrations:delete",
   "messages:read", "messages:write",
@@ -54,6 +56,12 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "jobs:read"],
   ["admin", "jobs:write"],
   ["admin", "jobs:delete"],
+  ["admin", "estimates:read"],
+  ["admin", "estimates:write"],
+  ["admin", "estimates:delete"],
+  ["admin", "products:read"],
+  ["admin", "products:write"],
+  ["admin", "products:delete"],
   ["admin", "reports:read"],
   ["admin", "integrations:read"],
   ["admin", "integrations:write"],
@@ -77,6 +85,10 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["manager", "users:read"],
   ["manager", "jobs:read"],
   ["manager", "jobs:write"],
+  ["manager", "estimates:read"],
+  ["manager", "estimates:write"],
+  ["manager", "products:read"],
+  ["manager", "products:write"],
   ["manager", "reports:read"],
 
   // tech — read/write jobs and customers; read leads
@@ -86,6 +98,9 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["tech", "contracts:write"],
   ["tech", "jobs:read"],
   ["tech", "jobs:write"],
+  ["tech", "estimates:read"],
+  ["tech", "estimates:write"],
+  ["tech", "products:read"],
 
   // agent — read-only leads, accounts, customers
   ["agent", "leads:read"],
@@ -184,6 +199,57 @@ const MESSAGES_PERMISSIONS: [UserRole, string][] = [
 /** Insert messaging permissions for existing deployments (idempotent). */
 export async function ensureMessagesPermissions(): Promise<void> {
   for (const [role, permission] of MESSAGES_PERMISSIONS) {
+    await RolePermission.updateOne(
+      { role, permission },
+      { $setOnInsert: { role, permission } },
+      { upsert: true },
+    );
+  }
+}
+
+const ESTIMATE_PERMISSIONS: [UserRole, string][] = [
+  ["super-admin", "estimates:read"],
+  ["super-admin", "estimates:write"],
+  ["super-admin", "estimates:delete"],
+  ["admin", "estimates:read"],
+  ["admin", "estimates:write"],
+  ["admin", "estimates:delete"],
+  ["owner", "estimates:read"],
+  ["owner", "estimates:write"],
+  ["owner", "estimates:delete"],
+  ["manager", "estimates:read"],
+  ["manager", "estimates:write"],
+  ["tech", "estimates:read"],
+  ["tech", "estimates:write"],
+];
+
+export async function ensureEstimatePermissions(): Promise<void> {
+  for (const [role, permission] of ESTIMATE_PERMISSIONS) {
+    await RolePermission.updateOne(
+      { role, permission },
+      { $setOnInsert: { role, permission } },
+      { upsert: true },
+    );
+  }
+}
+
+const PRODUCT_PERMISSIONS: [UserRole, string][] = [
+  ["super-admin", "products:read"],
+  ["super-admin", "products:write"],
+  ["super-admin", "products:delete"],
+  ["admin", "products:read"],
+  ["admin", "products:write"],
+  ["admin", "products:delete"],
+  ["owner", "products:read"],
+  ["owner", "products:write"],
+  ["owner", "products:delete"],
+  ["manager", "products:read"],
+  ["manager", "products:write"],
+  ["tech", "products:read"],
+];
+
+export async function ensureProductPermissions(): Promise<void> {
+  for (const [role, permission] of PRODUCT_PERMISSIONS) {
     await RolePermission.updateOne(
       { role, permission },
       { $setOnInsert: { role, permission } },

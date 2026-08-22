@@ -1,6 +1,15 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
 
-export interface IWorkOrderPart {
+export const ESTIMATE_STATUSES = [
+  "draft",
+  "sent",
+  "accepted",
+  "declined",
+  "converted",
+] as const;
+export type EstimateStatus = (typeof ESTIMATE_STATUSES)[number];
+
+export interface IEstimatePart {
   productRef?: Types.ObjectId | null;
   partNumber: string;
   description: string;
@@ -9,29 +18,19 @@ export interface IWorkOrderPart {
   amount: number;
 }
 
-export interface IWorkOrder extends Document {
-  legacyId: number;
-  number?: string;
-  userId: number;
-  customerId: number; // references Customer.legacyId
-  customerRef?: Types.ObjectId; // resolved Customer _id (optional virtual join)
+export interface IEstimate extends Document {
+  number: string;
+  status: EstimateStatus;
+  customerId: number;
+  customerRef?: Types.ObjectId;
   addressRef?: Types.ObjectId | null;
   equipmentRef?: Types.ObjectId | null;
-  estimateRef?: Types.ObjectId | null;
+  workOrderRef?: Types.ObjectId | null;
   descPerform: string;
-  paid: boolean;
-  runHours: number;
   laborHours: number;
   date: Date | null;
   tech: string;
-  assignedUserRef?: Types.ObjectId | null;
-  scheduledStart: Date | null;
-  scheduledEnd: Date | null;
-  estimatedMinutes: number;
-  appointmentCanceledAt: Date | null;
-  appointmentCanceledBy?: Types.ObjectId | null;
-  descPerformed: string;
-  parts: IWorkOrderPart[];
+  parts: IEstimatePart[];
   customerName: string;
   customerAddress: string;
   customerCity: string;
@@ -53,13 +52,11 @@ export interface IWorkOrder extends Document {
   signatureDataUrl: string;
   signedAt: Date | null;
   signedByName: string;
-  certify: boolean;
-  completed: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const workOrderPartSchema = new Schema<IWorkOrderPart>(
+const estimatePartSchema = new Schema<IEstimatePart>(
   {
     productRef: {
       type: Schema.Types.ObjectId,
@@ -75,54 +72,38 @@ const workOrderPartSchema = new Schema<IWorkOrderPart>(
   { _id: false },
 );
 
-const workOrderSchema = new Schema<IWorkOrder>(
+const estimateSchema = new Schema<IEstimate>(
   {
-    legacyId: { type: Number, index: true },
-    number: { type: String, default: undefined, index: true, sparse: true },
-    userId: { type: Number, index: true },
+    number: { type: String, required: true, unique: true, index: true },
+    status: {
+      type: String,
+      enum: ESTIMATE_STATUSES,
+      default: "draft",
+      index: true,
+    },
     customerId: { type: Number, index: true, required: true },
-    customerRef: { type: Schema.Types.ObjectId, ref: "Customer" },
+    customerRef: { type: Schema.Types.ObjectId, ref: "Customer", index: true },
     addressRef: {
       type: Schema.Types.ObjectId,
       ref: "CustomerAddress",
       default: null,
-      index: true,
     },
     equipmentRef: {
       type: Schema.Types.ObjectId,
       ref: "Equipment",
       default: null,
-      index: true,
     },
-    estimateRef: {
+    workOrderRef: {
       type: Schema.Types.ObjectId,
-      ref: "Estimate",
+      ref: "WorkOrder",
       default: null,
       index: true,
     },
     descPerform: { type: String, default: "" },
-    paid: { type: Boolean, default: false },
-    runHours: { type: Number, default: 0 },
     laborHours: { type: Number, default: 0 },
     date: { type: Date, default: null },
     tech: { type: String, default: "" },
-    assignedUserRef: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-      index: true,
-    },
-    scheduledStart: { type: Date, default: null, index: true },
-    scheduledEnd: { type: Date, default: null },
-    estimatedMinutes: { type: Number, default: 60 },
-    appointmentCanceledAt: { type: Date, default: null, index: true },
-    appointmentCanceledBy: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
-    descPerformed: { type: String, default: "" },
-    parts: { type: [workOrderPartSchema], default: [] },
+    parts: { type: [estimatePartSchema], default: [] },
     customerName: { type: String, default: "" },
     customerAddress: { type: String, default: "" },
     customerCity: { type: String, default: "" },
@@ -144,18 +125,11 @@ const workOrderSchema = new Schema<IWorkOrder>(
     signatureDataUrl: { type: String, default: "" },
     signedAt: { type: Date, default: null },
     signedByName: { type: String, default: "" },
-    certify: { type: Boolean, default: false },
-    completed: { type: Boolean, default: false },
   },
   { timestamps: true },
 );
 
-workOrderSchema.index({ customerId: 1, date: -1 });
-workOrderSchema.index({ assignedUserRef: 1, scheduledStart: 1 });
-workOrderSchema.index({ number: 1 }, { unique: true, sparse: true });
-workOrderSchema.index({ completed: 1, paid: 1, date: -1 });
+estimateSchema.index({ customerRef: 1, status: 1, createdAt: -1 });
+estimateSchema.index({ date: -1 });
 
-export const WorkOrder = mongoose.model<IWorkOrder>(
-  "WorkOrder",
-  workOrderSchema,
-);
+export const Estimate = mongoose.model<IEstimate>("Estimate", estimateSchema);

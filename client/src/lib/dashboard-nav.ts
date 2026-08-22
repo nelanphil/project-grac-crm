@@ -11,6 +11,10 @@ import {
   Map,
   ShieldCheck,
   KeyRound,
+  Package,
+  Landmark,
+  ClipboardList,
+  FileSpreadsheet,
   LucideIcon,
 } from "lucide-react";
 
@@ -77,6 +81,12 @@ export const NAV_SECTIONS: NavSection[] = [
             excludeRoles: ["customer"],
           },
           {
+            href: "/dashboard/products",
+            label: "Products",
+            icon: Package,
+            excludeRoles: ["customer"],
+          },
+          {
             href: "/dashboard/territory",
             label: "Territory",
             icon: Map,
@@ -109,7 +119,28 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "General",
     items: [
-      { href: "/dashboard/orders", label: "Invoices", icon: ShoppingCart },
+      {
+        href: "/dashboard/financials",
+        label: "Financials",
+        icon: Landmark,
+        excludeRoles: ["customer"],
+        includeRoles: ["admin", "super-admin", "owner", "manager"],
+        children: [
+          { href: "/dashboard/orders", label: "Invoices", icon: ShoppingCart },
+          {
+            href: "/dashboard/work-orders",
+            label: "Work Orders",
+            icon: ClipboardList,
+            excludeRoles: ["customer", "agent"],
+          },
+          {
+            href: "/dashboard/estimates",
+            label: "Estimates",
+            icon: FileSpreadsheet,
+            excludeRoles: ["customer", "agent"],
+          },
+        ],
+      },
       {
         href: "/dashboard/schedule",
         label: "Schedule",

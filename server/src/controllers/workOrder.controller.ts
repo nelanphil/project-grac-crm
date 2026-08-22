@@ -1,11 +1,16 @@
 import { Response } from "express";
 import mongoose from "mongoose";
-import { z } from "zod";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { WorkOrder } from "../models/mongo/WorkOrder";
+import { Estimate } from "../models/mongo/Estimate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { User, activeUserFilter } from "../models/mongo/User";
+import {
+  createWorkOrderSchema,
+  updateWorkOrderSchema,
+} from "../schemas/workOrder.schema";
+import { applyTicketFields } from "../services/applyTicketFields";
 import {
   actorFromRequest,
   customerDisplayName,
@@ -20,32 +25,10 @@ import {
   isDispatcherRole,
   rangeUtc,
 } from "../services/schedule.service";
+import { nextPrefixedNumber } from "../services/serviceTicket";
 import { addMinutes, formatLocalDate } from "../utils/scheduleTime";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
-
-const updateWorkOrderSchema = z
-  .object({
-    assignedUserRef: z.union([z.string(), z.null()]).optional(),
-    scheduledStart: z.union([z.string(), z.null()]).optional(),
-    estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
-    descPerform: z.string().optional(),
-    descPerformed: z.string().optional(),
-    date: z.union([z.string(), z.null()]).optional(),
-    tech: z.string().optional(),
-    paid: z.boolean().optional(),
-    completed: z.boolean().optional(),
-    certify: z.boolean().optional(),
-    runHours: z.number().optional(),
-    laborHours: z.number().optional(),
-    totalParts: z.number().optional(),
-    totalLabor: z.number().optional(),
-    miscExp: z.number().optional(),
-    subtotal: z.number().optional(),
-    shipping: z.number().optional(),
-    total: z.number().optional(),
-    addressRef: z.union([z.string(), z.null()]).optional(),
-  });
 
 async function enrichWithAddress(
   workOrders: Array<Record<string, unknown>>,
@@ -71,13 +54,29 @@ export async function getWorkOrders(
       typeof req.query.assignedUserId === "string"
         ? req.query.assignedUserId
         : "";
+    const pageRaw = typeof req.query.page === "string" ? req.query.page : "";
+    const paginate = Boolean(pageRaw);
+    const search =
+      typeof req.query.search === "string" ? req.query.search.trim() : "";
+    const paidFilter =
+      req.query.paid === "1" || req.query.paid === "true"
+        ? true
+        : req.query.paid === "0" || req.query.paid === "false"
+          ? false
+          : undefined;
+    const completedFilter =
+      req.query.completed === "1" || req.query.completed === "true"
+        ? true
+        : req.query.completed === "0" || req.query.completed === "false"
+          ? false
+          : undefined;
 
     if ((from && !localDateRe.test(from)) || (to && !localDateRe.test(to))) {
       res.status(400).json({ message: "from and to must be YYYY-MM-DD" });
       return;
     }
 
-    if (from || to || unscheduled || assignedUserId) {
+    if (from || to || unscheduled || assignedUserId || paginate) {
       if (!hasJobsPermission(req, "jobs:read")) {
         res.status(403).json({ message: "Missing permission: jobs:read" });
         return;
@@ -136,6 +135,47 @@ export async function getWorkOrders(
       }
     } else if (unscheduled) {
       filter.scheduledStart = null;
+    } else if (from) {
+      filter.date = { $gte: new Date(`${from}T00:00:00.000Z`) };
+    } else if (to) {
+      filter.date = { $lte: new Date(`${to}T23:59:59.999Z`) };
+    }
+
+    if (paidFilter !== undefined) filter.paid = paidFilter;
+    if (completedFilter !== undefined) filter.completed = completedFilter;
+    if (search) {
+      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? (filter.$and as object[]) : []),
+        {
+          $or: [
+            { number: re },
+            { tech: re },
+            { descPerform: re },
+            { descPerformed: re },
+            { customerName: re },
+          ],
+        },
+      ];
+    }
+
+    if (paginate) {
+      const page = Math.max(1, parseInt(pageRaw, 10) || 1);
+      const pageSize = Math.min(
+        200,
+        Math.max(1, parseInt(String(req.query.pageSize ?? "50"), 10) || 50),
+      );
+      const [total, workOrders] = await Promise.all([
+        WorkOrder.countDocuments(filter),
+        WorkOrder.find(filter)
+          .sort({ date: -1, createdAt: -1 })
+          .skip((page - 1) * pageSize)
+          .limit(pageSize)
+          .lean(),
+      ]);
+      const enriched = await enrichWithAddress(workOrders);
+      res.json({ workOrders: enriched, total, page, pageSize });
+      return;
     }
 
     const workOrders = await WorkOrder.find(filter)
@@ -206,19 +246,23 @@ export async function createWorkOrder(
       return;
     }
 
-    const { customerId, addressRef: rawAddressRef, ...rest } = req.body;
-    if (!customerId) {
-      res.status(400).json({ message: "customerId is required" });
+    const parsed = createWorkOrderSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Validation failed",
+        errors: parsed.error.flatten().fieldErrors,
+      });
       return;
     }
 
-    const customer = await Customer.findOne({ legacyId: customerId }).lean();
+    const data = parsed.data;
+    const customer = await Customer.findOne({ legacyId: data.customerId });
     if (!customer) {
       res.status(404).json({ message: "Customer not found" });
       return;
     }
 
-    const addressRef = rawAddressRef ?? null;
+    const addressRef = data.addressRef ?? null;
     if (addressRef) {
       if (!mongoose.Types.ObjectId.isValid(String(addressRef))) {
         res.status(400).json({ message: "Invalid addressRef" });
@@ -237,18 +281,57 @@ export async function createWorkOrder(
     }
 
     const estimatedMinutes =
-      typeof rest.estimatedMinutes === "number"
-        ? rest.estimatedMinutes
-        : DEFAULT_FROM_LABOR(rest);
+      typeof data.estimatedMinutes === "number"
+        ? data.estimatedMinutes
+        : estimatedMinutesForWorkOrder({
+            estimatedMinutes: undefined,
+            laborHours: data.laborHours,
+          });
 
-    const workOrder = await WorkOrder.create({
-      customerId,
+    const workOrder = new WorkOrder({
+      customerId: data.customerId,
       customerRef: customer._id,
-      addressRef,
+      addressRef: addressRef || null,
       userId: req.user ? parseInt(req.user.id, 10) : undefined,
-      ...rest,
+      number: await nextPrefixedNumber(WorkOrder, "WO"),
       estimatedMinutes,
+      estimateRef:
+        data.estimateRef && mongoose.Types.ObjectId.isValid(data.estimateRef)
+          ? new mongoose.Types.ObjectId(data.estimateRef)
+          : null,
     });
+
+    await applyTicketFields(
+      workOrder as unknown as Record<string, unknown>,
+      data,
+      customer,
+    );
+
+    if (data.assignedUserRef) {
+      if (!mongoose.Types.ObjectId.isValid(data.assignedUserRef)) {
+        res.status(400).json({ message: "Invalid assignedUserRef" });
+        return;
+      }
+      workOrder.assignedUserRef = new mongoose.Types.ObjectId(
+        data.assignedUserRef,
+      );
+    }
+    if (data.scheduledStart) {
+      const start = new Date(data.scheduledStart);
+      if (!Number.isNaN(start.getTime())) {
+        workOrder.scheduledStart = start;
+        workOrder.scheduledEnd = addMinutes(start, estimatedMinutes);
+      }
+    }
+
+    await workOrder.save();
+
+    if (workOrder.estimateRef) {
+      await Estimate.findByIdAndUpdate(workOrder.estimateRef, {
+        status: "converted",
+        workOrderRef: workOrder._id,
+      });
+    }
 
     const custName = customerDisplayName(customer);
     logNotificationAsync({
@@ -256,22 +339,17 @@ export async function createWorkOrder(
       action: "created",
       entityId: String(workOrder._id),
       customerRef: customer._id,
-      summary: `Work order created for ${custName}`,
-      metadata: { customerName: custName },
+      summary: `Work order ${workOrder.number} created for ${custName}`,
+      metadata: { customerName: custName, number: workOrder.number },
       ...actorFromRequest(req.user),
     });
 
-    res.status(201).json(workOrder);
+    const lean = workOrder.toObject() as unknown as Record<string, unknown>;
+    const [enriched] = await enrichWithAddress([lean]);
+    res.status(201).json(enriched);
   } catch {
     res.status(500).json({ message: "Failed to create work order" });
   }
-}
-
-function DEFAULT_FROM_LABOR(rest: { laborHours?: number }): number {
-  return estimatedMinutesForWorkOrder({
-    estimatedMinutes: undefined,
-    laborHours: rest.laborHours,
-  });
 }
 
 export async function updateWorkOrder(
@@ -327,9 +405,20 @@ export async function updateWorkOrder(
     delete rest.scheduledStart;
     delete rest.estimatedMinutes;
 
-    for (const [key, value] of Object.entries(rest)) {
-      if (value !== undefined) {
-        (workOrder as unknown as Record<string, unknown>)[key] = value;
+    const customer = workOrder.customerRef
+      ? await Customer.findById(workOrder.customerRef)
+      : await Customer.findOne({ legacyId: workOrder.customerId });
+    if (customer) {
+      await applyTicketFields(
+        workOrder as unknown as Record<string, unknown>,
+        rest,
+        customer,
+      );
+    } else {
+      for (const [key, value] of Object.entries(rest)) {
+        if (value !== undefined) {
+          (workOrder as unknown as Record<string, unknown>)[key] = value;
+        }
       }
     }
 

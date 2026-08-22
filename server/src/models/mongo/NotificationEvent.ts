@@ -17,6 +17,8 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "google_credentials",
   "payment_provider_account",
   "invoice",
+  "product",
+  "estimate",
 ] as const;
 
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPES)[number];

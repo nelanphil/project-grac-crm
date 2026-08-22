@@ -10,6 +10,7 @@ import {
   GitMerge,
   Loader2,
   Pencil,
+  Plus,
   ScrollText,
   X,
 } from "lucide-react";
@@ -141,6 +142,7 @@ function CustomerDetailContent() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const canWrite = useAuthStore((s) => s.hasPermission("customers:write"));
+  const canWriteJobs = useAuthStore((s) => s.hasPermission("jobs:write"));
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [workOrders, setWorkOrders] = useState<WorkOrderListItem[]>([]);
@@ -534,9 +536,20 @@ function CustomerDetailContent() {
         id="customer-work-orders"
         className="scroll-mt-28 space-y-4 lg:scroll-mt-6"
       >
-        <h2 className="text-lg font-semibold text-brand-dark">
-          Work Orders ({filteredWorkOrders.length})
-        </h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-brand-dark">
+            Work Orders ({filteredWorkOrders.length})
+          </h2>
+          {canWriteJobs ? (
+            <Link
+              href={`/dashboard/work-orders/create?customerId=${customer._id}`}
+              className="inline-flex items-center gap-1 rounded-lg bg-brand-dark px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New work order
+            </Link>
+          ) : null}
+        </div>
 
         {filteredWorkOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-16 text-center shadow-sm">
@@ -547,6 +560,14 @@ function CustomerDetailContent() {
             <p className="mt-1 text-xs text-neutral-400">
               Work orders for this customer will appear here.
             </p>
+            {canWriteJobs ? (
+              <Link
+                href={`/dashboard/work-orders/create?customerId=${customer._id}`}
+                className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-brand-orange hover:underline"
+              >
+                Create a work order
+              </Link>
+            ) : null}
           </div>
         ) : (
           <ResponsiveDataView
@@ -558,6 +579,9 @@ function CustomerDetailContent() {
                   addresses.length > 0
                     ? formatAddressLabel(order.address)
                     : undefined
+                }
+                onClick={() =>
+                  router.push(`/dashboard/work-orders/detail?id=${order._id}`)
                 }
                 badges={
                   <>
@@ -622,7 +646,15 @@ function CustomerDetailContent() {
                     </thead>
                     <tbody className="divide-y divide-neutral-100 bg-white">
                       {filteredWorkOrders.map((order) => (
-                        <tr key={order._id}>
+                        <tr
+                          key={order._id}
+                          className="cursor-pointer hover:bg-neutral-50"
+                          onClick={() =>
+                            router.push(
+                              `/dashboard/work-orders/detail?id=${order._id}`,
+                            )
+                          }
+                        >
                           <td className="whitespace-nowrap px-6 py-4 text-neutral-600">
                             {formatDate(order.date)}
                           </td>
@@ -649,7 +681,10 @@ function CustomerDetailContent() {
                               />
                             </div>
                           </td>
-                          <td className="whitespace-nowrap px-6 py-4 text-right">
+                          <td
+                            className="whitespace-nowrap px-6 py-4 text-right"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             {!order.paid && order.total > 0 && token ? (
                               <WorkOrderInvoiceButton
                                 token={token}

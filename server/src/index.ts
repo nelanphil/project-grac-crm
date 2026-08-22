@@ -7,6 +7,8 @@ import {
   ensureContractPermissions,
   ensureIntegrationsPermissions,
   ensureMessagesPermissions,
+  ensureEstimatePermissions,
+  ensureProductPermissions,
 } from "./models/mongo/RolePermission";
 import { seedDefaultRoles } from "./models/mongo/Role";
 import { seedContractTemplates } from "./models/mongo/ContractTemplate";
@@ -20,6 +22,8 @@ async function bootstrap(): Promise<void> {
   await ensureContractPermissions();
   await ensureIntegrationsPermissions();
   await ensureMessagesPermissions();
+  await ensureEstimatePermissions();
+  await ensureProductPermissions();
   await seedContractTemplates();
 
   startRenewalInvoiceScheduler();
