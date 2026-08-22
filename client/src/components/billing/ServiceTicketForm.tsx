@@ -1,6 +1,21 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVertical, Plus, Trash2 } from "lucide-react";
 import {
   CustomerDetail,
   CustomerListItem,
@@ -14,10 +29,11 @@ import { formatCustomerRecordName } from "@/lib/formatName";
 import {
   SERVICE_TICKET_TERMS,
   TicketFormState,
+  TicketPartRow,
   TicketVariant,
-  defaultLaborTotal,
+  emptyNoteRow,
+  emptyPartRow,
   emptyTicketForm,
-  parseMoney,
   partAmount,
   ticketToPayload,
   ticketTotals,
@@ -54,6 +70,214 @@ function formatMoney(amount: number): string {
   }).format(amount || 0);
 }
 
+function catalogCode(product: ProductItem): string {
+  return product.productCode || product.partNumber || "";
+}
+
+function catalogListPrice(product: ProductItem): number {
+  return product.listPrice ?? product.unitPrice ?? 0;
+}
+
+function patchRow(
+  parts: TicketPartRow[],
+  id: string,
+  updates: Partial<TicketPartRow>,
+): TicketPartRow[] {
+  return parts.map((row) => (row.id === id ? { ...row, ...updates } : row));
+}
+
+function SortableLineRow({
+  row,
+  productResults,
+  isActiveSearch,
+  pendingFocus,
+  onFocusSearch,
+  onChange,
+  onRemove,
+}: {
+  row: TicketPartRow;
+  productResults: ProductItem[];
+  isActiveSearch: boolean;
+  pendingFocus: boolean;
+  onFocusSearch: () => void;
+  onChange: (updates: Partial<TicketPartRow>, searchQuery?: string) => void;
+  onRemove: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: row.id });
+  const searchRef = useRef<HTMLInputElement>(null);
+  const didFocus = useRef(false);
+
+  useEffect(() => {
+    if (pendingFocus && !didFocus.current) {
+      didFocus.current = true;
+      searchRef.current?.focus();
+    }
+  }, [pendingFocus]);
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.65 : 1,
+  };
+
+  if (row.lineType === "note") {
+    return (
+      <tr ref={setNodeRef} style={style} className="border-t border-neutral-100 bg-neutral-50/60">
+        <td className="px-1 py-1">
+          <button
+            type="button"
+            className="cursor-grab touch-none rounded p-1 text-neutral-400 hover:text-neutral-600"
+            aria-label="Reorder note"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
+        </td>
+        <td className="px-2 py-1 text-xs text-neutral-400">Note</td>
+        <td className="px-2 py-1" colSpan={2}>
+          <textarea
+            rows={2}
+            value={row.description}
+            onChange={(e) => onChange({ description: e.target.value })}
+            placeholder="Line note"
+            className={inputClass}
+          />
+        </td>
+        <td className="px-1 py-1 text-right">
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded p-1 text-neutral-400 hover:text-red-600"
+            aria-label="Remove note"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr ref={setNodeRef} style={style} className="border-t border-neutral-100">
+      <td className="px-1 py-1">
+        <button
+          type="button"
+          className="cursor-grab touch-none rounded p-1 text-neutral-400 hover:text-neutral-600"
+          aria-label="Reorder product"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+      </td>
+      <td className="w-16 px-2 py-1">
+        <input
+          value={row.quantity}
+          onChange={(e) => onChange({ quantity: e.target.value })}
+          className={inputClass}
+        />
+      </td>
+      <td className="relative px-2 py-1">
+        <input
+          ref={searchRef}
+          value={row.partNumber}
+          onFocus={onFocusSearch}
+          onChange={(e) =>
+            onChange(
+              {
+                partNumber: e.target.value,
+                productRef: "",
+              },
+              e.target.value,
+            )
+          }
+          className={inputClass}
+          placeholder="Search products"
+        />
+        {row.description ? (
+          <p className="mt-0.5 text-[11px] text-neutral-500">
+            {row.kind === "labor" ? "Labor · " : ""}
+            {row.description}
+          </p>
+        ) : null}
+        {isActiveSearch && productResults.length > 0 ? (
+          <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
+            {productResults.map((product) => {
+              const listPrice = catalogListPrice(product);
+              const strike = product.strikeThroughPrice > 0;
+              return (
+                <li key={product._id}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onChange({
+                        productRef: product._id,
+                        partNumber: catalogCode(product),
+                        description: product.name,
+                        kind: product.kind === "labor" ? "labor" : "part",
+                        quantity: row.quantity || "1",
+                        listPrice: String(listPrice),
+                        unitPrice: String(listPrice),
+                        priceOverridden: false,
+                      })
+                    }
+                    className="w-full px-3 py-2 text-left text-xs hover:bg-neutral-50"
+                  >
+                    <span className="font-medium">{catalogCode(product)}</span>
+                    <span className="ml-2 rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600">
+                      {product.kind === "labor" ? "Labor" : "Part"}
+                    </span>
+                    <span className="mt-0.5 block text-neutral-500">
+                      {product.name} ·{" "}
+                      {strike ? (
+                        <span className="mr-1 text-neutral-400 line-through">
+                          {formatMoney(product.strikeThroughPrice)}
+                        </span>
+                      ) : null}
+                      {formatMoney(listPrice)}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+      </td>
+      <td className="w-28 px-2 py-1">
+        <input
+          value={row.unitPrice}
+          onChange={(e) =>
+            onChange({ unitPrice: e.target.value, priceOverridden: true })
+          }
+          className={inputClass}
+        />
+        <p className="mt-0.5 text-[10px] text-neutral-400">
+          Line {formatMoney(partAmount(row))}
+          {row.priceOverridden ? " · override" : ""}
+        </p>
+      </td>
+      <td className="px-1 py-1 text-right">
+        <button
+          type="button"
+          onClick={onRemove}
+          className="rounded p-1 text-neutral-400 hover:text-red-600"
+          aria-label="Remove product"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </td>
+    </tr>
+  );
+}
+
 export default function ServiceTicketForm({
   variant,
   initial,
@@ -74,9 +298,14 @@ export default function ServiceTicketForm({
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerListItem[]>([]);
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
-  const [productQuery, setProductQuery] = useState<Record<number, string>>({});
+  const [productQuery, setProductQuery] = useState<Record<string, string>>({});
   const [productResults, setProductResults] = useState<ProductItem[]>([]);
-  const [activePartIndex, setActivePartIndex] = useState<number | null>(null);
+  const [activePartId, setActivePartId] = useState<string | null>(null);
+  const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
 
   useEffect(() => {
     if (initial) setForm(initial);
@@ -123,8 +352,8 @@ export default function ServiceTicketForm({
   }, [token, customerQuery]);
 
   useEffect(() => {
-    if (!token || activePartIndex == null) return;
-    const q = (productQuery[activePartIndex] ?? "").trim();
+    if (!token || activePartId == null) return;
+    const q = (productQuery[activePartId] ?? "").trim();
     if (q.length < 1) {
       setProductResults([]);
       return;
@@ -135,10 +364,9 @@ export default function ServiceTicketForm({
         .catch(() => setProductResults([]));
     }, 200);
     return () => clearTimeout(t);
-  }, [token, activePartIndex, productQuery]);
+  }, [token, activePartId, productQuery]);
 
   const totals = useMemo(() => ticketTotals(form), [form]);
-  const computedLabor = defaultLaborTotal(parseMoney(form.laborHours));
 
   function patch(partial: Partial<TicketFormState>) {
     setForm((prev) => ({ ...prev, ...partial }));
@@ -195,6 +423,53 @@ export default function ServiceTicketForm({
       exerciseDay: unit?.exday ?? "",
       exerciseTime: unit?.extime ?? "",
     });
+  }
+
+  function addProductRow() {
+    const row = emptyPartRow();
+    patch({ parts: [...form.parts, row] });
+    setPendingFocusId(row.id);
+    setActivePartId(row.id);
+  }
+
+  function addNoteRow() {
+    patch({ parts: [...form.parts, emptyNoteRow()] });
+  }
+
+  function updatePart(
+    id: string,
+    updates: Partial<TicketPartRow>,
+    searchQuery?: string,
+  ) {
+    patch({ parts: patchRow(form.parts, id, updates) });
+    if (searchQuery !== undefined) {
+      setProductQuery((prev) => ({ ...prev, [id]: searchQuery }));
+    }
+    if (updates.productRef) {
+      setActivePartId(null);
+      setProductResults([]);
+      setPendingFocusId(null);
+    }
+  }
+
+  function removePart(id: string) {
+    patch({ parts: form.parts.filter((row) => row.id !== id) });
+    if (activePartId === id) {
+      setActivePartId(null);
+      setProductResults([]);
+    }
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = form.parts.findIndex((row) => row.id === active.id);
+    const newIndex = form.parts.findIndex((row) => row.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const next = [...form.parts];
+    const [moved] = next.splice(oldIndex, 1);
+    next.splice(newIndex, 0, moved);
+    patch({ parts: next });
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -461,27 +736,7 @@ export default function ServiceTicketForm({
               </Field>
             </div>
           )}
-          <Field label="Labor hours">
-            <input
-              type="number"
-              min={0}
-              step="0.25"
-              value={form.laborHours}
-              onChange={(e) =>
-                patch({
-                  laborHours: e.target.value,
-                  laborOverridden: false,
-                })
-              }
-              className={inputClass}
-            />
-          </Field>
         </div>
-
-        <p className="mt-3 text-xs text-neutral-500">
-          Each service includes up to 30 minutes of labor. Each additional 30 minutes
-          will incur a $75 charge.
-        </p>
 
         <div className="mt-4">
           <Field label="Description of work to be performed">
@@ -496,101 +751,79 @@ export default function ServiceTicketForm({
 
         <div className="mt-5 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Parts
-            </p>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Parts & Labor
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={addProductRow}
+                  className="inline-flex items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add product
+                </button>
+                <button
+                  type="button"
+                  onClick={addNoteRow}
+                  className="inline-flex items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add note
+                </button>
+              </div>
+            </div>
             <div className="overflow-x-auto rounded border border-neutral-200">
-              <table className="min-w-full text-sm">
-                <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
-                  <tr>
-                    <th className="w-16 px-2 py-2 text-left">Qty</th>
-                    <th className="px-2 py-2 text-left">Part number</th>
-                    <th className="w-28 px-2 py-2 text-left">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {form.parts.map((row, index) => (
-                    <tr key={index} className="border-t border-neutral-100">
-                      <td className="px-2 py-1">
-                        <input
-                          value={row.quantity}
-                          onChange={(e) => {
-                            const parts = [...form.parts];
-                            parts[index] = { ...row, quantity: e.target.value };
-                            patch({ parts });
-                          }}
-                          className={inputClass}
-                        />
-                      </td>
-                      <td className="relative px-2 py-1">
-                        <input
-                          value={row.partNumber}
-                          onFocus={() => setActivePartIndex(index)}
-                          onChange={(e) => {
-                            const parts = [...form.parts];
-                            parts[index] = {
-                              ...row,
-                              partNumber: e.target.value,
-                              productRef: "",
-                            };
-                            patch({ parts });
-                            setProductQuery((prev) => ({
-                              ...prev,
-                              [index]: e.target.value,
-                            }));
-                          }}
-                          className={inputClass}
-                          placeholder="Search SKU"
-                        />
-                        {activePartIndex === index && productResults.length > 0 ? (
-                          <ul className="absolute z-20 mt-1 max-h-40 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
-                            {productResults.map((product) => (
-                              <li key={product._id}>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const parts = [...form.parts];
-                                    parts[index] = {
-                                      productRef: product._id,
-                                      partNumber: product.partNumber,
-                                      description: product.name,
-                                      quantity: row.quantity || "1",
-                                      unitPrice: String(product.unitPrice),
-                                    };
-                                    patch({ parts });
-                                    setActivePartIndex(null);
-                                    setProductResults([]);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs hover:bg-neutral-50"
-                                >
-                                  <span className="font-medium">{product.partNumber}</span>
-                                  <span className="ml-2 text-neutral-500">
-                                    {product.name} · {formatMoney(product.unitPrice)}
-                                  </span>
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </td>
-                      <td className="px-2 py-1">
-                        <input
-                          value={row.unitPrice}
-                          onChange={(e) => {
-                            const parts = [...form.parts];
-                            parts[index] = { ...row, unitPrice: e.target.value };
-                            patch({ parts });
-                          }}
-                          className={inputClass}
-                        />
-                        <p className="mt-0.5 text-[10px] text-neutral-400">
-                          Line {formatMoney(partAmount(row))}
-                        </p>
-                      </td>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <table className="min-w-full text-sm">
+                  <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
+                    <tr>
+                      <th className="w-8 px-1 py-2" />
+                      <th className="w-16 px-2 py-2 text-left">Qty</th>
+                      <th className="px-2 py-2 text-left">Product</th>
+                      <th className="w-28 px-2 py-2 text-left">Amount</th>
+                      <th className="w-8 px-1 py-2" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <SortableContext
+                    items={form.parts.map((row) => row.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <tbody>
+                      {form.parts.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={5}
+                            className="px-3 py-6 text-center text-sm text-neutral-400"
+                          >
+                            Add parts or labor from the product catalog.
+                          </td>
+                        </tr>
+                      ) : (
+                        form.parts.map((row) => (
+                          <SortableLineRow
+                            key={row.id}
+                            row={row}
+                            productResults={productResults}
+                            isActiveSearch={activePartId === row.id}
+                            pendingFocus={pendingFocusId === row.id}
+                            onFocusSearch={() => setActivePartId(row.id)}
+                            onChange={(updates, searchQuery) =>
+                              updatePart(row.id, updates, searchQuery)
+                            }
+                            onRemove={() => removePart(row.id)}
+                          />
+                        ))
+                      )}
+                    </tbody>
+                  </SortableContext>
+                </table>
+              </DndContext>
             </div>
           </div>
 
@@ -610,15 +843,9 @@ export default function ServiceTicketForm({
                 <span>Total parts</span>
                 <span>{formatMoney(totals.totalParts)}</span>
               </div>
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex justify-between">
                 <span>Total labor</span>
-                <input
-                  value={form.laborOverridden ? form.totalLabor : String(computedLabor)}
-                  onChange={(e) =>
-                    patch({ laborOverridden: true, totalLabor: e.target.value })
-                  }
-                  className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
-                />
+                <span>{formatMoney(totals.totalLabor)}</span>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <span>Misc exp.</span>

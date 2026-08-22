@@ -29,6 +29,8 @@ function workOrderInvoiceLineItems(wo: {
     description?: string;
     quantity?: number;
     amount?: number;
+    lineType?: string;
+    kind?: string;
   }>;
   totalLabor?: number;
   miscExp?: number;
@@ -39,21 +41,24 @@ function workOrderInvoiceLineItems(wo: {
 }): { description: string; amountCents: number }[] {
   const items: { description: string; amountCents: number }[] = [];
   const parts = wo.parts ?? [];
+  let hasLaborProductLines = false;
   for (const part of parts) {
+    if (part.lineType === "note") continue;
+    if (part.kind === "labor") hasLaborProductLines = true;
     const cents = dollarsToCents(part.amount || 0);
     if (cents <= 0) continue;
     const qty = part.quantity && part.quantity !== 1 ? `${part.quantity} × ` : "";
     const label =
       part.description?.trim() ||
       part.partNumber?.trim() ||
-      "Part";
+      (part.kind === "labor" ? "Labor" : "Part");
     items.push({
       description: `${qty}${label}${part.partNumber && part.description ? ` (${part.partNumber})` : ""}`,
       amountCents: cents,
     });
   }
   const laborCents = dollarsToCents(wo.totalLabor || 0);
-  if (laborCents > 0) {
+  if (!hasLaborProductLines && laborCents > 0) {
     items.push({ description: "Labor", amountCents: laborCents });
   }
   const miscCents = dollarsToCents(wo.miscExp || 0);

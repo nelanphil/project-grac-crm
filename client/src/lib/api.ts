@@ -1222,12 +1222,19 @@ export async function deleteCustomerNote(
   );
 }
 
+export type TicketLineType = "product" | "note";
+export type ProductKind = "part" | "labor";
+
 export interface WorkOrderPart {
   productRef?: string | null;
+  lineType?: TicketLineType;
+  kind?: ProductKind;
   partNumber: string;
   description: string;
   quantity: number;
   unitPrice: number;
+  listPrice?: number;
+  priceOverridden?: boolean;
   amount: number;
 }
 
@@ -1914,14 +1921,33 @@ export async function startCheckoutByPayToken(
 
 export interface ProductItem {
   _id: string;
+  productCode: string;
+  productNumber: string;
+  productAltCode: string;
   partNumber: string;
   name: string;
+  kind: ProductKind;
+  listPrice: number;
   unitPrice: number;
+  cost: number;
+  strikeThroughPrice: number;
   active: boolean;
   notes: string;
   createdAt: string;
   updatedAt: string;
 }
+
+export type ProductWritePayload = {
+  productCode: string;
+  productNumber?: string;
+  name: string;
+  kind?: ProductKind;
+  listPrice?: number;
+  cost?: number;
+  strikeThroughPrice?: number;
+  active?: boolean;
+  notes?: string;
+};
 
 export async function getProducts(
   token: string,
@@ -1942,13 +1968,7 @@ export async function getProducts(
 
 export async function createProduct(
   token: string,
-  data: {
-    partNumber: string;
-    name: string;
-    unitPrice?: number;
-    active?: boolean;
-    notes?: string;
-  },
+  data: ProductWritePayload,
 ): Promise<{ product: ProductItem }> {
   return authRequest<{ product: ProductItem }>("/products", {
     method: "POST",
@@ -1960,13 +1980,7 @@ export async function createProduct(
 export async function updateProduct(
   token: string,
   id: string,
-  data: {
-    partNumber?: string;
-    name?: string;
-    unitPrice?: number;
-    active?: boolean;
-    notes?: string;
-  },
+  data: Partial<ProductWritePayload>,
 ): Promise<{ product: ProductItem }> {
   return authRequest<{ product: ProductItem }>(`/products/${id}`, {
     method: "PATCH",

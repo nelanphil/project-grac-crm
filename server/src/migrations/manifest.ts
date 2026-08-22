@@ -34,4 +34,8 @@ export const MIGRATIONS: MigrationEntry[] = [
     file: "migrate-contracts-collection",
   },
   { id: "2026-07-19-contract-dates", file: "migrate-contract-dates" },
+  {
+    id: "2026-08-22-product-catalog-fields",
+    file: "migrate-product-catalog-fields",
+  },
 ];

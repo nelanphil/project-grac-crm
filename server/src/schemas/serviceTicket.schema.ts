@@ -2,10 +2,14 @@ import { z } from "zod";
 
 export const ticketPartSchema = z.object({
   productRef: z.string().trim().nullable().optional(),
+  lineType: z.enum(["product", "note"]).optional().default("product"),
+  kind: z.enum(["part", "labor"]).optional().default("part"),
   partNumber: z.string().trim().max(80).optional().default(""),
-  description: z.string().trim().max(300).optional().default(""),
+  description: z.string().trim().max(2000).optional().default(""),
   quantity: z.number().min(0).optional().default(0),
   unitPrice: z.number().min(0).optional().default(0),
+  listPrice: z.number().min(0).optional().default(0),
+  priceOverridden: z.boolean().optional().default(false),
   amount: z.number().min(0).optional(),
 });
 

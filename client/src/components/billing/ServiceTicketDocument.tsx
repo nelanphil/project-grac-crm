@@ -36,7 +36,7 @@ export type ServiceTicketView = {
   exerciseTime: string;
   paid?: boolean;
   runHours?: number;
-  laborHours: number;
+  laborHours?: number;
   descPerform: string;
   descPerformed?: string;
   parts: Array<{
@@ -45,6 +45,8 @@ export type ServiceTicketView = {
     description?: string;
     unitPrice?: number;
     amount: number;
+    lineType?: "product" | "note";
+    kind?: "part" | "labor";
   }>;
   totalParts: number;
   totalLabor: number;
@@ -119,14 +121,8 @@ export default function ServiceTicketDocument({
           ) : (
             <p className="capitalize">Status: {ticket.status}</p>
           )}
-          <p>Labor hours: {ticket.laborHours || 0}</p>
         </div>
       </div>
-
-      <p className="mt-3 text-xs text-neutral-500">
-        Each service includes up to 30 minutes of labor. Each additional 30 minutes
-        will incur a $75 charge.
-      </p>
 
       <div className="mt-4">
         <p className="text-xs font-semibold uppercase text-neutral-500">
@@ -138,33 +134,50 @@ export default function ServiceTicketDocument({
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs uppercase text-neutral-500">
-              <th className="py-2">Qty</th>
-              <th className="py-2">Part number</th>
-              <th className="py-2 text-right">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(ticket.parts.length ? ticket.parts : [{ quantity: 0, partNumber: "", amount: 0 }]).map(
-              (part, index) => (
-                <tr key={index} className="border-b border-neutral-100">
-                  <td className="py-2">{part.quantity || ""}</td>
-                  <td className="py-2">
-                    {part.partNumber}
-                    {part.description ? (
-                      <span className="ml-2 text-neutral-500">{part.description}</span>
-                    ) : null}
-                  </td>
-                  <td className="py-2 text-right">
-                    {part.amount ? formatMoney(part.amount) : ""}
-                  </td>
-                </tr>
-              ),
-            )}
-          </tbody>
-        </table>
+        <div>
+          <p className="text-xs font-semibold uppercase text-neutral-500">
+            Parts & Labor
+          </p>
+          <table className="mt-1 min-w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs uppercase text-neutral-500">
+                <th className="py-2">Qty</th>
+                <th className="py-2">Product</th>
+                <th className="py-2 text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(ticket.parts.length
+                ? ticket.parts
+                : [{ quantity: 0, partNumber: "", amount: 0 }]
+              ).map((part, index) =>
+                part.lineType === "note" ? (
+                  <tr key={index} className="border-b border-neutral-100">
+                    <td colSpan={3} className="py-2 italic text-neutral-600">
+                      {part.description || "—"}
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={index} className="border-b border-neutral-100">
+                    <td className="py-2">{part.quantity || ""}</td>
+                    <td className="py-2">
+                      {part.partNumber}
+                      {part.description ? (
+                        <span className="ml-2 text-neutral-500">
+                          {part.kind === "labor" ? "Labor · " : ""}
+                          {part.description}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="py-2 text-right">
+                      {part.amount ? formatMoney(part.amount) : ""}
+                    </td>
+                  </tr>
+                ),
+              )}
+            </tbody>
+          </table>
+        </div>
         <div className="space-y-2 text-sm">
           {!isEstimate ? (
             <div>

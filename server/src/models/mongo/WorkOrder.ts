@@ -2,10 +2,14 @@ import mongoose, { Schema, Document, Types } from "mongoose";
 
 export interface IWorkOrderPart {
   productRef?: Types.ObjectId | null;
+  lineType: "product" | "note";
+  kind: "part" | "labor";
   partNumber: string;
   description: string;
   quantity: number;
   unitPrice: number;
+  listPrice: number;
+  priceOverridden: boolean;
   amount: number;
 }
 
@@ -66,10 +70,14 @@ const workOrderPartSchema = new Schema<IWorkOrderPart>(
       ref: "Product",
       default: null,
     },
+    lineType: { type: String, enum: ["product", "note"], default: "product" },
+    kind: { type: String, enum: ["part", "labor"], default: "part" },
     partNumber: { type: String, default: "" },
     description: { type: String, default: "" },
     quantity: { type: Number, default: 0 },
     unitPrice: { type: Number, default: 0 },
+    listPrice: { type: Number, default: 0 },
+    priceOverridden: { type: Boolean, default: false },
     amount: { type: Number, default: 0 },
   },
   { _id: false },

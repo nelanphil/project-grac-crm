@@ -12,6 +12,7 @@ import {
   deleteProduct,
   getProducts,
   ProductItem,
+  ProductKind,
   updateProduct,
 } from "@/lib/api";
 
@@ -22,21 +23,81 @@ function formatMoney(amount: number): string {
   }).format(amount || 0);
 }
 
+function buildProductAltCode(productCode: string): string {
+  const code = productCode.trim();
+  if (!code) return "";
+  if (code.toUpperCase().startsWith("GMOF")) return code;
+  return `GMOF${code}`;
+}
+
+function productCodeOf(product: ProductItem): string {
+  return product.productCode || product.partNumber || "";
+}
+
+function listPriceOf(product: ProductItem): number {
+  return product.listPrice ?? product.unitPrice ?? 0;
+}
+
+function PriceDisplay({
+  listPrice,
+  strikeThroughPrice,
+}: {
+  listPrice: number;
+  strikeThroughPrice?: number;
+}) {
+  const strike = strikeThroughPrice && strikeThroughPrice > 0;
+  return (
+    <span className="inline-flex items-baseline gap-2">
+      {strike ? (
+        <span className="text-neutral-400 line-through">
+          {formatMoney(strikeThroughPrice)}
+        </span>
+      ) : null}
+      <span>{formatMoney(listPrice)}</span>
+    </span>
+  );
+}
+
+function KindBadge({ kind }: { kind: ProductKind }) {
+  return (
+    <span
+      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+        kind === "labor"
+          ? "bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-600/20"
+          : "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/20"
+      }`}
+    >
+      {kind === "labor" ? "Labor" : "Part"}
+    </span>
+  );
+}
+
 type ProductFormState = {
-  partNumber: string;
+  productCode: string;
+  productNumber: string;
   name: string;
-  unitPrice: string;
+  kind: ProductKind;
+  listPrice: string;
+  cost: string;
+  strikeThroughPrice: string;
   active: boolean;
   notes: string;
 };
 
 const EMPTY_FORM: ProductFormState = {
-  partNumber: "",
+  productCode: "",
+  productNumber: "",
   name: "",
-  unitPrice: "0",
+  kind: "part",
+  listPrice: "0",
+  cost: "0",
+  strikeThroughPrice: "",
   active: true,
   notes: "",
 };
+
+const inputClass =
+  "w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue";
 
 export default function ProductsPage() {
   return (
@@ -46,11 +107,19 @@ export default function ProductsPage() {
   );
 }
 
+const PRODUCT_WRITE_ROLES = new Set(["admin", "super-admin", "owner", "manager"]);
+const PRODUCT_DELETE_ROLES = new Set(["admin", "super-admin", "owner"]);
+
 function ProductsContent() {
   const token = useAuthStore((s) => s.token);
-  const hasPermission = useAuthStore((s) => s.hasPermission);
-  const canWrite = hasPermission("products:write");
-  const canDelete = hasPermission("products:delete");
+  const role = useAuthStore((s) => s.user?.role);
+  const permissions = useAuthStore((s) => s.user?.permissions);
+  const canWrite =
+    permissions?.includes("products:write") ||
+    PRODUCT_WRITE_ROLES.has(role ?? "");
+  const canDelete =
+    permissions?.includes("products:delete") ||
+    PRODUCT_DELETE_ROLES.has(role ?? "");
 
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,6 +161,7 @@ function ProductsContent() {
   }, [token, debouncedSearch, showInactive]);
 
   const visible = useMemo(() => products, [products]);
+  const previewAltCode = buildProductAltCode(form.productCode);
 
   function openCreate() {
     setEditing(null);
@@ -102,9 +172,14 @@ function ProductsContent() {
   function openEdit(product: ProductItem) {
     setEditing(product);
     setForm({
-      partNumber: product.partNumber,
+      productCode: productCodeOf(product),
+      productNumber: product.productNumber ?? "",
       name: product.name,
-      unitPrice: String(product.unitPrice ?? 0),
+      kind: product.kind === "labor" ? "labor" : "part",
+      listPrice: String(listPriceOf(product)),
+      cost: String(product.cost ?? 0),
+      strikeThroughPrice:
+        product.strikeThroughPrice > 0 ? String(product.strikeThroughPrice) : "",
       active: product.active,
       notes: product.notes ?? "",
     });
@@ -117,9 +192,13 @@ function ProductsContent() {
     setError(null);
     try {
       const payload = {
-        partNumber: form.partNumber.trim(),
+        productCode: form.productCode.trim(),
+        productNumber: form.productNumber.trim(),
         name: form.name.trim(),
-        unitPrice: Number(form.unitPrice) || 0,
+        kind: form.kind,
+        listPrice: Number(form.listPrice) || 0,
+        cost: Number(form.cost) || 0,
+        strikeThroughPrice: Number(form.strikeThroughPrice) || 0,
         active: form.active,
         notes: form.notes.trim(),
       };
@@ -139,7 +218,8 @@ function ProductsContent() {
 
   async function handleDelete(product: ProductItem) {
     if (!token) return;
-    if (!window.confirm(`Delete part ${product.partNumber}?`)) return;
+    const code = productCodeOf(product);
+    if (!window.confirm(`Delete product ${code}?`)) return;
     setDeletingId(product._id);
     setError(null);
     try {
@@ -158,7 +238,7 @@ function ProductsContent() {
         <div>
           <h1 className="text-2xl font-bold text-brand-dark">Products</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            Part numbers and prices used on estimates and work orders.
+            Parts and labor used on estimates and work orders.
           </p>
         </div>
         {canWrite ? (
@@ -179,7 +259,7 @@ function ProductsContent() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search part number or name"
+            placeholder="Search product code, number, alt code, or name"
             className="w-full rounded-lg border border-neutral-200 bg-white py-2 pl-9 pr-3 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue"
           />
         </div>
@@ -211,30 +291,55 @@ function ProductsContent() {
               <Package className="mb-4 h-10 w-10 text-neutral-300" />
               <p className="text-sm font-medium text-neutral-500">No products yet</p>
               <p className="mt-1 text-xs text-neutral-400">
-                Add part numbers so they can be picked on estimates and work orders.
+                Add parts and labor so they can be picked on estimates and work orders.
               </p>
+              {canWrite ? (
+                <button
+                  type="button"
+                  onClick={openCreate}
+                  className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add product
+                </button>
+              ) : null}
             </div>
           }
           mobile={visible.map((product) => (
             <MobileDataCard
               key={product._id}
-              title={product.partNumber}
+              title={productCodeOf(product)}
               subtitle={product.name}
               badges={
-                <span
-                  className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                    product.active
-                      ? "bg-green-50 text-green-700 ring-1 ring-inset ring-green-600/20"
-                      : "bg-neutral-100 text-neutral-500 ring-1 ring-inset ring-neutral-300"
-                  }`}
-                >
-                  {product.active ? "Active" : "Inactive"}
+                <span className="flex flex-wrap gap-1">
+                  <KindBadge kind={product.kind === "labor" ? "labor" : "part"} />
+                  <span
+                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                      product.active
+                        ? "bg-green-50 text-green-700 ring-1 ring-inset ring-green-600/20"
+                        : "bg-neutral-100 text-neutral-500 ring-1 ring-inset ring-neutral-300"
+                    }`}
+                  >
+                    {product.active ? "Active" : "Inactive"}
+                  </span>
                 </span>
               }
               fields={
                 <>
-                  <DataField label="Price" value={formatMoney(product.unitPrice)} />
-                  <DataField label="Notes" value={product.notes || "—"} className="col-span-2" />
+                  <DataField
+                    label="List price"
+                    value={
+                      <PriceDisplay
+                        listPrice={listPriceOf(product)}
+                        strikeThroughPrice={product.strikeThroughPrice}
+                      />
+                    }
+                  />
+                  <DataField
+                    label="Alt code"
+                    value={product.productAltCode || "—"}
+                    className="col-span-2"
+                  />
                 </>
               }
               actions={
@@ -270,13 +375,19 @@ function ProductsContent() {
                 <thead className="bg-neutral-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Part number
+                      Product code
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Name
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Price
+                      Type
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      List price
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Cost
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Status
@@ -290,11 +401,25 @@ function ProductsContent() {
                   {visible.map((product) => (
                     <tr key={product._id} className="hover:bg-neutral-50">
                       <td className="px-6 py-4 font-medium text-brand-dark">
-                        {product.partNumber}
+                        <div>{productCodeOf(product)}</div>
+                        {product.productAltCode ? (
+                          <div className="text-xs font-normal text-neutral-400">
+                            {product.productAltCode}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="px-6 py-4 text-neutral-600">{product.name}</td>
+                      <td className="px-6 py-4">
+                        <KindBadge kind={product.kind === "labor" ? "labor" : "part"} />
+                      </td>
                       <td className="px-6 py-4 text-neutral-700">
-                        {formatMoney(product.unitPrice)}
+                        <PriceDisplay
+                          listPrice={listPriceOf(product)}
+                          strikeThroughPrice={product.strikeThroughPrice}
+                        />
+                      </td>
+                      <td className="px-6 py-4 text-neutral-700">
+                        {formatMoney(product.cost ?? 0)}
                       </td>
                       <td className="px-6 py-4">
                         <span
@@ -343,45 +468,109 @@ function ProductsContent() {
 
       {modalOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center">
-          <div className="max-h-[90vh] w-full overflow-y-auto rounded-t-xl bg-white p-6 shadow-xl sm:max-w-lg sm:rounded-xl">
+          <div className="max-h-[90vh] w-full overflow-y-auto rounded-t-xl bg-white p-6 shadow-xl sm:max-w-xl sm:rounded-xl">
             <h2 className="text-lg font-semibold text-brand-dark">
               {editing ? "Edit product" : "Add product"}
             </h2>
-            <div className="mt-4 space-y-3">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="block text-sm">
-                <span className="mb-1 block text-neutral-600">Part number</span>
+                <span className="mb-1 block text-neutral-600">Product code</span>
                 <input
-                  value={form.partNumber}
+                  value={form.productCode}
                   onChange={(e) =>
-                    setForm((prev) => ({ ...prev, partNumber: e.target.value }))
+                    setForm((prev) => ({ ...prev, productCode: e.target.value }))
                   }
-                  className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue"
+                  className={inputClass}
                 />
               </label>
               <label className="block text-sm">
+                <span className="mb-1 block text-neutral-600">Product number</span>
+                <input
+                  value={form.productNumber}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, productNumber: e.target.value }))
+                  }
+                  className={inputClass}
+                />
+              </label>
+              <label className="block text-sm sm:col-span-2">
+                <span className="mb-1 block text-neutral-600">Product alt code</span>
+                <input
+                  value={previewAltCode}
+                  readOnly
+                  className={`${inputClass} bg-neutral-50 text-neutral-500`}
+                />
+              </label>
+              <label className="block text-sm sm:col-span-2">
                 <span className="mb-1 block text-neutral-600">Name</span>
                 <input
                   value={form.name}
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, name: e.target.value }))
                   }
-                  className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue"
+                  className={inputClass}
                 />
               </label>
               <label className="block text-sm">
-                <span className="mb-1 block text-neutral-600">Unit price</span>
+                <span className="mb-1 block text-neutral-600">Type</span>
+                <select
+                  value={form.kind}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      kind: e.target.value as ProductKind,
+                    }))
+                  }
+                  className={inputClass}
+                >
+                  <option value="part">Part</option>
+                  <option value="labor">Labor</option>
+                </select>
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block text-neutral-600">List price</span>
                 <input
                   type="number"
                   min={0}
                   step="0.01"
-                  value={form.unitPrice}
+                  value={form.listPrice}
                   onChange={(e) =>
-                    setForm((prev) => ({ ...prev, unitPrice: e.target.value }))
+                    setForm((prev) => ({ ...prev, listPrice: e.target.value }))
                   }
-                  className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue"
+                  className={inputClass}
                 />
               </label>
               <label className="block text-sm">
+                <span className="mb-1 block text-neutral-600">Cost</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.cost}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, cost: e.target.value }))
+                  }
+                  className={inputClass}
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block text-neutral-600">Strike-through price</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.strikeThroughPrice}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      strikeThroughPrice: e.target.value,
+                    }))
+                  }
+                  placeholder="Optional MSRP"
+                  className={inputClass}
+                />
+              </label>
+              <label className="block text-sm sm:col-span-2">
                 <span className="mb-1 block text-neutral-600">Notes</span>
                 <textarea
                   value={form.notes}
@@ -389,10 +578,10 @@ function ProductsContent() {
                     setForm((prev) => ({ ...prev, notes: e.target.value }))
                   }
                   rows={3}
-                  className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue"
+                  className={inputClass}
                 />
               </label>
-              <label className="inline-flex items-center gap-2 text-sm text-neutral-600">
+              <label className="inline-flex items-center gap-2 text-sm text-neutral-600 sm:col-span-2">
                 <input
                   type="checkbox"
                   checked={form.active}
@@ -413,7 +602,7 @@ function ProductsContent() {
               </button>
               <button
                 type="button"
-                disabled={saving || !form.partNumber.trim() || !form.name.trim()}
+                disabled={saving || !form.productCode.trim() || !form.name.trim()}
                 onClick={() => void handleSave()}
                 className="rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
               >

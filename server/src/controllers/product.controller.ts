@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { Product, IProduct } from "../models/mongo/Product";
+import { Product, IProduct, ProductKind } from "../models/mongo/Product";
 import {
   createProductSchema,
   updateProductSchema,
@@ -9,6 +9,11 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
+import { buildProductAltCode } from "../utils/productCodes";
+
+function asProductKind(value: unknown): ProductKind {
+  return value === "labor" ? "labor" : "part";
+}
 
 function toPublic(doc: IProduct | Record<string, unknown>) {
   const d =
@@ -16,16 +21,34 @@ function toPublic(doc: IProduct | Record<string, unknown>) {
       ? (doc as IProduct).toObject()
       : (doc as Record<string, unknown>);
 
+  const productCode = String(d.productCode || d.partNumber || "").trim();
+  const listPrice = Number(d.listPrice ?? d.unitPrice ?? 0);
+
   return {
     _id: d._id,
-    partNumber: d.partNumber,
+    productCode,
+    productNumber: d.productNumber ?? "",
+    productAltCode: d.productAltCode || buildProductAltCode(productCode),
+    partNumber: d.partNumber || productCode,
     name: d.name,
-    unitPrice: d.unitPrice ?? 0,
+    kind: asProductKind(d.kind),
+    listPrice,
+    unitPrice: Number(d.unitPrice ?? listPrice),
+    cost: Number(d.cost ?? 0),
+    strikeThroughPrice: Number(d.strikeThroughPrice ?? 0),
     active: d.active !== false,
     notes: d.notes ?? "",
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
   };
+}
+
+async function findCodeClash(code: string, excludeId?: string) {
+  const filter: Record<string, unknown> = {
+    $or: [{ productCode: code }, { partNumber: code }],
+  };
+  if (excludeId) filter._id = { $ne: excludeId };
+  return Product.findOne(filter).lean();
 }
 
 export async function getProducts(
@@ -41,11 +64,17 @@ export async function getProducts(
     if (activeOnly) filter.active = true;
     if (search) {
       const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      filter.$or = [{ partNumber: re }, { name: re }];
+      filter.$or = [
+        { productCode: re },
+        { productNumber: re },
+        { productAltCode: re },
+        { partNumber: re },
+        { name: re },
+      ];
     }
 
     const products = await Product.find(filter)
-      .sort({ partNumber: 1 })
+      .sort({ productCode: 1, partNumber: 1 })
       .lean();
     res.json({ products: products.map(toPublic) });
   } catch (err) {
@@ -86,18 +115,25 @@ export async function createProduct(
     }
 
     const data = parsed.data;
-    const existing = await Product.findOne({
-      partNumber: data.partNumber,
-    }).lean();
+    const productCode = (data.productCode || data.partNumber || "").trim();
+    const listPrice = data.listPrice ?? data.unitPrice ?? 0;
+    const existing = await findCodeClash(productCode);
     if (existing) {
-      res.status(409).json({ message: "A product with that part number already exists" });
+      res.status(409).json({ message: "A product with that product code already exists" });
       return;
     }
 
     const product = await Product.create({
-      partNumber: data.partNumber,
+      productCode,
+      productNumber: data.productNumber ?? "",
+      productAltCode: buildProductAltCode(productCode),
+      partNumber: productCode,
       name: data.name,
-      unitPrice: data.unitPrice ?? 0,
+      kind: data.kind ?? "part",
+      listPrice,
+      unitPrice: listPrice,
+      cost: data.cost ?? 0,
+      strikeThroughPrice: data.strikeThroughPrice ?? 0,
       active: data.active ?? true,
       notes: data.notes ?? "",
     });
@@ -106,8 +142,8 @@ export async function createProduct(
       entityType: "product",
       action: "created",
       entityId: String(product._id),
-      summary: `Product ${product.partNumber} created`,
-      metadata: { partNumber: product.partNumber },
+      summary: `Product ${product.productCode} created`,
+      metadata: { productCode: product.productCode, partNumber: product.partNumber },
       ...actorFromRequest(req.user),
     });
 
@@ -139,19 +175,33 @@ export async function updateProduct(
     }
 
     const data = parsed.data;
-    if (data.partNumber && data.partNumber !== product.partNumber) {
-      const clash = await Product.findOne({
-        partNumber: data.partNumber,
-        _id: { $ne: product._id },
-      }).lean();
+    const nextCode = (data.productCode || data.partNumber)?.trim();
+    if (nextCode && nextCode !== (product.productCode || product.partNumber)) {
+      const clash = await findCodeClash(nextCode, String(product._id));
       if (clash) {
-        res.status(409).json({ message: "A product with that part number already exists" });
+        res.status(409).json({ message: "A product with that product code already exists" });
         return;
       }
-      product.partNumber = data.partNumber;
+      product.productCode = nextCode;
+      product.partNumber = nextCode;
+      product.productAltCode = buildProductAltCode(nextCode);
+    } else if (product.productCode) {
+      product.partNumber = product.productCode;
+      product.productAltCode = buildProductAltCode(product.productCode);
     }
+
+    if (data.productNumber !== undefined) product.productNumber = data.productNumber;
     if (data.name !== undefined) product.name = data.name;
-    if (data.unitPrice !== undefined) product.unitPrice = data.unitPrice;
+    if (data.kind !== undefined) product.kind = data.kind;
+    if (data.listPrice !== undefined || data.unitPrice !== undefined) {
+      const listPrice = data.listPrice ?? data.unitPrice ?? product.listPrice;
+      product.listPrice = listPrice;
+      product.unitPrice = listPrice;
+    }
+    if (data.cost !== undefined) product.cost = data.cost;
+    if (data.strikeThroughPrice !== undefined) {
+      product.strikeThroughPrice = data.strikeThroughPrice;
+    }
     if (data.active !== undefined) product.active = data.active;
     if (data.notes !== undefined) product.notes = data.notes;
 
@@ -161,8 +211,11 @@ export async function updateProduct(
       entityType: "product",
       action: "updated",
       entityId: String(product._id),
-      summary: `Product ${product.partNumber} updated`,
-      metadata: { partNumber: product.partNumber },
+      summary: `Product ${product.productCode || product.partNumber} updated`,
+      metadata: {
+        productCode: product.productCode,
+        partNumber: product.partNumber,
+      },
       ...actorFromRequest(req.user),
     });
 
@@ -184,12 +237,13 @@ export async function deleteProduct(
       return;
     }
 
+    const code = product.productCode || product.partNumber;
     logNotificationAsync({
       entityType: "product",
       action: "deleted",
       entityId: String(product._id),
-      summary: `Product ${product.partNumber} deleted`,
-      metadata: { partNumber: product.partNumber },
+      summary: `Product ${code} deleted`,
+      metadata: { productCode: code, partNumber: product.partNumber },
       ...actorFromRequest(req.user),
     });
 

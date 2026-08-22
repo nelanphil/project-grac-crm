@@ -1,16 +1,22 @@
 export const LABOR_INCLUDED_MINUTES = 30;
 export const LABOR_BLOCK_MINUTES = 30;
 export const LABOR_BLOCK_RATE = 75;
-export const PART_ROW_COUNT = 10;
 
 export type TicketVariant = "work-order" | "estimate";
+export type TicketLineType = "product" | "note";
+export type TicketProductKind = "part" | "labor";
 
 export interface TicketPartRow {
+  id: string;
+  lineType: TicketLineType;
+  kind: TicketProductKind;
   productRef: string;
   partNumber: string;
   description: string;
   quantity: string;
+  listPrice: string;
   unitPrice: string;
+  priceOverridden: boolean;
 }
 
 export interface TicketFormState {
@@ -48,13 +54,40 @@ export interface TicketFormState {
   status: "draft" | "sent" | "accepted" | "declined" | "converted";
 }
 
+export function newRowId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `row-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function emptyPartRow(): TicketPartRow {
   return {
+    id: newRowId(),
+    lineType: "product",
+    kind: "part",
     productRef: "",
     partNumber: "",
     description: "",
     quantity: "",
+    listPrice: "",
     unitPrice: "",
+    priceOverridden: false,
+  };
+}
+
+export function emptyNoteRow(): TicketPartRow {
+  return {
+    id: newRowId(),
+    lineType: "note",
+    kind: "part",
+    productRef: "",
+    partNumber: "",
+    description: "",
+    quantity: "",
+    listPrice: "",
+    unitPrice: "",
+    priceOverridden: false,
   };
 }
 
@@ -85,7 +118,7 @@ export function emptyTicketForm(): TicketFormState {
     totalLabor: "",
     descPerform: "",
     descPerformed: "",
-    parts: Array.from({ length: PART_ROW_COUNT }, emptyPartRow),
+    parts: [],
     miscExp: "",
     shipping: "",
     signatureDataUrl: "",
@@ -108,15 +141,29 @@ export function defaultLaborTotal(laborHours: number): number {
 }
 
 export function partAmount(row: TicketPartRow): number {
+  if (row.lineType === "note") return 0;
   return Math.round(parseMoney(row.quantity) * parseMoney(row.unitPrice) * 100) / 100;
 }
 
+export function hasLaborProductLines(parts: TicketPartRow[]): boolean {
+  return parts.some((row) => row.lineType !== "note" && row.kind === "labor");
+}
+
 export function ticketTotals(form: TicketFormState) {
-  const totalParts = form.parts.reduce((sum, row) => sum + partAmount(row), 0);
+  const totalParts = form.parts.reduce((sum, row) => {
+    if (row.lineType === "note" || row.kind === "labor") return sum;
+    return sum + partAmount(row);
+  }, 0);
+  const lineLabor = form.parts.reduce((sum, row) => {
+    if (row.lineType === "note" || row.kind !== "labor") return sum;
+    return sum + partAmount(row);
+  }, 0);
   const laborHours = parseMoney(form.laborHours);
-  const totalLabor = form.laborOverridden
-    ? parseMoney(form.totalLabor)
-    : defaultLaborTotal(laborHours);
+  const totalLabor = hasLaborProductLines(form.parts)
+    ? lineLabor
+    : form.laborOverridden
+      ? parseMoney(form.totalLabor)
+      : defaultLaborTotal(laborHours);
   const miscExp = parseMoney(form.miscExp);
   const shipping = parseMoney(form.shipping);
   const subtotal = Math.round((totalParts + totalLabor + miscExp) * 100) / 100;
@@ -139,25 +186,45 @@ export function ticketToPayload(form: TicketFormState) {
     runHours: parseMoney(form.runHours),
     laborHours: totals.laborHours,
     totalLabor: totals.totalLabor,
-    laborOverridden: form.laborOverridden,
+    laborOverridden: form.laborOverridden && !hasLaborProductLines(form.parts),
     miscExp: totals.miscExp,
     shipping: totals.shipping,
     parts: form.parts
-      .filter(
-        (row) =>
-          row.partNumber.trim() ||
-          row.description.trim() ||
-          parseMoney(row.quantity) > 0 ||
-          parseMoney(row.unitPrice) > 0,
+      .filter((row) =>
+        row.lineType === "note"
+          ? Boolean(row.description.trim())
+          : row.partNumber.trim() ||
+            row.description.trim() ||
+            parseMoney(row.quantity) > 0 ||
+            parseMoney(row.unitPrice) > 0,
       )
-      .map((row) => ({
-        productRef: row.productRef || null,
-        partNumber: row.partNumber.trim(),
-        description: row.description.trim(),
-        quantity: parseMoney(row.quantity),
-        unitPrice: parseMoney(row.unitPrice),
-        amount: partAmount(row),
-      })),
+      .map((row) =>
+        row.lineType === "note"
+          ? {
+              productRef: null,
+              lineType: "note" as const,
+              kind: "part" as const,
+              partNumber: "",
+              description: row.description.trim(),
+              quantity: 0,
+              unitPrice: 0,
+              listPrice: 0,
+              priceOverridden: false,
+              amount: 0,
+            }
+          : {
+              productRef: row.productRef || null,
+              lineType: "product" as const,
+              kind: row.kind,
+              partNumber: row.partNumber.trim(),
+              description: row.description.trim(),
+              quantity: parseMoney(row.quantity),
+              unitPrice: parseMoney(row.unitPrice),
+              listPrice: parseMoney(row.listPrice),
+              priceOverridden: row.priceOverridden,
+              amount: partAmount(row),
+            },
+      ),
     customerName: form.customerName,
     customerAddress: form.customerAddress,
     customerCity: form.customerCity,
@@ -203,10 +270,14 @@ export function ticketFromRecord(record: {
   descPerformed?: string | null;
   parts?: Array<{
     productRef?: string | null;
+    lineType?: TicketLineType;
+    kind?: TicketProductKind;
     partNumber?: string;
     description?: string;
     quantity?: number;
     unitPrice?: number;
+    listPrice?: number;
+    priceOverridden?: boolean;
   }>;
   miscExp?: number | null;
   shipping?: number | null;
@@ -217,13 +288,17 @@ export function ticketFromRecord(record: {
 }): TicketFormState {
   const base = emptyTicketForm();
   const parts = (record.parts ?? []).map((part) => ({
+    id: newRowId(),
+    lineType: part.lineType === "note" ? ("note" as const) : ("product" as const),
+    kind: part.kind === "labor" ? ("labor" as const) : ("part" as const),
     productRef: part.productRef ?? "",
     partNumber: part.partNumber ?? "",
     description: part.description ?? "",
     quantity: part.quantity ? String(part.quantity) : "",
+    listPrice: part.listPrice ? String(part.listPrice) : part.unitPrice ? String(part.unitPrice) : "",
     unitPrice: part.unitPrice ? String(part.unitPrice) : "",
+    priceOverridden: Boolean(part.priceOverridden),
   }));
-  while (parts.length < PART_ROW_COUNT) parts.push(emptyPartRow());
   return {
     ...base,
     number: record.number ?? "",

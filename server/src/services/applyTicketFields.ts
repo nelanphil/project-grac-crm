@@ -54,10 +54,14 @@ function asObjectId(value: string | null | undefined): Types.ObjectId | null {
 function partsForDoc(parts: NormalizedTicketPart[]) {
   return parts.map((part) => ({
     productRef: asObjectId(part.productRef),
+    lineType: part.lineType,
+    kind: part.kind,
     partNumber: part.partNumber,
     description: part.description,
     quantity: part.quantity,
     unitPrice: part.unitPrice,
+    listPrice: part.listPrice,
+    priceOverridden: part.priceOverridden,
     amount: part.amount,
   }));
 }
@@ -164,7 +168,12 @@ export function applyTicketMoney(
   if (body.miscExp !== undefined) target.miscExp = body.miscExp;
   if (body.shipping !== undefined) target.shipping = body.shipping;
 
-  const parts = (target.parts as Array<{ amount: number }>) ?? [];
+  const parts =
+    (target.parts as Array<{
+      amount: number;
+      lineType?: string;
+      kind?: string;
+    }>) ?? [];
   const totals = computeTicketTotals({
     parts,
     laborHours: target.laborHours,
