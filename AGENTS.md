@@ -26,7 +26,10 @@ only cover non-obvious caveats for running things in this environment.
 
 - The API loads a repo-root `.env` (gitignored). All values have working dev defaults in
   `server/src/config/env.ts` (Mongo URI, `JWT_SECRET`, `CREDENTIALS_ENCRYPTION_KEY`), so the
-  server runs without any `.env`. `client/.env.local` sets `NEXT_PUBLIC_API_URL`
+  server runs without any `.env` when `NODE_ENV` is not `production`. In production the API
+  fails closed: boot throws if `JWT_SECRET` or `CREDENTIALS_ENCRYPTION_KEY` is missing, empty,
+  or still a known local-dev default — set both on the Render API web service
+  (`grac-crm-server`), not the static client. `client/.env.local` sets `NEXT_PUBLIC_API_URL`
   (defaults to `http://localhost:4009` if absent). The `.env.example` files referenced in
   `README.md` are not committed.
 - Square **OAuth** (Connect with Square in Control Panel) needs platform app credentials
