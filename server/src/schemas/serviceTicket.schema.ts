@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ticketContractDiscountSchema } from "./contractTemplate.schema";
 
 export const ticketPartSchema = z.object({
   productRef: z.string().trim().nullable().optional(),
@@ -41,6 +42,11 @@ export const ticketMoneySchema = z.object({
 export const ticketSignatureSchema = z.object({
   signatureDataUrl: z.string().max(400000).optional().nullable(),
   signedByName: z.string().trim().max(120).optional(),
+});
+
+export const ticketContractSchema = z.object({
+  contractRef: z.union([z.string().trim(), z.null()]).optional(),
+  contractDiscount: ticketContractDiscountSchema.nullable().optional(),
 });
 
 export type TicketPartInput = z.infer<typeof ticketPartSchema>;

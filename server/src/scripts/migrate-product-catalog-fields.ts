@@ -9,7 +9,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
 import { connectMongoDB, disconnectMongoDB } from "../config/mongodb";
 import { Product } from "../models/mongo/Product";
-import { buildProductAltCode } from "../utils/productCodes";
+import { buildProductAltCode, normalizeProductCode } from "../utils/productCodes";
 
 async function main(): Promise<void> {
   await connectMongoDB();
@@ -20,7 +20,9 @@ async function main(): Promise<void> {
   let updated = 0;
 
   for (const product of products) {
-    const productCode = (product.productCode || product.partNumber || "").trim();
+    const productCode = normalizeProductCode(
+      product.productCode || product.partNumber || "",
+    );
     if (!productCode) continue;
 
     const listPrice = Number(product.listPrice ?? product.unitPrice ?? 0);

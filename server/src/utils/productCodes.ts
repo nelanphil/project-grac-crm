@@ -1,6 +1,10 @@
+export function normalizeProductCode(productCode: string): string {
+  return productCode.trim().toUpperCase();
+}
+
 export function buildProductAltCode(productCode: string): string {
-  const code = productCode.trim();
+  const code = normalizeProductCode(productCode);
   if (!code) return "";
-  if (code.toUpperCase().startsWith("GMOF")) return code;
+  if (code.startsWith("GMOF")) return code;
   return `GMOF${code}`;
 }

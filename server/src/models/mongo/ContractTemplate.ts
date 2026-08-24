@@ -1,4 +1,6 @@
 import mongoose, { Schema, Document } from "mongoose";
+import { ProductDiscounts } from "../../utils/productDiscounts";
+import { productDiscountsSchema } from "./productDiscounts";
 
 export interface IContractTemplate extends Document {
   label: string;
@@ -6,6 +8,7 @@ export interface IContractTemplate extends Document {
   body: string;
   cost: number;
   badgeIcon: string;
+  productDiscounts: ProductDiscounts;
   deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -24,6 +27,7 @@ const contractTemplateSchema = new Schema<IContractTemplate>(
     body: { type: String, default: "" },
     cost: { type: Number, default: 0, min: 0 },
     badgeIcon: { type: String, default: "scroll-text", trim: true },
+    productDiscounts: { type: productDiscountsSchema, default: () => ({}) },
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true },

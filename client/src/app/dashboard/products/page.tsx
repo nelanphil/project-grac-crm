@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Package, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
@@ -24,14 +24,27 @@ function formatMoney(amount: number): string {
 }
 
 function buildProductAltCode(productCode: string): string {
-  const code = productCode.trim();
+  const code = productCode.trim().toUpperCase();
   if (!code) return "";
-  if (code.toUpperCase().startsWith("GMOF")) return code;
+  if (code.startsWith("GMOF")) return code;
   return `GMOF${code}`;
 }
 
+function sanitizeMoneyInput(raw: string): string {
+  const cleaned = raw.replace(/[^\d.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot === -1) return cleaned;
+  const whole = cleaned.slice(0, firstDot);
+  const fraction = cleaned.slice(firstDot + 1).replace(/\./g, "").slice(0, 2);
+  return `${whole}.${fraction}`;
+}
+
+function moneyString(amount: number): string {
+  return Number.isFinite(amount) ? amount.toFixed(2) : "";
+}
+
 function productCodeOf(product: ProductItem): string {
-  return product.productCode || product.partNumber || "";
+  return (product.productCode || product.partNumber || "").toUpperCase();
 }
 
 function listPriceOf(product: ProductItem): number {
@@ -89,8 +102,8 @@ const EMPTY_FORM: ProductFormState = {
   productNumber: "",
   name: "",
   kind: "part",
-  listPrice: "0",
-  cost: "0",
+  listPrice: "0.00",
+  cost: "0.00",
   strikeThroughPrice: "",
   active: true,
   notes: "",
@@ -98,6 +111,56 @@ const EMPTY_FORM: ProductFormState = {
 
 const inputClass =
   "w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue";
+
+function FieldLabel({
+  children,
+  required,
+}: {
+  children: ReactNode;
+  required?: boolean;
+}) {
+  return (
+    <span className="mb-1 block text-neutral-600">
+      {children}{" "}
+      {required ? (
+        <span className="font-medium text-red-600">*</span>
+      ) : (
+        <span className="font-normal text-neutral-400">(optional)</span>
+      )}
+    </span>
+  );
+}
+
+function MoneyInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-sm text-neutral-500">
+        $
+      </span>
+      <input
+        inputMode="decimal"
+        autoComplete="off"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(sanitizeMoneyInput(e.target.value))}
+        onBlur={() => {
+          if (value.trim() === "") return;
+          const n = Number(value);
+          if (!Number.isNaN(n)) onChange(n.toFixed(2));
+        }}
+        className={`${inputClass} pl-7`}
+      />
+    </div>
+  );
+}
 
 export default function ProductsPage() {
   return (
@@ -172,14 +235,16 @@ function ProductsContent() {
   function openEdit(product: ProductItem) {
     setEditing(product);
     setForm({
-      productCode: productCodeOf(product),
+      productCode: productCodeOf(product).toUpperCase(),
       productNumber: product.productNumber ?? "",
       name: product.name,
       kind: product.kind === "labor" ? "labor" : "part",
-      listPrice: String(listPriceOf(product)),
-      cost: String(product.cost ?? 0),
+      listPrice: moneyString(listPriceOf(product)),
+      cost: moneyString(product.cost ?? 0),
       strikeThroughPrice:
-        product.strikeThroughPrice > 0 ? String(product.strikeThroughPrice) : "",
+        product.strikeThroughPrice > 0
+          ? moneyString(product.strikeThroughPrice)
+          : "",
       active: product.active,
       notes: product.notes ?? "",
     });
@@ -192,7 +257,7 @@ function ProductsContent() {
     setError(null);
     try {
       const payload = {
-        productCode: form.productCode.trim(),
+        productCode: form.productCode.trim().toUpperCase(),
         productNumber: form.productNumber.trim(),
         name: form.name.trim(),
         kind: form.kind,
@@ -337,7 +402,7 @@ function ProductsContent() {
                   />
                   <DataField
                     label="Alt code"
-                    value={product.productAltCode || "—"}
+                    value={(product.productAltCode || "—").toUpperCase()}
                     className="col-span-2"
                   />
                 </>
@@ -404,7 +469,7 @@ function ProductsContent() {
                         <div>{productCodeOf(product)}</div>
                         {product.productAltCode ? (
                           <div className="text-xs font-normal text-neutral-400">
-                            {product.productAltCode}
+                            {product.productAltCode.toUpperCase()}
                           </div>
                         ) : null}
                       </td>
@@ -472,19 +537,27 @@ function ProductsContent() {
             <h2 className="text-lg font-semibold text-brand-dark">
               {editing ? "Edit product" : "Add product"}
             </h2>
+            <p className="mt-1 text-xs text-neutral-500">
+              <span className="font-medium text-red-600">*</span> Required
+            </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="block text-sm">
-                <span className="mb-1 block text-neutral-600">Product code</span>
+                <FieldLabel required>Product code</FieldLabel>
                 <input
                   value={form.productCode}
+                  autoCapitalize="characters"
+                  spellCheck={false}
                   onChange={(e) =>
-                    setForm((prev) => ({ ...prev, productCode: e.target.value }))
+                    setForm((prev) => ({
+                      ...prev,
+                      productCode: e.target.value.toUpperCase(),
+                    }))
                   }
-                  className={inputClass}
+                  className={`${inputClass} uppercase`}
                 />
               </label>
               <label className="block text-sm">
-                <span className="mb-1 block text-neutral-600">Product number</span>
+                <FieldLabel>Product number</FieldLabel>
                 <input
                   value={form.productNumber}
                   onChange={(e) =>
@@ -494,15 +567,15 @@ function ProductsContent() {
                 />
               </label>
               <label className="block text-sm sm:col-span-2">
-                <span className="mb-1 block text-neutral-600">Product alt code</span>
+                <FieldLabel>Product alt code</FieldLabel>
                 <input
                   value={previewAltCode}
                   readOnly
-                  className={`${inputClass} bg-neutral-50 text-neutral-500`}
+                  className={`${inputClass} bg-neutral-50 uppercase text-neutral-500`}
                 />
               </label>
               <label className="block text-sm sm:col-span-2">
-                <span className="mb-1 block text-neutral-600">Name</span>
+                <FieldLabel required>Name</FieldLabel>
                 <input
                   value={form.name}
                   onChange={(e) =>
@@ -512,7 +585,7 @@ function ProductsContent() {
                 />
               </label>
               <label className="block text-sm">
-                <span className="mb-1 block text-neutral-600">Type</span>
+                <FieldLabel required>Type</FieldLabel>
                 <select
                   value={form.kind}
                   onChange={(e) =>
@@ -528,50 +601,33 @@ function ProductsContent() {
                 </select>
               </label>
               <label className="block text-sm">
-                <span className="mb-1 block text-neutral-600">List price</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
+                <FieldLabel required>List price</FieldLabel>
+                <MoneyInput
                   value={form.listPrice}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, listPrice: e.target.value }))
+                  onChange={(listPrice) =>
+                    setForm((prev) => ({ ...prev, listPrice }))
                   }
-                  className={inputClass}
                 />
               </label>
               <label className="block text-sm">
-                <span className="mb-1 block text-neutral-600">Cost</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
+                <FieldLabel>Cost</FieldLabel>
+                <MoneyInput
                   value={form.cost}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, cost: e.target.value }))
-                  }
-                  className={inputClass}
+                  onChange={(cost) => setForm((prev) => ({ ...prev, cost }))}
                 />
               </label>
               <label className="block text-sm">
-                <span className="mb-1 block text-neutral-600">Strike-through price</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
+                <FieldLabel>Strike-through price</FieldLabel>
+                <MoneyInput
                   value={form.strikeThroughPrice}
-                  onChange={(e) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      strikeThroughPrice: e.target.value,
-                    }))
+                  onChange={(strikeThroughPrice) =>
+                    setForm((prev) => ({ ...prev, strikeThroughPrice }))
                   }
-                  placeholder="Optional MSRP"
-                  className={inputClass}
+                  placeholder="MSRP"
                 />
               </label>
               <label className="block text-sm sm:col-span-2">
-                <span className="mb-1 block text-neutral-600">Notes</span>
+                <FieldLabel>Description</FieldLabel>
                 <textarea
                   value={form.notes}
                   onChange={(e) =>
@@ -602,7 +658,13 @@ function ProductsContent() {
               </button>
               <button
                 type="button"
-                disabled={saving || !form.productCode.trim() || !form.name.trim()}
+                disabled={
+                  saving ||
+                  !form.productCode.trim() ||
+                  !form.name.trim() ||
+                  form.listPrice.trim() === "" ||
+                  Number.isNaN(Number(form.listPrice))
+                }
                 onClick={() => void handleSave()}
                 className="rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
               >

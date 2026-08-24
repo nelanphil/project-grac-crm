@@ -205,6 +205,7 @@ function EstimateDetailContent() {
             total: estimate.total,
             signatureDataUrl: estimate.signatureDataUrl,
             signedByName: estimate.signedByName,
+            contractDiscount: estimate.contractDiscount,
           }}
         />
       )}

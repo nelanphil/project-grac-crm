@@ -26,6 +26,12 @@ import {
 import { inferContractType } from "../utils/contractTypes";
 import { applyContractRenewal } from "../services/invoice.service";
 import { normalizePhoneDigits } from "../utils/customerSites";
+import {
+  normalizeKindDiscount,
+  normalizeProductDiscounts,
+  ProductDiscounts,
+} from "../utils/productDiscounts";
+import { contractProductDiscountsSchema } from "../schemas/contractTemplate.schema";
 
 const notMergedFilter: {
   $or: Array<{ mergedIntoRef: null } | { mergedIntoRef: { $exists: false } }>;
@@ -296,7 +302,7 @@ async function enrichWithTemplate(
   const templates = await ContractTemplate.find({
     _id: { $in: templateIds },
   })
-    .select("_id label slug badgeIcon cost deletedAt")
+    .select("_id label slug badgeIcon cost productDiscounts deletedAt")
     .lean();
 
   const templateById = new Map(
@@ -308,6 +314,9 @@ async function enrichWithTemplate(
         slug: t.slug,
         badgeIcon: t.badgeIcon,
         cost: t.cost,
+        productDiscounts: normalizeProductDiscounts(
+          t.productDiscounts as ProductDiscounts | undefined,
+        ),
         deletedAt: t.deletedAt ?? null,
       },
     ]),
@@ -333,6 +342,14 @@ function enrichWithStanding(
       ...c,
       standing,
       inGoodStanding,
+      productDiscounts: {
+        override: Boolean(
+          (c.productDiscounts as { override?: boolean } | undefined)?.override,
+        ),
+        ...normalizeProductDiscounts(
+          c.productDiscounts as ProductDiscounts | undefined,
+        ),
+      },
     };
   });
 }
@@ -618,6 +635,7 @@ export async function updateContract(
       templateId: rawTemplateId,
       addressRef: rawAddressRef,
       equipmentRef: rawEquipmentRef,
+      productDiscounts: rawProductDiscounts,
     } = req.body;
 
     if (
@@ -744,6 +762,24 @@ export async function updateContract(
         nextContractDate,
         nextDuration,
       );
+    }
+
+    if (rawProductDiscounts !== undefined) {
+      const parsedDiscounts =
+        contractProductDiscountsSchema.safeParse(rawProductDiscounts);
+      if (!parsedDiscounts.success) {
+        res.status(400).json({
+          message: "Validation failed",
+          errors: parsedDiscounts.error.flatten().fieldErrors,
+        });
+        return;
+      }
+      const data = parsedDiscounts.data;
+      updates.productDiscounts = {
+        override: Boolean(data.override),
+        parts: normalizeKindDiscount(data.parts),
+        labor: normalizeKindDiscount(data.labor),
+      };
     }
 
     const contract = await Contract.findByIdAndUpdate(

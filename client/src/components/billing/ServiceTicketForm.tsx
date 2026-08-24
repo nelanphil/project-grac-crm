@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   DndContext,
   PointerSensor,
@@ -20,6 +21,7 @@ import {
   CustomerDetail,
   CustomerListItem,
   ProductItem,
+  getContractsForCustomer,
   getCustomer,
   getCustomers,
   getProducts,
@@ -27,10 +29,21 @@ import {
 import { COMPANY } from "@/lib/constants";
 import { formatCustomerRecordName } from "@/lib/formatName";
 import {
+  DEFAULT_PRODUCT_DISCOUNTS,
+  formatDiscountSummary,
+  hasAnyDiscount,
+  matchContractForTicket,
+  resolveEffectiveDiscounts,
+  ticketSiteKey,
+  discountedUnitPrice,
+  type ProductDiscounts,
+} from "@/lib/productDiscounts";
+import {
   SERVICE_TICKET_TERMS,
   TicketFormState,
   TicketPartRow,
   TicketVariant,
+  applyDiscountsToParts,
   emptyNoteRow,
   emptyPartRow,
   emptyTicketForm,
@@ -39,7 +52,6 @@ import {
   ticketTotals,
 } from "@/lib/service-ticket";
 import { useAuthStore } from "@/store/useAuthStore";
-import SignaturePad from "@/components/billing/SignaturePad";
 
 function Field({
   label,
@@ -86,12 +98,130 @@ function patchRow(
   return parts.map((row) => (row.id === id ? { ...row, ...updates } : row));
 }
 
+function ProductSuggestMenu({
+  anchor,
+  products,
+  discounts,
+  onSelect,
+  onClose,
+}: {
+  anchor: HTMLElement | null;
+  products: ProductItem[];
+  discounts: ProductDiscounts;
+  onSelect: (product: ProductItem) => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLUListElement>(null);
+  const [coords, setCoords] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!anchor) return;
+    function update() {
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const gutter = 8;
+      const spaceBelow = window.innerHeight - rect.bottom - gutter;
+      const spaceAbove = rect.top - gutter;
+      const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
+      const maxHeight = Math.min(256, Math.max(openUp ? spaceAbove : spaceBelow, 120));
+      setCoords({
+        top: openUp ? Math.max(gutter, rect.top - maxHeight - 4) : rect.bottom + 4,
+        left: rect.left,
+        width: Math.max(rect.width, 240),
+        maxHeight,
+      });
+    }
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [anchor, products.length]);
+
+  useEffect(() => {
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (anchor?.contains(target) || menuRef.current?.contains(target)) return;
+      onClose();
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [anchor, onClose]);
+
+  if (!coords || products.length === 0) return null;
+
+  return createPortal(
+    <ul
+      ref={menuRef}
+      style={{
+        position: "fixed",
+        top: coords.top,
+        left: coords.left,
+        width: coords.width,
+        maxHeight: coords.maxHeight,
+        zIndex: 80,
+      }}
+      className="overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg"
+    >
+      {products.map((product) => {
+        const listPrice = catalogListPrice(product);
+        const kind = product.kind === "labor" ? "labor" : "part";
+        const unitPrice = discountedUnitPrice(listPrice, kind, discounts);
+        const strike = product.strikeThroughPrice > 0;
+        return (
+          <li key={product._id}>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onSelect(product)}
+              className="w-full px-3 py-2 text-left text-xs hover:bg-neutral-50"
+            >
+              <span className="font-medium">{catalogCode(product)}</span>
+              <span className="ml-2 rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600">
+                {kind === "labor" ? "Labor" : "Part"}
+              </span>
+              <span className="mt-0.5 block text-neutral-500">
+                {product.name} ·{" "}
+                {strike ? (
+                  <span className="mr-1 text-neutral-400 line-through">
+                    {formatMoney(product.strikeThroughPrice)}
+                  </span>
+                ) : null}
+                {unitPrice < listPrice ? (
+                  <>
+                    <span className="mr-1 text-neutral-400 line-through">
+                      {formatMoney(listPrice)}
+                    </span>
+                    {formatMoney(unitPrice)}
+                  </>
+                ) : (
+                  formatMoney(listPrice)
+                )}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>,
+    document.body,
+  );
+}
+
 function SortableLineRow({
   row,
   productResults,
   isActiveSearch,
   pendingFocus,
+  discounts,
   onFocusSearch,
+  onCloseSearch,
   onChange,
   onRemove,
 }: {
@@ -99,7 +229,9 @@ function SortableLineRow({
   productResults: ProductItem[];
   isActiveSearch: boolean;
   pendingFocus: boolean;
+  discounts: ProductDiscounts;
   onFocusSearch: () => void;
+  onCloseSearch: () => void;
   onChange: (updates: Partial<TicketPartRow>, searchQuery?: string) => void;
   onRemove: () => void;
 }) {
@@ -113,6 +245,7 @@ function SortableLineRow({
   } = useSortable({ id: row.id });
   const searchRef = useRef<HTMLInputElement>(null);
   const didFocus = useRef(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (pendingFocus && !didFocus.current) {
@@ -120,6 +253,10 @@ function SortableLineRow({
       searchRef.current?.focus();
     }
   }, [pendingFocus]);
+
+  useEffect(() => {
+    setMenuAnchor(isActiveSearch ? searchRef.current : null);
+  }, [isActiveSearch]);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -209,46 +346,26 @@ function SortableLineRow({
           </p>
         ) : null}
         {isActiveSearch && productResults.length > 0 ? (
-          <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
-            {productResults.map((product) => {
+          <ProductSuggestMenu
+            anchor={menuAnchor}
+            products={productResults}
+            discounts={discounts}
+            onClose={onCloseSearch}
+            onSelect={(product) => {
               const listPrice = catalogListPrice(product);
-              const strike = product.strikeThroughPrice > 0;
-              return (
-                <li key={product._id}>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onChange({
-                        productRef: product._id,
-                        partNumber: catalogCode(product),
-                        description: product.name,
-                        kind: product.kind === "labor" ? "labor" : "part",
-                        quantity: row.quantity || "1",
-                        listPrice: String(listPrice),
-                        unitPrice: String(listPrice),
-                        priceOverridden: false,
-                      })
-                    }
-                    className="w-full px-3 py-2 text-left text-xs hover:bg-neutral-50"
-                  >
-                    <span className="font-medium">{catalogCode(product)}</span>
-                    <span className="ml-2 rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600">
-                      {product.kind === "labor" ? "Labor" : "Part"}
-                    </span>
-                    <span className="mt-0.5 block text-neutral-500">
-                      {product.name} ·{" "}
-                      {strike ? (
-                        <span className="mr-1 text-neutral-400 line-through">
-                          {formatMoney(product.strikeThroughPrice)}
-                        </span>
-                      ) : null}
-                      {formatMoney(listPrice)}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+              const kind = product.kind === "labor" ? "labor" : "part";
+              onChange({
+                productRef: product._id,
+                partNumber: catalogCode(product),
+                description: product.name,
+                kind,
+                quantity: row.quantity || "1",
+                listPrice: String(listPrice),
+                unitPrice: String(discountedUnitPrice(listPrice, kind, discounts)),
+                priceOverridden: false,
+              });
+            }}
+          />
         ) : null}
       </td>
       <td className="w-28 px-2 py-1">
@@ -302,13 +419,19 @@ export default function ServiceTicketForm({
   const [productResults, setProductResults] = useState<ProductItem[]>([]);
   const [activePartId, setActivePartId] = useState<string | null>(null);
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+  const lastAppliedSiteKey = useRef(
+    ticketSiteKey(initial ?? emptyTicketForm()),
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
   useEffect(() => {
-    if (initial) setForm(initial);
+    if (initial) {
+      setForm(initial);
+      lastAppliedSiteKey.current = ticketSiteKey(initial);
+    }
   }, [initial]);
 
   useEffect(() => {
@@ -354,19 +477,92 @@ export default function ServiceTicketForm({
   useEffect(() => {
     if (!token || activePartId == null) return;
     const q = (productQuery[activePartId] ?? "").trim();
-    if (q.length < 1) {
-      setProductResults([]);
-      return;
-    }
     const t = setTimeout(() => {
-      getProducts(token, { search: q, active: true })
-        .then(({ products }) => setProductResults(products.slice(0, 8)))
+      getProducts(token, {
+        search: q || undefined,
+        active: true,
+      })
+        .then(({ products }) => setProductResults(products.slice(0, 12)))
         .catch(() => setProductResults([]));
-    }, 200);
+    }, q ? 200 : 0);
     return () => clearTimeout(t);
   }, [token, activePartId, productQuery]);
 
+  useEffect(() => {
+    if (!token || !form.customerId) {
+      const key = ticketSiteKey(form);
+      if (lastAppliedSiteKey.current === key) return;
+      lastAppliedSiteKey.current = key;
+      setForm((prev) => {
+        if (!prev.contractRef && !prev.contractDiscount) return prev;
+        return {
+          ...prev,
+          contractRef: "",
+          contractDiscount: null,
+          parts: applyDiscountsToParts(prev.parts, DEFAULT_PRODUCT_DISCOUNTS),
+        };
+      });
+      return;
+    }
+
+    const key = ticketSiteKey(form);
+    const unchanged = key === lastAppliedSiteKey.current;
+    lastAppliedSiteKey.current = key;
+
+    if (unchanged && form.contractDiscount) return;
+
+    let cancelled = false;
+    getContractsForCustomer(token, form.customerId)
+      .then(({ contracts }) => {
+        if (cancelled) return;
+        const match = matchContractForTicket(contracts, {
+          addressRef: form.addressRef,
+          equipmentRef: form.equipmentRef,
+        });
+        const discounts = match
+          ? resolveEffectiveDiscounts({
+              template: match.template?.productDiscounts,
+              contract: match.productDiscounts,
+            })
+          : DEFAULT_PRODUCT_DISCOUNTS;
+        const snapshot =
+          match && hasAnyDiscount(discounts)
+            ? {
+                label: match.template?.label || "Service contract",
+                ...discounts,
+              }
+            : null;
+        setForm((prev) => ({
+          ...prev,
+          contractRef: snapshot ? (match?._id ?? "") : "",
+          contractDiscount: snapshot,
+          parts: unchanged
+            ? prev.parts
+            : applyDiscountsToParts(prev.parts, discounts),
+        }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        if (!unchanged) {
+          setForm((prev) => ({
+            ...prev,
+            contractRef: "",
+            contractDiscount: null,
+          }));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, form.customerId, form.addressRef, form.equipmentRef]);
+
   const totals = useMemo(() => ticketTotals(form), [form]);
+  const discountRules = form.contractDiscount ?? DEFAULT_PRODUCT_DISCOUNTS;
+  const discountBanner = form.contractDiscount
+    ? formatDiscountSummary(form.contractDiscount, form.contractDiscount.label)
+    : null;
 
   function patch(partial: Partial<TicketFormState>) {
     setForm((prev) => ({ ...prev, ...partial }));
@@ -738,23 +934,17 @@ export default function ServiceTicketForm({
           )}
         </div>
 
-        <div className="mt-4">
-          <Field label="Description of work to be performed">
-            <textarea
-              rows={3}
-              value={form.descPerform}
-              onChange={(e) => patch({ descPerform: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-        </div>
-
         <div className="mt-5 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
           <div>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Parts & Labor
               </p>
+              {discountBanner ? (
+                <p className="text-[11px] font-normal normal-case tracking-normal text-sky-800">
+                  {discountBanner}
+                </p>
+              ) : null}
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -812,7 +1002,14 @@ export default function ServiceTicketForm({
                             productResults={productResults}
                             isActiveSearch={activePartId === row.id}
                             pendingFocus={pendingFocusId === row.id}
+                            discounts={discountRules}
                             onFocusSearch={() => setActivePartId(row.id)}
+                            onCloseSearch={() => {
+                              if (activePartId === row.id) {
+                                setActivePartId(null);
+                                setProductResults([]);
+                              }
+                            }}
                             onChange={(updates, searchQuery) =>
                               updatePart(row.id, updates, searchQuery)
                             }
@@ -837,8 +1034,22 @@ export default function ServiceTicketForm({
                   className={inputClass}
                 />
               </Field>
-            ) : null}
+            ) : (
+              <Field label="Description of work to be performed">
+                <textarea
+                  rows={8}
+                  value={form.descPerform}
+                  onChange={(e) => patch({ descPerform: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+            )}
             <div className="space-y-2 rounded border border-neutral-200 p-3 text-sm">
+              {discountBanner ? (
+                <p className="rounded bg-sky-50 px-2 py-1.5 text-xs text-sky-800">
+                  {discountBanner}
+                </p>
+              ) : null}
               <div className="flex justify-between">
                 <span>Total parts</span>
                 <span>{formatMoney(totals.totalParts)}</span>
@@ -875,30 +1086,13 @@ export default function ServiceTicketForm({
           </div>
         </div>
 
-        <div className="mt-5 grid gap-5 lg:grid-cols-2">
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Terms & conditions
-            </p>
-            <p className="text-xs leading-relaxed text-neutral-600">
-              {SERVICE_TICKET_TERMS}
-            </p>
-          </div>
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Signature
-            </p>
-            <input
-              value={form.signedByName}
-              onChange={(e) => patch({ signedByName: e.target.value })}
-              placeholder="Signer name"
-              className={`${inputClass} mb-2`}
-            />
-            <SignaturePad
-              value={form.signatureDataUrl}
-              onChange={(signatureDataUrl) => patch({ signatureDataUrl })}
-            />
-          </div>
+        <div className="mt-5">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            Terms & conditions
+          </p>
+          <p className="text-xs leading-relaxed text-neutral-600">
+            {SERVICE_TICKET_TERMS}
+          </p>
         </div>
 
         {variant === "work-order" ? (

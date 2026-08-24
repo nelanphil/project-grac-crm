@@ -1,4 +1,8 @@
 import { Model } from "mongoose";
+import {
+  discountedLaborTotal,
+  ProductDiscounts,
+} from "../utils/productDiscounts";
 
 export const LABOR_INCLUDED_MINUTES = 30;
 export const LABOR_BLOCK_MINUTES = 30;
@@ -118,6 +122,7 @@ export function computeTicketTotals(input: {
   laborOverridden?: boolean;
   miscExp?: number;
   shipping?: number;
+  contractDiscount?: ProductDiscounts | null;
 }): {
   totalParts: number;
   totalLabor: number;
@@ -141,7 +146,10 @@ export function computeTicketTotals(input: {
     ? lineLabor
     : input.laborOverridden && input.totalLabor != null
       ? roundMoney(input.totalLabor)
-      : defaultLaborTotal(input.laborHours);
+      : discountedLaborTotal(
+          defaultLaborTotal(input.laborHours),
+          input.contractDiscount,
+        );
   const miscExp = roundMoney(input.miscExp ?? 0);
   const shipping = roundMoney(input.shipping ?? 0);
   const subtotal = roundMoney(totalParts + totalLabor + miscExp);

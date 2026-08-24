@@ -9,6 +9,11 @@ import {
   normalizeParts,
   TicketPartInput,
 } from "./serviceTicket";
+import {
+  hasAnyDiscount,
+  normalizeProductDiscounts,
+  TicketContractDiscount,
+} from "../utils/productDiscounts";
 
 export type TicketSnapshotFields = {
   customerName?: string;
@@ -43,6 +48,8 @@ export type TicketBodyFields = TicketSnapshotFields & {
   signedByName?: string;
   addressRef?: string | null;
   equipmentRef?: string | null;
+  contractRef?: string | null;
+  contractDiscount?: Partial<TicketContractDiscount> | null;
 };
 
 function asObjectId(value: string | null | undefined): Types.ObjectId | null {
@@ -152,6 +159,8 @@ export function applyTicketMoney(
     subtotal: number;
     shipping: number;
     total: number;
+    contractRef?: unknown;
+    contractDiscount?: TicketContractDiscount | null;
   },
   body: TicketBodyFields,
 ): void {
@@ -167,6 +176,23 @@ export function applyTicketMoney(
   }
   if (body.miscExp !== undefined) target.miscExp = body.miscExp;
   if (body.shipping !== undefined) target.shipping = body.shipping;
+  if (body.contractRef !== undefined) {
+    target.contractRef = asObjectId(body.contractRef);
+  }
+  if (body.contractDiscount !== undefined) {
+    if (body.contractDiscount == null) {
+      target.contractDiscount = null;
+    } else {
+      const discounts = normalizeProductDiscounts(body.contractDiscount);
+      target.contractDiscount = hasAnyDiscount(discounts)
+        ? {
+            label: (body.contractDiscount.label ?? "").trim(),
+            ...discounts,
+          }
+        : null;
+      if (!target.contractDiscount) target.contractRef = null;
+    }
+  }
 
   const parts =
     (target.parts as Array<{
@@ -181,6 +207,7 @@ export function applyTicketMoney(
     laborOverridden: target.laborOverridden,
     miscExp: target.miscExp,
     shipping: target.shipping,
+    contractDiscount: target.contractDiscount ?? undefined,
   });
   target.totalParts = totals.totalParts;
   target.totalLabor = totals.totalLabor;
@@ -242,6 +269,8 @@ export async function applyTicketFields(
       subtotal: number;
       shipping: number;
       total: number;
+      contractRef?: unknown;
+      contractDiscount?: TicketContractDiscount | null;
     },
     body,
   );

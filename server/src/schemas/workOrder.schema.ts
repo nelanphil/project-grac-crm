@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  ticketContractSchema,
   ticketMoneySchema,
   ticketPartSchema,
   ticketSignatureSchema,
@@ -28,7 +29,8 @@ export const createWorkOrderSchema = z
   })
   .merge(ticketSnapshotSchema)
   .merge(ticketMoneySchema)
-  .merge(ticketSignatureSchema);
+  .merge(ticketSignatureSchema)
+  .merge(ticketContractSchema);
 
 export const updateWorkOrderSchema = z
   .object({
@@ -48,7 +50,8 @@ export const updateWorkOrderSchema = z
   })
   .merge(ticketSnapshotSchema)
   .merge(ticketMoneySchema)
-  .merge(ticketSignatureSchema);
+  .merge(ticketSignatureSchema)
+  .merge(ticketContractSchema);
 
 export type CreateWorkOrderInput = z.infer<typeof createWorkOrderSchema>;
 export type UpdateWorkOrderInput = z.infer<typeof updateWorkOrderSchema>;

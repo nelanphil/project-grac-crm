@@ -1,4 +1,6 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
+import { TicketContractDiscount } from "../../utils/productDiscounts";
+import { ticketContractDiscountSchema } from "./productDiscounts";
 
 export const ESTIMATE_STATUSES = [
   "draft",
@@ -30,6 +32,8 @@ export interface IEstimate extends Document {
   addressRef?: Types.ObjectId | null;
   equipmentRef?: Types.ObjectId | null;
   workOrderRef?: Types.ObjectId | null;
+  contractRef?: Types.ObjectId | null;
+  contractDiscount?: TicketContractDiscount | null;
   descPerform: string;
   laborHours: number;
   date: Date | null;
@@ -106,6 +110,15 @@ const estimateSchema = new Schema<IEstimate>(
       ref: "WorkOrder",
       default: null,
       index: true,
+    },
+    contractRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Contract",
+      default: null,
+    },
+    contractDiscount: {
+      type: ticketContractDiscountSchema,
+      default: null,
     },
     descPerform: { type: String, default: "" },
     laborHours: { type: Number, default: 0 },

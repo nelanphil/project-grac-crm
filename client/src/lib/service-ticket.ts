@@ -1,3 +1,11 @@
+import {
+  DEFAULT_PRODUCT_DISCOUNTS,
+  discountedLaborTotal,
+  discountedUnitPrice,
+  type ProductDiscounts,
+  type TicketContractDiscount,
+} from "./productDiscounts";
+
 export const LABOR_INCLUDED_MINUTES = 30;
 export const LABOR_BLOCK_MINUTES = 30;
 export const LABOR_BLOCK_RATE = 75;
@@ -52,6 +60,8 @@ export interface TicketFormState {
   signedByName: string;
   completed: boolean;
   status: "draft" | "sent" | "accepted" | "declined" | "converted";
+  contractRef: string;
+  contractDiscount: TicketContractDiscount | null;
 }
 
 export function newRowId(): string {
@@ -125,6 +135,8 @@ export function emptyTicketForm(): TicketFormState {
     signedByName: "",
     completed: false,
     status: "draft",
+    contractRef: "",
+    contractDiscount: null,
   };
 }
 
@@ -138,6 +150,22 @@ export function defaultLaborTotal(laborHours: number): number {
   const extra = Math.max(0, minutes - LABOR_INCLUDED_MINUTES);
   if (extra <= 0) return 0;
   return Math.ceil(extra / LABOR_BLOCK_MINUTES) * LABOR_BLOCK_RATE;
+}
+
+export function applyDiscountsToParts(
+  parts: TicketPartRow[],
+  discounts: ProductDiscounts | null | undefined,
+): TicketPartRow[] {
+  const rules = discounts ?? DEFAULT_PRODUCT_DISCOUNTS;
+  return parts.map((row) => {
+    if (row.lineType === "note" || row.priceOverridden) return row;
+    const list = parseMoney(row.listPrice) || parseMoney(row.unitPrice);
+    if (!row.listPrice && !row.unitPrice) return row;
+    return {
+      ...row,
+      unitPrice: String(discountedUnitPrice(list, row.kind, rules)),
+    };
+  });
 }
 
 export function partAmount(row: TicketPartRow): number {
@@ -163,7 +191,10 @@ export function ticketTotals(form: TicketFormState) {
     ? lineLabor
     : form.laborOverridden
       ? parseMoney(form.totalLabor)
-      : defaultLaborTotal(laborHours);
+      : discountedLaborTotal(
+          defaultLaborTotal(laborHours),
+          form.contractDiscount ?? DEFAULT_PRODUCT_DISCOUNTS,
+        );
   const miscExp = parseMoney(form.miscExp);
   const shipping = parseMoney(form.shipping);
   const subtotal = Math.round((totalParts + totalLabor + miscExp) * 100) / 100;
@@ -239,6 +270,8 @@ export function ticketToPayload(form: TicketFormState) {
     signatureDataUrl: form.signatureDataUrl,
     signedByName: form.signedByName,
     status: form.status,
+    contractRef: form.contractRef || null,
+    contractDiscount: form.contractDiscount,
   };
 }
 
@@ -285,6 +318,8 @@ export function ticketFromRecord(record: {
   signedByName?: string | null;
   completed?: boolean;
   status?: TicketFormState["status"];
+  contractRef?: string | null;
+  contractDiscount?: TicketContractDiscount | null;
 }): TicketFormState {
   const base = emptyTicketForm();
   const parts = (record.parts ?? []).map((part) => ({
@@ -333,6 +368,8 @@ export function ticketFromRecord(record: {
     signedByName: record.signedByName ?? "",
     completed: Boolean(record.completed),
     status: record.status ?? "draft",
+    contractRef: record.contractRef ?? "",
+    contractDiscount: record.contractDiscount ?? null,
   };
 }
 

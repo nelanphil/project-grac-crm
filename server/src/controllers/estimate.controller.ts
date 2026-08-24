@@ -26,6 +26,7 @@ function toPublic(doc: Record<string, unknown>) {
     addressRef: doc.addressRef?.toString?.() ?? doc.addressRef ?? null,
     equipmentRef: doc.equipmentRef?.toString?.() ?? doc.equipmentRef ?? null,
     workOrderRef: doc.workOrderRef?.toString?.() ?? doc.workOrderRef ?? null,
+    contractRef: doc.contractRef?.toString?.() ?? doc.contractRef ?? null,
   };
 }
 
@@ -268,6 +269,8 @@ export async function convertEstimate(
       addressRef: estimate.addressRef ?? null,
       equipmentRef: estimate.equipmentRef ?? null,
       estimateRef: estimate._id,
+      contractRef: estimate.contractRef ?? null,
+      contractDiscount: estimate.contractDiscount ?? null,
       number: await nextPrefixedNumber(WorkOrder, "WO"),
       descPerform: estimate.descPerform,
       descPerformed: "",

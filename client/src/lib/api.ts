@@ -1,6 +1,11 @@
 import type { EstimatePayload } from "./estimate-types";
 import type { LeadListItem, LeadStatus } from "./lead-types";
 import type { AuthUser, NavOrder } from "@/store/useAuthStore";
+import type {
+  ContractProductDiscountOverride,
+  ProductDiscounts,
+  TicketContractDiscount,
+} from "./productDiscounts";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4009";
 
@@ -1281,6 +1286,8 @@ export interface WorkOrderListItem {
   addressRef?: string | null;
   equipmentRef?: string | null;
   estimateRef?: string | null;
+  contractRef?: string | null;
+  contractDiscount?: TicketContractDiscount | null;
   address?: CustomerAddressSummary | null;
   assignedUserRef?: string | null;
   scheduledStart?: string | null;
@@ -1327,6 +1334,8 @@ export type ServiceTicketPayload = {
   signatureDataUrl?: string | null;
   signedByName?: string;
   status?: "draft" | "sent" | "accepted" | "declined" | "converted";
+  contractRef?: string | null;
+  contractDiscount?: TicketContractDiscount | null;
 };
 
 export async function getWorkOrders(
@@ -1598,6 +1607,7 @@ export interface ContractTemplateSummary {
   slug: string;
   badgeIcon: string;
   cost: number;
+  productDiscounts?: ProductDiscounts;
   deletedAt: string | null;
 }
 
@@ -1624,6 +1634,7 @@ export interface ContractListItem {
   contractType: string | null;
   standing: ContractStanding;
   inGoodStanding: boolean;
+  productDiscounts?: ContractProductDiscountOverride;
   renewals?: ContractRenewalEvent[];
   template?: ContractTemplateSummary | null;
   address?: CustomerAddressSummary | null;
@@ -1718,6 +1729,7 @@ export async function updateContract(
     templateId?: string | null;
     addressRef?: string | null;
     equipmentRef?: string | null;
+    productDiscounts?: ContractProductDiscountOverride;
   },
 ): Promise<{ contract: ContractListItem }> {
   return authRequest<{ contract: ContractListItem }>(`/contracts/${id}`, {
@@ -1933,6 +1945,7 @@ export interface ProductItem {
   strikeThroughPrice: number;
   active: boolean;
   notes: string;
+  usageCount?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -2042,6 +2055,8 @@ export interface EstimateItem {
   signatureDataUrl?: string;
   signedAt?: string | null;
   signedByName?: string;
+  contractRef?: string | null;
+  contractDiscount?: TicketContractDiscount | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -3321,6 +3336,7 @@ export interface ContractTemplateItem {
   body: string;
   cost: number;
   badgeIcon: string;
+  productDiscounts: ProductDiscounts;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -3332,6 +3348,7 @@ export interface ContractTemplateInput {
   cost?: number;
   badgeIcon?: string;
   slug?: string;
+  productDiscounts?: ProductDiscounts;
 }
 
 export async function getContractTemplates(

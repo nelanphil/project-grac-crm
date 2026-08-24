@@ -208,6 +208,7 @@ function WorkOrderDetailContent() {
             total: order.total,
             signatureDataUrl: order.signatureDataUrl,
             signedByName: order.signedByName,
+            contractDiscount: order.contractDiscount,
           }}
         />
       )}

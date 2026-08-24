@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ESTIMATE_STATUSES } from "../models/mongo/Estimate";
 import {
+  ticketContractSchema,
   ticketMoneySchema,
   ticketPartSchema,
   ticketSignatureSchema,
@@ -22,7 +23,8 @@ export const createEstimateSchema = z
   })
   .merge(ticketSnapshotSchema)
   .merge(ticketMoneySchema)
-  .merge(ticketSignatureSchema);
+  .merge(ticketSignatureSchema)
+  .merge(ticketContractSchema);
 
 export const updateEstimateSchema = createEstimateSchema
   .partial()

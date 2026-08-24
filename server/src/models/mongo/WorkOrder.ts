@@ -1,4 +1,6 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
+import { TicketContractDiscount } from "../../utils/productDiscounts";
+import { ticketContractDiscountSchema } from "./productDiscounts";
 
 export interface IWorkOrderPart {
   productRef?: Types.ObjectId | null;
@@ -22,6 +24,8 @@ export interface IWorkOrder extends Document {
   addressRef?: Types.ObjectId | null;
   equipmentRef?: Types.ObjectId | null;
   estimateRef?: Types.ObjectId | null;
+  contractRef?: Types.ObjectId | null;
+  contractDiscount?: TicketContractDiscount | null;
   descPerform: string;
   paid: boolean;
   runHours: number;
@@ -107,6 +111,15 @@ const workOrderSchema = new Schema<IWorkOrder>(
       ref: "Estimate",
       default: null,
       index: true,
+    },
+    contractRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Contract",
+      default: null,
+    },
+    contractDiscount: {
+      type: ticketContractDiscountSchema,
+      default: null,
     },
     descPerform: { type: String, default: "" },
     paid: { type: Boolean, default: false },

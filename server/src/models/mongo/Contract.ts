@@ -1,4 +1,6 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
+import { ContractProductDiscountOverride } from "../../utils/productDiscounts";
+import { contractProductDiscountsSchema } from "./productDiscounts";
 
 export interface IRenewalEvent {
   renewedAt: Date;
@@ -30,6 +32,7 @@ export interface IContract extends Document {
   renewals: IRenewalEvent[];
   description: string;
   contractType: string | null;
+  productDiscounts: ContractProductDiscountOverride;
   sourceWorkOrderRef?: Types.ObjectId;
   userId?: number;
   createdAt: Date;
@@ -80,6 +83,10 @@ const contractSchema = new Schema<IContract>(
     renewals: { type: [renewalEventSchema], default: [] },
     description: { type: String, default: "" },
     contractType: { type: String, default: null },
+    productDiscounts: {
+      type: contractProductDiscountsSchema,
+      default: () => ({ override: false }),
+    },
     sourceWorkOrderRef: { type: Schema.Types.ObjectId, ref: "WorkOrder" },
     userId: { type: Number },
   },

@@ -1,6 +1,8 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { Product, IProduct, ProductKind } from "../models/mongo/Product";
+import { WorkOrder } from "../models/mongo/WorkOrder";
+import { Estimate } from "../models/mongo/Estimate";
 import {
   createProductSchema,
   updateProductSchema,
@@ -9,7 +11,10 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
-import { buildProductAltCode } from "../utils/productCodes";
+import {
+  buildProductAltCode,
+  normalizeProductCode,
+} from "../utils/productCodes";
 
 function asProductKind(value: unknown): ProductKind {
   return value === "labor" ? "labor" : "part";
@@ -21,14 +26,16 @@ function toPublic(doc: IProduct | Record<string, unknown>) {
       ? (doc as IProduct).toObject()
       : (doc as Record<string, unknown>);
 
-  const productCode = String(d.productCode || d.partNumber || "").trim();
+  const productCode = normalizeProductCode(
+    String(d.productCode || d.partNumber || ""),
+  );
   const listPrice = Number(d.listPrice ?? d.unitPrice ?? 0);
 
   return {
     _id: d._id,
     productCode,
     productNumber: d.productNumber ?? "",
-    productAltCode: d.productAltCode || buildProductAltCode(productCode),
+    productAltCode: buildProductAltCode(productCode),
     partNumber: d.partNumber || productCode,
     name: d.name,
     kind: asProductKind(d.kind),
@@ -38,9 +45,31 @@ function toPublic(doc: IProduct | Record<string, unknown>) {
     strikeThroughPrice: Number(d.strikeThroughPrice ?? 0),
     active: d.active !== false,
     notes: d.notes ?? "",
+    usageCount: Number(d.usageCount) || 0,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
   };
+}
+
+const USAGE_SORT_MIN_USED = 3;
+
+async function productUsageCounts(): Promise<Map<string, number>> {
+  const pipeline = [
+    { $unwind: "$parts" },
+    { $match: { "parts.productRef": { $ne: null } } },
+    { $group: { _id: "$parts.productRef", count: { $sum: 1 } } },
+  ];
+  const [workOrders, estimates] = await Promise.all([
+    WorkOrder.aggregate(pipeline),
+    Estimate.aggregate(pipeline),
+  ]);
+  const counts = new Map<string, number>();
+  for (const row of [...workOrders, ...estimates]) {
+    if (!row._id) continue;
+    const id = String(row._id);
+    counts.set(id, (counts.get(id) ?? 0) + Number(row.count || 0));
+  }
+  return counts;
 }
 
 async function findCodeClash(code: string, excludeId?: string) {
@@ -73,10 +102,33 @@ export async function getProducts(
       ];
     }
 
-    const products = await Product.find(filter)
-      .sort({ productCode: 1, partNumber: 1 })
-      .lean();
-    res.json({ products: products.map(toPublic) });
+    const [products, usage] = await Promise.all([
+      Product.find(filter).lean(),
+      productUsageCounts(),
+    ]);
+    const publicProducts = products.map((product) =>
+      toPublic({
+        ...product,
+        usageCount: usage.get(String(product._id)) ?? 0,
+      }),
+    );
+    const usedCount = publicProducts.filter((p) => p.usageCount > 0).length;
+    publicProducts.sort((a, b) => {
+      if (usedCount >= USAGE_SORT_MIN_USED) {
+        const byUsage = b.usageCount - a.usageCount;
+        if (byUsage !== 0) return byUsage;
+      }
+      const byName = String(a.name).localeCompare(String(b.name), undefined, {
+        sensitivity: "base",
+      });
+      if (byName !== 0) return byName;
+      return String(a.productCode || a.partNumber).localeCompare(
+        String(b.productCode || b.partNumber),
+        undefined,
+        { sensitivity: "base" },
+      );
+    });
+    res.json({ products: publicProducts });
   } catch (err) {
     console.error("GET /products error:", err);
     res.status(500).json({ message: "Failed to fetch products" });
@@ -115,7 +167,9 @@ export async function createProduct(
     }
 
     const data = parsed.data;
-    const productCode = (data.productCode || data.partNumber || "").trim();
+    const productCode = normalizeProductCode(
+      data.productCode || data.partNumber || "",
+    );
     const listPrice = data.listPrice ?? data.unitPrice ?? 0;
     const existing = await findCodeClash(productCode);
     if (existing) {
@@ -175,7 +229,10 @@ export async function updateProduct(
     }
 
     const data = parsed.data;
-    const nextCode = (data.productCode || data.partNumber)?.trim();
+    const nextCode =
+      data.productCode || data.partNumber
+        ? normalizeProductCode(data.productCode || data.partNumber || "")
+        : undefined;
     if (nextCode && nextCode !== (product.productCode || product.partNumber)) {
       const clash = await findCodeClash(nextCode, String(product._id));
       if (clash) {
@@ -186,6 +243,7 @@ export async function updateProduct(
       product.partNumber = nextCode;
       product.productAltCode = buildProductAltCode(nextCode);
     } else if (product.productCode) {
+      product.productCode = normalizeProductCode(product.productCode);
       product.partNumber = product.productCode;
       product.productAltCode = buildProductAltCode(product.productCode);
     }

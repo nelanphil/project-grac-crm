@@ -25,7 +25,13 @@ import {
 import { formatAddressLabel } from "@/components/customers/CustomerAddressesPanel";
 import { formatEquipmentLabel } from "@/components/contracts/ServiceContractsTable";
 import InvoiceBillingPanel from "@/components/billing/InvoiceBillingPanel";
+import ProductDiscountEditor from "@/components/contracts/ProductDiscountEditor";
 import { formatCustomerRecordName } from "@/lib/formatName";
+import {
+  DEFAULT_PRODUCT_DISCOUNTS,
+  normalizeProductDiscounts,
+  ProductDiscounts,
+} from "@/lib/productDiscounts";
 
 function toInputDate(date: string | null): string {
   if (!date) return "";
@@ -65,6 +71,10 @@ function EditContractContent() {
   const [renewedAt, setRenewedAt] = useState("");
   const [renewDurationMonths, setRenewDurationMonths] = useState("12");
   const [renewNotes, setRenewNotes] = useState("");
+  const [overrideDiscounts, setOverrideDiscounts] = useState(false);
+  const [productDiscounts, setProductDiscounts] = useState<ProductDiscounts>(
+    DEFAULT_PRODUCT_DISCOUNTS,
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [renewing, setRenewing] = useState(false);
@@ -127,6 +137,14 @@ function EditContractContent() {
         setRenewDurationMonths(String(c.durationMonths ?? 12));
         setAddressRef(c.addressRef ?? c.address?._id ?? "");
         setEquipmentRef(c.equipmentRef ?? c.equipment?._id ?? "");
+        setOverrideDiscounts(Boolean(c.productDiscounts?.override));
+        setProductDiscounts(
+          normalizeProductDiscounts(
+            c.productDiscounts?.override
+              ? c.productDiscounts
+              : c.template?.productDiscounts,
+          ),
+        );
 
         if (c.customer?._id) {
           try {
@@ -167,12 +185,21 @@ function EditContractContent() {
         description: string;
         addressRef: string | null;
         equipmentRef: string | null;
+        productDiscounts: {
+          override: boolean;
+          parts: ProductDiscounts["parts"];
+          labor: ProductDiscounts["labor"];
+        };
       } = {
         contractDate: contractDate ? contractDate : null,
         durationMonths: parsedDuration,
         description,
         addressRef: addressRef || null,
         equipmentRef: equipmentRef || null,
+        productDiscounts: {
+          override: overrideDiscounts,
+          ...productDiscounts,
+        },
       };
 
       if (canEditOriginalDate) {
@@ -487,6 +514,39 @@ function EditContractContent() {
             onChange={(e) => setDescription(e.target.value)}
             rows={5}
             className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange resize-y min-h-[8rem]"
+          />
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-neutral-400">
+            Parts & labor discounts
+          </p>
+          <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
+            <input
+              type="checkbox"
+              checked={overrideDiscounts}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setOverrideDiscounts(next);
+                if (!next) {
+                  setProductDiscounts(
+                    normalizeProductDiscounts(
+                      contract.template?.productDiscounts,
+                    ),
+                  );
+                }
+              }}
+            />
+            Override catalog discounts
+          </label>
+          <ProductDiscountEditor
+            value={
+              overrideDiscounts
+                ? productDiscounts
+                : normalizeProductDiscounts(contract.template?.productDiscounts)
+            }
+            onChange={setProductDiscounts}
+            disabled={!overrideDiscounts}
           />
         </div>
 

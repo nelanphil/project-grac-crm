@@ -14,6 +14,10 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
+import {
+  normalizeProductDiscounts,
+  ProductDiscounts,
+} from "../utils/productDiscounts";
 
 function toPublic(doc: IContractTemplate | Record<string, unknown>) {
   const d =
@@ -28,6 +32,9 @@ function toPublic(doc: IContractTemplate | Record<string, unknown>) {
     body: d.body ?? "",
     cost: d.cost ?? 0,
     badgeIcon: d.badgeIcon ?? "scroll-text",
+    productDiscounts: normalizeProductDiscounts(
+      d.productDiscounts as ProductDiscounts | undefined,
+    ),
     deletedAt: d.deletedAt ?? null,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
@@ -82,6 +89,11 @@ export async function createContractTemplate(
         existing.body = data.body ?? "";
         existing.cost = data.cost ?? 0;
         existing.badgeIcon = data.badgeIcon ?? "scroll-text";
+        if (data.productDiscounts) {
+          existing.productDiscounts = normalizeProductDiscounts(
+            data.productDiscounts,
+          );
+        }
         await existing.save();
 
         logNotificationAsync({
@@ -106,6 +118,7 @@ export async function createContractTemplate(
       body: data.body ?? "",
       cost: data.cost ?? 0,
       badgeIcon: data.badgeIcon ?? "scroll-text",
+      productDiscounts: normalizeProductDiscounts(data.productDiscounts),
       deletedAt: null,
     });
 
@@ -151,6 +164,11 @@ export async function updateContractTemplate(
     if (data.body !== undefined) template.body = data.body;
     if (data.cost !== undefined) template.cost = data.cost;
     if (data.badgeIcon !== undefined) template.badgeIcon = data.badgeIcon;
+    if (data.productDiscounts !== undefined) {
+      template.productDiscounts = normalizeProductDiscounts(
+        data.productDiscounts,
+      );
+    }
 
     await template.save();
 
@@ -191,6 +209,7 @@ export async function duplicateContractTemplate(
       body: source.body ?? "",
       cost: source.cost ?? 0,
       badgeIcon: source.badgeIcon ?? "scroll-text",
+      productDiscounts: normalizeProductDiscounts(source.productDiscounts),
       deletedAt: null,
     });
 

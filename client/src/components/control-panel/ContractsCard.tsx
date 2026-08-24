@@ -14,14 +14,22 @@ import {
 } from "@/lib/api";
 import LucideIconByName from "@/components/icons/LucideIconByName";
 import LucideIconPicker from "@/components/icons/LucideIconPicker";
+import ProductDiscountEditor from "@/components/contracts/ProductDiscountEditor";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
+import {
+  DEFAULT_PRODUCT_DISCOUNTS,
+  formatDiscountSummary,
+  normalizeProductDiscounts,
+  ProductDiscounts,
+} from "@/lib/productDiscounts";
 
 type FormState = {
   label: string;
   cost: string;
   body: string;
   badgeIcon: string;
+  productDiscounts: ProductDiscounts;
 };
 
 const EMPTY_FORM: FormState = {
@@ -29,6 +37,7 @@ const EMPTY_FORM: FormState = {
   cost: "0",
   body: "",
   badgeIcon: "scroll-text",
+  productDiscounts: DEFAULT_PRODUCT_DISCOUNTS,
 };
 
 function formatCost(cost: number): string {
@@ -94,6 +103,7 @@ export default function ContractsCard() {
       cost: String(template.cost ?? 0),
       body: template.body ?? "",
       badgeIcon: template.badgeIcon || "scroll-text",
+      productDiscounts: normalizeProductDiscounts(template.productDiscounts),
     });
     setSaveError(null);
     setFormOpen(true);
@@ -124,6 +134,7 @@ export default function ContractsCard() {
         body: form.body,
         cost,
         badgeIcon: form.badgeIcon || "scroll-text",
+        productDiscounts: form.productDiscounts,
       };
 
       if (editingId) {
@@ -288,6 +299,15 @@ export default function ContractsCard() {
             </label>
 
             <div className="sm:col-span-2">
+              <ProductDiscountEditor
+                value={form.productDiscounts}
+                onChange={(productDiscounts) =>
+                  field("productDiscounts", productDiscounts)
+                }
+              />
+            </div>
+
+            <div className="sm:col-span-2">
               <span className="text-xs font-medium text-neutral-600">
                 Badge icon
               </span>
@@ -370,10 +390,21 @@ export default function ContractsCard() {
                     </span>
                   }
                   fields={
-                    <DataField
-                      label="Cost"
-                      value={formatCost(template.cost)}
-                    />
+                    <>
+                      <DataField
+                        label="Cost"
+                        value={formatCost(template.cost)}
+                      />
+                      <DataField
+                        label="Discounts"
+                        value={
+                          formatDiscountSummary(
+                            normalizeProductDiscounts(template.productDiscounts),
+                          ) ?? "None"
+                        }
+                        className="col-span-2"
+                      />
+                    </>
                   }
                   actions={
                     !isDeleted ? (
@@ -422,6 +453,9 @@ export default function ContractsCard() {
                         Cost
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Discounts
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                         Status
                       </th>
                       <th className="px-6 py-3" />
@@ -462,6 +496,12 @@ export default function ContractsCard() {
                           </td>
                           <td className="whitespace-nowrap px-6 py-4 text-neutral-600">
                             {formatCost(template.cost)}
+                          </td>
+                          <td className="px-6 py-4 text-neutral-600">
+                            {formatDiscountSummary(
+                              normalizeProductDiscounts(template.productDiscounts),
+                              "",
+                            ) ?? "—"}
                           </td>
                           <td className="whitespace-nowrap px-6 py-4">
                             <span

@@ -1,6 +1,10 @@
 "use client";
 
 import { COMPANY } from "@/lib/constants";
+import {
+  formatDiscountSummary,
+  type TicketContractDiscount,
+} from "@/lib/productDiscounts";
 import { SERVICE_TICKET_TERMS } from "@/lib/service-ticket";
 
 function formatMoney(amount: number): string {
@@ -56,6 +60,7 @@ export type ServiceTicketView = {
   total: number;
   signatureDataUrl?: string;
   signedByName?: string;
+  contractDiscount?: TicketContractDiscount | null;
 };
 
 export default function ServiceTicketDocument({
@@ -190,6 +195,18 @@ export default function ServiceTicketDocument({
             </div>
           ) : null}
           <div className="space-y-1 border-t border-neutral-200 pt-2">
+            {ticket.contractDiscount &&
+            formatDiscountSummary(
+              ticket.contractDiscount,
+              ticket.contractDiscount.label,
+            ) ? (
+              <p className="text-xs text-sky-800">
+                {formatDiscountSummary(
+                  ticket.contractDiscount,
+                  ticket.contractDiscount.label,
+                )}
+              </p>
+            ) : null}
             <p className="flex justify-between">
               <span>Total parts</span>
               <span>{formatMoney(ticket.totalParts)}</span>
