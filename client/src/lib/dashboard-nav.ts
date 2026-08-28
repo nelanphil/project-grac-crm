@@ -52,7 +52,7 @@ export const NAV_SECTIONS: NavSection[] = [
       },
       {
         href: "/dashboard/messaging",
-        label: "Messaging",
+        label: "Messages",
         icon: MessageSquare,
         includeRoles: ["admin", "super-admin", "owner"],
       },

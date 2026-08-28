@@ -247,6 +247,7 @@ export default function CreatePanel({
 
   return (
     <div className="space-y-4">
+      <h2 className="text-sm font-semibold text-brand-dark">Message Wizard</h2>
       {error ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}

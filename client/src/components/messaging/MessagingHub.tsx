@@ -488,7 +488,7 @@ export default function MessagingHub() {
           [
             ["templates", "Templates"],
             ["threads", "Threads"],
-            ["create", "Create"],
+            ["create", "Message Wizard"],
           ] as const
         ).map(([value, label]) => (
           <button

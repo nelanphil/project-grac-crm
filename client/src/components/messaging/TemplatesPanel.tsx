@@ -178,7 +178,7 @@ export default function TemplatesPanel({
             {body.length}/1600
           </p>
           <p className="mt-2 text-xs text-neutral-400">
-            Pick a template and recipients in the Create tab to send a message.
+            Pick a template and recipients in Message Wizard to send a message.
           </p>
         </section>
 
