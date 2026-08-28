@@ -20,6 +20,7 @@ import {
   formatDuration,
   formatRelativeTime,
   groupCustomersByRef,
+  unknownVoiceRows,
   voiceRowFromMessage,
   voiceTranscript,
 } from "./conversationUtils";
@@ -49,7 +50,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
   const customers = useMemo(() => groupCustomersByRef(threads), [threads]);
   const voiceRows = useMemo(
-    () => buildVoiceCallRows(voiceComms, threads),
+    () => unknownVoiceRows(buildVoiceCallRows(voiceComms, threads)),
     [voiceComms, threads],
   );
   const selectedCustomer =

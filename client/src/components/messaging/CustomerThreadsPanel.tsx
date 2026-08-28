@@ -257,11 +257,7 @@ export default function CustomerThreadsPanel({
                         </span>
                       </div>
                       <div className="truncate text-[11px] text-neutral-500">
-                        {t.lastMessageChannel === "voice"
-                          ? t.lastMessageDirection === "outbound"
-                            ? "Outbound call"
-                            : "Inbound call"
-                          : t.lastMessagePreview || "—"}
+                        {t.lastMessagePreview || t.lastMessageChannel || "—"}
                       </div>
                       <div className="flex items-center gap-1 text-[10px] text-neutral-400">
                         <span className="truncate">
