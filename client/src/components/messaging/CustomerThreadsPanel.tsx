@@ -214,7 +214,9 @@ export default function CustomerThreadsPanel({
                       type="button"
                       onClick={() => setSelectedThreadId(t._id)}
                       className={`w-full border-b border-[var(--staff-border)] px-3 py-2 text-left ${
-                        active ? "bg-orange-50" : "hover:bg-[var(--staff-surface)]"
+                        active
+                          ? "border-l-2 border-l-brand-orange bg-orange-50"
+                          : "hover:bg-[var(--staff-surface)]"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">

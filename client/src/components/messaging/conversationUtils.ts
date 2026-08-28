@@ -105,7 +105,7 @@ export type CustomerRow = {
   threads: MessageThreadItem[];
 };
 
-/** L1: one row per customer. Unknown (customerRef null) is Voice-only. */
+/** L1: one row per customerRef. Identified voice stays here. Unknown (null) is Voice Threads only. */
 export function groupCustomersByRef(
   threads: MessageThreadItem[],
 ): CustomerRow[] {
@@ -252,6 +252,11 @@ export function buildVoiceCallRows(
         thread: t,
       };
     });
+}
+
+/** Voice Threads list: unidentified callers only. Identified voice nests under Conversations. */
+export function unknownVoiceRows(rows: VoiceCallRow[]): VoiceCallRow[] {
+  return rows.filter((row) => !row.customerRef);
 }
 
 export function voiceRowFromMessage(

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { AlertTriangle, Phone, X } from "lucide-react";
 import { TwilioCommunicationItem } from "@/lib/api";
-import { formatDuration } from "./conversationUtils";
+import { formatDuration, voiceTranscript } from "./conversationUtils";
 
 export function truncateSid(sid: string): string {
   if (sid.length <= 10) return sid;
@@ -121,20 +121,42 @@ export function StatusBadge({
   );
 }
 
-/** Compact call chip for a voice event inside an SMS conversation. */
+/** Voice event inside a customer contact conversation (identified calls). */
 export function VoiceCallChip({ msg }: { msg: TwilioCommunicationItem }) {
   const label =
     msg.direction === "inbound" ? "Inbound call" : "Outbound call";
   const dur =
     msg.durationSeconds != null ? formatDuration(msg.durationSeconds) : "";
+  const transcript = voiceTranscript(msg);
+  const recordingUrl = msg.mediaUrls[0] ?? null;
+
   return (
     <div className="flex justify-center py-0.5">
-      <div className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2.5 py-1 text-[11px] text-[var(--staff-muted)]">
-        <Phone className="h-3 w-3 shrink-0" />
-        <span className="truncate">
-          {label}
-          {dur ? ` · ${dur}` : ""}
-        </span>
+      <div className="w-full max-w-[90%] space-y-2 rounded-2xl border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
+        <div className="inline-flex max-w-full items-center gap-1.5 text-[11px] text-neutral-500">
+          <Phone className="h-3 w-3 shrink-0 text-brand-orange" />
+          <span className="truncate">
+            {label}
+            {dur ? ` · ${dur}` : ""}
+          </span>
+        </div>
+        {transcript ? (
+          <p className="text-[13px] leading-snug whitespace-pre-wrap text-brand-dark">
+            {transcript}
+          </p>
+        ) : (
+          <p className="text-[13px] text-neutral-500">
+            Transcript isn&apos;t available yet.
+          </p>
+        )}
+        {recordingUrl ? (
+          <audio controls src={recordingUrl} className="w-full">
+            <a href={recordingUrl}>Download recording</a>
+          </audio>
+        ) : null}
+        <div className="text-[10px] text-neutral-400">
+          {formatTime(msg.createdAt)}
+        </div>
       </div>
     </div>
   );

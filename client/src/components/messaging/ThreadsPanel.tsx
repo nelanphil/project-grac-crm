@@ -20,6 +20,7 @@ import {
   formatDuration,
   formatRelativeTime,
   groupCustomersByRef,
+  unknownVoiceRows,
   voiceRowFromMessage,
   voiceTranscript,
 } from "./conversationUtils";
@@ -49,7 +50,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
   const customers = useMemo(() => groupCustomersByRef(threads), [threads]);
   const voiceRows = useMemo(
-    () => buildVoiceCallRows(voiceComms, threads),
+    () => unknownVoiceRows(buildVoiceCallRows(voiceComms, threads)),
     [voiceComms, threads],
   );
   const selectedCustomer =
@@ -90,7 +91,8 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
           } else if (match && !match.customerRef) {
             const voiceMatch =
               commRes.communications.find(
-                (c) => c.threadRef === match._id || c.contactRef === match.contactRef,
+                (c) =>
+                  c.threadRef === match._id || c.contactRef === match.contactRef,
               ) ?? null;
             setSelectedVoiceId(voiceMatch?._id ?? match._id);
           }
@@ -138,7 +140,8 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
           voiceMsgs.find((m) => m._id === selectedVoiceRow.id) ??
           (selectedVoiceRow.communication
             ? voiceMsgs.find(
-                (m) => m.twilioSid === selectedVoiceRow.communication?.twilioSid,
+                (m) =>
+                  m.twilioSid === selectedVoiceRow.communication?.twilioSid,
               )
             : undefined) ??
           voiceMsgs[voiceMsgs.length - 1];
@@ -158,10 +161,22 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
   }, [token, selectedVoiceRow]);
 
   const shownVoice = voiceDetail ?? selectedVoiceRow;
-  const transcriptText = shownVoice ? voiceTranscript({
-    transcript: shownVoice.transcript,
-    body: shownVoice.communication?.body,
-  }) : "";
+  const transcriptText = shownVoice
+    ? voiceTranscript({
+        transcript: shownVoice.transcript,
+        body: shownVoice.communication?.body,
+      })
+    : "";
+
+  function selectCustomer(customerRef: string) {
+    setSelectedVoiceId(null);
+    setSelectedCustomerRef(customerRef);
+  }
+
+  function selectVoice(id: string) {
+    setSelectedCustomerRef(null);
+    setSelectedVoiceId(id);
+  }
 
   return (
     <div className="space-y-6">
@@ -171,7 +186,11 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
         </div>
       ) : null}
 
-      <section className="flex h-full min-h-[420px] flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-sm">
+      <section
+        className={`flex h-full flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-sm md:min-h-[420px] ${
+          selectedVoiceId ? "hidden md:flex" : "flex"
+        } ${selectedCustomerRef ? "min-h-0" : "min-h-[420px] md:min-h-[420px]"}`}
+      >
         <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-3 py-2">
           <h2 className="text-sm font-semibold text-brand-dark">
             Conversations
@@ -215,10 +234,10 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                     <li key={row.customerRef}>
                       <button
                         type="button"
-                        onClick={() => setSelectedCustomerRef(row.customerRef)}
+                        onClick={() => selectCustomer(row.customerRef)}
                         className={`w-full border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
                           active
-                            ? "bg-orange-50"
+                            ? "border-l-2 border-l-brand-orange bg-orange-50"
                             : "hover:bg-white"
                         }`}
                       >
@@ -266,17 +285,23 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
               />
             ) : (
               <div className="flex flex-1 items-center p-4 text-xs text-neutral-500">
-                Select a customer to see that customer's contact threads.
+                Select a customer to see that customer&apos;s contact threads.
               </div>
             )}
           </div>
         </div>
       </section>
 
-      <section className="flex min-h-[320px] flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-cream,#faf4ee)] shadow-sm">
+      <section
+        className={`flex flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-cream,#faf4ee)] shadow-sm ${
+          selectedCustomerRef ? "hidden md:flex" : "flex"
+        } ${selectedVoiceId ? "min-h-0 md:min-h-[320px]" : "min-h-[320px]"}`}
+      >
         <div className="flex items-center gap-2 border-b border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
           <Phone className="h-4 w-4 text-brand-orange" />
-          <h2 className="text-sm font-semibold text-brand-dark">Voice Threads</h2>
+          <h2 className="text-sm font-semibold text-brand-dark">
+            Voice Threads
+          </h2>
         </div>
 
         <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_1fr]">
@@ -292,7 +317,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
               </div>
             ) : voiceRows.length === 0 ? (
               <p className="p-3 text-xs text-neutral-500">
-                {"No call transcripts yet. Inbound calls show up here after they're transcribed."}
+                No unknown callers. Identified calls appear under Conversations.
               </p>
             ) : (
               <ul>
@@ -303,9 +328,11 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                     <li key={row.id}>
                       <button
                         type="button"
-                        onClick={() => setSelectedVoiceId(row.id)}
+                        onClick={() => selectVoice(row.id)}
                         className={`flex w-full items-start gap-2 border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
-                          active ? "bg-orange-50" : "hover:bg-[var(--staff-surface)]"
+                          active
+                            ? "border-l-2 border-l-brand-orange bg-orange-50"
+                            : "hover:bg-[var(--staff-surface)]"
                         }`}
                       >
                         <Phone className="mt-0.5 h-4 w-4 shrink-0 text-brand-orange" />
@@ -313,11 +340,9 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                           <div className="truncate text-sm font-medium text-brand-dark">
                             {row.displayName}
                           </div>
-                          {row.customerRef ? null : (
-                            <div className="truncate text-[11px] text-neutral-500">
-                              {row.phone || "—"}
-                            </div>
-                          )}
+                          <div className="truncate text-[11px] text-neutral-500">
+                            {row.phone || "—"}
+                          </div>
                           <div className="text-[11px] text-neutral-500">
                             {row.direction === "outbound"
                               ? "Outbound call"
@@ -337,8 +362,8 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
           </div>
 
           <div
-            className={`min-h-[240px] flex-col bg-[var(--staff-surface)] ${
-              selectedVoiceId ? "flex" : "hidden md:flex"
+            className={`flex-col bg-[var(--staff-surface)] ${
+              selectedVoiceId ? "flex min-h-0 flex-1" : "hidden min-h-[240px] md:flex"
             }`}
           >
             <div className="flex items-center gap-2 border-b border-[var(--staff-border)] px-3 py-2">
@@ -378,18 +403,16 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {shownVoice.customerRef ? null : (
-                    <p className="text-sm text-neutral-500">
-                      {shownVoice.phone || "Unknown caller"}
-                    </p>
-                  )}
+                  <p className="text-sm text-neutral-500">
+                    {shownVoice.phone || "Unknown caller"}
+                  </p>
                   {transcriptText ? (
                     <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-brand-dark sm:text-base">
                       {transcriptText}
                     </p>
                   ) : (
                     <p className="text-[15px] text-neutral-500 sm:text-base">
-                      Transcript isn't available yet.
+                      Transcript isn&apos;t available yet.
                     </p>
                   )}
                   {shownVoice.recordingUrl ? (
