@@ -17,7 +17,6 @@ import {
   contactThreadKey,
   formatPhone,
   formatRelativeTime,
-  smsMessages,
   uniqueContactThreads,
 } from "./conversationUtils";
 
@@ -109,7 +108,7 @@ export default function CustomerThreadsPanel({
   }
 
   const contactRef = threadDetail?.thread.contactRef ?? null;
-  const conversationMessages = smsMessages(threadDetail?.messages ?? []);
+  const conversationMessages = threadDetail?.messages ?? [];
 
   async function handleSendReply() {
     if (!threadDetail || !replyText.trim() || !contactRef) return;

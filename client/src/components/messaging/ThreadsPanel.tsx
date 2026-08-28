@@ -121,12 +121,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
       return;
     }
 
-    const comm = selectedVoiceRow.communication;
-    if (comm && (voiceTranscript(comm) || comm.mediaUrls[0])) {
-      queueMicrotask(() => setVoiceDetail(selectedVoiceRow));
-    } else {
-      queueMicrotask(() => setVoiceDetail(selectedVoiceRow));
-    }
+    queueMicrotask(() => setVoiceDetail(selectedVoiceRow));
 
     const threadId = selectedVoiceRow.thread?._id;
     if (!threadId) return;
@@ -281,7 +276,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
       <section className="flex min-h-[320px] flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-cream,#faf4ee)] shadow-sm">
         <div className="flex items-center gap-2 border-b border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
           <Phone className="h-4 w-4 text-brand-orange" />
-          <h2 className="text-sm font-semibold text-brand-dark">Voice</h2>
+          <h2 className="text-sm font-semibold text-brand-dark">Voice Threads</h2>
         </div>
 
         <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_1fr]">
