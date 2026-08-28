@@ -75,9 +75,10 @@ export default function CustomerThreadsPanel({
   const threadsByContact = useMemo(() => {
     const map = new Map<string, MessageThreadItem[]>();
     for (const t of threads) {
-      const list = map.get(t.contactRef) ?? [];
+      const key = t.contactRef ?? "";
+      const list = map.get(key) ?? [];
       list.push(t);
-      map.set(t.contactRef, list);
+      map.set(key, list);
     }
     for (const list of map.values()) {
       list.sort((a, b) => {

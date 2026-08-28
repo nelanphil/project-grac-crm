@@ -4,7 +4,9 @@ import { CommunicationChannel, CommunicationDirection } from "./TwilioCommunicat
 export type MessageThreadStatus = "open" | "closed";
 
 export interface IMessageThread extends Document {
-  contactRef: Types.ObjectId;
+  /** Last-known / owning contact. Null for unattached unknown-caller threads. */
+  contactRef: Types.ObjectId | null;
+  /** Grouping only — not unique. Null for unknown/unattached threads. */
   customerRef: Types.ObjectId | null;
   twilioAccountRef: Types.ObjectId;
   accountSid: string;
@@ -28,7 +30,7 @@ const messageThreadSchema = new Schema<IMessageThread>(
     contactRef: {
       type: Schema.Types.ObjectId,
       ref: "CustomerContact",
-      required: true,
+      default: null,
       index: true,
     },
     customerRef: {
@@ -81,13 +83,23 @@ const messageThreadSchema = new Schema<IMessageThread>(
 );
 
 messageThreadSchema.index({ contactRef: 1, ourNumber: 1, status: 1 });
+// One open thread per contact + our number. Partial filter requires an
+// ObjectId contactRef so unattached unknown-caller threads (contactRef null)
+// do not collide with each other on this unique index.
 messageThreadSchema.index(
   { contactRef: 1, ourNumber: 1 },
-  { unique: true, partialFilterExpression: { status: "open" } },
+  {
+    unique: true,
+    partialFilterExpression: {
+      status: "open",
+      contactRef: { $type: "objectId" },
+    },
+  },
 );
 messageThreadSchema.index({ customerRef: 1, lastMessageAt: -1 });
 messageThreadSchema.index({ contactRef: 1, lastMessageAt: -1 });
 messageThreadSchema.index({ twilioAccountRef: 1, lastMessageAt: -1 });
+messageThreadSchema.index({ ourNumber: 1, contactPhoneSnapshot: 1, status: 1 });
 
 export const MessageThread = mongoose.model<IMessageThread>(
   "MessageThread",

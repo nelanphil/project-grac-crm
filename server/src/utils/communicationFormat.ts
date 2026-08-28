@@ -132,6 +132,7 @@ export function toPublicCommunication(
     fromNumber: d.fromNumber ?? "",
     toNumber: d.toNumber ?? "",
     body: d.body ?? "",
+    transcript: typeof d.transcript === "string" ? d.transcript : "",
     mediaUrls: d.mediaUrls ?? [],
     durationSeconds: d.durationSeconds ?? null,
     twilioSid: d.twilioSid ?? null,
