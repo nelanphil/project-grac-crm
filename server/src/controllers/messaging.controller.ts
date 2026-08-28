@@ -7,7 +7,6 @@ import { MessageTemplate } from "../models/mongo/MessageTemplate";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
 import { TwilioAccount } from "../models/mongo/TwilioAccount";
 import { MessageThread } from "../models/mongo/MessageThread";
-import { env } from "../config/env";
 import {
   messagingCallSchema,
   messagingPreviewSchema,
@@ -44,6 +43,7 @@ import {
   sendSms,
   TwilioServiceError,
 } from "../services/twilio.service";
+import { resolvePublicApiBase } from "../utils/publicUrl";
 
 const PAGE_SIZES = new Set([25, 50, 100, 150, 200, 250]);
 const SEND_CONCURRENCY = 5;
@@ -901,7 +901,9 @@ function toPublicThread(
     : undefined;
   const customer = thread.customerRef
     ? lookups.customerById.get(String(thread.customerRef))
-    : undefined;
+    : contact
+      ? lookups.customerById.get(String(contact.customerRef))
+      : undefined;
   const accountFriendlyName =
     lookups.names.get(String(thread.twilioAccountRef))?.friendlyName ?? null;
 
@@ -1141,11 +1143,7 @@ export async function getWebhookInfo(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
-  const host = req.get("host");
-  const proto = req.protocol;
-  const base =
-    process.env.PUBLIC_API_URL?.replace(/\/$/, "") ||
-    (host ? `${proto}://${host}` : `http://localhost:${env.port}`);
+  const base = resolvePublicApiBase(req);
 
   const accounts = await TwilioAccount.find()
     .select("_id friendlyName accountSid isActive")
@@ -1154,6 +1152,8 @@ export async function getWebhookInfo(
 
   res.json({
     messageWebhookUrl: `${base}/webhooks/twilio/message`,
+    voiceWebhookUrl: `${base}/webhooks/twilio/voice`,
+    recordingWebhookUrl: `${base}/webhooks/twilio/voice/recording`,
     statusWebhookUrl: `${base}/webhooks/twilio/status`,
     accounts: accounts.map((a) => ({
       _id: String(a._id),
@@ -1161,6 +1161,8 @@ export async function getWebhookInfo(
       accountSid: a.accountSid,
       isActive: a.isActive,
       messageWebhookUrl: `${base}/webhooks/twilio/message?accountSid=${encodeURIComponent(a.accountSid)}`,
+      voiceWebhookUrl: `${base}/webhooks/twilio/voice?accountSid=${encodeURIComponent(a.accountSid)}`,
+      recordingWebhookUrl: `${base}/webhooks/twilio/voice/recording?accountSid=${encodeURIComponent(a.accountSid)}`,
       statusWebhookUrl: `${base}/webhooks/twilio/status?accountSid=${encodeURIComponent(a.accountSid)}`,
     })),
   });

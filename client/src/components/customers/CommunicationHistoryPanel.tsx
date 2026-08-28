@@ -258,7 +258,7 @@ export default function CommunicationHistoryPanel({
                   </div>
                   <p className="mt-1 text-sm text-brand-dark whitespace-pre-wrap">
                     {row.channel === "voice"
-                      ? row.body || "Voice call"
+                      ? row.transcript || row.body || "Voice call"
                       : row.body || "(no text)"}
                   </p>
                   {row.mediaUrls.length > 0 ? (

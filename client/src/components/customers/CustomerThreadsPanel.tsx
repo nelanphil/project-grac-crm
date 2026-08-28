@@ -75,7 +75,7 @@ export default function CustomerThreadsPanel({
   const threadsByContact = useMemo(() => {
     const map = new Map<string, MessageThreadItem[]>();
     for (const t of threads) {
-      const key = t.contactRef ?? "";
+      const key = t.contactRef ?? "unknown";
       const list = map.get(key) ?? [];
       list.push(t);
       map.set(key, list);
@@ -120,7 +120,8 @@ export default function CustomerThreadsPanel({
           {[...threadsByContact.entries()].map(([contactId, contactThreads]) => (
             <div key={contactId}>
               <h3 className="mb-2 text-sm font-medium text-neutral-600">
-                {contactNameById.get(contactId) || "Contact"}
+                {contactNameById.get(contactId) ||
+                  (contactId === "unknown" ? "Unknown caller" : "Contact")}
               </h3>
               <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {contactThreads.map((t) => (

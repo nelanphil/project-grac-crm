@@ -10,6 +10,25 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
+import {
+  configureIncomingNumbersVoiceUrl,
+  voiceWebhookAbsoluteUrl,
+} from "../services/twilio.service";
+
+async function applyVoiceWebhooks(account: ITwilioAccount): Promise<void> {
+  if (!account.phoneNumbers?.length) return;
+  try {
+    await configureIncomingNumbersVoiceUrl(
+      account,
+      voiceWebhookAbsoluteUrl(account.accountSid),
+    );
+  } catch (err) {
+    console.error(
+      `Failed to set Twilio Voice URLs for ${account.friendlyName}:`,
+      err,
+    );
+  }
+}
 
 function emptyToUndefined(
   value: string | undefined | null,
@@ -92,6 +111,8 @@ export async function createTwilioAccount(
     ...actorFromRequest(req.user),
   });
 
+  await applyVoiceWebhooks(account);
+
   res.status(201).json({ account: toPublic(account) });
 }
 
@@ -164,6 +185,10 @@ export async function updateTwilioAccount(
   }
 
   await account.save();
+
+  if (data.phoneNumbers !== undefined) {
+    await applyVoiceWebhooks(account);
+  }
 
   logNotificationAsync({
     entityType: "twilio_account",

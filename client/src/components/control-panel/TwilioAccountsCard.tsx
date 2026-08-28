@@ -251,12 +251,19 @@ export default function TwilioAccountsCard() {
             <code className="break-all">{webhookInfo.messageWebhookUrl}</code>
           </div>
           <div>
+            <span className="font-medium">Voice (TwiML):</span>{" "}
+            <code className="break-all">{webhookInfo.voiceWebhookUrl}</code>
+          </div>
+          <div>
             <span className="font-medium">Status callbacks:</span>{" "}
             <code className="break-all">{webhookInfo.statusWebhookUrl}</code>
           </div>
           <p className="text-neutral-500">
-            Optional per-account URLs include <code>?accountSid=AC…</code> for
-            unambiguous routing when multiple Twilio accounts share this CRM.
+            Set each Twilio number&apos;s Voice webhook to the TwiML URL
+            (saving a number here also pushes that URL via the Twilio API).
+            Recording/transcription callbacks are set in TwiML, not on the
+            number. Optional per-account URLs include <code>?accountSid=AC…</code>{" "}
+            for unambiguous routing when multiple Twilio accounts share this CRM.
           </p>
         </div>
       ) : null}

@@ -136,8 +136,10 @@ export default function MessageBubble({
             <StatusBadge status={msg.status} errorMessage={msg.errorMessage} />
             {msg.durationSeconds != null ? ` · ${msg.durationSeconds}s` : ""}
           </div>
-          {msg.body ? (
-            <p className="text-neutral-500 whitespace-pre-wrap">{msg.body}</p>
+          {msg.transcript || msg.body ? (
+            <p className="text-neutral-500 whitespace-pre-wrap">
+              {msg.transcript || msg.body}
+            </p>
           ) : null}
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-neutral-400">
             <AccountBadge name={msg.accountFriendlyName} sid={msg.accountSid} />
