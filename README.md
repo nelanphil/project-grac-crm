@@ -68,6 +68,8 @@ Repo-root `.env` is loaded by the API (`server/src/config/env.ts`).
 | `PORT` | `.env` | API port (default 4009) |
 | `CLIENT_URL` | `.env` | Frontend URL for CORS and password-reset links |
 | `MONGODB_URI_DEVELOPMENT` / `MONGODB_URI_PRODUCTION` | `.env` | MongoDB connection strings |
+| `JWT_SECRET` | `.env` / Render API | JWT signing secret (required non-default in production) |
+| `CREDENTIALS_ENCRYPTION_KEY` | `.env` / Render API | AES key for integration credentials at rest (required non-default in production) |
 | `MYSQL_*` | `.env` | MySQL connection settings |
 | `SMTP_HOST` | `.env` | Optional SMTP fallback host |
 | `SMTP_PORT` | `.env` | SMTP port (default `587`) |
@@ -76,6 +78,8 @@ Repo-root `.env` is loaded by the API (`server/src/config/env.ts`).
 | `SMTP_SECURE` | `.env` | Set `true` for port 465 TLS |
 | `EMAIL_FROM` | `.env` | Optional From address for env fallback |
 | `NEXT_PUBLIC_API_URL` | `client/.env.local` | Backend API URL |
+
+**Production (Render):** On the API web service (`grac-crm-server`), set both `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` to strong non-default values. The API refuses to boot in `NODE_ENV=production` if either is missing, empty, or still the hardcoded local-dev default. The static Next.js site does not need these secrets.
 
 **Outbound email** is configured in the dashboard **Control Panel → Email**. Assign the **General notifications** role for password-reset and signup confirmation emails (and **Billing notifications** for future invoice mail). Env `SMTP_*` vars are a last-resort fallback when no matching account is assigned. In non-production, forgot-password may return a `devResetUrl` if mail cannot be sent.
 
