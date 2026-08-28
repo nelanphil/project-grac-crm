@@ -105,7 +105,7 @@ export type CustomerRow = {
   threads: MessageThreadItem[];
 };
 
-/** L1: one row per identified customerRef, including voice-only. Unknown (null) is Voice Threads only. */
+/** L1: one row per customerRef. Identified voice stays here. Unknown (null) is Voice Threads only. */
 export function groupCustomersByRef(
   threads: MessageThreadItem[],
 ): CustomerRow[] {
@@ -157,6 +157,33 @@ export function uniqueContactThreads(
   return [...map.values()].sort(
     (a, b) => ts(b.lastMessageAt) - ts(a.lastMessageAt),
   );
+}
+
+export function pickReplyThread(
+  threads: MessageThreadItem[],
+): MessageThreadItem | null {
+  const sms = threads.filter((t) => t.lastMessageChannel !== "voice");
+  const pool = sms.length > 0 ? sms : threads;
+  const byRecent = [...pool].sort(
+    (a, b) => ts(b.lastMessageAt) - ts(a.lastMessageAt),
+  );
+  return byRecent.find((t) => t.status === "open") ?? byRecent[0] ?? null;
+}
+
+export function mergeMessages(
+  lists: TwilioCommunicationItem[][],
+): TwilioCommunicationItem[] {
+  const seen = new Set<string>();
+  const merged: TwilioCommunicationItem[] = [];
+  for (const list of lists) {
+    for (const msg of list) {
+      if (seen.has(msg._id)) continue;
+      seen.add(msg._id);
+      merged.push(msg);
+    }
+  }
+  merged.sort((a, b) => ts(a.createdAt) - ts(b.createdAt));
+  return merged;
 }
 
 export type VoiceCallRow = {

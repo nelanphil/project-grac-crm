@@ -256,11 +256,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                           </span>
                         </div>
                         <div className="truncate text-[11px] text-neutral-500">
-                          {row.lastMessageChannel === "voice"
-                            ? row.lastMessageDirection === "outbound"
-                              ? "Outbound call"
-                              : "Inbound call"
-                            : row.preview || "—"}
+                          {row.preview || "—"}
                         </div>
                         <div className="text-[10px] text-neutral-400">
                           {formatRelativeTime(row.lastMessageAt)}
