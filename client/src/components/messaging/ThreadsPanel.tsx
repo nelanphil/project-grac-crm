@@ -1,21 +1,29 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Loader2, Phone, Send, X } from "lucide-react";
+import { Loader2, Phone } from "lucide-react";
 import {
   ApiError,
   MessageThreadDetail,
   MessageThreadItem,
   TwilioAccountItem,
-  closeMessagingThread,
+  TwilioCommunicationItem,
+  getMessagingCommunications,
   getMessagingThreadDetail,
   getMessagingThreads,
-  placeMessagingCall,
-  sendMessagingMessages,
 } from "@/lib/api";
-import { formatCustomerName } from "@/lib/formatName";
-import MessageBubble, { formatTime } from "./MessageBubble";
+import CustomerThreadsPanel from "./CustomerThreadsPanel";
+import {
+  VoiceCallRow,
+  buildVoiceCallRows,
+  formatDuration,
+  formatRelativeTime,
+  groupCustomersByRef,
+  unknownVoiceRows,
+  voiceRowFromMessage,
+  voiceTranscript,
+} from "./conversationUtils";
 
 type ThreadsPanelProps = {
   token: string;
@@ -28,47 +36,65 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
   const initialContactId = searchParams.get("contactId");
   const consumedDeepLink = useRef(false);
 
-  // Independent account filter for browsing threads. Defaults to "All
-  // accounts" so threads from every Twilio account are visible here,
-  // regardless of which account is selected for sending on the Create tab.
   const [filterAccountId, setFilterAccountId] = useState("");
-
   const [threads, setThreads] = useState<MessageThreadItem[]>([]);
+  const [voiceComms, setVoiceComms] = useState<TwilioCommunicationItem[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(true);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [threadDetail, setThreadDetail] = useState<MessageThreadDetail | null>(
+  const [selectedCustomerRef, setSelectedCustomerRef] = useState<string | null>(
     null,
   );
-  const [loadingThreadDetail, setLoadingThreadDetail] = useState(false);
-  const [replyText, setReplyText] = useState("");
-  const [sendingReply, setSendingReply] = useState(false);
-  const [calling, setCalling] = useState(false);
-  const [closingThread, setClosingThread] = useState(false);
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+  const [voiceDetail, setVoiceDetail] = useState<VoiceCallRow | null>(null);
+  const [loadingVoiceDetail, setLoadingVoiceDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
 
-  // Load thread list
+  const customers = useMemo(() => groupCustomersByRef(threads), [threads]);
+  const voiceRows = useMemo(
+    () => unknownVoiceRows(buildVoiceCallRows(voiceComms, threads)),
+    [voiceComms, threads],
+  );
+  const selectedCustomer =
+    customers.find((c) => c.customerRef === selectedCustomerRef) ?? null;
+
   useEffect(() => {
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) setLoadingThreads(true);
     });
-    getMessagingThreads(token, {
+
+    const threadOpts = {
       twilioAccountId: filterAccountId || undefined,
       pageSize: 100,
-    })
-      .then((res) => {
+    };
+
+    Promise.all([
+      getMessagingThreads(token, threadOpts),
+      getMessagingCommunications(token, {
+        twilioAccountId: filterAccountId || undefined,
+        channel: "voice",
+        pageSize: 100,
+      }).catch(() => ({ communications: [] as TwilioCommunicationItem[] })),
+    ])
+      .then(([threadRes, commRes]) => {
         if (cancelled) return;
-        setThreads(res.threads);
+        setThreads(threadRes.threads);
+        setVoiceComms(commRes.communications);
         if (!consumedDeepLink.current) {
           consumedDeepLink.current = true;
-          if (initialThreadId) {
-            setSelectedThreadId(initialThreadId);
-          } else if (initialContactId) {
-            const match = res.threads.find(
-              (t) => t.contactRef === initialContactId,
-            );
-            if (match) setSelectedThreadId(match._id);
+          const match = initialThreadId
+            ? threadRes.threads.find((t) => t._id === initialThreadId)
+            : initialContactId
+              ? threadRes.threads.find((t) => t.contactRef === initialContactId)
+              : undefined;
+          if (match?.customerRef) {
+            setSelectedCustomerRef(match.customerRef);
+          } else if (match && !match.customerRef) {
+            const voiceMatch =
+              commRes.communications.find(
+                (c) =>
+                  c.threadRef === match._id || c.contactRef === match.contactRef,
+              ) ?? null;
+            setSelectedVoiceId(voiceMatch?._id ?? match._id);
           }
         }
       })
@@ -81,127 +107,99 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
       .finally(() => {
         if (!cancelled) setLoadingThreads(false);
       });
+
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, filterAccountId, refreshKey]);
+  }, [token, filterAccountId]);
 
-  // Load selected thread detail
+  const selectedVoiceRow =
+    voiceRows.find((row) => row.id === selectedVoiceId) ?? null;
+
   useEffect(() => {
-    if (!selectedThreadId) {
-      queueMicrotask(() => setThreadDetail(null));
+    if (!selectedVoiceRow) {
+      queueMicrotask(() => setVoiceDetail(null));
       return;
     }
+
+    queueMicrotask(() => setVoiceDetail(selectedVoiceRow));
+
+    const threadId = selectedVoiceRow.thread?._id;
+    if (!threadId) return;
+
     let cancelled = false;
     queueMicrotask(() => {
-      if (!cancelled) setLoadingThreadDetail(true);
+      if (!cancelled) setLoadingVoiceDetail(true);
     });
-    getMessagingThreadDetail(token, selectedThreadId)
-      .then((res) => {
+    getMessagingThreadDetail(token, threadId)
+      .then((res: MessageThreadDetail) => {
         if (cancelled) return;
-        setThreadDetail(res);
+        const voiceMsgs = res.messages.filter((m) => m.channel === "voice");
+        const match =
+          voiceMsgs.find((m) => m._id === selectedVoiceRow.id) ??
+          (selectedVoiceRow.communication
+            ? voiceMsgs.find(
+                (m) =>
+                  m.twilioSid === selectedVoiceRow.communication?.twilioSid,
+              )
+            : undefined) ??
+          voiceMsgs[voiceMsgs.length - 1];
+        if (match) {
+          setVoiceDetail(voiceRowFromMessage(match, res.thread));
+        }
       })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(
-          err instanceof ApiError ? err.message : "Failed to load thread.",
-        );
+      .catch(() => {
+        /* list payload is enough to render a missing-transcript state */
       })
       .finally(() => {
-        if (!cancelled) setLoadingThreadDetail(false);
+        if (!cancelled) setLoadingVoiceDetail(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [token, selectedThreadId, refreshKey]);
+  }, [token, selectedVoiceRow]);
 
-  function refresh() {
-    setRefreshKey((k) => k + 1);
+  const shownVoice = voiceDetail ?? selectedVoiceRow;
+  const transcriptText = shownVoice
+    ? voiceTranscript({
+        transcript: shownVoice.transcript,
+        body: shownVoice.communication?.body,
+      })
+    : "";
+
+  function selectCustomer(customerRef: string) {
+    setSelectedVoiceId(null);
+    setSelectedCustomerRef(customerRef);
   }
 
-  async function handleSendReply() {
-    if (!threadDetail || !replyText.trim()) return;
-    const contactId = threadDetail.thread.contactRef;
-    if (!contactId) return;
-    setSendingReply(true);
-    setError(null);
-    try {
-      await sendMessagingMessages(token, {
-        contactIds: [contactId],
-        body: replyText,
-        threadId: threadDetail.thread._id,
-        twilioAccountId: threadDetail.thread.twilioAccountRef,
-        fromNumber: threadDetail.thread.ourNumber,
-      });
-      setReplyText("");
-      refresh();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to send reply.");
-    } finally {
-      setSendingReply(false);
-    }
-  }
-
-  async function handleCall() {
-    if (!threadDetail) return;
-    const contactId = threadDetail.thread.contactRef;
-    if (!contactId) return;
-    const label =
-      formatCustomerName(
-        threadDetail.thread.contact?.first,
-        threadDetail.thread.contact?.last,
-      ) || "this contact";
-    if (!window.confirm(`Place an outbound call to ${label}?`)) return;
-    setCalling(true);
-    setError(null);
-    try {
-      await placeMessagingCall(token, {
-        contactId,
-        twilioAccountId: threadDetail.thread.twilioAccountRef,
-        fromNumber: threadDetail.thread.ourNumber,
-      });
-      refresh();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Call failed.");
-    } finally {
-      setCalling(false);
-    }
-  }
-
-  async function handleCloseThread() {
-    if (!threadDetail) return;
-    setClosingThread(true);
-    setError(null);
-    try {
-      await closeMessagingThread(token, threadDetail.thread._id);
-      refresh();
-    } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : "Failed to close thread.",
-      );
-    } finally {
-      setClosingThread(false);
-    }
+  function selectVoice(id: string) {
+    setSelectedCustomerRef(null);
+    setSelectedVoiceId(id);
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {error ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
         </div>
       ) : null}
 
-      {/* Thread browser */}
-      <div className="flex h-full min-h-[420px] flex-col rounded-xl border border-neutral-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-neutral-100 px-3 py-2">
-          <h2 className="text-sm font-semibold text-brand-dark">Threads</h2>
+      <section
+        className={`flex h-full flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-sm md:min-h-[420px] ${
+          selectedVoiceId ? "hidden md:flex" : "flex"
+        } ${selectedCustomerRef ? "min-h-0" : "min-h-[420px] md:min-h-[420px]"}`}
+      >
+        <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-3 py-2">
+          <h2 className="text-sm font-semibold text-brand-dark">
+            Conversations
+          </h2>
           {accounts.length > 0 ? (
             <select
               value={filterAccountId}
               onChange={(e) => setFilterAccountId(e.target.value)}
-              className="rounded-md border border-neutral-300 px-2 py-1 text-[11px] text-neutral-600 outline-none focus:border-brand-orange"
+              className="rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2 py-1 text-[11px] text-neutral-600 outline-none focus:border-brand-orange"
             >
               <option value="">All accounts</option>
               {accounts.map((a) => (
@@ -213,10 +211,10 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
           ) : null}
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[240px_1fr]">
+        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_1fr]">
           <div
-            className={`max-h-[480px] overflow-y-auto border-neutral-100 md:border-r ${
-              selectedThreadId ? "hidden md:block" : "block"
+            className={`max-h-[480px] overflow-y-auto border-[var(--staff-border)] md:border-r ${
+              selectedCustomerRef ? "hidden md:block" : "block"
             }`}
           >
             {loadingThreads ? (
@@ -224,55 +222,44 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 Loading…
               </div>
-            ) : threads.length === 0 ? (
+            ) : customers.length === 0 ? (
               <p className="p-3 text-xs text-neutral-500">
-                No threads yet. Pick recipients in the Create tab and send a
-                message to start one.
+                No conversations yet. Send from Message Wizard to start one.
               </p>
             ) : (
               <ul>
-                {threads.map((t) => {
-                  const active = selectedThreadId === t._id;
+                {customers.map((row) => {
+                  const active = selectedCustomerRef === row.customerRef;
                   return (
-                    <li key={t._id}>
+                    <li key={row.customerRef}>
                       <button
                         type="button"
-                        onClick={() => setSelectedThreadId(t._id)}
-                        className={`w-full border-b border-neutral-50 px-3 py-2 text-left ${
-                          active ? "bg-orange-50" : "hover:bg-neutral-50"
+                        onClick={() => selectCustomer(row.customerRef)}
+                        className={`w-full border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
+                          active
+                            ? "border-l-2 border-l-brand-orange bg-orange-50"
+                            : "hover:bg-white"
                         }`}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="truncate text-sm font-medium text-brand-dark">
-                            {formatCustomerName(
-                              t.contact?.first,
-                              t.contact?.last,
-                            ) ||
-                              t.contactPhoneSnapshot ||
-                              "Unknown caller"}
+                            {row.displayName}
                           </span>
                           <span
                             className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                              t.status === "open"
+                              row.status === "open"
                                 ? "bg-green-50 text-green-700"
                                 : "bg-neutral-100 text-neutral-500"
                             }`}
                           >
-                            {t.status}
+                            {row.status}
                           </span>
                         </div>
                         <div className="truncate text-[11px] text-neutral-500">
-                          {t.lastMessagePreview || t.lastMessageChannel || "—"}
-                        </div>
-                        <div className="flex items-center gap-1 text-[10px] text-neutral-400">
-                          <span className="truncate" title={t.accountSid}>
-                            {t.accountFriendlyName || t.accountSid}
-                          </span>
-                          <span>·</span>
-                          <span className="truncate">{t.ourNumber}</span>
+                          {row.preview || "—"}
                         </div>
                         <div className="text-[10px] text-neutral-400">
-                          {formatTime(t.lastMessageAt)}
+                          {formatRelativeTime(row.lastMessageAt)}
                         </div>
                       </button>
                     </li>
@@ -284,136 +271,165 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
           <div
             className={`min-h-[280px] flex-col ${
-              selectedThreadId ? "flex" : "hidden md:flex"
+              selectedCustomerRef ? "flex" : "hidden md:flex"
             }`}
           >
-            <div className="flex items-center justify-between gap-2 border-b border-neutral-100 px-3 py-2">
-              <div className="flex min-w-0 items-center gap-2">
-                {selectedThreadId ? (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedThreadId(null)}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50 md:hidden"
-                  >
-                    Back
-                  </button>
-                ) : null}
-                <span className="truncate text-sm font-medium text-brand-dark">
-                  {threadDetail
-                    ? formatCustomerName(
-                        threadDetail.thread.contact?.first,
-                        threadDetail.thread.contact?.last,
-                      ) ||
-                      threadDetail.thread.contactPhoneSnapshot ||
-                      "Unknown caller"
-                    : "Select a thread"}
-                </span>
+            {selectedCustomer ? (
+              <CustomerThreadsPanel
+                token={token}
+                customerName={selectedCustomer.displayName}
+                threads={selectedCustomer.threads}
+                initialThreadId={initialThreadId}
+                initialContactId={initialContactId}
+                onBack={() => setSelectedCustomerRef(null)}
+              />
+            ) : (
+              <div className="flex flex-1 items-center p-4 text-xs text-neutral-500">
+                Select a customer to see that customer&apos;s contact threads.
               </div>
-              {threadDetail ? (
-                <div className="flex shrink-0 items-center gap-2">
-                  {threadDetail.thread.status === "open" ? (
-                    <button
-                      type="button"
-                      onClick={handleCloseThread}
-                      disabled={closingThread}
-                      className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-600 hover:border-red-300 hover:text-red-600 disabled:opacity-50"
-                    >
-                      {closingThread ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <X className="h-3.5 w-3.5" />
-                      )}
-                      <span className="hidden sm:inline">Close</span>
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={handleCall}
-                    disabled={calling || !threadDetail.thread.contactRef}
-                    className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-brand-dark hover:border-brand-orange disabled:opacity-50"
-                  >
-                    {calling ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Phone className="h-3.5 w-3.5" />
-                    )}
-                    <span className="hidden sm:inline">Call</span>
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            {threadDetail ? (
-              <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-1.5 text-[11px] text-neutral-500">
-                <span
-                  className="truncate rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600"
-                  title={threadDetail.thread.accountSid}
-                >
-                  {threadDetail.thread.accountFriendlyName ||
-                    threadDetail.thread.accountSid}
-                </span>
-                <span className="truncate">
-                  via {threadDetail.thread.ourNumber}
-                </span>
-              </div>
-            ) : null}
-            <div className="flex flex-1 flex-col gap-2 overflow-y-auto bg-[#f2f2f7] p-3">
-              {loadingThreadDetail ? (
-                <div className="flex items-center gap-2 text-xs text-neutral-500">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Loading thread…
-                </div>
-              ) : !threadDetail ? (
-                <p className="text-xs text-neutral-500">
-                  Pick a thread on the left, or start one from the Create tab.
-                </p>
-              ) : threadDetail.messages.length === 0 ? (
-                <p className="text-xs text-neutral-500">No messages yet.</p>
-              ) : (
-                threadDetail.messages.map((m) => (
-                  <MessageBubble key={m._id} msg={m} />
-                ))
-              )}
-            </div>
-            {threadDetail ? (
-              <div className="flex items-center gap-2 border-t border-neutral-100 p-2">
-                <input
-                  type="text"
-                  value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !sendingReply) handleSendReply();
-                  }}
-                  placeholder={
-                    !threadDetail.thread.contactRef
-                      ? "Attach this caller to a contact to reply"
-                      : threadDetail.thread.status === "closed"
-                        ? "Reply to reopen this thread…"
-                        : "Type a reply…"
-                  }
-                  disabled={!threadDetail.thread.contactRef}
-                  className="flex-1 rounded-full border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-brand-orange disabled:bg-neutral-100"
-                />
-                <button
-                  type="button"
-                  onClick={handleSendReply}
-                  disabled={
-                    sendingReply ||
-                    !replyText.trim() ||
-                    !threadDetail.thread.contactRef
-                  }
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#34c759] text-white disabled:opacity-50"
-                >
-                  {sendingReply ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-            ) : null}
+            )}
           </div>
         </div>
-      </div>
+      </section>
+
+      <section
+        className={`flex flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-cream,#faf4ee)] shadow-sm ${
+          selectedCustomerRef ? "hidden md:flex" : "flex"
+        } ${selectedVoiceId ? "min-h-0 md:min-h-[320px]" : "min-h-[320px]"}`}
+      >
+        <div className="flex items-center gap-2 border-b border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
+          <Phone className="h-4 w-4 text-brand-orange" />
+          <h2 className="text-sm font-semibold text-brand-dark">
+            Voice Threads
+          </h2>
+        </div>
+
+        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_1fr]">
+          <div
+            className={`max-h-[420px] overflow-y-auto border-[var(--staff-border)] md:border-r ${
+              selectedVoiceId ? "hidden md:block" : "block"
+            }`}
+          >
+            {loadingThreads ? (
+              <div className="flex items-center gap-2 p-3 text-xs text-neutral-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading…
+              </div>
+            ) : voiceRows.length === 0 ? (
+              <p className="p-3 text-xs text-neutral-500">
+                No unknown callers. Identified calls appear under Conversations.
+              </p>
+            ) : (
+              <ul>
+                {voiceRows.map((row) => {
+                  const active = selectedVoiceId === row.id;
+                  const duration = formatDuration(row.durationSeconds);
+                  return (
+                    <li key={row.id}>
+                      <button
+                        type="button"
+                        onClick={() => selectVoice(row.id)}
+                        className={`flex w-full items-start gap-2 border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
+                          active
+                            ? "border-l-2 border-l-brand-orange bg-orange-50"
+                            : "hover:bg-[var(--staff-surface)]"
+                        }`}
+                      >
+                        <Phone className="mt-0.5 h-4 w-4 shrink-0 text-brand-orange" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium text-brand-dark">
+                            {row.displayName}
+                          </div>
+                          <div className="truncate text-[11px] text-neutral-500">
+                            {row.phone || "—"}
+                          </div>
+                          <div className="text-[11px] text-neutral-500">
+                            {row.direction === "outbound"
+                              ? "Outbound call"
+                              : "Inbound call"}
+                            {duration ? ` · ${duration}` : ""}
+                          </div>
+                          <div className="text-[10px] text-neutral-400">
+                            {formatRelativeTime(row.createdAt)}
+                          </div>
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div
+            className={`flex-col bg-[var(--staff-surface)] ${
+              selectedVoiceId ? "flex min-h-0 flex-1" : "hidden min-h-[240px] md:flex"
+            }`}
+          >
+            <div className="flex items-center gap-2 border-b border-[var(--staff-border)] px-3 py-2">
+              {selectedVoiceId ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedVoiceId(null)}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--staff-border)] px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-white md:hidden"
+                >
+                  Back
+                </button>
+              ) : null}
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-brand-dark">
+                  {shownVoice ? shownVoice.displayName : "Select a call"}
+                </p>
+                {shownVoice ? (
+                  <p className="text-[11px] text-neutral-500">
+                    {new Date(shownVoice.createdAt).toLocaleString()}
+                    {shownVoice.durationSeconds != null
+                      ? ` · ${formatDuration(shownVoice.durationSeconds)}`
+                      : ""}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+              {loadingVoiceDetail && !shownVoice ? (
+                <div className="flex items-center gap-2 text-xs text-neutral-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading…
+                </div>
+              ) : !shownVoice ? (
+                <p className="text-xs text-neutral-500">
+                  Pick a call to read its transcript.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-neutral-500">
+                    {shownVoice.phone || "Unknown caller"}
+                  </p>
+                  {transcriptText ? (
+                    <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-brand-dark sm:text-base">
+                      {transcriptText}
+                    </p>
+                  ) : (
+                    <p className="text-[15px] text-neutral-500 sm:text-base">
+                      Transcript isn&apos;t available yet.
+                    </p>
+                  )}
+                  {shownVoice.recordingUrl ? (
+                    <audio
+                      controls
+                      src={shownVoice.recordingUrl}
+                      className="w-full"
+                    >
+                      <a href={shownVoice.recordingUrl}>Download recording</a>
+                    </audio>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

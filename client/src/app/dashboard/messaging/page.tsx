@@ -33,15 +33,15 @@ function MessagingPageContent() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-brand-dark">Messaging</h1>
+        <h1 className="text-2xl font-bold text-brand-dark">Messages</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Build SMS templates, preview messages, and send to customer contacts via Twilio.
+          Templates, conversations, and call transcripts.
         </p>
       </div>
 
       <Suspense
         fallback={
-          <div className="text-sm text-neutral-500">Loading messaging…</div>
+          <div className="text-sm text-neutral-500">Loading messages…</div>
         }
       >
         <MessagingHub />

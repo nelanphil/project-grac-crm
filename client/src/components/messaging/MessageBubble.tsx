@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AlertTriangle, Phone, X } from "lucide-react";
 import { TwilioCommunicationItem } from "@/lib/api";
+import { formatDuration, voiceTranscript } from "./conversationUtils";
 
 export function truncateSid(sid: string): string {
   if (sid.length <= 10) return sid;
@@ -120,6 +121,47 @@ export function StatusBadge({
   );
 }
 
+/** Voice event inside a customer contact conversation (identified calls). */
+export function VoiceCallChip({ msg }: { msg: TwilioCommunicationItem }) {
+  const label =
+    msg.direction === "inbound" ? "Inbound call" : "Outbound call";
+  const dur =
+    msg.durationSeconds != null ? formatDuration(msg.durationSeconds) : "";
+  const transcript = voiceTranscript(msg);
+  const recordingUrl = msg.mediaUrls[0] ?? null;
+
+  return (
+    <div className="flex justify-center py-0.5">
+      <div className="w-full max-w-[90%] space-y-2 rounded-2xl border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
+        <div className="inline-flex max-w-full items-center gap-1.5 text-[11px] text-neutral-500">
+          <Phone className="h-3 w-3 shrink-0 text-brand-orange" />
+          <span className="truncate">
+            {label}
+            {dur ? ` · ${dur}` : ""}
+          </span>
+        </div>
+        {transcript ? (
+          <p className="text-[13px] leading-snug whitespace-pre-wrap text-brand-dark">
+            {transcript}
+          </p>
+        ) : (
+          <p className="text-[13px] text-neutral-500">
+            Transcript isn&apos;t available yet.
+          </p>
+        )}
+        {recordingUrl ? (
+          <audio controls src={recordingUrl} className="w-full">
+            <a href={recordingUrl}>Download recording</a>
+          </audio>
+        ) : null}
+        <div className="text-[10px] text-neutral-400">
+          {formatTime(msg.createdAt)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function MessageBubble({
   msg,
 }: {
@@ -127,32 +169,7 @@ export default function MessageBubble({
 }) {
   const outbound = msg.direction === "outbound";
   if (msg.channel === "voice") {
-    return (
-      <div className={`flex ${outbound ? "justify-end" : "justify-start"}`}>
-        <div className="max-w-[90%] rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-700 shadow-sm">
-          <div className="mb-1 flex items-center gap-1.5 font-medium">
-            <Phone className="h-3 w-3" />
-            Voice call ·{" "}
-            <StatusBadge status={msg.status} errorMessage={msg.errorMessage} />
-            {msg.durationSeconds != null ? ` · ${msg.durationSeconds}s` : ""}
-          </div>
-          {msg.transcript || msg.body ? (
-            <p className="text-neutral-500 whitespace-pre-wrap">
-              {msg.transcript || msg.body}
-            </p>
-          ) : null}
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-neutral-400">
-            <AccountBadge name={msg.accountFriendlyName} sid={msg.accountSid} />
-            <NumberBadge
-              outbound={outbound}
-              fromNumber={msg.fromNumber}
-              toNumber={msg.toNumber}
-            />
-            <span>{formatTime(msg.createdAt)}</span>
-          </div>
-        </div>
-      </div>
-    );
+    return <VoiceCallChip msg={msg} />;
   }
 
   return (
