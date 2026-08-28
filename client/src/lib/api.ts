@@ -2963,6 +2963,7 @@ export interface TwilioCommunicationItem {
   fromNumber: string;
   toNumber: string;
   body: string;
+  transcript: string;
   mediaUrls: string[];
   durationSeconds: number | null;
   twilioSid: string | null;
@@ -2980,7 +2981,7 @@ export type MessageThreadStatus = "open" | "closed";
 
 export interface MessageThreadItem {
   _id: string;
-  contactRef: string;
+  contactRef: string | null;
   customerRef: string | null;
   twilioAccountRef: string;
   accountSid: string;

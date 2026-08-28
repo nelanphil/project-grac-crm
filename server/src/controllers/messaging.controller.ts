@@ -846,20 +846,38 @@ type ThreadLookups = {
 
 async function buildThreadLookups(
   threads: Array<{
-    contactRef: Types.ObjectId;
+    contactRef?: Types.ObjectId | null;
+    customerRef?: Types.ObjectId | null;
     twilioAccountRef: Types.ObjectId;
   }>,
 ): Promise<ThreadLookups> {
-  const contactIds = [...new Set(threads.map((t) => String(t.contactRef)))];
-  const contacts = await CustomerContact.find({ _id: { $in: contactIds } })
-    .select("_id first last phone customerRef label")
-    .lean();
+  const contactIds = [
+    ...new Set(
+      threads
+        .map((t) => (t.contactRef ? String(t.contactRef) : ""))
+        .filter(Boolean),
+    ),
+  ];
+  const contacts = contactIds.length
+    ? await CustomerContact.find({ _id: { $in: contactIds } })
+        .select("_id first last phone customerRef label")
+        .lean()
+    : [];
   const contactById = new Map(contacts.map((c) => [String(c._id), c]));
 
-  const customerIds = [...new Set(contacts.map((c) => String(c.customerRef)))];
-  const customers = await Customer.find({ _id: { $in: customerIds } })
-    .select("_id first last")
-    .lean();
+  const customerIds = [
+    ...new Set(
+      [
+        ...contacts.map((c) => String(c.customerRef)),
+        ...threads.map((t) => (t.customerRef ? String(t.customerRef) : "")),
+      ].filter(Boolean),
+    ),
+  ];
+  const customers = customerIds.length
+    ? await Customer.find({ _id: { $in: customerIds } })
+        .select("_id first last accountName")
+        .lean()
+    : [];
   const customerById = new Map(customers.map((c) => [String(c._id), c]));
 
   const names = await accountNameMap(
@@ -869,21 +887,28 @@ async function buildThreadLookups(
   return { contactById, customerById, names };
 }
 
+function publicRef(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  return String(value);
+}
+
 function toPublicThread(
   thread: Record<string, unknown>,
   lookups: ThreadLookups,
 ) {
-  const contact = lookups.contactById.get(String(thread.contactRef));
-  const customer = contact
-    ? lookups.customerById.get(String(contact.customerRef))
+  const contact = thread.contactRef
+    ? lookups.contactById.get(String(thread.contactRef))
+    : undefined;
+  const customer = thread.customerRef
+    ? lookups.customerById.get(String(thread.customerRef))
     : undefined;
   const accountFriendlyName =
     lookups.names.get(String(thread.twilioAccountRef))?.friendlyName ?? null;
 
   return {
     _id: String(thread._id),
-    contactRef: String(thread.contactRef),
-    customerRef: thread.customerRef ? String(thread.customerRef) : null,
+    contactRef: publicRef(thread.contactRef),
+    customerRef: publicRef(thread.customerRef),
     twilioAccountRef: String(thread.twilioAccountRef),
     accountSid: thread.accountSid ?? "",
     accountFriendlyName,

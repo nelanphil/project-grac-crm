@@ -24,6 +24,8 @@ export interface ITwilioCommunication extends Document {
   fromNumber: string;
   toNumber: string;
   body: string;
+  /** Voice call transcript. Empty string for SMS/MMS and when unknown. */
+  transcript: string;
   mediaUrls: string[];
   durationSeconds?: number | null;
   twilioSid?: string | null;
@@ -85,6 +87,7 @@ const twilioCommunicationSchema = new Schema<ITwilioCommunication>(
     fromNumber: { type: String, required: true, trim: true },
     toNumber: { type: String, required: true, trim: true },
     body: { type: String, default: "" },
+    transcript: { type: String, default: "" },
     mediaUrls: { type: [String], default: [] },
     durationSeconds: { type: Number, default: null },
     twilioSid: { type: String, default: null },

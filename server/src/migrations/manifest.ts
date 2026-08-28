@@ -38,4 +38,8 @@ export const MIGRATIONS: MigrationEntry[] = [
     id: "2026-08-22-product-catalog-fields",
     file: "migrate-product-catalog-fields",
   },
+  {
+    id: "2026-08-27-customer-message-threads",
+    file: "merge-customer-message-threads",
+  },
 ];

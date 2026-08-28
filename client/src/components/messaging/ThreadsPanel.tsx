@@ -122,11 +122,13 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
   async function handleSendReply() {
     if (!threadDetail || !replyText.trim()) return;
+    const contactId = threadDetail.thread.contactRef;
+    if (!contactId) return;
     setSendingReply(true);
     setError(null);
     try {
       await sendMessagingMessages(token, {
-        contactIds: [threadDetail.thread.contactRef],
+        contactIds: [contactId],
         body: replyText,
         threadId: threadDetail.thread._id,
         twilioAccountId: threadDetail.thread.twilioAccountRef,
@@ -143,6 +145,8 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
   async function handleCall() {
     if (!threadDetail) return;
+    const contactId = threadDetail.thread.contactRef;
+    if (!contactId) return;
     const label =
       formatCustomerName(
         threadDetail.thread.contact?.first,
@@ -153,7 +157,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
     setError(null);
     try {
       await placeMessagingCall(token, {
-        contactId: threadDetail.thread.contactRef,
+        contactId,
         twilioAccountId: threadDetail.thread.twilioAccountRef,
         fromNumber: threadDetail.thread.ourNumber,
       });
