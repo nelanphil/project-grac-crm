@@ -75,18 +75,8 @@ export default function CustomerThreadsPanel({
   const selectedThread =
     contactThreads.find((t) => t._id === selectedThreadId) ?? null;
 
-  const relatedThreads = useMemo(() => {
-    if (!selectedThread) return [];
-    const key = contactThreadKey(selectedThread);
-    const same = threads.filter((th) => contactThreadKey(th) === key);
-    return same.length > 0 ? same : [selectedThread];
-  }, [threads, selectedThread]);
-
-  const replyThread = pickReplyThread(relatedThreads) ?? selectedThread;
-  const relatedThreadIds = relatedThreads.map((th) => th._id).join("|");
-
   useEffect(() => {
-    if (relatedThreads.length === 0) {
+    if (!selectedThreadId) {
       queueMicrotask(() => setThreadDetail(null));
       return;
     }
@@ -94,18 +84,10 @@ export default function CustomerThreadsPanel({
     queueMicrotask(() => {
       if (!cancelled) setLoadingThreadDetail(true);
     });
-    Promise.all(
-      relatedThreads.map((th) => getMessagingThreadDetail(token, th._id)),
-    )
-      .then((details) => {
+    getMessagingThreadDetail(token, selectedThreadId)
+      .then((res) => {
         if (cancelled) return;
-        const header =
-          details.find((d) => d.thread._id === replyThread?._id) ??
-          details[0];
-        setThreadDetail({
-          thread: header.thread,
-          messages: mergeMessages(details.map((d) => d.messages)),
-        });
+        setThreadDetail(res);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -119,16 +101,13 @@ export default function CustomerThreadsPanel({
     return () => {
       cancelled = true;
     };
-    // relatedThreadIds is a stable digest of relatedThreads
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, relatedThreadIds, replyThread?._id, refreshKey]);
+  }, [token, selectedThreadId, refreshKey]);
 
   function refresh() {
     setRefreshKey((k) => k + 1);
   }
 
-  const contactRef =
-    replyThread?.contactRef ?? threadDetail?.thread.contactRef ?? null;
+  const contactRef = threadDetail?.thread.contactRef ?? null;
   const conversationMessages = threadDetail?.messages ?? [];
 
   async function handleSendReply() {
@@ -255,7 +234,11 @@ export default function CustomerThreadsPanel({
                         </span>
                       </div>
                       <div className="truncate text-[11px] text-neutral-500">
-                        {t.lastMessagePreview || t.lastMessageChannel || "—"}
+                        {t.lastMessageChannel === "voice"
+                          ? t.lastMessageDirection === "outbound"
+                            ? "Outbound call"
+                            : "Inbound call"
+                          : t.lastMessagePreview || "—"}
                       </div>
                       <div className="flex items-center gap-1 text-[10px] text-neutral-400">
                         <span className="truncate">
