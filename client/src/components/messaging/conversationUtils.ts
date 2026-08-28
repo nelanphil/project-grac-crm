@@ -57,7 +57,9 @@ export function voiceTranscript(msg: {
   transcript?: string | null;
   body?: string | null;
 }): string {
-  return msg.transcript?.trim() || msg.body?.trim() || "";
+  const transcript = (msg.transcript ?? "").trim();
+  if (!transcript || transcript === "Voice message") return "";
+  return transcript;
 }
 
 export function smsMessages(
@@ -105,7 +107,7 @@ export type CustomerRow = {
   threads: MessageThreadItem[];
 };
 
-/** L1: one row per customerRef. Identified voice stays here. Unknown (null) is Voice Threads only. */
+/** L1: one row per customerRef. Identified voice also appears in Voice Threads. */
 export function groupCustomersByRef(
   threads: MessageThreadItem[],
 ): CustomerRow[] {
@@ -280,11 +282,6 @@ export function buildVoiceCallRows(
         thread: t,
       };
     });
-}
-
-/** Voice Threads list: unidentified callers only. Identified voice nests under Conversations. */
-export function unknownVoiceRows(rows: VoiceCallRow[]): VoiceCallRow[] {
-  return rows.filter((row) => !row.customerRef && !row.thread?.customerRef);
 }
 
 export function voiceRowFromMessage(

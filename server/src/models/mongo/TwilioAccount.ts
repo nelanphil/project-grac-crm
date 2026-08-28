@@ -8,6 +8,8 @@ export interface ITwilioAccount extends Document {
   testAuthTokenEncrypted?: string;
   phoneNumbers: string[];
   isActive: boolean;
+  /** Twilio <Say> voice used for IVR, voicemail, and outbound calls. */
+  sayVoice: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,6 +47,11 @@ const twilioAccountSchema = new Schema<ITwilioAccount>(
     isActive: {
       type: Boolean,
       default: true,
+    },
+    sayVoice: {
+      type: String,
+      trim: true,
+      default: "Polly.Joanna",
     },
   },
   { timestamps: true },

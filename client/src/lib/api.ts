@@ -2295,12 +2295,18 @@ export async function updateRolePermissions(
 // Twilio accounts (Control Panel)
 // ---------------------------------------------------------------------------
 
+export type TwilioRuntimeEnvironment = "development" | "production";
+export type TwilioCredentialPair = "live" | "test";
+
 export interface TwilioAccountItem {
   _id: string;
   accountSid: string;
   friendlyName: string;
   phoneNumbers: string[];
   isActive: boolean;
+  sayVoice: string;
+  environment: TwilioRuntimeEnvironment;
+  credentialsInUse: TwilioCredentialPair;
   hasAuthToken: boolean;
   testAccountSid: string | null;
   hasTestAuthToken: boolean;
@@ -2317,6 +2323,7 @@ export interface TwilioAccountInput {
   testAuthToken?: string | null;
   phoneNumbers?: string[];
   isActive?: boolean;
+  sayVoice?: string;
 }
 
 export async function getTwilioAccounts(
@@ -3026,7 +3033,8 @@ export interface ThreadConflictCheck {
 }
 
 export interface MessagingWebhookInfo {
-  liveTwilioDisabled: boolean;
+  environment: TwilioRuntimeEnvironment;
+  credentialsInUse: TwilioCredentialPair;
   messageWebhookUrl: string;
   voiceWebhookUrl: string;
   recordingWebhookUrl: string;

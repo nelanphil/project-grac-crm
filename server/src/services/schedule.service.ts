@@ -12,6 +12,7 @@ import {
   localDateToUtc,
   rangesOverlap,
   resolveDayWindow,
+  SCHEDULE_TIMEZONE,
   windowToUtcRange,
   type HomeLocation,
   type WeeklyHours,
@@ -901,4 +902,122 @@ export async function listScheduleQueue(opts: {
   ]);
 
   return { unscheduled, today: todayJobs, upcoming, pastDue };
+}
+
+export type PhoneBookingSlot = {
+  start: Date;
+  end: Date;
+  assignedUserRef: string;
+  spokenLabel: string;
+};
+
+function speakSlot(start: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: SCHEDULE_TIMEZONE,
+    weekday: "long",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(start);
+}
+
+/** Next open 60-minute windows on schedulable staff (next ~14 days). */
+export async function listNextAvailableSlots(opts?: {
+  estimatedMinutes?: number;
+  count?: number;
+  daysAhead?: number;
+}): Promise<PhoneBookingSlot[]> {
+  const estimatedMinutes = opts?.estimatedMinutes ?? DEFAULT_ESTIMATED_MINUTES;
+  const count = opts?.count ?? 3;
+  const daysAhead = opts?.daysAhead ?? 14;
+  const staff = await listSchedulableStaff();
+  if (staff.length === 0) return [];
+
+  const now = new Date();
+  const firstDate = formatLocalDate(now);
+  const lastDate = formatLocalDate(addMinutes(now, daysAhead * 24 * 60));
+  const rangeStart = localDateToUtc(firstDate, "00:00");
+  const rangeEnd = localDateToUtc(lastDate, "23:59");
+
+  const jobs = await WorkOrder.find({
+    assignedUserRef: { $in: staff.map((s) => s._id) },
+    scheduledStart: { $gte: rangeStart, $lte: rangeEnd },
+    $or: [
+      { appointmentCanceledAt: null },
+      { appointmentCanceledAt: { $exists: false } },
+    ],
+  })
+    .select("assignedUserRef scheduledStart scheduledEnd estimatedMinutes")
+    .lean();
+
+  const jobsByUser = new Map<string, typeof jobs>();
+  for (const job of jobs) {
+    const key = job.assignedUserRef?.toString() ?? "";
+    if (!key) continue;
+    const list = jobsByUser.get(key) ?? [];
+    list.push(job);
+    jobsByUser.set(key, list);
+  }
+
+  const slots: PhoneBookingSlot[] = [];
+  const seenStarts = new Set<number>();
+
+  for (let day = 0; day < daysAhead && slots.length < count; day += 1) {
+    const localDate = formatLocalDate(addMinutes(localDateToUtc(firstDate, "12:00"), day * 24 * 60));
+    const windows = staff
+      .map((s) => {
+        const window = resolveDayWindow(
+          s.weeklyHours ?? defaultWeeklyHours(Boolean(s.schedulable)),
+          s.scheduleExceptions,
+          localDate,
+        );
+        const range = windowToUtcRange(localDate, window);
+        return { staff: s, range };
+      })
+      .filter((w): w is { staff: LeanUser; range: { start: Date; end: Date } } =>
+        Boolean(w.range),
+      );
+
+    if (windows.length === 0) continue;
+
+    const dayStart = Math.min(...windows.map((w) => w.range.start.getTime()));
+    const dayEnd = Math.max(...windows.map((w) => w.range.end.getTime()));
+
+    for (
+      let cursor = dayStart;
+      cursor + estimatedMinutes * 60000 <= dayEnd && slots.length < count;
+      cursor += estimatedMinutes * 60000
+    ) {
+      if (cursor < now.getTime()) continue;
+      if (seenStarts.has(cursor)) continue;
+      const start = new Date(cursor);
+      const end = addMinutes(start, estimatedMinutes);
+
+      const free = windows.find(({ staff: s, range }) => {
+        if (start.getTime() < range.start.getTime()) return false;
+        if (end.getTime() > range.end.getTime()) return false;
+        const existing = jobsByUser.get(String(s._id)) ?? [];
+        return !existing.some((job) => {
+          const jobStart = job.scheduledStart
+            ? new Date(job.scheduledStart)
+            : null;
+          if (!jobStart) return false;
+          const jobEnd = job.scheduledEnd
+            ? new Date(job.scheduledEnd)
+            : addMinutes(jobStart, estimatedMinutesForWorkOrder(job));
+          return rangesOverlap(start, end, jobStart, jobEnd);
+        });
+      });
+
+      if (!free) continue;
+      seenStarts.add(cursor);
+      slots.push({
+        start,
+        end,
+        assignedUserRef: String(free.staff._id),
+        spokenLabel: speakSlot(start),
+      });
+    }
+  }
+
+  return slots;
 }

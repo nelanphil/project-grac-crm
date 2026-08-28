@@ -4,6 +4,7 @@ import { TwilioAccount, ITwilioAccount } from "../models/mongo/TwilioAccount";
 import { decryptCredential } from "../utils/credentialsCrypto";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
 import { resolvePublicApiBase } from "../utils/publicUrl";
+import { buildOutboundSayTwiml } from "../utils/twilioVoiceTwiml";
 
 export class TwilioServiceError extends Error {
   constructor(message: string) {
@@ -22,39 +23,30 @@ function resolveAuthToken(account: ITwilioAccount): string {
   return decryptCredential(encrypted);
 }
 
-/** Non-production never uses live Twilio (sends, calls, or webhook ingest). */
-export function isLiveTwilioDisabled(): boolean {
-  return process.env.NODE_ENV !== "production";
+export type TwilioRuntimeEnvironment = "development" | "production";
+export type TwilioCredentialPair = "live" | "test";
+
+export function getTwilioRuntimeEnvironment(): TwilioRuntimeEnvironment {
+  return process.env.NODE_ENV === "production" ? "production" : "development";
+}
+
+/** Credential pair this process actually uses for Twilio API calls. */
+export function getTwilioCredentialPair(): TwilioCredentialPair {
+  return "live";
 }
 
 /**
  * Resolves the Account SID + Auth Token pair to use for Twilio API calls
  * and webhook signature validation.
  *
- * Twilio requires the Account SID and Auth Token to belong to the same
- * credential set — a live Account SID can never be authenticated with a Test
- * Auth Token (and vice versa), otherwise Twilio responds with a 401
- * "Authenticate" error (code 20003).
- *
- * Production always uses the live pair. Non-production requires a complete
- * test SID + test auth token and never falls back to live credentials.
+ * Always uses the live Account SID + auth token so local development and
+ * production send, receive, and validate against the same saved account.
+ * Optional test SID/token fields are stored but not selected automatically.
  */
 function resolveCredentials(account: ITwilioAccount): {
   accountSid: string;
   authToken: string;
 } {
-  if (isLiveTwilioDisabled()) {
-    if (account.testAccountSid && account.testAuthTokenEncrypted) {
-      return {
-        accountSid: account.testAccountSid,
-        authToken: decryptCredential(account.testAuthTokenEncrypted),
-      };
-    }
-    throw new TwilioServiceError(
-      "Twilio test credentials are required in development",
-    );
-  }
-
   return {
     accountSid: account.accountSid,
     authToken: resolveAuthToken(account),
@@ -157,18 +149,13 @@ export async function createOutboundCall(params: {
   from: string;
   to: string;
   sayText: string;
+  voice?: string;
   statusCallbackUrl?: string;
 }): Promise<{ sid: string }> {
   const { accountSid, authToken } = resolveCredentials(params.account);
   const client = twilio(accountSid, authToken);
 
-  const escaped = params.sayText
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-
-  const twiml = `<Response><Say voice="alice">${escaped}</Say></Response>`;
+  const twiml = buildOutboundSayTwiml(params.sayText, params.voice);
 
   try {
     const call = await client.calls.create({
@@ -260,18 +247,51 @@ export function voiceWebhookAbsoluteUrl(accountSid?: string): string {
   return webhookAbsoluteUrl("/webhooks/twilio/voice", accountSid);
 }
 
+export function voiceGatherWebhookAbsoluteUrl(accountSid?: string): string {
+  return webhookAbsoluteUrl("/webhooks/twilio/voice/gather", accountSid);
+}
+
 export function voiceRecordingWebhookAbsoluteUrl(accountSid?: string): string {
   return webhookAbsoluteUrl("/webhooks/twilio/voice/recording", accountSid);
 }
 
-/**
- * Point each configured incoming number's Voice webhook at our TwiML URL.
- * Uses live Account SID + Auth Token (not test credentials). Best-effort:
- * missing numbers are skipped and logged.
- */
-export async function configureIncomingNumbersVoiceUrl(
+export function messageWebhookAbsoluteUrl(accountSid?: string): string {
+  return webhookAbsoluteUrl("/webhooks/twilio/message", accountSid);
+}
+
+export function statusWebhookAbsoluteUrl(accountSid?: string): string {
+  return webhookAbsoluteUrl("/webhooks/twilio/status", accountSid);
+}
+
+/** Best-effort: Twilio sometimes delivers RecordingUrl before TranscriptionText. */
+export async function fetchRecordingTranscript(
   account: ITwilioAccount,
-  voiceUrl: string,
+  recordingSid: string,
+): Promise<string> {
+  const sid = recordingSid.trim();
+  if (!sid) return "";
+  try {
+    const { accountSid, authToken } = liveCredentials(account);
+    const client = twilio(accountSid, authToken);
+    const list = await client.recordings(sid).transcriptions.list({ limit: 5 });
+    const withText = list.find((t) => (t.transcriptionText || "").trim());
+    return (withText?.transcriptionText || "").trim();
+  } catch (err) {
+    console.warn(
+      `[twilio] Could not fetch transcription for recording ${sid}:`,
+      err,
+    );
+    return "";
+  }
+}
+
+/**
+ * Point each configured incoming number at our Voice, SMS, and status URLs.
+ * Uses live Account SID + Auth Token. Best-effort: missing numbers are skipped.
+ */
+export async function configureIncomingNumbersWebhooks(
+  account: ITwilioAccount,
+  urls: { voiceUrl: string; smsUrl: string; statusCallbackUrl: string },
 ): Promise<void> {
   const wanted = account.phoneNumbers ?? [];
   if (wanted.length === 0) return;
@@ -292,18 +312,22 @@ export async function configureIncomingNumbersVoiceUrl(
     });
     if (!match) {
       console.warn(
-        `[twilio] Incoming number ${raw} not found on account ${account.accountSid}; skipped Voice URL update`,
+        `[twilio] Incoming number ${raw} not found on account ${account.accountSid}; skipped webhook URL update`,
       );
       continue;
     }
     try {
       await client.incomingPhoneNumbers(match.sid).update({
-        voiceUrl,
+        voiceUrl: urls.voiceUrl,
         voiceMethod: "POST",
+        smsUrl: urls.smsUrl,
+        smsMethod: "POST",
+        statusCallback: urls.statusCallbackUrl,
+        statusCallbackMethod: "POST",
       });
     } catch (err) {
       console.error(
-        `[twilio] Failed to set Voice URL on ${raw} (${match.sid}):`,
+        `[twilio] Failed to set webhook URLs on ${raw} (${match.sid}):`,
         err,
       );
     }

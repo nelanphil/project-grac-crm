@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TWILIO_SAY_VOICE_VALUES } from "../utils/twilioVoices";
 
 const accountSidSchema = z
   .string()
@@ -8,6 +9,8 @@ const accountSidSchema = z
     "Account SID must be AC followed by 32 hex characters",
   );
 
+const sayVoiceSchema = z.enum(TWILIO_SAY_VOICE_VALUES);
+
 export const createTwilioAccountSchema = z.object({
   accountSid: accountSidSchema,
   friendlyName: z.string().trim().min(1, "Account name is required").max(120),
@@ -16,6 +19,7 @@ export const createTwilioAccountSchema = z.object({
   testAuthToken: z.string().trim().optional(),
   phoneNumbers: z.array(z.string().trim().min(1)).optional().default([]),
   isActive: z.boolean().optional().default(true),
+  sayVoice: sayVoiceSchema.optional(),
 });
 
 export const updateTwilioAccountSchema = z.object({
@@ -28,6 +32,7 @@ export const updateTwilioAccountSchema = z.object({
   testAuthToken: z.string().trim().min(1).nullable().optional(),
   phoneNumbers: z.array(z.string().trim().min(1)).optional(),
   isActive: z.boolean().optional(),
+  sayVoice: sayVoiceSchema.optional(),
 });
 
 export type CreateTwilioAccountInput = z.infer<

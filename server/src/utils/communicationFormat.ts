@@ -4,6 +4,7 @@ import {
   CommunicationStatus,
   ITwilioCommunication,
 } from "../models/mongo/TwilioCommunication";
+import { Customer } from "../models/mongo/Customer";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { normalizePhoneDigits } from "./customerSites";
 
@@ -60,6 +61,19 @@ export function mapTwilioCallStatus(
   }
 }
 
+function phonesMatchDigits(stored: string, incomingDigits: string): boolean {
+  const d = normalizePhoneDigits(stored);
+  if (d.length < 7) return false;
+  return (
+    d === incomingDigits ||
+    d.endsWith(incomingDigits) ||
+    incomingDigits.endsWith(d) ||
+    (d.length >= 10 &&
+      incomingDigits.length >= 10 &&
+      d.slice(-10) === incomingDigits.slice(-10))
+  );
+}
+
 export async function findContactByPhone(phone: string): Promise<{
   contactRef: Types.ObjectId;
   customerRef: Types.ObjectId;
@@ -73,23 +87,60 @@ export async function findContactByPhone(phone: string): Promise<{
     .select("_id customerRef phone")
     .lean();
 
-  const match = contacts.find((c) => {
-    const d = normalizePhoneDigits(c.phone);
-    if (d.length < 7) return false;
-    return (
-      d === digits ||
-      d.endsWith(digits) ||
-      digits.endsWith(d) ||
-      (d.length >= 10 &&
-        digits.length >= 10 &&
-        d.slice(-10) === digits.slice(-10))
-    );
-  });
+  const match = contacts.find((c) => phonesMatchDigits(c.phone, digits));
+  if (match) {
+    return {
+      contactRef: match._id as Types.ObjectId,
+      customerRef: match.customerRef as Types.ObjectId,
+    };
+  }
 
-  if (!match) return null;
+  const customers = await Customer.find({
+    deletedAt: null,
+    $or: [
+      { phoneDigits: { $exists: true, $nin: [null, ""] } },
+      { phone: { $exists: true, $nin: [null, ""] } },
+    ],
+  })
+    .select("_id first last phone phoneDigits")
+    .lean();
+
+  const customer = customers.find((c) => {
+    if (c.phoneDigits && phonesMatchDigits(c.phoneDigits, digits)) return true;
+    return phonesMatchDigits(c.phone ?? "", digits);
+  });
+  if (!customer) return null;
+
+  const primary =
+    (await CustomerContact.findOne({
+      customerRef: customer._id,
+      isPrimary: true,
+    })
+      .select("_id customerRef")
+      .lean()) ??
+    (await CustomerContact.findOne({ customerRef: customer._id })
+      .select("_id customerRef")
+      .lean());
+
+  if (primary) {
+    return {
+      contactRef: primary._id as Types.ObjectId,
+      customerRef: customer._id as Types.ObjectId,
+    };
+  }
+
+  const created = await CustomerContact.create({
+    customerRef: customer._id,
+    first: customer.first ?? "",
+    last: customer.last ?? "",
+    phone: customer.phone || phone,
+    email: "",
+    label: "Primary",
+    isPrimary: true,
+  });
   return {
-    contactRef: match._id as Types.ObjectId,
-    customerRef: match.customerRef as Types.ObjectId,
+    contactRef: created._id as Types.ObjectId,
+    customerRef: customer._id as Types.ObjectId,
   };
 }
 

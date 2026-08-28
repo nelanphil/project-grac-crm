@@ -20,9 +20,7 @@ import {
   formatDuration,
   formatRelativeTime,
   groupCustomersByRef,
-  unknownVoiceRows,
   voiceRowFromMessage,
-  voiceTranscript,
 } from "./conversationUtils";
 
 type ThreadsPanelProps = {
@@ -50,7 +48,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
   const customers = useMemo(() => groupCustomersByRef(threads), [threads]);
   const voiceRows = useMemo(
-    () => unknownVoiceRows(buildVoiceCallRows(voiceComms, threads)),
+    () => buildVoiceCallRows(voiceComms, threads),
     [voiceComms, threads],
   );
   const selectedCustomer =
@@ -161,12 +159,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
   }, [token, selectedVoiceRow]);
 
   const shownVoice = voiceDetail ?? selectedVoiceRow;
-  const transcriptText = shownVoice
-    ? voiceTranscript({
-        transcript: shownVoice.transcript,
-        body: shownVoice.communication?.body,
-      })
-    : "";
+  const transcriptText = shownVoice?.transcript ?? "";
 
   function selectCustomer(customerRef: string) {
     setSelectedVoiceId(null);
@@ -317,7 +310,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
               </div>
             ) : voiceRows.length === 0 ? (
               <p className="p-3 text-xs text-neutral-500">
-                No unknown callers. Identified calls appear under Conversations.
+                No calls yet.
               </p>
             ) : (
               <ul>

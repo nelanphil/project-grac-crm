@@ -39,7 +39,8 @@ import {
 import {
   createOutboundCall,
   getTwilioAccountForSend,
-  isLiveTwilioDisabled,
+  getTwilioCredentialPair,
+  getTwilioRuntimeEnvironment,
   resolveFromNumber,
   sendSms,
   TwilioServiceError,
@@ -682,6 +683,7 @@ export async function placeCall(
         from: fromNumber,
         to: toE164Number,
         sayText,
+        voice: account.sayVoice,
         statusCallbackUrl,
       });
 
@@ -1143,7 +1145,8 @@ export async function getWebhookInfo(
     .lean();
 
   res.json({
-    liveTwilioDisabled: isLiveTwilioDisabled(),
+    environment: getTwilioRuntimeEnvironment(),
+    credentialsInUse: getTwilioCredentialPair(),
     messageWebhookUrl: `${base}/webhooks/twilio/message`,
     voiceWebhookUrl: `${base}/webhooks/twilio/voice`,
     recordingWebhookUrl: `${base}/webhooks/twilio/voice/recording`,

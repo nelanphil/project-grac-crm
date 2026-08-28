@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { Types } from "mongoose";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
 import { MessageThread } from "../models/mongo/MessageThread";
 import { ITwilioAccount } from "../models/mongo/TwilioAccount";
@@ -8,6 +9,7 @@ import {
   mapTwilioMessageStatus,
 } from "../utils/communicationFormat";
 import {
+  fetchRecordingTranscript,
   resolveAccountFromWebhook,
   voiceRecordingWebhookAbsoluteUrl,
 } from "../services/twilio.service";
@@ -19,7 +21,9 @@ import {
 import { toE164 } from "../utils/messagingContext";
 import { normalizePhoneDigits } from "../utils/customerSites";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
+import { handleIvrGather, startInboundIvr } from "../services/voiceIvr.service";
 import { buildTakeAMessageTwiml } from "../utils/twilioVoiceTwiml";
+import { resolveSayVoice } from "../utils/twilioVoices";
 
 function asStringRecord(body: unknown): Record<string, string> {
   const out: Record<string, string> = {};
@@ -184,6 +188,15 @@ function transcriptFromParams(params: Record<string, string>): string {
   );
 }
 
+async function resolveCallTranscript(
+  account: ITwilioAccount,
+  params: Record<string, string>,
+): Promise<string> {
+  const fromParams = transcriptFromParams(params).trim();
+  if (fromParams) return fromParams;
+  return fetchRecordingTranscript(account, params.RecordingSid || "");
+}
+
 function withRecordingFirst(existing: string[], recordingUrl: string): string[] {
   if (!recordingUrl) return existing;
   const rest = existing.filter((u) => u !== recordingUrl);
@@ -250,15 +263,18 @@ async function ingestInboundVoice(opts: {
     toNumber,
   });
 
-  const keepExistingThread =
-    Boolean(existing?.threadRef) &&
-    !resolved.contactRef &&
-    Boolean(existing?.contactRef);
-  const threadRef = keepExistingThread
-    ? existing!.threadRef!
-    : resolved.thread._id;
-  const customerRef = resolved.customerRef ?? existing?.customerRef ?? null;
-  const contactRef = resolved.contactRef ?? existing?.contactRef ?? null;
+  let threadRef = resolved.thread._id;
+  let customerRef = resolved.customerRef ?? existing?.customerRef ?? null;
+  let contactRef = resolved.contactRef ?? existing?.contactRef ?? null;
+  if (resolved.contactRef) {
+    threadRef = resolved.thread._id;
+    customerRef = resolved.customerRef;
+    contactRef = resolved.contactRef;
+  } else if (existing?.threadRef) {
+    threadRef = existing.threadRef;
+    customerRef = existing.customerRef ?? customerRef;
+    contactRef = existing.contactRef ?? contactRef;
+  }
 
   const transcript = (opts.transcript || "").trim();
   const status = opts.statusRaw
@@ -286,8 +302,10 @@ async function ingestInboundVoice(opts: {
     $set.transcript = transcript;
     $set.body = previewBody(transcript);
   } else if (!existing) {
-    $set.body = "Voice message";
+    $set.body = "";
     $set.transcript = "";
+  } else if (existing.body === "Voice message") {
+    $set.body = "";
   }
 
   if (opts.recordingUrl) {
@@ -318,8 +336,8 @@ async function ingestInboundVoice(opts: {
 
   const preview =
     (typeof $set.body === "string" && $set.body) ||
-    existing?.body ||
-    "Voice message";
+    (existing?.body && existing.body !== "Voice message" ? existing.body : "") ||
+    "";
 
   if (!alreadyOnThread) {
     await touchThreadAfterMessage(threadRef, {
@@ -392,7 +410,9 @@ export async function statusWebhook(
       : params.ErrorMessage || null;
 
     const recordingUrl = isCall ? recordingUrlFromParams(params) : "";
-    const transcript = isCall ? transcriptFromParams(params) : "";
+    const transcript = isCall
+      ? await resolveCallTranscript(account, params)
+      : "";
     const fromNumber = params.From || "";
     const toNumber = params.To || "";
 
@@ -405,6 +425,20 @@ export async function statusWebhook(
       const mediaUrls = recordingUrl
         ? withRecordingFirst(existing.mediaUrls ?? [], recordingUrl)
         : undefined;
+
+      const identity: Record<string, unknown> = {};
+      if (existing.channel === "voice" && !existing.contactRef) {
+        const resolved = await resolveInboundVoiceThread({
+          account,
+          fromNumber: fromNumber || existing.fromNumber,
+          toNumber: toNumber || existing.toNumber,
+        });
+        if (resolved.contactRef) {
+          identity.contactRef = resolved.contactRef;
+          identity.customerRef = resolved.customerRef;
+          identity.threadRef = resolved.thread._id;
+        }
+      }
 
       await TwilioCommunication.updateOne(
         { _id: existing._id },
@@ -424,13 +458,17 @@ export async function statusWebhook(
             ...(transcript
               ? { transcript, body: previewBody(transcript) }
               : {}),
+            ...identity,
           },
         },
       );
 
-      if (transcript && existing.threadRef) {
+      const threadRef =
+        (identity.threadRef as typeof existing.threadRef | undefined) ??
+        existing.threadRef;
+      if (transcript && threadRef) {
         await MessageThread.updateOne(
-          { _id: existing.threadRef },
+          { _id: threadRef },
           {
             $set: {
               lastMessagePreview: previewBody(transcript),
@@ -438,6 +476,17 @@ export async function statusWebhook(
             },
           },
         );
+      } else if (
+        identity.threadRef &&
+        String(identity.threadRef) !== String(existing.threadRef ?? "")
+      ) {
+        await touchThreadAfterMessage(identity.threadRef as Types.ObjectId, {
+          direction: existing.direction === "outbound" ? "outbound" : "inbound",
+          channel: "voice",
+          body: existing.body === "Voice message" ? "" : existing.body,
+          transcript: existing.transcript || "",
+          at: existing.createdAt ?? new Date(),
+        });
       }
 
       res.status(200).send("OK");
@@ -538,25 +587,64 @@ export async function inboundVoiceWebhook(
 
     const params = asStringRecord(req.body);
     const callSid = params.CallSid || "";
-    if (callSid) {
-      try {
-        await ingestInboundVoice({
-          account,
-          callSid,
-          fromNumber: params.From || params.Caller || "",
-          toNumber: params.To || params.Called || "",
-          statusRaw: params.CallStatus,
-          defaultStatus: "in-progress",
-        });
-      } catch (err) {
-        console.error("Twilio inbound voice ingest error:", err);
-      }
+    const fromNumber = params.From || params.Caller || "";
+    const toNumber = params.To || params.Called || "";
+    if (!callSid) {
+      res
+        .status(200)
+        .type("text/xml")
+        .send(
+          buildTakeAMessageTwiml(
+            voiceRecordingWebhookAbsoluteUrl(account.accountSid),
+            resolveSayVoice(account.sayVoice),
+          ),
+        );
+      return;
     }
 
-    const recordingUrl = voiceRecordingWebhookAbsoluteUrl(account.accountSid);
-    res.status(200).type("text/xml").send(buildTakeAMessageTwiml(recordingUrl));
+    try {
+      await ingestInboundVoice({
+        account,
+        callSid,
+        fromNumber,
+        toNumber,
+        statusRaw: params.CallStatus,
+        defaultStatus: "in-progress",
+      });
+    } catch (err) {
+      console.error("Twilio inbound voice ingest error:", err);
+    }
+
+    const twiml = await startInboundIvr({
+      account,
+      callSid,
+      fromNumber,
+      toNumber,
+    });
+    res.status(200).type("text/xml").send(twiml);
   } catch (err) {
     console.error("Twilio inbound voice webhook error:", err);
+    res.status(200).type("text/xml").send(EMPTY_TWIML);
+  }
+}
+
+// POST /webhooks/twilio/voice/gather
+export async function inboundVoiceGatherWebhook(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const account = await resolveAccount(req);
+    if (!account) {
+      res.status(403).type("text/xml").send(EMPTY_TWIML);
+      return;
+    }
+
+    const params = asStringRecord(req.body);
+    const twiml = await handleIvrGather({ account, params });
+    res.status(200).type("text/xml").send(twiml);
+  } catch (err) {
+    console.error("Twilio inbound voice gather webhook error:", err);
     res.status(200).type("text/xml").send(EMPTY_TWIML);
   }
 }
@@ -600,7 +688,8 @@ export async function inboundVoiceRecordingWebhook(
       toNumber: params.To || params.Called || "",
       statusRaw,
       defaultStatus: "completed",
-      transcript: transcriptFromParams(params) || undefined,
+      transcript:
+        (await resolveCallTranscript(account, params)) || undefined,
       recordingUrl: recordingUrlFromParams(params) || undefined,
       durationSeconds: parseDurationSeconds(params),
     });

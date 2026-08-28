@@ -14,6 +14,7 @@ import {
   getTwilioAccounts,
   MessagingWebhookInfo,
   TwilioAccountItem,
+  TwilioRuntimeEnvironment,
   updateTwilioAccount,
 } from "@/lib/api";
 
@@ -26,7 +27,20 @@ type FormState = {
   clearTestAuthToken: boolean;
   phoneNumbers: string;
   isActive: boolean;
+  sayVoice: string;
 };
+
+const SAY_VOICES = [
+  { value: "Polly.Joanna", label: "Joanna (Amazon Polly)" },
+  { value: "Polly.Matthew", label: "Matthew (Amazon Polly)" },
+  { value: "Polly.Joey", label: "Joey (Amazon Polly)" },
+  { value: "Polly.Salli", label: "Salli (Amazon Polly)" },
+  { value: "Google.en-US-Neural2-F", label: "Neural female (Google)" },
+  { value: "Google.en-US-Neural2-D", label: "Neural male (Google)" },
+  { value: "alice", label: "Alice (legacy)" },
+] as const;
+
+const DEFAULT_SAY_VOICE = "Polly.Joanna";
 
 const EMPTY_FORM: FormState = {
   friendlyName: "",
@@ -37,6 +51,7 @@ const EMPTY_FORM: FormState = {
   clearTestAuthToken: false,
   phoneNumbers: "",
   isActive: true,
+  sayVoice: DEFAULT_SAY_VOICE,
 };
 
 function maskSid(sid: string): string {
@@ -49,6 +64,67 @@ function parsePhoneNumbers(raw: string): string[] {
     .split(/[\n,]+/)
     .map((p) => p.trim())
     .filter(Boolean);
+}
+
+function environmentLabel(environment: TwilioRuntimeEnvironment): string {
+  return environment === "production" ? "Production" : "Development";
+}
+
+function webhookHostIsPublic(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return !(
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host.endsWith(".local") ||
+      !host.includes(".")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function EnvironmentBadge({
+  environment,
+}: {
+  environment: TwilioRuntimeEnvironment;
+}) {
+  const production = environment === "production";
+  return (
+    <span
+      className={
+        production
+          ? "inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-800"
+          : "inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800"
+      }
+    >
+      {environmentLabel(environment)}
+    </span>
+  );
+}
+
+function ActiveBadge({ isActive }: { isActive: boolean }) {
+  return (
+    <span
+      className={
+        isActive
+          ? "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
+          : "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
+      }
+    >
+      {isActive ? "Active" : "Inactive"}
+    </span>
+  );
+}
+
+function AccountStatusBadges({ account }: { account: TwilioAccountItem }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <EnvironmentBadge environment={account.environment} />
+      <ActiveBadge isActive={account.isActive} />
+    </span>
+  );
 }
 
 export default function TwilioAccountsCard() {
@@ -110,6 +186,7 @@ export default function TwilioAccountsCard() {
       clearTestAuthToken: false,
       phoneNumbers: account.phoneNumbers.join(", "),
       isActive: account.isActive,
+      sayVoice: account.sayVoice || DEFAULT_SAY_VOICE,
     });
     setSaveError(null);
     setFormOpen(true);
@@ -140,6 +217,7 @@ export default function TwilioAccountsCard() {
         : form.testAuthToken.trim() || undefined,
       phoneNumbers: parsePhoneNumbers(form.phoneNumbers),
       isActive: form.isActive,
+      sayVoice: form.sayVoice,
     };
 
     try {
@@ -217,12 +295,18 @@ export default function TwilioAccountsCard() {
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
       <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-neutral-100">
         <div>
-          <h2 className="text-lg font-semibold text-brand-dark">Twilio</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold text-brand-dark">Twilio</h2>
+            {webhookInfo ? (
+              <EnvironmentBadge environment={webhookInfo.environment} />
+            ) : accounts[0] ? (
+              <EnvironmentBadge environment={accounts[0].environment} />
+            ) : null}
+          </div>
           <p className="text-sm text-neutral-500 mt-0.5">
-            Configure Twilio accounts for SMS, MMS, and phone calls. Accounts
-            are keyed by Account SID. Point each Twilio number&apos;s webhooks
-            at the URLs below so inbound traffic is attributed to the correct
-            account.
+            Configure Twilio accounts for SMS, MMS, and phone calls. Incoming
+            calls must use the Voice URL on Twilio&apos;s Voice tab — not the
+            Messaging tab, and not the status callback.
           </p>
         </div>
         {!formOpen && (
@@ -243,36 +327,59 @@ export default function TwilioAccountsCard() {
         </div>
       )}
 
-      {webhookInfo?.liveTwilioDisabled ? (
-        <div className="mx-6 mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Development will not send on live numbers, ingest live webhooks, or
-          rewrite Twilio Voice URLs. Add a test Account SID and test auth token
-          to send or call locally (Twilio magic numbers only).
-        </div>
-      ) : null}
-
       {webhookInfo ? (
         <div className="mx-6 mt-4 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-xs text-neutral-600 space-y-2">
           <p className="font-semibold text-brand-dark">Webhook URLs</p>
+          <p>
+            Match Twilio Console labels. Incoming <strong>calls</strong> belong
+            on the <strong>Voice configuration</strong> tab. Incoming{" "}
+            <strong>SMS</strong> belongs on the <strong>Messaging</strong> tab.
+            Status callback is delivery / call-progress only — it returns{" "}
+            <code>OK</code>, not TwiML, so never use it as the Voice URL or as
+            the Messaging backup.
+          </p>
           <div>
-            <span className="font-medium">Messaging (inbound SMS/MMS):</span>{" "}
-            <code className="break-all">{webhookInfo.messageWebhookUrl}</code>
-          </div>
-          <div>
-            <span className="font-medium">Voice (TwiML):</span>{" "}
+            <span className="font-medium">
+              Voice webhook (A call comes in):
+            </span>{" "}
             <code className="break-all">{webhookInfo.voiceWebhookUrl}</code>
+            <span className="mt-0.5 block text-neutral-500">
+              Voice configuration tab. Saving a number here also pushes this
+              URL when the API is public.
+            </span>
           </div>
           <div>
-            <span className="font-medium">Status callbacks:</span>{" "}
+            <span className="font-medium">
+              Messaging webhook (A message comes in):
+            </span>{" "}
+            <code className="break-all">{webhookInfo.messageWebhookUrl}</code>
+            <span className="mt-0.5 block text-neutral-500">
+              Messaging tab, primary handler.
+            </span>
+          </div>
+          <div>
+            <span className="font-medium">Status callback:</span>{" "}
             <code className="break-all">{webhookInfo.statusWebhookUrl}</code>
+            <span className="mt-0.5 block text-neutral-500">
+              StatusCallback / call status changes only — not Messaging backup.
+            </span>
+          </div>
+          <div>
+            <span className="font-medium">Recording / transcription:</span>{" "}
+            <code className="break-all">
+              {webhookInfo.recordingWebhookUrl}
+            </code>
+            <span className="mt-0.5 block text-neutral-500">
+              Applied by TwiML when a caller leaves voicemail — not a number
+              field in Twilio Console.
+            </span>
           </div>
           <p className="text-neutral-500">
-            {webhookInfo.liveTwilioDisabled
-              ? "These URLs are not applied to live Twilio numbers from this environment. Set each production number's Voice webhook in the Twilio Console (or by saving the account in production)."
-              : "Set each Twilio number's Voice webhook to the TwiML URL (saving a number here also pushes that URL via the Twilio API)."}{" "}
-            Recording/transcription callbacks are set in TwiML, not on the
-            number. Optional per-account URLs include <code>?accountSid=AC…</code>{" "}
-            for unambiguous routing when multiple Twilio accounts share this CRM.
+            {webhookHostIsPublic(webhookInfo.voiceWebhookUrl)
+              ? "This API host is public, so saving an account pushes Voice, Messaging, and Status URLs onto each listed number."
+              : "Voice, Messaging, and Status URLs are not pushed to Twilio until this API is publicly reachable (localhost cannot receive Twilio callbacks)."}{" "}
+            Optional per-account URLs include <code>?accountSid=AC…</code> for
+            unambiguous routing when multiple Twilio accounts share this CRM.
           </p>
         </div>
       ) : null}
@@ -295,6 +402,22 @@ export default function TwilioAccountsCard() {
               <X className="h-4 w-4" />
             </button>
           </div>
+          {(webhookInfo || editingAccount) && (
+            <p className="text-xs text-neutral-500">
+              This server is{" "}
+              {environmentLabel(
+                webhookInfo?.environment ??
+                  editingAccount?.environment ??
+                  "development",
+              )}{" "}
+              · account is {form.isActive ? "Active" : "Inactive"} · using{" "}
+              {(webhookInfo?.credentialsInUse ??
+                editingAccount?.credentialsInUse) === "live"
+                ? "live"
+                : "test"}{" "}
+              Account SID.
+            </p>
+          )}
 
           {saveError && (
             <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
@@ -434,6 +557,23 @@ export default function TwilioAccountsCard() {
               />
             </label>
 
+            <label className="block sm:col-span-2">
+              <span className="text-xs font-medium text-neutral-600">
+                Spoken voice (IVR, voicemail, outbound calls)
+              </span>
+              <select
+                value={form.sayVoice}
+                onChange={(e) => field("sayVoice", e.target.value)}
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+              >
+                {SAY_VOICES.map((voice) => (
+                  <option key={voice.value} value={voice.value}>
+                    {voice.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <label className="flex items-center gap-2 sm:col-span-2">
               <input
                 type="checkbox"
@@ -482,27 +622,16 @@ export default function TwilioAccountsCard() {
                 title={account.friendlyName}
                 subtitle={
                   <>
+                    {account.credentialsInUse === "live"
+                      ? "Using live credentials"
+                      : "Using test credentials"}
+                    {" · "}
                     {account.hasAuthToken
                       ? "Auth token set"
                       : "Missing auth token"}
-                    {account.hasTestAuthToken
-                      ? account.testAccountSid
-                        ? " · Test credentials set"
-                        : " · Test token set (missing test SID — will NOT work)"
-                      : ""}
                   </>
                 }
-                badges={
-                  <span
-                    className={
-                      account.isActive
-                        ? "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
-                        : "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
-                    }
-                  >
-                    {account.isActive ? "Active" : "Inactive"}
-                  </span>
-                }
+                badges={<AccountStatusBadges account={account} />}
                 fields={
                   <>
                     <DataField
@@ -574,14 +703,12 @@ export default function TwilioAccountsCard() {
                         <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
                           {account.friendlyName}
                           <div className="mt-0.5 text-xs font-normal text-neutral-400">
+                            {account.credentialsInUse === "live"
+                              ? "Using live credentials"
+                              : "Using test credentials"}
                             {account.hasAuthToken
-                              ? "Auth token set"
-                              : "Missing auth token"}
-                            {account.hasTestAuthToken
-                              ? account.testAccountSid
-                                ? " · Test credentials set"
-                                : " · Test token set (missing test SID — will NOT work)"
-                              : ""}
+                              ? " · Auth token set"
+                              : " · Missing auth token"}
                           </div>
                         </td>
                         <td className="px-6 py-4 font-mono text-neutral-600 whitespace-nowrap">
@@ -593,15 +720,7 @@ export default function TwilioAccountsCard() {
                             : "—"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <span
-                            className={
-                              account.isActive
-                                ? "inline-flex rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700"
-                                : "inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500"
-                            }
-                          >
-                            {account.isActive ? "Active" : "Inactive"}
-                          </span>
+                          <AccountStatusBadges account={account} />
                         </td>
                         <td className="px-6 py-4 text-right whitespace-nowrap">
                           <button

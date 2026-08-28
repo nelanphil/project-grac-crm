@@ -11,28 +11,36 @@ import {
   logNotificationAsync,
 } from "../services/notification.service";
 import {
-  configureIncomingNumbersVoiceUrl,
-  isLiveTwilioDisabled,
+  configureIncomingNumbersWebhooks,
+  getTwilioCredentialPair,
+  getTwilioRuntimeEnvironment,
+  messageWebhookAbsoluteUrl,
+  statusWebhookAbsoluteUrl,
   voiceWebhookAbsoluteUrl,
 } from "../services/twilio.service";
 import { isPubliclyReachableApiHost } from "../utils/publicUrl";
+import { DEFAULT_SAY_VOICE, resolveSayVoice } from "../utils/twilioVoices";
 
-async function applyVoiceWebhooks(account: ITwilioAccount): Promise<void> {
+async function applyNumberWebhooks(account: ITwilioAccount): Promise<void> {
   if (!account.phoneNumbers?.length) return;
 
   const voiceUrl = voiceWebhookAbsoluteUrl(account.accountSid);
-  if (isLiveTwilioDisabled() || !isPubliclyReachableApiHost(voiceUrl)) {
+  if (!isPubliclyReachableApiHost(voiceUrl)) {
     console.info(
-      `[twilio] Skipping Voice URL push for ${account.friendlyName} (non-production or non-public webhook URL)`,
+      `[twilio] Skipping webhook URL push for ${account.friendlyName} (non-public webhook URL)`,
     );
     return;
   }
 
   try {
-    await configureIncomingNumbersVoiceUrl(account, voiceUrl);
+    await configureIncomingNumbersWebhooks(account, {
+      voiceUrl,
+      smsUrl: messageWebhookAbsoluteUrl(account.accountSid),
+      statusCallbackUrl: statusWebhookAbsoluteUrl(account.accountSid),
+    });
   } catch (err) {
     console.error(
-      `Failed to set Twilio Voice URLs for ${account.friendlyName}:`,
+      `Failed to set Twilio webhook URLs for ${account.friendlyName}:`,
       err,
     );
   }
@@ -57,6 +65,11 @@ function toPublic(doc: ITwilioAccount | Record<string, unknown>) {
     friendlyName: d.friendlyName,
     phoneNumbers: d.phoneNumbers ?? [],
     isActive: d.isActive ?? true,
+    sayVoice: resolveSayVoice(
+      typeof d.sayVoice === "string" ? d.sayVoice : DEFAULT_SAY_VOICE,
+    ),
+    environment: getTwilioRuntimeEnvironment(),
+    credentialsInUse: getTwilioCredentialPair(),
     hasAuthToken: Boolean(d.authTokenEncrypted),
     testAccountSid: d.testAccountSid ?? null,
     hasTestAuthToken: Boolean(d.testAuthTokenEncrypted),
@@ -108,6 +121,7 @@ export async function createTwilioAccount(
       : undefined,
     phoneNumbers: data.phoneNumbers ?? [],
     isActive: data.isActive ?? true,
+    sayVoice: resolveSayVoice(data.sayVoice),
   });
 
   logNotificationAsync({
@@ -119,7 +133,7 @@ export async function createTwilioAccount(
     ...actorFromRequest(req.user),
   });
 
-  await applyVoiceWebhooks(account);
+  await applyNumberWebhooks(account);
 
   res.status(201).json({ account: toPublic(account) });
 }
@@ -192,10 +206,14 @@ export async function updateTwilioAccount(
     account.isActive = data.isActive;
   }
 
+  if (data.sayVoice !== undefined) {
+    account.sayVoice = resolveSayVoice(data.sayVoice);
+  }
+
   await account.save();
 
   if (data.phoneNumbers !== undefined) {
-    await applyVoiceWebhooks(account);
+    await applyNumberWebhooks(account);
   }
 
   logNotificationAsync({
