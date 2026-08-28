@@ -17,6 +17,8 @@ import {
   contactThreadKey,
   formatPhone,
   formatRelativeTime,
+  mergeMessages,
+  pickReplyThread,
   uniqueContactThreads,
 } from "./conversationUtils";
 
