@@ -159,6 +159,33 @@ export function uniqueContactThreads(
   );
 }
 
+export function pickReplyThread(
+  threads: MessageThreadItem[],
+): MessageThreadItem | null {
+  const sms = threads.filter((t) => t.lastMessageChannel !== "voice");
+  const pool = sms.length > 0 ? sms : threads;
+  const byRecent = [...pool].sort(
+    (a, b) => ts(b.lastMessageAt) - ts(a.lastMessageAt),
+  );
+  return byRecent.find((t) => t.status === "open") ?? byRecent[0] ?? null;
+}
+
+export function mergeMessages(
+  lists: TwilioCommunicationItem[][],
+): TwilioCommunicationItem[] {
+  const seen = new Set<string>();
+  const merged: TwilioCommunicationItem[] = [];
+  for (const list of lists) {
+    for (const msg of list) {
+      if (seen.has(msg._id)) continue;
+      seen.add(msg._id);
+      merged.push(msg);
+    }
+  }
+  merged.sort((a, b) => ts(a.createdAt) - ts(b.createdAt));
+  return merged;
+}
+
 export type VoiceCallRow = {
   id: string;
   customerRef: string | null;
@@ -207,10 +234,11 @@ export function buildVoiceCallRows(
             (t) => Boolean(c.customerRef) && t.customerRef === c.customerRef,
           ) ??
           null;
-        const unknown = !c.customerRef;
+        const customerRef = c.customerRef ?? thread?.customerRef ?? null;
+        const unknown = !customerRef;
         return {
           id: c._id,
-          customerRef: c.customerRef,
+          customerRef,
           displayName: unknown
             ? "Unknown caller"
             : thread
@@ -256,7 +284,7 @@ export function buildVoiceCallRows(
 
 /** Voice Threads list: unidentified callers only. Identified voice nests under Conversations. */
 export function unknownVoiceRows(rows: VoiceCallRow[]): VoiceCallRow[] {
-  return rows.filter((row) => !row.customerRef);
+  return rows.filter((row) => !row.customerRef && !row.thread?.customerRef);
 }
 
 export function voiceRowFromMessage(
