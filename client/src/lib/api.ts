@@ -3026,6 +3026,7 @@ export interface ThreadConflictCheck {
 }
 
 export interface MessagingWebhookInfo {
+  liveTwilioDisabled: boolean;
   messageWebhookUrl: string;
   voiceWebhookUrl: string;
   recordingWebhookUrl: string;

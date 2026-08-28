@@ -6,6 +6,9 @@
  * from server/.env (repo-root .env is a fallback). The `grac-crm` database
  * name is appended using the same logic as src/config/env.ts.
  *
+ * Skips `twiliocommunications` and `messagethreads` so live SMS/call
+ * traffic is not copied into development.
+ *
  * Dry-run by default. Pass --yes to write. Pass --drop to replace each
  * development collection (true clone).
  *
@@ -134,6 +137,8 @@ async function main() {
       : "\nMODE: DRY RUN (no writes). Re-run with --yes --drop to clone.\n",
   );
 
+  const skipCollections = new Set(["twiliocommunications", "messagethreads"]);
+
   const collections = await sourceDb
     .listCollections({}, { nameOnly: true })
     .toArray();
@@ -144,6 +149,10 @@ async function main() {
 
   const results: { name: string; copied: number; source: number }[] = [];
   for (const name of names) {
+    if (skipCollections.has(name.toLowerCase())) {
+      console.log(`  ${name}: skipped (do not copy messaging traffic into dev)`);
+      continue;
+    }
     const res = await copyCollection(name, sourceDb, targetDb, {
       execute,
       drop,

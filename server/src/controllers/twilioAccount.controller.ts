@@ -12,16 +12,24 @@ import {
 } from "../services/notification.service";
 import {
   configureIncomingNumbersVoiceUrl,
+  isLiveTwilioDisabled,
   voiceWebhookAbsoluteUrl,
 } from "../services/twilio.service";
+import { isPubliclyReachableApiHost } from "../utils/publicUrl";
 
 async function applyVoiceWebhooks(account: ITwilioAccount): Promise<void> {
   if (!account.phoneNumbers?.length) return;
-  try {
-    await configureIncomingNumbersVoiceUrl(
-      account,
-      voiceWebhookAbsoluteUrl(account.accountSid),
+
+  const voiceUrl = voiceWebhookAbsoluteUrl(account.accountSid);
+  if (isLiveTwilioDisabled() || !isPubliclyReachableApiHost(voiceUrl)) {
+    console.info(
+      `[twilio] Skipping Voice URL push for ${account.friendlyName} (non-production or non-public webhook URL)`,
     );
+    return;
+  }
+
+  try {
+    await configureIncomingNumbersVoiceUrl(account, voiceUrl);
   } catch (err) {
     console.error(
       `Failed to set Twilio Voice URLs for ${account.friendlyName}:`,

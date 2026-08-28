@@ -39,14 +39,30 @@ import {
 import {
   createOutboundCall,
   getTwilioAccountForSend,
+  isLiveTwilioDisabled,
   resolveFromNumber,
   sendSms,
   TwilioServiceError,
 } from "../services/twilio.service";
-import { resolvePublicApiBase } from "../utils/publicUrl";
+import {
+  isPubliclyReachableApiHost,
+  resolvePublicApiBase,
+} from "../utils/publicUrl";
 
 const PAGE_SIZES = new Set([25, 50, 100, 150, 200, 250]);
 const SEND_CONCURRENCY = 5;
+const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
+
+function objectIdStrings(values: unknown[]): string[] {
+  return [
+    ...new Set(
+      values
+        .map((v) => (v == null ? "" : String(v)))
+        .filter((id) => OBJECT_ID_HEX.test(id)),
+    ),
+  ];
+}
+
 const DEFAULT_SAY_TEXT =
   "Hello, this is a call from GRAC. Please call us back at your earliest convenience.";
 
@@ -66,21 +82,7 @@ function buildStatusCallbackUrl(
   apiBase: string,
   accountSid: string,
 ): string | undefined {
-  let host: string;
-  try {
-    host = new URL(apiBase).hostname;
-  } catch {
-    return undefined;
-  }
-
-  const isLocal =
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "::1" ||
-    host.endsWith(".local") ||
-    !host.includes(".");
-
-  if (isLocal) return undefined;
+  if (!isPubliclyReachableApiHost(apiBase)) return undefined;
 
   return `${apiBase}/webhooks/twilio/status?accountSid=${encodeURIComponent(accountSid)}`;
 }
@@ -851,13 +853,7 @@ async function buildThreadLookups(
     twilioAccountRef: Types.ObjectId;
   }>,
 ): Promise<ThreadLookups> {
-  const contactIds = [
-    ...new Set(
-      threads
-        .map((t) => (t.contactRef ? String(t.contactRef) : ""))
-        .filter(Boolean),
-    ),
-  ];
+  const contactIds = objectIdStrings(threads.map((t) => t.contactRef));
   const contacts = contactIds.length
     ? await CustomerContact.find({ _id: { $in: contactIds } })
         .select("_id first last phone customerRef label")
@@ -865,14 +861,10 @@ async function buildThreadLookups(
     : [];
   const contactById = new Map(contacts.map((c) => [String(c._id), c]));
 
-  const customerIds = [
-    ...new Set(
-      [
-        ...contacts.map((c) => String(c.customerRef)),
-        ...threads.map((t) => (t.customerRef ? String(t.customerRef) : "")),
-      ].filter(Boolean),
-    ),
-  ];
+  const customerIds = objectIdStrings([
+    ...contacts.map((c) => c.customerRef),
+    ...threads.map((t) => t.customerRef),
+  ]);
   const customers = customerIds.length
     ? await Customer.find({ _id: { $in: customerIds } })
         .select("_id first last accountName")
@@ -1151,6 +1143,7 @@ export async function getWebhookInfo(
     .lean();
 
   res.json({
+    liveTwilioDisabled: isLiveTwilioDisabled(),
     messageWebhookUrl: `${base}/webhooks/twilio/message`,
     voiceWebhookUrl: `${base}/webhooks/twilio/voice`,
     recordingWebhookUrl: `${base}/webhooks/twilio/voice/recording`,

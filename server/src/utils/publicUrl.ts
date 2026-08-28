@@ -48,6 +48,27 @@ export function resolvePublicApiBase(req?: Request): string {
   return fallback;
 }
 
+/**
+ * True when `urlOrHost` is a hostname Twilio can reach (not localhost,
+ * loopback, `.local`, or a bare hostname without a dot).
+ */
+export function isPubliclyReachableApiHost(urlOrHost: string): boolean {
+  let host: string;
+  try {
+    host = new URL(urlOrHost).hostname;
+  } catch {
+    host = urlOrHost;
+  }
+  if (!host) return false;
+  return !(
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host.endsWith(".local") ||
+    !host.includes(".")
+  );
+}
+
 /** Frontend base used for post-OAuth redirects. */
 export function resolveClientBaseUrl(): string {
   const raw = env.clientUrl.split(",")[0]?.trim().replace(/\/+$/, "") || "";

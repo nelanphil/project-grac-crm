@@ -243,6 +243,14 @@ export default function TwilioAccountsCard() {
         </div>
       )}
 
+      {webhookInfo?.liveTwilioDisabled ? (
+        <div className="mx-6 mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Development will not send on live numbers, ingest live webhooks, or
+          rewrite Twilio Voice URLs. Add a test Account SID and test auth token
+          to send or call locally (Twilio magic numbers only).
+        </div>
+      ) : null}
+
       {webhookInfo ? (
         <div className="mx-6 mt-4 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-xs text-neutral-600 space-y-2">
           <p className="font-semibold text-brand-dark">Webhook URLs</p>
@@ -259,8 +267,9 @@ export default function TwilioAccountsCard() {
             <code className="break-all">{webhookInfo.statusWebhookUrl}</code>
           </div>
           <p className="text-neutral-500">
-            Set each Twilio number&apos;s Voice webhook to the TwiML URL
-            (saving a number here also pushes that URL via the Twilio API).
+            {webhookInfo.liveTwilioDisabled
+              ? "These URLs are not applied to live Twilio numbers from this environment. Set each production number's Voice webhook in the Twilio Console (or by saving the account in production)."
+              : "Set each Twilio number's Voice webhook to the TwiML URL (saving a number here also pushes that URL via the Twilio API)."}{" "}
             Recording/transcription callbacks are set in TwiML, not on the
             number. Optional per-account URLs include <code>?accountSid=AC…</code>{" "}
             for unambiguous routing when multiple Twilio accounts share this CRM.

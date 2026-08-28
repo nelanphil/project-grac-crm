@@ -22,31 +22,37 @@ function resolveAuthToken(account: ITwilioAccount): string {
   return decryptCredential(encrypted);
 }
 
+/** Non-production never uses live Twilio (sends, calls, or webhook ingest). */
+export function isLiveTwilioDisabled(): boolean {
+  return process.env.NODE_ENV !== "production";
+}
+
 /**
- * Resolves the Account SID + Auth Token pair to use for real Twilio API calls.
+ * Resolves the Account SID + Auth Token pair to use for Twilio API calls
+ * and webhook signature validation.
  *
  * Twilio requires the Account SID and Auth Token to belong to the same
  * credential set — a live Account SID can never be authenticated with a Test
  * Auth Token (and vice versa), otherwise Twilio responds with a 401
- * "Authenticate" error (code 20003). Test credentials are only used when a
- * matching `testAccountSid` + `testAuthTokenEncrypted` pair is fully
- * configured for the account; otherwise we always fall back to the live
- * pair so sending never silently breaks.
+ * "Authenticate" error (code 20003).
+ *
+ * Production always uses the live pair. Non-production requires a complete
+ * test SID + test auth token and never falls back to live credentials.
  */
 function resolveCredentials(account: ITwilioAccount): {
   accountSid: string;
   authToken: string;
 } {
-  const useTest =
-    process.env.NODE_ENV !== "production" &&
-    Boolean(account.testAccountSid) &&
-    Boolean(account.testAuthTokenEncrypted);
-
-  if (useTest) {
-    return {
-      accountSid: account.testAccountSid!,
-      authToken: decryptCredential(account.testAuthTokenEncrypted!),
-    };
+  if (isLiveTwilioDisabled()) {
+    if (account.testAccountSid && account.testAuthTokenEncrypted) {
+      return {
+        accountSid: account.testAccountSid,
+        authToken: decryptCredential(account.testAuthTokenEncrypted),
+      };
+    }
+    throw new TwilioServiceError(
+      "Twilio test credentials are required in development",
+    );
   }
 
   return {
