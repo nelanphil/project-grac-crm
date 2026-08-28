@@ -887,6 +887,11 @@ async function buildThreadLookups(
   return { contactById, customerById, names };
 }
 
+function publicRef(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  return String(value);
+}
+
 function toPublicThread(
   thread: Record<string, unknown>,
   lookups: ThreadLookups,
@@ -902,8 +907,8 @@ function toPublicThread(
 
   return {
     _id: String(thread._id),
-    contactRef: thread.contactRef ? String(thread.contactRef) : null,
-    customerRef: thread.customerRef ? String(thread.customerRef) : null,
+    contactRef: publicRef(thread.contactRef),
+    customerRef: publicRef(thread.customerRef),
     twilioAccountRef: String(thread.twilioAccountRef),
     accountSid: thread.accountSid ?? "",
     accountFriendlyName,
