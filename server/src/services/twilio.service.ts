@@ -3,6 +3,7 @@ import { Types } from "mongoose";
 import { TwilioAccount, ITwilioAccount } from "../models/mongo/TwilioAccount";
 import { decryptCredential } from "../utils/credentialsCrypto";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
+import { resolvePublicApiBase } from "../utils/publicUrl";
 
 export class TwilioServiceError extends Error {
   constructor(message: string) {
@@ -229,4 +230,76 @@ export async function resolveAccountFromWebhook(params: {
   }
 
   return null;
+}
+
+function liveCredentials(account: ITwilioAccount): {
+  accountSid: string;
+  authToken: string;
+} {
+  return {
+    accountSid: account.accountSid,
+    authToken: resolveAuthToken(account),
+  };
+}
+
+function webhookAbsoluteUrl(path: string, accountSid?: string): string {
+  const base = resolvePublicApiBase().replace(/\/+$/, "");
+  const url = `${base}${path}`;
+  if (!accountSid) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}accountSid=${encodeURIComponent(accountSid)}`;
+}
+
+export function voiceWebhookAbsoluteUrl(accountSid?: string): string {
+  return webhookAbsoluteUrl("/webhooks/twilio/voice", accountSid);
+}
+
+export function voiceRecordingWebhookAbsoluteUrl(accountSid?: string): string {
+  return webhookAbsoluteUrl("/webhooks/twilio/voice/recording", accountSid);
+}
+
+/**
+ * Point each configured incoming number's Voice webhook at our TwiML URL.
+ * Uses live Account SID + Auth Token (not test credentials). Best-effort:
+ * missing numbers are skipped and logged.
+ */
+export async function configureIncomingNumbersVoiceUrl(
+  account: ITwilioAccount,
+  voiceUrl: string,
+): Promise<void> {
+  const wanted = account.phoneNumbers ?? [];
+  if (wanted.length === 0) return;
+
+  const { accountSid, authToken } = liveCredentials(account);
+  const client = twilio(accountSid, authToken);
+  const incoming = await client.incomingPhoneNumbers.list({ limit: 200 });
+
+  for (const raw of wanted) {
+    const digits = raw.replace(/\D/g, "");
+    if (!digits) continue;
+    const match = incoming.find((n) => {
+      const d = (n.phoneNumber || "").replace(/\D/g, "");
+      return (
+        d === digits ||
+        (d.length >= 7 && digits.length >= 7 && (d.endsWith(digits) || digits.endsWith(d)))
+      );
+    });
+    if (!match) {
+      console.warn(
+        `[twilio] Incoming number ${raw} not found on account ${account.accountSid}; skipped Voice URL update`,
+      );
+      continue;
+    }
+    try {
+      await client.incomingPhoneNumbers(match.sid).update({
+        voiceUrl,
+        voiceMethod: "POST",
+      });
+    } catch (err) {
+      console.error(
+        `[twilio] Failed to set Voice URL on ${raw} (${match.sid}):`,
+        err,
+      );
+    }
+  }
 }

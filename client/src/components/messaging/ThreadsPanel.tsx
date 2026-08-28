@@ -247,7 +247,9 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                             {formatCustomerName(
                               t.contact?.first,
                               t.contact?.last,
-                            ) || "Contact"}
+                            ) ||
+                              t.contactPhoneSnapshot ||
+                              "Unknown caller"}
                           </span>
                           <span
                             className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
@@ -301,7 +303,9 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                     ? formatCustomerName(
                         threadDetail.thread.contact?.first,
                         threadDetail.thread.contact?.last,
-                      ) || "Thread"
+                      ) ||
+                      threadDetail.thread.contactPhoneSnapshot ||
+                      "Unknown caller"
                     : "Select a thread"}
                 </span>
               </div>
@@ -325,7 +329,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                   <button
                     type="button"
                     onClick={handleCall}
-                    disabled={calling}
+                    disabled={calling || !threadDetail.thread.contactRef}
                     className="inline-flex items-center gap-1 rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-brand-dark hover:border-brand-orange disabled:opacity-50"
                   >
                     {calling ? (
@@ -380,16 +384,23 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                     if (e.key === "Enter" && !sendingReply) handleSendReply();
                   }}
                   placeholder={
-                    threadDetail.thread.status === "closed"
-                      ? "Reply to reopen this thread…"
-                      : "Type a reply…"
+                    !threadDetail.thread.contactRef
+                      ? "Attach this caller to a contact to reply"
+                      : threadDetail.thread.status === "closed"
+                        ? "Reply to reopen this thread…"
+                        : "Type a reply…"
                   }
-                  className="flex-1 rounded-full border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-brand-orange"
+                  disabled={!threadDetail.thread.contactRef}
+                  className="flex-1 rounded-full border border-neutral-300 px-3 py-1.5 text-sm outline-none focus:border-brand-orange disabled:bg-neutral-100"
                 />
                 <button
                   type="button"
                   onClick={handleSendReply}
-                  disabled={sendingReply || !replyText.trim()}
+                  disabled={
+                    sendingReply ||
+                    !replyText.trim() ||
+                    !threadDetail.thread.contactRef
+                  }
                   className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#34c759] text-white disabled:opacity-50"
                 >
                   {sendingReply ? (

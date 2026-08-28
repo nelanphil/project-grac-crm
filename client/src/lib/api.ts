@@ -3027,6 +3027,8 @@ export interface ThreadConflictCheck {
 
 export interface MessagingWebhookInfo {
   messageWebhookUrl: string;
+  voiceWebhookUrl: string;
+  recordingWebhookUrl: string;
   statusWebhookUrl: string;
   accounts: Array<{
     _id: string;
@@ -3034,6 +3036,8 @@ export interface MessagingWebhookInfo {
     accountSid: string;
     isActive: boolean;
     messageWebhookUrl: string;
+    voiceWebhookUrl: string;
+    recordingWebhookUrl: string;
     statusWebhookUrl: string;
   }>;
 }
