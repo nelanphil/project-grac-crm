@@ -4,6 +4,7 @@ import { CustomerContact } from "../models/mongo/CustomerContact";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerNote } from "../models/mongo/CustomerNote";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
+import { MessageThread } from "../models/mongo/MessageThread";
 import { ITwilioAccount } from "../models/mongo/TwilioAccount";
 import { User, activeUserFilter } from "../models/mongo/User";
 import {
@@ -53,6 +54,86 @@ const WEEKDAYS: Array<{ keys: string[]; label: string }> = [
 
 function expiresAt(): Date {
   return new Date(Date.now() + SESSION_MS);
+}
+
+export function previewVoiceBody(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return trimmed.length <= PREVIEW_LENGTH
+    ? trimmed
+    : `${trimmed.slice(0, PREVIEW_LENGTH - 1)}…`;
+}
+
+export function formatVoicemailLine(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  if (/^voicemail:/i.test(trimmed)) return trimmed;
+  return `Voicemail: ${trimmed}`;
+}
+
+/** Newline-separated activity log. Skips blank or duplicate lines. */
+export function mergeVoiceActivity(existing: string, line: string): string {
+  const prev = (existing || "").trim();
+  const next = (line || "").trim();
+  if (!next) return prev;
+  if (!prev) return next;
+  const lines = prev.split("\n").map((entry) => entry.trim());
+  if (lines.includes(next)) return prev;
+  const unprefixed = next.replace(/^voicemail:\s*/i, "");
+  if (
+    unprefixed &&
+    /^voicemail:/i.test(next) &&
+    lines.some(
+      (entry) =>
+        entry === unprefixed ||
+        entry.replace(/^voicemail:\s*/i, "") === unprefixed,
+    )
+  ) {
+    return prev;
+  }
+  return `${prev}\n${next}`;
+}
+
+export async function appendVoiceActivity(opts: {
+  accountSid: string;
+  callSid: string;
+  line: string;
+}): Promise<void> {
+  const line = (opts.line || "").trim();
+  if (!line || !opts.callSid || !opts.accountSid) return;
+
+  try {
+    const existing = await TwilioCommunication.findOne({
+      accountSid: opts.accountSid,
+      twilioSid: opts.callSid,
+    });
+    if (!existing) return;
+
+    const transcript = mergeVoiceActivity(existing.transcript || "", line);
+    if (transcript === (existing.transcript || "").trim()) return;
+
+    const body = previewVoiceBody(transcript);
+    await TwilioCommunication.updateOne(
+      { _id: existing._id },
+      { $set: { transcript, body } },
+    );
+
+    if (existing.threadRef) {
+      await MessageThread.updateOne(
+        { _id: existing.threadRef },
+        {
+          $set: {
+            lastMessageAt: new Date(),
+            lastMessageDirection: "inbound",
+            lastMessageChannel: "voice",
+            lastMessagePreview: body.slice(0, PREVIEW_LENGTH),
+          },
+        },
+      );
+    }
+  } catch (err) {
+    console.error("Voice activity log failed:", err);
+  }
 }
 
 function gatherUrl(accountSid: string): string {
@@ -320,7 +401,16 @@ async function attachCallToCustomer(opts: {
     contactPhoneSnapshot: normalizeThreadPhone(opts.fromNumber),
   });
 
+  const existing = await TwilioCommunication.findOne({
+    accountSid: opts.account.accountSid,
+    twilioSid: opts.callSid,
+  });
+  const existingTranscript = (existing?.transcript || "").trim();
   const summary = (opts.summary ?? "").trim();
+  const priorThreadRef = existing?.threadRef ?? null;
+  const threadChanged =
+    !priorThreadRef || String(priorThreadRef) !== String(thread._id);
+
   await TwilioCommunication.updateOne(
     { accountSid: opts.account.accountSid, twilioSid: opts.callSid },
     {
@@ -328,22 +418,43 @@ async function attachCallToCustomer(opts: {
         customerRef: opts.customerRef,
         contactRef: opts.contactRef,
         threadRef: thread._id,
-        ...(summary
-          ? { body: summary.slice(0, PREVIEW_LENGTH), transcript: summary }
-          : {}),
+        ...(existingTranscript
+          ? { body: previewVoiceBody(existingTranscript) }
+          : summary
+            ? { body: summary.slice(0, PREVIEW_LENGTH), transcript: summary }
+            : {}),
       },
     },
   );
 
-  if (summary) {
+  const previewSource = existingTranscript || summary;
+  if (!previewSource) return;
+
+  if (threadChanged || (summary && !existingTranscript)) {
     await touchThreadAfterMessage(thread._id, {
       direction: "inbound",
       channel: "voice",
-      body: summary,
-      transcript: summary,
+      body: previewVoiceBody(previewSource),
+      transcript: previewSource,
       at: new Date(),
     });
+    return;
   }
+
+  await MessageThread.updateOne(
+    { _id: thread._id },
+    {
+      $set: {
+        lastMessageAt: new Date(),
+        lastMessageDirection: "inbound",
+        lastMessageChannel: "voice",
+        lastMessagePreview: previewVoiceBody(previewSource).slice(
+          0,
+          PREVIEW_LENGTH,
+        ),
+      },
+    },
+  );
 }
 
 async function maybeAddPreferredDaysNote(
@@ -474,7 +585,13 @@ export async function startInboundIvr(opts: {
   toNumber: string;
 }): Promise<string> {
   const session = await upsertIvrSession(opts);
-  return greetingTwiml(opts.account, session);
+  const twiml = await greetingTwiml(opts.account, session);
+  await appendVoiceActivity({
+    accountSid: opts.account.accountSid,
+    callSid: opts.callSid,
+    line: "Call started.",
+  });
+  return twiml;
 }
 
 async function handleMenu(
@@ -486,10 +603,23 @@ async function handleMenu(
   const action = gatherUrl(account.accountSid);
 
   if (!digits || digits === "2" || digits === "0") {
+    await appendVoiceActivity({
+      accountSid: account.accountSid,
+      callSid: session.callSid,
+      line:
+        digits === "2"
+          ? "Pressed 2 to leave a message."
+          : "Chose to leave a voicemail.",
+    });
     return voicemailTwiml(account);
   }
 
   if (digits === "1") {
+    await appendVoiceActivity({
+      accountSid: account.accountSid,
+      callSid: session.callSid,
+      line: "Pressed 1 to schedule a service.",
+    });
     if (session.customerRef && session.contactRef) {
       await setStep(session, "gather_days");
       return daysGatherTwiml(account);
@@ -518,6 +648,11 @@ async function retryOrVoicemail(
   retryTwiml: string,
 ): Promise<string> {
   if (session.gatherRetries >= 1) {
+    await appendVoiceActivity({
+      accountSid: account.accountSid,
+      callSid: session.callSid,
+      line: "Fell back to voicemail.",
+    });
     return voicemailTwiml(
       account,
       "I'm sorry, I still didn't catch that.",
@@ -553,6 +688,11 @@ async function handleGatherName(
 
   const { first, last } = parseSpokenName(spoken);
   session.speechName = `${first} ${last}`.trim();
+  await appendVoiceActivity({
+    accountSid: account.accountSid,
+    callSid: session.callSid,
+    line: `Said name: ${session.speechName}.`,
+  });
   await setStep(session, "gather_address");
   return buildGatherTwiml({
     prompt:
@@ -588,6 +728,11 @@ async function handleGatherAddress(
   }
 
   session.speechAddress = spoken.replace(/\s+/g, " ").trim();
+  await appendVoiceActivity({
+    accountSid: account.accountSid,
+    callSid: session.callSid,
+    line: `Said address: ${session.speechAddress}.`,
+  });
   const { first, last } = parseSpokenName(session.speechName);
 
   try {
@@ -603,6 +748,11 @@ async function handleGatherAddress(
     await session.save();
   } catch (err) {
     console.error("Inbound IVR customer create failed:", err);
+    await appendVoiceActivity({
+      accountSid: account.accountSid,
+      callSid: session.callSid,
+      line: "Fell back to voicemail.",
+    });
     return voicemailTwiml(
       account,
       "I'm sorry, I couldn't save your information.",
@@ -647,6 +797,11 @@ async function handleGatherDays(
 
   const spokenLabel = formatDaysSpoken(days);
   session.preferredDays = spokenLabel;
+  await appendVoiceActivity({
+    accountSid: account.accountSid,
+    callSid: session.callSid,
+    line: `Prefers ${spokenLabel}.`,
+  });
   await setStep(session, "confirm_days");
   return confirmDaysTwiml(account, spokenLabel);
 }
@@ -663,6 +818,11 @@ async function handleConfirmDays(
       await setStep(session, "gather_days");
       return daysGatherTwiml(account, "Let's try that again.");
     }
+    await appendVoiceActivity({
+      accountSid: account.accountSid,
+      callSid: session.callSid,
+      line: "Confirmed those days.",
+    });
     return completeScheduleRequest(session, account, daysSpoken);
   }
 
@@ -670,6 +830,11 @@ async function handleConfirmDays(
   if (corrected.length > 0) {
     const spokenLabel = formatDaysSpoken(corrected);
     session.preferredDays = spokenLabel;
+    await appendVoiceActivity({
+      accountSid: account.accountSid,
+      callSid: session.callSid,
+      line: `Corrected preferred days to ${spokenLabel}.`,
+    });
     await setStep(session, "confirm_days");
     return confirmDaysTwiml(account, spokenLabel);
   }
@@ -732,5 +897,10 @@ export async function handleIvrGather(opts: {
     return handleConfirmDays(session, opts.account, digits, speech);
   }
 
+  await appendVoiceActivity({
+    accountSid: opts.account.accountSid,
+    callSid,
+    line: "Fell back to voicemail.",
+  });
   return voicemailTwiml(opts.account);
 }
