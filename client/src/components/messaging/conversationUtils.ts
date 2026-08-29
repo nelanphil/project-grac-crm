@@ -398,3 +398,129 @@ export function compactVoicePreview(
   }
   return direction === "outbound" ? "Outbound call" : "Inbound call";
 }
+
+export const UNKNOWN_VOICE_KEY = "unknown";
+
+export type VoiceContactGroup = {
+  key: string;
+  contactRef: string | null;
+  ourNumber: string;
+  displayName: string;
+  phone: string;
+  calls: VoiceCallRow[];
+};
+
+export type VoiceCustomerGroup = {
+  key: string;
+  customerRef: string | null;
+  unknown: boolean;
+  displayName: string;
+  preview: string;
+  lastCallAt: string;
+  contacts: VoiceContactGroup[];
+};
+
+function ourNumberFromCall(row: VoiceCallRow): string {
+  if (row.thread?.ourNumber) return row.thread.ourNumber;
+  const comm = row.communication;
+  if (!comm) return "";
+  return comm.direction === "outbound" ? comm.fromNumber : comm.toNumber;
+}
+
+function contactRefFromCall(row: VoiceCallRow): string | null {
+  return row.communication?.contactRef ?? row.thread?.contactRef ?? null;
+}
+
+export function voiceContactKey(row: VoiceCallRow): string {
+  if (!row.customerRef) {
+    const digits = (row.phone || "").replace(/\D/g, "") || row.id;
+    return `${UNKNOWN_VOICE_KEY}::${digits}`;
+  }
+  return `${contactRefFromCall(row) ?? "none"}::${ourNumberFromCall(row)}`;
+}
+
+function callPreview(row: VoiceCallRow): string {
+  return compactVoicePreview(
+    row.communication?.transcript || row.transcript || "",
+    "voice",
+    row.direction,
+  );
+}
+
+export function groupVoiceContacts(calls: VoiceCallRow[]): VoiceContactGroup[] {
+  const buckets = new Map<string, VoiceCallRow[]>();
+  for (const call of calls) {
+    const key = voiceContactKey(call);
+    const list = buckets.get(key);
+    if (list) list.push(call);
+    else buckets.set(key, [call]);
+  }
+  const groups: VoiceContactGroup[] = [];
+  for (const [key, list] of buckets) {
+    const sorted = [...list].sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
+    const latest = sorted[0];
+    const unknown = !latest.customerRef;
+    groups.push({
+      key,
+      contactRef: contactRefFromCall(latest),
+      ourNumber: ourNumberFromCall(latest),
+      displayName: unknown
+        ? latest.phone || "Unknown caller"
+        : latest.thread
+          ? contactDisplayName(latest.thread)
+          : latest.phone || "Contact",
+      phone: latest.phone,
+      calls: sorted,
+    });
+  }
+  groups.sort((a, b) => ts(b.calls[0]?.createdAt) - ts(a.calls[0]?.createdAt));
+  return groups;
+}
+
+/** L1: one identified customer row + one Unknown callers row. L2 is contacts/numbers. */
+export function groupVoiceCustomers(rows: VoiceCallRow[]): VoiceCustomerGroup[] {
+  const identified = new Map<string, VoiceCallRow[]>();
+  const unknownCalls: VoiceCallRow[] = [];
+  for (const row of rows) {
+    if (!row.customerRef) {
+      unknownCalls.push(row);
+      continue;
+    }
+    const list = identified.get(row.customerRef);
+    if (list) list.push(row);
+    else identified.set(row.customerRef, [row]);
+  }
+
+  const groups: VoiceCustomerGroup[] = [];
+  for (const [customerRef, calls] of identified) {
+    const sorted = [...calls].sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
+    const latest = sorted[0];
+    groups.push({
+      key: customerRef,
+      customerRef,
+      unknown: false,
+      displayName: latest.displayName,
+      preview: callPreview(latest),
+      lastCallAt: latest.createdAt,
+      contacts: groupVoiceContacts(sorted),
+    });
+  }
+  groups.sort((a, b) => ts(b.lastCallAt) - ts(a.lastCallAt));
+
+  if (unknownCalls.length > 0) {
+    const sorted = [...unknownCalls].sort(
+      (a, b) => ts(b.createdAt) - ts(a.createdAt),
+    );
+    const latest = sorted[0];
+    groups.push({
+      key: UNKNOWN_VOICE_KEY,
+      customerRef: null,
+      unknown: true,
+      displayName: "Unknown callers",
+      preview: callPreview(latest),
+      lastCallAt: latest.createdAt,
+      contacts: groupVoiceContacts(sorted),
+    });
+  }
+  return groups;
+}

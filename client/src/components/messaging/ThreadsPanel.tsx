@@ -15,15 +15,18 @@ import {
 } from "@/lib/api";
 import CustomerThreadsPanel from "./CustomerThreadsPanel";
 import {
+  UNKNOWN_VOICE_KEY,
   VoiceCallRow,
+  VoiceContactGroup,
   buildVoiceCallRows,
-  formatDuration,
   formatRelativeTime,
   groupCustomersByRef,
+  groupVoiceCustomers,
+  voiceContactKey,
   voiceTimelineLines,
   voiceRowFromMessage,
 } from "./conversationUtils";
-import { VoiceActivityTimeline } from "./VoiceActivityTimeline";
+import VoiceCustomerPanel from "./VoiceCustomerPanel";
 
 type ThreadsPanelProps = {
   token: string;
@@ -43,6 +46,12 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
   const [selectedCustomerRef, setSelectedCustomerRef] = useState<string | null>(
     null,
   );
+  const [selectedVoiceGroupKey, setSelectedVoiceGroupKey] = useState<
+    string | null
+  >(null);
+  const [selectedVoiceContactKey, setSelectedVoiceContactKey] = useState<
+    string | null
+  >(null);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
   const [voiceDetail, setVoiceDetail] = useState<VoiceCallRow | null>(null);
   const [loadingVoiceDetail, setLoadingVoiceDetail] = useState(false);
@@ -53,8 +62,15 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
     () => buildVoiceCallRows(voiceComms, threads),
     [voiceComms, threads],
   );
+  const voiceGroups = useMemo(
+    () => groupVoiceCustomers(voiceRows),
+    [voiceRows],
+  );
   const selectedCustomer =
     customers.find((c) => c.customerRef === selectedCustomerRef) ?? null;
+  const selectedVoiceGroup =
+    voiceGroups.find((g) => g.key === selectedVoiceGroupKey) ?? null;
+  const voiceOpen = Boolean(selectedVoiceGroupKey);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +110,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                 (c) =>
                   c.threadRef === match._id || c.contactRef === match.contactRef,
               ) ?? null;
+            setSelectedVoiceGroupKey(UNKNOWN_VOICE_KEY);
             setSelectedVoiceId(voiceMatch?._id ?? match._id);
           }
         }
@@ -116,6 +133,17 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
   const selectedVoiceRow =
     voiceRows.find((row) => row.id === selectedVoiceId) ?? null;
+
+  useEffect(() => {
+    if (!selectedVoiceId || selectedVoiceContactKey) return;
+    const row = voiceRows.find((r) => r.id === selectedVoiceId);
+    if (!row) return;
+    const groupKey = row.customerRef ?? UNKNOWN_VOICE_KEY;
+    queueMicrotask(() => {
+      setSelectedVoiceGroupKey(groupKey);
+      setSelectedVoiceContactKey(voiceContactKey(row));
+    });
+  }, [selectedVoiceId, selectedVoiceContactKey, voiceRows]);
 
   useEffect(() => {
     if (!selectedVoiceRow) {
@@ -164,14 +192,32 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
   const transcriptText = shownVoice?.transcript ?? "";
   const timeline = voiceTimelineLines(shownVoice?.communication, transcriptText);
 
-  function selectCustomer(customerRef: string) {
+  function clearVoice() {
+    setSelectedVoiceGroupKey(null);
+    setSelectedVoiceContactKey(null);
     setSelectedVoiceId(null);
+  }
+
+  function selectCustomer(customerRef: string) {
+    clearVoice();
     setSelectedCustomerRef(customerRef);
   }
 
-  function selectVoice(id: string) {
+  function selectVoiceGroup(key: string) {
     setSelectedCustomerRef(null);
-    setSelectedVoiceId(id);
+    setSelectedVoiceGroupKey(key);
+    setSelectedVoiceContactKey(null);
+    setSelectedVoiceId(null);
+  }
+
+  function selectVoiceContact(contact: VoiceContactGroup) {
+    setSelectedVoiceContactKey(contact.key);
+    setSelectedVoiceId(contact.calls[0]?.id ?? null);
+  }
+
+  function clearVoiceContact() {
+    setSelectedVoiceContactKey(null);
+    setSelectedVoiceId(null);
   }
 
   return (
@@ -184,15 +230,15 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
       <section
         className={`flex flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-sm ${
-          selectedVoiceId
+          voiceOpen
             ? "hidden md:flex md:min-h-0"
             : `flex h-full ${selectedCustomerRef ? "min-h-0" : "min-h-[420px] md:min-h-[420px]"}`
         }`}
       >
-        {selectedVoiceId ? (
+        {voiceOpen ? (
           <button
             type="button"
-            onClick={() => setSelectedVoiceId(null)}
+            onClick={clearVoice}
             className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-white"
           >
             <span className="text-sm font-semibold text-brand-dark">
@@ -202,105 +248,106 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
           </button>
         ) : (
           <>
-        <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-3 py-2">
-          <h2 className="text-sm font-semibold text-brand-dark">
-            Conversations
-          </h2>
-          {accounts.length > 0 ? (
-            <select
-              value={filterAccountId}
-              onChange={(e) => setFilterAccountId(e.target.value)}
-              className="rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2 py-1 text-[11px] text-neutral-600 outline-none focus:border-brand-orange"
-            >
-              <option value="">All accounts</option>
-              {accounts.map((a) => (
-                <option key={a._id} value={a._id}>
-                  {a.friendlyName}
-                </option>
-              ))}
-            </select>
-          ) : null}
-        </div>
+            <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-3 py-2">
+              <h2 className="text-sm font-semibold text-brand-dark">
+                Conversations
+              </h2>
+              {accounts.length > 0 ? (
+                <select
+                  value={filterAccountId}
+                  onChange={(e) => setFilterAccountId(e.target.value)}
+                  className="rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2 py-1 text-[11px] text-neutral-600 outline-none focus:border-brand-orange"
+                >
+                  <option value="">All accounts</option>
+                  {accounts.map((a) => (
+                    <option key={a._id} value={a._id}>
+                      {a.friendlyName}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+            </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_1fr]">
-          <div
-            className={`max-h-[480px] overflow-y-auto border-[var(--staff-border)] md:border-r ${
-              selectedCustomerRef ? "hidden md:block" : "block"
-            }`}
-          >
-            {loadingThreads ? (
-              <div className="flex items-center gap-2 p-3 text-xs text-neutral-500">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Loading…
-              </div>
-            ) : customers.length === 0 ? (
-              <p className="p-3 text-xs text-neutral-500">
-                No conversations yet. Send from Message Wizard to start one.
-              </p>
-            ) : (
-              <ul>
-                {customers.map((row) => {
-                  const active = selectedCustomerRef === row.customerRef;
-                  return (
-                    <li key={row.customerRef}>
-                      <button
-                        type="button"
-                        onClick={() => selectCustomer(row.customerRef)}
-                        className={`w-full border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
-                          active
-                            ? "border-l-2 border-l-brand-orange bg-orange-50"
-                            : "hover:bg-white"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-sm font-medium text-brand-dark">
-                            {row.displayName}
-                          </span>
-                          <span
-                            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                              row.status === "open"
-                                ? "bg-green-50 text-green-700"
-                                : "bg-neutral-100 text-neutral-500"
+            <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_1fr]">
+              <div
+                className={`max-h-[480px] overflow-y-auto border-[var(--staff-border)] md:border-r ${
+                  selectedCustomerRef ? "hidden md:block" : "block"
+                }`}
+              >
+                {loadingThreads ? (
+                  <div className="flex items-center gap-2 p-3 text-xs text-neutral-500">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Loading…
+                  </div>
+                ) : customers.length === 0 ? (
+                  <p className="p-3 text-xs text-neutral-500">
+                    No conversations yet. Send from Message Wizard to start one.
+                  </p>
+                ) : (
+                  <ul>
+                    {customers.map((row) => {
+                      const active = selectedCustomerRef === row.customerRef;
+                      return (
+                        <li key={row.customerRef}>
+                          <button
+                            type="button"
+                            onClick={() => selectCustomer(row.customerRef)}
+                            className={`w-full border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
+                              active
+                                ? "border-l-2 border-l-brand-orange bg-orange-50"
+                                : "hover:bg-white"
                             }`}
                           >
-                            {row.status}
-                          </span>
-                        </div>
-                        <div className="truncate text-[11px] text-neutral-500">
-                          {row.preview || "—"}
-                        </div>
-                        <div className="text-[10px] text-neutral-400">
-                          {formatRelativeTime(row.lastMessageAt)}
-                        </div>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-
-          <div
-            className={`min-h-[280px] flex-col ${
-              selectedCustomerRef ? "flex" : "hidden md:flex"
-            }`}
-          >
-            {selectedCustomer ? (
-              <CustomerThreadsPanel
-                token={token}
-                customerName={selectedCustomer.displayName}
-                threads={selectedCustomer.threads}
-                initialThreadId={initialThreadId}
-                initialContactId={initialContactId}
-                onBack={() => setSelectedCustomerRef(null)}
-              />
-            ) : (
-              <div className="flex flex-1 items-center p-4 text-xs text-neutral-500">
-                Select a customer to see that customer&apos;s contact threads.
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate text-sm font-medium text-brand-dark">
+                                {row.displayName}
+                              </span>
+                              <span
+                                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                                  row.status === "open"
+                                    ? "bg-green-50 text-green-700"
+                                    : "bg-neutral-100 text-neutral-500"
+                                }`}
+                              >
+                                {row.status}
+                              </span>
+                            </div>
+                            <div className="truncate text-[11px] text-neutral-500">
+                              {row.preview || "—"}
+                            </div>
+                            <div className="text-[10px] text-neutral-400">
+                              {formatRelativeTime(row.lastMessageAt)}
+                            </div>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
-            )}
-          </div>
-        </div>
+
+              <div
+                className={`min-h-[280px] flex-col ${
+                  selectedCustomerRef ? "flex" : "hidden md:flex"
+                }`}
+              >
+                {selectedCustomer ? (
+                  <CustomerThreadsPanel
+                    token={token}
+                    customerName={selectedCustomer.displayName}
+                    threads={selectedCustomer.threads}
+                    initialThreadId={initialThreadId}
+                    initialContactId={initialContactId}
+                    onBack={() => setSelectedCustomerRef(null)}
+                  />
+                ) : (
+                  <div className="flex flex-1 items-center p-4 text-xs text-neutral-500">
+                    Select a customer to see that customer&apos;s contact
+                    threads.
+                  </div>
+                )}
+              </div>
+            </div>
           </>
         )}
       </section>
@@ -308,7 +355,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
       <section
         className={`flex flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-cream,#faf4ee)] shadow-sm ${
           selectedCustomerRef ? "hidden md:flex" : "flex"
-        } ${selectedVoiceId ? "min-h-[420px] md:min-h-[480px]" : "min-h-[320px]"}`}
+        } ${voiceOpen ? "min-h-[420px] md:min-h-[480px]" : "min-h-[320px]"}`}
       >
         <div className="flex items-center gap-2 border-b border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
           <Phone className="h-4 w-4 text-brand-orange" />
@@ -320,7 +367,9 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
         <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_1fr]">
           <div
             className={`overflow-y-auto border-[var(--staff-border)] md:border-r ${
-              selectedVoiceId ? "hidden md:block md:max-h-none" : "block max-h-[420px]"
+              selectedVoiceGroupKey
+                ? "hidden md:block md:max-h-none"
+                : "block max-h-[420px]"
             }`}
           >
             {loadingThreads ? (
@@ -328,20 +377,17 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 Loading…
               </div>
-            ) : voiceRows.length === 0 ? (
-              <p className="p-3 text-xs text-neutral-500">
-                No calls yet.
-              </p>
+            ) : voiceGroups.length === 0 ? (
+              <p className="p-3 text-xs text-neutral-500">No calls yet.</p>
             ) : (
               <ul>
-                {voiceRows.map((row) => {
-                  const active = selectedVoiceId === row.id;
-                  const duration = formatDuration(row.durationSeconds);
+                {voiceGroups.map((group) => {
+                  const active = selectedVoiceGroupKey === group.key;
                   return (
-                    <li key={row.id}>
+                    <li key={group.key}>
                       <button
                         type="button"
-                        onClick={() => selectVoice(row.id)}
+                        onClick={() => selectVoiceGroup(group.key)}
                         className={`flex w-full items-start gap-2 border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
                           active
                             ? "border-l-2 border-l-brand-orange bg-orange-50"
@@ -351,19 +397,13 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                         <Phone className="mt-0.5 h-4 w-4 shrink-0 text-brand-orange" />
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm font-medium text-brand-dark">
-                            {row.displayName}
+                            {group.displayName}
                           </div>
                           <div className="truncate text-[11px] text-neutral-500">
-                            {row.phone || "—"}
-                          </div>
-                          <div className="text-[11px] text-neutral-500">
-                            {row.direction === "outbound"
-                              ? "Outbound call"
-                              : "Inbound call"}
-                            {duration ? ` · ${duration}` : ""}
+                            {group.preview || "—"}
                           </div>
                           <div className="text-[10px] text-neutral-400">
-                            {formatRelativeTime(row.createdAt)}
+                            {formatRelativeTime(group.lastCallAt)}
                           </div>
                         </div>
                       </button>
@@ -376,62 +416,29 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
           <div
             className={`flex-col bg-[var(--staff-surface)] ${
-              selectedVoiceId ? "flex min-h-0 flex-1" : "hidden min-h-[240px] md:flex"
+              selectedVoiceGroupKey
+                ? "flex min-h-0 flex-1"
+                : "hidden min-h-[240px] md:flex"
             }`}
           >
-            <div className="space-y-2 border-b border-[var(--staff-border)] px-3 py-2">
-              <div className="flex items-center gap-2">
-                {selectedVoiceId ? (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedVoiceId(null)}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--staff-border)] px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-white md:hidden"
-                  >
-                    Back
-                  </button>
-                ) : null}
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-brand-dark">
-                    {shownVoice ? shownVoice.displayName : "Select a call"}
-                  </p>
-                  {shownVoice ? (
-                    <p className="text-[11px] text-neutral-500">
-                      {new Date(shownVoice.createdAt).toLocaleString()}
-                      {shownVoice.durationSeconds != null
-                        ? ` · ${formatDuration(shownVoice.durationSeconds)}`
-                        : ""}
-                    </p>
-                  ) : null}
-                </div>
+            {selectedVoiceGroup ? (
+              <VoiceCustomerPanel
+                group={selectedVoiceGroup}
+                selectedContactKey={selectedVoiceContactKey}
+                selectedVoiceId={selectedVoiceId}
+                shownVoice={shownVoice}
+                timeline={timeline}
+                loadingVoiceDetail={loadingVoiceDetail}
+                onBack={clearVoice}
+                onSelectContact={selectVoiceContact}
+                onClearContact={clearVoiceContact}
+                onSelectCall={setSelectedVoiceId}
+              />
+            ) : (
+              <div className="flex flex-1 items-center p-4 text-xs text-neutral-500">
+                Select a customer to see that customer&apos;s voice threads.
               </div>
-              {shownVoice?.recordingUrl ? (
-                <audio
-                  controls
-                  src={shownVoice.recordingUrl}
-                  className="w-full"
-                />
-              ) : null}
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4">
-              {loadingVoiceDetail && !shownVoice ? (
-                <div className="flex items-center gap-2 text-xs text-neutral-500">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Loading…
-                </div>
-              ) : !shownVoice ? (
-                <p className="text-xs text-neutral-500">
-                  Pick a call to read its transcript.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-sm text-neutral-500">
-                    {shownVoice.phone || "Unknown caller"}
-                  </p>
-                  <VoiceActivityTimeline lines={timeline} />
-                </div>
-              )}
-            </div>
+            )}
           </div>
         </div>
       </section>
