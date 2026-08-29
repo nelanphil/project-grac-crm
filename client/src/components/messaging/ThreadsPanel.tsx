@@ -353,7 +353,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
       </section>
 
       <section
-        className={`flex flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-cream,#faf4ee)] shadow-sm ${
+        className={`flex flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-sm ${
           selectedCustomerRef ? "hidden md:flex" : "flex"
         } ${voiceOpen ? "min-h-[420px] md:min-h-[480px]" : "min-h-[320px]"}`}
       >
@@ -388,23 +388,33 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                       <button
                         type="button"
                         onClick={() => selectVoiceGroup(group.key)}
-                        className={`flex w-full items-start gap-2 border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
+                        className={`w-full border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
                           active
                             ? "border-l-2 border-l-brand-orange bg-orange-50"
-                            : "hover:bg-[var(--staff-surface)]"
+                            : "hover:bg-white"
                         }`}
                       >
-                        <Phone className="mt-0.5 h-4 w-4 shrink-0 text-brand-orange" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium text-brand-dark">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-sm font-medium text-brand-dark">
                             {group.displayName}
-                          </div>
-                          <div className="truncate text-[11px] text-neutral-500">
-                            {group.preview || "—"}
-                          </div>
-                          <div className="text-[10px] text-neutral-400">
-                            {formatRelativeTime(group.lastCallAt)}
-                          </div>
+                          </span>
+                          {group.unknown || !group.status ? null : (
+                            <span
+                              className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                                group.status === "open"
+                                  ? "bg-green-50 text-green-700"
+                                  : "bg-neutral-100 text-neutral-500"
+                              }`}
+                            >
+                              {group.status}
+                            </span>
+                          )}
+                        </div>
+                        <div className="truncate text-[11px] text-neutral-500">
+                          {group.preview || "—"}
+                        </div>
+                        <div className="text-[10px] text-neutral-400">
+                          {formatRelativeTime(group.lastCallAt)}
                         </div>
                       </button>
                     </li>
@@ -436,7 +446,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
               />
             ) : (
               <div className="flex flex-1 items-center p-4 text-xs text-neutral-500">
-                Select a customer to see that customer&apos;s voice threads.
+                Select a customer to see that customer&apos;s calls.
               </div>
             )}
           </div>

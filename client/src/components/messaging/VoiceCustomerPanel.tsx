@@ -91,8 +91,21 @@ export default function VoiceCustomerPanel({
                           : "hover:bg-[var(--staff-surface)]"
                       }`}
                     >
-                      <div className="truncate text-sm font-medium text-brand-dark">
-                        {contact.displayName}
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-medium text-brand-dark">
+                          {contact.displayName}
+                        </span>
+                        {contact.status ? (
+                          <span
+                            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                              contact.status === "open"
+                                ? "bg-green-50 text-green-700"
+                                : "bg-neutral-100 text-neutral-500"
+                            }`}
+                          >
+                            {contact.status}
+                          </span>
+                        ) : null}
                       </div>
                       <div className="truncate text-[11px] text-neutral-500">
                         {latest
@@ -203,7 +216,7 @@ export default function VoiceCustomerPanel({
               </div>
             ) : !shownVoice ? (
               <p className="text-xs text-neutral-500">
-                Select a contact to read the call.
+                Pick a contact to open that call.
               </p>
             ) : (
               <div className="space-y-3">

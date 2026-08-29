@@ -407,6 +407,7 @@ export type VoiceContactGroup = {
   ourNumber: string;
   displayName: string;
   phone: string;
+  status: MessageThreadStatus | null;
   calls: VoiceCallRow[];
 };
 
@@ -417,6 +418,7 @@ export type VoiceCustomerGroup = {
   displayName: string;
   preview: string;
   lastCallAt: string;
+  status: MessageThreadStatus | null;
   contacts: VoiceContactGroup[];
 };
 
@@ -470,6 +472,11 @@ export function groupVoiceContacts(calls: VoiceCallRow[]): VoiceContactGroup[] {
           ? contactDisplayName(latest.thread)
           : latest.phone || "Contact",
       phone: latest.phone,
+      status: unknown
+        ? null
+        : sorted.some((c) => c.thread?.status === "open")
+          ? "open"
+          : (latest.thread?.status ?? "closed"),
       calls: sorted,
     });
   }
@@ -502,6 +509,9 @@ export function groupVoiceCustomers(rows: VoiceCallRow[]): VoiceCustomerGroup[] 
       displayName: latest.displayName,
       preview: callPreview(latest),
       lastCallAt: latest.createdAt,
+      status: sorted.some((c) => c.thread?.status === "open")
+        ? "open"
+        : (latest.thread?.status ?? "closed"),
       contacts: groupVoiceContacts(sorted),
     });
   }
@@ -519,6 +529,7 @@ export function groupVoiceCustomers(rows: VoiceCallRow[]): VoiceCustomerGroup[] 
       displayName: "Unknown callers",
       preview: callPreview(latest),
       lastCallAt: latest.createdAt,
+      status: null,
       contacts: groupVoiceContacts(sorted),
     });
   }
