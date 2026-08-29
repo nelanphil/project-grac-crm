@@ -362,7 +362,6 @@ async function ingestInboundVoice(opts: {
       $setOnInsert: {
         createdByUserRef: null,
         twilioSid: opts.callSid,
-        ...(incomingTranscript ? {} : { transcript: "" }),
       },
     },
     { upsert: true, new: true },
