@@ -21,7 +21,9 @@ import { toE164 } from "../utils/messagingContext";
 import { normalizePhoneDigits } from "../utils/customerSites";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
 import {
+  formatVoicemailLine,
   handleIvrGather,
+  mergeVoiceActivity,
   startInboundIvr,
   voicemailTwiml,
 } from "../services/voiceIvr.service";
@@ -302,7 +304,13 @@ async function ingestInboundVoice(opts: {
     contactRef = existing.contactRef ?? contactRef;
   }
 
-  const transcript = (opts.transcript || "").trim();
+  const incomingTranscript = (opts.transcript || "").trim();
+  const mergedTranscript = incomingTranscript
+    ? mergeVoiceActivity(
+        existing?.transcript || "",
+        formatVoicemailLine(incomingTranscript),
+      )
+    : (existing?.transcript || "").trim();
   const status = opts.statusRaw
     ? mapTwilioCallStatus(opts.statusRaw)
     : existing
@@ -324,9 +332,9 @@ async function ingestInboundVoice(opts: {
     rawStatus: opts.statusRaw || existing?.rawStatus || opts.defaultStatus,
   };
 
-  if (transcript) {
-    $set.transcript = transcript;
-    $set.body = previewBody(transcript);
+  if (incomingTranscript) {
+    $set.transcript = mergedTranscript;
+    $set.body = previewBody(mergedTranscript);
   } else if (!existing) {
     $set.body = "";
     $set.transcript = "";
@@ -354,7 +362,6 @@ async function ingestInboundVoice(opts: {
       $setOnInsert: {
         createdByUserRef: null,
         twilioSid: opts.callSid,
-        ...(transcript ? {} : { transcript: "" }),
       },
     },
     { upsert: true, new: true },
@@ -370,13 +377,13 @@ async function ingestInboundVoice(opts: {
       direction: "inbound",
       channel: "voice",
       body: preview,
-      transcript,
+      transcript: mergedTranscript,
       at: doc?.createdAt ?? new Date(),
     });
     return;
   }
 
-  if (transcript && threadRef) {
+  if (incomingTranscript && threadRef) {
     await MessageThread.updateOne(
       { _id: threadRef },
       {
@@ -466,6 +473,15 @@ export async function statusWebhook(
         }
       }
 
+      const nextTranscript = transcript
+        ? existing.channel === "voice" && existing.direction === "inbound"
+          ? mergeVoiceActivity(
+              existing.transcript || "",
+              formatVoicemailLine(transcript),
+            )
+          : transcript
+        : "";
+
       await TwilioCommunication.updateOne(
         { _id: existing._id },
         {
@@ -481,8 +497,8 @@ export async function statusWebhook(
               null,
             errorMessage,
             ...(mediaUrls ? { mediaUrls } : {}),
-            ...(transcript
-              ? { transcript, body: previewBody(transcript) }
+            ...(nextTranscript
+              ? { transcript: nextTranscript, body: previewBody(nextTranscript) }
               : {}),
             ...identity,
           },
@@ -492,12 +508,12 @@ export async function statusWebhook(
       const threadRef =
         (identity.threadRef as typeof existing.threadRef | undefined) ??
         existing.threadRef;
-      if (transcript && threadRef) {
+      if (nextTranscript && threadRef) {
         await MessageThread.updateOne(
           { _id: threadRef },
           {
             $set: {
-              lastMessagePreview: previewBody(transcript),
+              lastMessagePreview: previewBody(nextTranscript),
               lastMessageChannel: "voice",
             },
           },
@@ -527,7 +543,11 @@ export async function statusWebhook(
         preferOutbound: true,
       });
 
-      const body = previewBody(transcript);
+      const storedTranscript =
+        resolved.direction === "inbound" && transcript
+          ? formatVoicemailLine(transcript)
+          : transcript;
+      const body = previewBody(storedTranscript);
       const mediaUrls = recordingUrl ? [recordingUrl] : [];
 
       const doc = await TwilioCommunication.create({
@@ -539,7 +559,7 @@ export async function statusWebhook(
         fromNumber,
         toNumber,
         body,
-        transcript,
+        transcript: storedTranscript,
         mediaUrls,
         durationSeconds: Number.isFinite(durationSeconds as number)
           ? durationSeconds
@@ -557,7 +577,7 @@ export async function statusWebhook(
         direction: resolved.direction,
         channel: "voice",
         body,
-        transcript,
+        transcript: storedTranscript,
         at: doc.createdAt ?? new Date(),
       });
 
