@@ -11,7 +11,6 @@ import {
 import {
   fetchRecordingTranscript,
   resolveAccountFromWebhook,
-  voiceRecordingWebhookAbsoluteUrl,
 } from "../services/twilio.service";
 import {
   normalizeThreadPhone,
@@ -21,8 +20,12 @@ import {
 import { toE164 } from "../utils/messagingContext";
 import { normalizePhoneDigits } from "../utils/customerSites";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
-import { handleIvrGather, startInboundIvr } from "../services/voiceIvr.service";
-import { buildTakeAMessageTwiml } from "../utils/twilioVoiceTwiml";
+import {
+  handleIvrGather,
+  startInboundIvr,
+  voicemailTwiml,
+} from "../services/voiceIvr.service";
+import { buildSayHangupTwiml } from "../utils/twilioVoiceTwiml";
 import { resolveSayVoice } from "../utils/twilioVoices";
 
 function asStringRecord(body: unknown): Record<string, string> {
@@ -573,13 +576,21 @@ export async function statusWebhook(
   }
 }
 
+function thankYouHangupTwiml(account: ITwilioAccount): string {
+  return buildSayHangupTwiml(
+    "Thank you for your message. Goodbye.",
+    resolveSayVoice(account.sayVoice),
+  );
+}
+
 // POST /webhooks/twilio/voice
 export async function inboundVoiceWebhook(
   req: Request,
   res: Response,
 ): Promise<void> {
+  let account: ITwilioAccount | null = null;
   try {
-    const account = await resolveAccount(req);
+    account = await resolveAccount(req);
     if (!account) {
       res.status(403).type("text/xml").send(EMPTY_TWIML);
       return;
@@ -590,15 +601,7 @@ export async function inboundVoiceWebhook(
     const fromNumber = params.From || params.Caller || "";
     const toNumber = params.To || params.Called || "";
     if (!callSid) {
-      res
-        .status(200)
-        .type("text/xml")
-        .send(
-          buildTakeAMessageTwiml(
-            voiceRecordingWebhookAbsoluteUrl(account.accountSid),
-            resolveSayVoice(account.sayVoice),
-          ),
-        );
+      res.status(200).type("text/xml").send(voicemailTwiml(account));
       return;
     }
 
@@ -624,6 +627,13 @@ export async function inboundVoiceWebhook(
     res.status(200).type("text/xml").send(twiml);
   } catch (err) {
     console.error("Twilio inbound voice webhook error:", err);
+    if (account) {
+      res
+        .status(200)
+        .type("text/xml")
+        .send(voicemailTwiml(account, "I'm sorry, something went wrong."));
+      return;
+    }
     res.status(200).type("text/xml").send(EMPTY_TWIML);
   }
 }
@@ -633,8 +643,9 @@ export async function inboundVoiceGatherWebhook(
   req: Request,
   res: Response,
 ): Promise<void> {
+  let account: ITwilioAccount | null = null;
   try {
-    const account = await resolveAccount(req);
+    account = await resolveAccount(req);
     if (!account) {
       res.status(403).type("text/xml").send(EMPTY_TWIML);
       return;
@@ -645,6 +656,13 @@ export async function inboundVoiceGatherWebhook(
     res.status(200).type("text/xml").send(twiml);
   } catch (err) {
     console.error("Twilio inbound voice gather webhook error:", err);
+    if (account) {
+      res
+        .status(200)
+        .type("text/xml")
+        .send(voicemailTwiml(account, "I'm sorry, something went wrong."));
+      return;
+    }
     res.status(200).type("text/xml").send(EMPTY_TWIML);
   }
 }
@@ -654,8 +672,9 @@ export async function inboundVoiceRecordingWebhook(
   req: Request,
   res: Response,
 ): Promise<void> {
+  let account: ITwilioAccount | null = null;
   try {
-    const account = await resolveAccount(req);
+    account = await resolveAccount(req);
     if (!account) {
       res.status(403).type("text/xml").send(EMPTY_TWIML);
       return;
@@ -664,7 +683,7 @@ export async function inboundVoiceRecordingWebhook(
     const params = asStringRecord(req.body);
     const callSid = params.CallSid || params.ParentCallSid || "";
     if (!callSid) {
-      res.status(200).type("text/xml").send(EMPTY_TWIML);
+      res.status(200).type("text/xml").send(thankYouHangupTwiml(account));
       return;
     }
 
@@ -694,9 +713,13 @@ export async function inboundVoiceRecordingWebhook(
       durationSeconds: parseDurationSeconds(params),
     });
 
-    res.status(200).type("text/xml").send(EMPTY_TWIML);
+    res.status(200).type("text/xml").send(thankYouHangupTwiml(account));
   } catch (err) {
     console.error("Twilio inbound voice recording webhook error:", err);
+    if (account) {
+      res.status(200).type("text/xml").send(thankYouHangupTwiml(account));
+      return;
+    }
     res.status(200).type("text/xml").send(EMPTY_TWIML);
   }
 }

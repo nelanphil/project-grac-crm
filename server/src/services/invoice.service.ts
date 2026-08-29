@@ -1,3 +1,4 @@
+import { randomInt } from "crypto";
 import { Types } from "mongoose";
 import { Contract, IContract } from "../models/mongo/Contract";
 import { Invoice, IInvoice } from "../models/mongo/Invoice";
@@ -7,6 +8,7 @@ import {
   parseDateOnly,
   startOfDay,
 } from "../utils/contractDates";
+import { SCHEDULE_TIMEZONE } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
 import { PaymentProviderName } from "../models/mongo/PaymentProviderAccount";
 
@@ -195,19 +197,35 @@ export function dollarsToCents(amount: number): number {
   return Math.round(amount * 100);
 }
 
-export async function nextInvoiceNumber(): Promise<string> {
-  const year = new Date().getUTCFullYear();
-  const prefix = `INV-${year}-`;
-  const latest = await Invoice.findOne({ number: new RegExp(`^${prefix}`) })
-    .sort({ number: -1 })
-    .select("number")
-    .lean();
+/** GMOF + MMDDYY + 5-digit suffix, e.g. GMOF08282684721 */
+export const INVOICE_NUMBER_PATTERN = /^GMOF\d{11}$/;
 
-  let seq = 1;
-  if (latest?.number) {
-    const part = latest.number.slice(prefix.length);
-    const n = parseInt(part, 10);
-    if (!Number.isNaN(n)) seq = n + 1;
+const MAX_INVOICE_NUMBER_ATTEMPTS = 20;
+
+export function invoiceNumberPrefixFromDate(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: SCHEDULE_TIMEZONE,
+    month: "2-digit",
+    day: "2-digit",
+    year: "2-digit",
+  }).formatToParts(date);
+  const mm = parts.find((p) => p.type === "month")?.value ?? "00";
+  const dd = parts.find((p) => p.type === "day")?.value ?? "00";
+  const yy = parts.find((p) => p.type === "year")?.value ?? "00";
+  return `GMOF${mm}${dd}${yy}`;
+}
+
+export async function nextInvoiceNumber(
+  issuedAt: Date = new Date(),
+  reserved?: Set<string>,
+): Promise<string> {
+  const prefix = invoiceNumberPrefixFromDate(issuedAt);
+  for (let i = 0; i < MAX_INVOICE_NUMBER_ATTEMPTS; i++) {
+    const suffix = String(randomInt(0, 100_000)).padStart(5, "0");
+    const number = `${prefix}${suffix}`;
+    if (reserved?.has(number)) continue;
+    const exists = await Invoice.exists({ number });
+    if (!exists) return number;
   }
-  return `${prefix}${String(seq).padStart(5, "0")}`;
+  throw new Error("Unable to allocate a unique invoice number");
 }

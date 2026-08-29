@@ -89,8 +89,9 @@ export async function runRenewalInvoiceJob(): Promise<{
         continue;
       }
 
+      const issuedAt = new Date();
       await Invoice.create({
-        number: await nextInvoiceNumber(),
+        number: await nextInvoiceNumber(issuedAt),
         customerId: contract.customerId,
         customerRef: contract.customerRef,
         sourceType: "contract_renewal",
@@ -106,7 +107,7 @@ export async function runRenewalInvoiceJob(): Promise<{
         currency: "USD",
         status: "open",
         dueDate: contract.renewalDueDate,
-        issuedAt: new Date(),
+        issuedAt,
         metadata: {
           durationMonths: contract.durationMonths,
           renewalDueDate: contract.renewalDueDate,

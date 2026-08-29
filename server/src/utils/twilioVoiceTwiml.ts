@@ -16,8 +16,12 @@ function sayVoice(voice?: string | null): SayOpts {
 export function buildTakeAMessageTwiml(
   recordingCallbackUrl: string,
   voice?: string | null,
+  intro?: string,
 ): string {
   const response = new twilio.twiml.VoiceResponse();
+  if (intro?.trim()) {
+    response.say(sayVoice(voice), intro.trim());
+  }
   response.say(sayVoice(voice), TAKE_A_MESSAGE_PROMPT);
   response.record({
     action: recordingCallbackUrl,
@@ -52,7 +56,7 @@ export function buildGatherTwiml(opts: {
   const gather = response.gather({
     action: opts.actionUrl,
     method: "POST",
-    numDigits: opts.speech ? undefined : (opts.numDigits ?? 1),
+    numDigits: opts.numDigits ?? (opts.speech ? undefined : 1),
     timeout: opts.timeout ?? 6,
     input: opts.speech ? ["speech", "dtmf"] : ["dtmf"],
     speechTimeout: opts.speech ? "auto" : undefined,

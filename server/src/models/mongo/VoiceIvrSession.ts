@@ -3,15 +3,9 @@ import mongoose, { Schema, Document, Types } from "mongoose";
 export type VoiceIvrStep =
   | "menu"
   | "gather_name"
-  | "offer_slots"
-  | "confirm_slot";
-
-export interface IVoiceIvrOfferedSlot {
-  start: Date;
-  end: Date;
-  assignedUserRef: string;
-  spokenLabel: string;
-}
+  | "gather_address"
+  | "gather_days"
+  | "confirm_days";
 
 export interface IVoiceIvrSession extends Document {
   callSid: string;
@@ -23,22 +17,13 @@ export interface IVoiceIvrSession extends Document {
   contactRef?: Types.ObjectId | null;
   isNewCustomer: boolean;
   speechName: string;
-  offeredSlots: IVoiceIvrOfferedSlot[];
-  selectedSlotIndex: number | null;
+  speechAddress: string;
+  preferredDays: string;
+  gatherRetries: number;
   expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
 }
-
-const offeredSlotSchema = new Schema<IVoiceIvrOfferedSlot>(
-  {
-    start: { type: Date, required: true },
-    end: { type: Date, required: true },
-    assignedUserRef: { type: String, required: true },
-    spokenLabel: { type: String, required: true },
-  },
-  { _id: false },
-);
 
 const voiceIvrSessionSchema = new Schema<IVoiceIvrSession>(
   {
@@ -46,7 +31,13 @@ const voiceIvrSessionSchema = new Schema<IVoiceIvrSession>(
     accountSid: { type: String, required: true, index: true },
     step: {
       type: String,
-      enum: ["menu", "gather_name", "offer_slots", "confirm_slot"],
+      enum: [
+        "menu",
+        "gather_name",
+        "gather_address",
+        "gather_days",
+        "confirm_days",
+      ],
       default: "menu",
     },
     fromNumber: { type: String, default: "" },
@@ -63,8 +54,9 @@ const voiceIvrSessionSchema = new Schema<IVoiceIvrSession>(
     },
     isNewCustomer: { type: Boolean, default: false },
     speechName: { type: String, default: "" },
-    offeredSlots: { type: [offeredSlotSchema], default: [] },
-    selectedSlotIndex: { type: Number, default: null },
+    speechAddress: { type: String, default: "" },
+    preferredDays: { type: String, default: "" },
+    gatherRetries: { type: Number, default: 0 },
     expiresAt: { type: Date, required: true, index: { expireAfterSeconds: 0 } },
   },
   { timestamps: true },

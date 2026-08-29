@@ -477,8 +477,9 @@ export async function createInvoice(
       }
     }
 
+    const issuedAt = new Date();
     const invoice = await Invoice.create({
-      number: await nextInvoiceNumber(),
+      number: await nextInvoiceNumber(issuedAt),
       customerId,
       customerRef,
       sourceType: data.sourceType,
@@ -490,7 +491,7 @@ export async function createInvoice(
       currency: "USD",
       status: "open",
       dueDate,
-      issuedAt: new Date(),
+      issuedAt,
       metadata,
     });
 
