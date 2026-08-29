@@ -8,6 +8,7 @@ import paymentWebhookRoutes from "./routes/paymentWebhook.routes";
 import { errorHandler } from "./middleware/errorHandler";
 
 const app = express();
+app.set("trust proxy", 1);
 
 // Normalize allowed origins: strip trailing slashes and support a
 // comma-separated list in CLIENT_URL. The browser's Origin header never

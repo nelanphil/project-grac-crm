@@ -38,10 +38,33 @@ function asStringRecord(body: unknown): Record<string, string> {
   return out;
 }
 
-function buildWebhookUrl(req: Request): string {
-  const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol;
-  const host = req.get("host") || "localhost";
-  return `${proto}://${host}${req.originalUrl}`;
+function firstHeaderValue(value: string | string[] | undefined): string {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return (raw || "").split(",")[0].trim();
+}
+
+function webhookUrlCandidates(req: Request): string[] {
+  const originalUrl = req.originalUrl || req.url || "";
+  const host =
+    firstHeaderValue(req.headers["x-forwarded-host"]) ||
+    req.get("host") ||
+    "";
+  const proto =
+    firstHeaderValue(req.headers["x-forwarded-proto"]) ||
+    req.protocol ||
+    "https";
+
+  const urls = new Set<string>();
+  if (host) {
+    urls.add(`${proto}://${host}${originalUrl}`);
+    urls.add(`https://${host}${originalUrl}`);
+    urls.add(`http://${host}${originalUrl}`);
+  }
+  const configured = process.env.PUBLIC_API_URL?.trim().replace(/\/+$/, "");
+  if (configured) {
+    urls.add(`${configured}${originalUrl}`);
+  }
+  return [...urls];
 }
 
 async function resolveAccount(req: Request) {
@@ -52,7 +75,7 @@ async function resolveAccount(req: Request) {
   return resolveAccountFromWebhook({
     accountSidHint: hint,
     signature: req.get("X-Twilio-Signature") || undefined,
-    url: buildWebhookUrl(req),
+    url: webhookUrlCandidates(req),
     params,
   });
 }

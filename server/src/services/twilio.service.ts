@@ -189,7 +189,7 @@ export async function createOutboundCall(params: {
 export async function resolveAccountFromWebhook(params: {
   accountSidHint?: string | null;
   signature: string | undefined;
-  url: string;
+  url: string | string[];
   params: Record<string, string>;
 }): Promise<ITwilioAccount | null> {
   const { validateRequest } = twilio;
@@ -209,13 +209,18 @@ export async function resolveAccountFromWebhook(params: {
 
   if (!params.signature) return null;
 
+  const urls = Array.isArray(params.url) ? params.url : [params.url];
+  const uniqueUrls = [...new Set(urls.filter(Boolean))];
+
   for (const account of candidates) {
     try {
       const { authToken } = resolveCredentials(account);
-      if (
-        validateRequest(authToken, params.signature, params.url, params.params)
-      ) {
-        return account;
+      for (const url of uniqueUrls) {
+        if (
+          validateRequest(authToken, params.signature, url, params.params)
+        ) {
+          return account;
+        }
       }
     } catch {
       // try next account
@@ -235,20 +240,33 @@ function liveCredentials(account: ITwilioAccount): {
   };
 }
 
+function webhookPath(path: string, accountSid?: string): string {
+  if (!accountSid) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}accountSid=${encodeURIComponent(accountSid)}`;
+}
+
 function webhookAbsoluteUrl(path: string, accountSid?: string): string {
   const base = resolvePublicApiBase().replace(/\/+$/, "");
-  const url = `${base}${path}`;
-  if (!accountSid) return url;
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}accountSid=${encodeURIComponent(accountSid)}`;
+  return `${base}${webhookPath(path, accountSid)}`;
 }
 
 export function voiceWebhookAbsoluteUrl(accountSid?: string): string {
   return webhookAbsoluteUrl("/webhooks/twilio/voice", accountSid);
 }
 
+/** Same-host path for TwiML <Gather action> so callbacks follow the Voice webhook host. */
+export function voiceGatherWebhookPath(accountSid?: string): string {
+  return webhookPath("/webhooks/twilio/voice/gather", accountSid);
+}
+
 export function voiceGatherWebhookAbsoluteUrl(accountSid?: string): string {
   return webhookAbsoluteUrl("/webhooks/twilio/voice/gather", accountSid);
+}
+
+/** Same-host path for TwiML <Record action> so callbacks follow the Voice webhook host. */
+export function voiceRecordingWebhookPath(accountSid?: string): string {
+  return webhookPath("/webhooks/twilio/voice/recording", accountSid);
 }
 
 export function voiceRecordingWebhookAbsoluteUrl(accountSid?: string): string {

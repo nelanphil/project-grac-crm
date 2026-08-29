@@ -29,8 +29,8 @@ import {
 } from "../utils/messageThreads";
 import { toE164 } from "../utils/messagingContext";
 import {
-  voiceGatherWebhookAbsoluteUrl,
-  voiceRecordingWebhookAbsoluteUrl,
+  voiceGatherWebhookPath,
+  voiceRecordingWebhookPath,
 } from "./twilio.service";
 
 const SESSION_MS = 30 * 60 * 1000;
@@ -56,7 +56,7 @@ function expiresAt(): Date {
 }
 
 function gatherUrl(accountSid: string): string {
-  return voiceGatherWebhookAbsoluteUrl(accountSid);
+  return voiceGatherWebhookPath(accountSid);
 }
 
 export function voicemailTwiml(
@@ -64,7 +64,7 @@ export function voicemailTwiml(
   intro?: string,
 ): string {
   return buildTakeAMessageTwiml(
-    voiceRecordingWebhookAbsoluteUrl(account.accountSid),
+    voiceRecordingWebhookPath(account.accountSid),
     resolveSayVoice(account.sayVoice),
     intro,
   );
@@ -408,20 +408,17 @@ async function completeScheduleRequest(
   );
 }
 
-export async function startInboundIvr(opts: {
+async function upsertIvrSession(opts: {
   account: ITwilioAccount;
   callSid: string;
   fromNumber: string;
   toNumber: string;
-}): Promise<string> {
+}): Promise<IVoiceIvrSession> {
   const matched = opts.fromNumber
     ? await findContactByPhone(opts.fromNumber)
     : null;
-  const first = matched
-    ? await loadContactFirstName(matched.contactRef)
-    : "";
 
-  await VoiceIvrSession.findOneAndUpdate(
+  const session = await VoiceIvrSession.findOneAndUpdate(
     { callSid: opts.callSid },
     {
       $set: {
@@ -446,15 +443,38 @@ export async function startInboundIvr(opts: {
     { upsert: true, new: true },
   );
 
+  if (!session) {
+    throw new Error("Failed to create inbound IVR session");
+  }
+  return session;
+}
+
+async function greetingTwiml(
+  account: ITwilioAccount,
+  session: IVoiceIvrSession,
+): Promise<string> {
+  const first = session.contactRef
+    ? await loadContactFirstName(session.contactRef)
+    : "";
   const greet = first
     ? `Hi ${first}, thanks for calling ${COMPANY_NAME}.`
     : `Thanks for calling ${COMPANY_NAME}.`;
   return buildGatherTwiml({
     prompt: `${greet} ${MENU_PROMPT}`,
-    actionUrl: gatherUrl(opts.account.accountSid),
-    voice: resolveSayVoice(opts.account.sayVoice),
+    actionUrl: gatherUrl(account.accountSid),
+    voice: resolveSayVoice(account.sayVoice),
     numDigits: 1,
   });
+}
+
+export async function startInboundIvr(opts: {
+  account: ITwilioAccount;
+  callSid: string;
+  fromNumber: string;
+  toNumber: string;
+}): Promise<string> {
+  const session = await upsertIvrSession(opts);
+  return greetingTwiml(opts.account, session);
 }
 
 async function handleMenu(
@@ -681,15 +701,14 @@ export async function handleIvrGather(opts: {
     return voicemailTwiml(opts.account);
   }
 
-  const session = await VoiceIvrSession.findOne({ callSid });
-  if (!session) {
-    return startInboundIvr({
+  const session =
+    (await VoiceIvrSession.findOne({ callSid })) ??
+    (await upsertIvrSession({
       account: opts.account,
       callSid,
       fromNumber: opts.params.From || "",
       toNumber: opts.params.To || "",
-    });
-  }
+    }));
 
   if (session.step === "menu") {
     return handleMenu(session, opts.account, digits);
