@@ -23,7 +23,6 @@ import {
   groupCustomersByRef,
   groupVoiceCustomers,
   voiceContactKey,
-  voiceTimelineLines,
   voiceRowFromMessage,
 } from "./conversationUtils";
 import VoiceCustomerPanel from "./VoiceCustomerPanel";
@@ -53,9 +52,11 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
     string | null
   >(null);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
-  const [voiceDetail, setVoiceDetail] = useState<VoiceCallRow | null>(null);
+  const [voiceDetails, setVoiceDetails] = useState<VoiceCallRow[]>([]);
   const [loadingVoiceDetail, setLoadingVoiceDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conversationsCollapsed, setConversationsCollapsed] = useState(false);
+  const [voiceCollapsed, setVoiceCollapsed] = useState(false);
 
   const customers = useMemo(() => groupCustomersByRef(threads), [threads]);
   const voiceRows = useMemo(
@@ -147,11 +148,11 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
   useEffect(() => {
     if (!selectedVoiceRow) {
-      queueMicrotask(() => setVoiceDetail(null));
+      queueMicrotask(() => setVoiceDetails([]));
       return;
     }
 
-    queueMicrotask(() => setVoiceDetail(selectedVoiceRow));
+    queueMicrotask(() => setVoiceDetails([selectedVoiceRow]));
 
     const threadId = selectedVoiceRow.thread?._id;
     if (!threadId) return;
@@ -173,8 +174,12 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
               )
             : undefined) ??
           voiceMsgs[voiceMsgs.length - 1];
-        if (match) {
-          setVoiceDetail(voiceRowFromMessage(match, res.thread));
+        if (voiceMsgs.length) {
+          setVoiceDetails(
+            voiceMsgs.map((m) => voiceRowFromMessage(m, res.thread)),
+          );
+        } else if (match) {
+          setVoiceDetails([voiceRowFromMessage(match, res.thread)]);
         }
       })
       .catch(() => {
@@ -188,9 +193,11 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
     };
   }, [token, selectedVoiceRow]);
 
-  const shownVoice = voiceDetail ?? selectedVoiceRow;
-  const transcriptText = shownVoice?.transcript ?? "";
-  const timeline = voiceTimelineLines(shownVoice?.communication, transcriptText);
+  const shownVoices = voiceDetails.length
+    ? voiceDetails
+    : selectedVoiceRow
+      ? [selectedVoiceRow]
+      : [];
 
   function clearVoice() {
     setSelectedVoiceGroupKey(null);
@@ -199,11 +206,15 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
   }
 
   function selectCustomer(customerRef: string) {
+    setVoiceCollapsed(true);
+    setConversationsCollapsed(false);
     clearVoice();
     setSelectedCustomerRef(customerRef);
   }
 
   function selectVoiceGroup(key: string) {
+    setConversationsCollapsed(true);
+    setVoiceCollapsed(false);
     setSelectedCustomerRef(null);
     setSelectedVoiceGroupKey(key);
     setSelectedVoiceContactKey(null);
@@ -230,28 +241,16 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
       <section
         className={`flex flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-sm ${
-          voiceOpen
-            ? "hidden md:flex md:min-h-0"
+          conversationsCollapsed
+            ? "flex md:min-h-0"
             : `flex h-full ${selectedCustomerRef ? "min-h-0" : "min-h-[420px] md:min-h-[420px]"}`
         }`}
       >
-        {voiceOpen ? (
-          <button
-            type="button"
-            onClick={clearVoice}
-            className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-white"
-          >
-            <span className="text-sm font-semibold text-brand-dark">
-              Conversations
-            </span>
-            <span className="text-[11px] text-neutral-500">Show</span>
-          </button>
-        ) : (
-          <>
             <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-3 py-2">
               <h2 className="text-sm font-semibold text-brand-dark">
                 Conversations
               </h2>
+              <div className="flex items-center gap-2">
               {accounts.length > 0 ? (
                 <select
                   value={filterAccountId}
@@ -266,7 +265,17 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                   ))}
                 </select>
               ) : null}
+            <button
+              type="button"
+              onClick={() => setConversationsCollapsed((c) => !c)}
+              className="text-[11px] text-neutral-500"
+            >
+              {conversationsCollapsed ? "Show" : "Hide"}
+            </button>
+              </div>
             </div>
+            {conversationsCollapsed ? null : (
+          <>
 
             <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_1fr]">
               <div
@@ -349,21 +358,49 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
               </div>
             </div>
           </>
-        )}
+            )}
       </section>
 
       <section
         className={`flex flex-col overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-sm ${
-          selectedCustomerRef ? "hidden md:flex" : "flex"
-        } ${voiceOpen ? "min-h-[420px] md:min-h-[480px]" : "min-h-[320px]"}`}
+          voiceCollapsed
+            ? "flex md:min-h-0"
+            : `flex ${voiceOpen ? "min-h-[420px] md:min-h-[480px]" : "min-h-[320px]"}`
+        }`}
       >
-        <div className="flex items-center gap-2 border-b border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
-          <Phone className="h-4 w-4 text-brand-orange" />
-          <h2 className="text-sm font-semibold text-brand-dark">
-            Voice Threads
-          </h2>
+        <div className="flex items-center justify-between border-b border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
+          <div className="flex items-center gap-2">
+            <Phone className="h-4 w-4 text-brand-orange" />
+            <h2 className="text-sm font-semibold text-brand-dark">
+              Voice Threads
+            </h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {accounts.length > 0 ? (
+              <select
+                value={filterAccountId}
+                onChange={(e) => setFilterAccountId(e.target.value)}
+                className="rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2 py-1 text-[11px] text-neutral-600 outline-none focus:border-brand-orange"
+              >
+                <option value="">All accounts</option>
+                {accounts.map((a) => (
+                  <option key={a._id} value={a._id}>
+                    {a.friendlyName}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setVoiceCollapsed((c) => !c)}
+              className="text-[11px] text-neutral-500"
+            >
+              {voiceCollapsed ? "Show" : "Hide"}
+            </button>
+          </div>
         </div>
 
+        {voiceCollapsed ? null : (
         <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[260px_1fr]">
           <div
             className={`overflow-y-auto border-[var(--staff-border)] md:border-r ${
@@ -436,8 +473,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                 group={selectedVoiceGroup}
                 selectedContactKey={selectedVoiceContactKey}
                 selectedVoiceId={selectedVoiceId}
-                shownVoice={shownVoice}
-                timeline={timeline}
+                shownVoices={shownVoices}
                 loadingVoiceDetail={loadingVoiceDetail}
                 onBack={clearVoice}
                 onSelectContact={selectVoiceContact}
@@ -451,6 +487,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
             )}
           </div>
         </div>
+        )}
       </section>
     </div>
   );

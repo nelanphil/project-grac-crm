@@ -535,3 +535,32 @@ export function groupVoiceCustomers(rows: VoiceCallRow[]): VoiceCustomerGroup[] 
   }
   return groups;
 }
+
+export function dateGroupKey(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Today / Yesterday / weekday (this local calendar week) / M/D/YYYY */
+export function dateGroupLabel(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const start = (value: Date) =>
+    new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const day = start(d);
+  const today = start(new Date());
+  const yesterday = today - 86400000;
+  if (day === today) return "Today";
+  if (day === yesterday) return "Yesterday";
+  const now = new Date();
+  const weekStart = start(
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()),
+  );
+  if (day >= weekStart && day < today) {
+    return d.toLocaleDateString(undefined, { weekday: "long" });
+  }
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+}
