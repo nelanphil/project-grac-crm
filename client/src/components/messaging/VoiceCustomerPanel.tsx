@@ -163,11 +163,6 @@ export default function VoiceCustomerPanel({
                   ? selectedContact.displayName
                   : "Select a contact"}
               </p>
-              {selectedContact ? (
-                <p className="truncate text-[11px] text-neutral-500">
-                  {selectedContact.phone || "—"}
-                </p>
-              ) : null}
             </div>
           </div>
 

@@ -268,7 +268,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
             <button
               type="button"
               onClick={() => setConversationsCollapsed((c) => !c)}
-              className="text-[11px] text-neutral-500 hover:text-brand-dark"
+              className="text-[11px] text-neutral-500"
             >
               {conversationsCollapsed ? "Show" : "Hide"}
             </button>
@@ -393,7 +393,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
             <button
               type="button"
               onClick={() => setVoiceCollapsed((c) => !c)}
-              className="text-[11px] text-neutral-500 hover:text-brand-dark"
+              className="text-[11px] text-neutral-500"
             >
               {voiceCollapsed ? "Show" : "Hide"}
             </button>
