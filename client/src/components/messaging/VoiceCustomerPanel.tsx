@@ -1,14 +1,18 @@
 "use client";
 
+import { Fragment } from "react";
 import { Loader2 } from "lucide-react";
 import {
   VoiceContactGroup,
   VoiceCustomerGroup,
   VoiceCallRow,
-  VoiceTimelineLine,
   compactVoicePreview,
+  dateGroupKey,
+  dateGroupLabel,
   formatDuration,
   formatRelativeTime,
+  ts,
+  voiceTimelineLines,
 } from "./conversationUtils";
 import { VoiceActivityTimeline } from "./VoiceActivityTimeline";
 
@@ -16,8 +20,7 @@ type VoiceCustomerPanelProps = {
   group: VoiceCustomerGroup;
   selectedContactKey: string | null;
   selectedVoiceId: string | null;
-  shownVoice: VoiceCallRow | null;
-  timeline: VoiceTimelineLine[];
+  shownVoices: VoiceCallRow[];
   loadingVoiceDetail: boolean;
   onBack: () => void;
   onSelectContact: (contact: VoiceContactGroup) => void;
@@ -29,8 +32,7 @@ export default function VoiceCustomerPanel({
   group,
   selectedContactKey,
   selectedVoiceId,
-  shownVoice,
-  timeline,
+  shownVoices,
   loadingVoiceDetail,
   onBack,
   onSelectContact,
@@ -145,90 +147,116 @@ export default function VoiceCustomerPanel({
             selectedContactKey ? "flex" : "hidden md:flex"
           }`}
         >
-          <div className="space-y-2 border-b border-[var(--staff-border)] px-3 py-2">
-            <div className="flex items-center gap-2">
-              {selectedContactKey ? (
-                <button
-                  type="button"
-                  onClick={onClearContact}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--staff-border)] px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-white md:hidden"
-                >
-                  Back
-                </button>
-              ) : null}
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-brand-dark">
-                  {shownVoice
-                    ? shownVoice.displayName
-                    : selectedContact
-                      ? selectedContact.displayName
-                      : "Select a call"}
-                </p>
-                {shownVoice ? (
-                  <p className="text-[11px] text-neutral-500">
-                    {new Date(shownVoice.createdAt).toLocaleString()}
-                    {shownVoice.durationSeconds != null
-                      ? ` · ${formatDuration(shownVoice.durationSeconds)}`
-                      : ""}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-            {shownVoice?.recordingUrl ? (
-              <audio
-                controls
-                src={shownVoice.recordingUrl}
-                className="w-full"
-              />
+          <div className="flex items-center gap-2 border-b border-[var(--staff-border)] px-3 py-2">
+            {selectedContactKey ? (
+              <button
+                type="button"
+                onClick={onClearContact}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--staff-border)] px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-[var(--staff-surface)] md:hidden"
+              >
+                Back
+              </button>
             ) : null}
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-brand-dark">
+                {selectedContact
+                  ? selectedContact.displayName
+                  : "Select a contact"}
+              </p>
+              {selectedContact ? (
+                <p className="truncate text-[11px] text-neutral-500">
+                  {selectedContact.phone || "—"}
+                </p>
+              ) : null}
+            </div>
           </div>
 
-          {selectedContact && selectedContact.calls.length > 1 ? (
-            <div className="flex gap-1 overflow-x-auto border-b border-[var(--staff-border)] px-3 py-2">
-              {selectedContact.calls.map((call) => {
-                const active = selectedVoiceId === call.id;
-                return (
-                  <button
-                    key={call.id}
-                    type="button"
-                    onClick={() => onSelectCall(call.id)}
-                    className={`shrink-0 rounded-md border px-2 py-1 text-[11px] ${
-                      active
-                        ? "border-brand-orange bg-orange-50 text-brand-dark"
-                        : "border-[var(--staff-border)] text-neutral-500 hover:bg-[var(--staff-surface)]"
-                    }`}
-                  >
-                    {formatRelativeTime(call.createdAt) || "Call"}
-                    {call.durationSeconds != null
-                      ? ` · ${formatDuration(call.durationSeconds)}`
-                      : ""}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-
-          <div className="flex-1 overflow-y-auto p-4">
-            {loadingVoiceDetail && !shownVoice ? (
+          <div className="flex-1 overflow-y-auto p-3">
+            {loadingVoiceDetail && !selectedContact ? (
               <div className="flex items-center gap-2 text-xs text-neutral-500">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 Loading…
               </div>
-            ) : !shownVoice ? (
+            ) : !selectedContact ? (
               <p className="text-xs text-neutral-500">
                 Pick a contact to open that call.
               </p>
             ) : (
-              <div className="space-y-3">
-                <p className="text-sm text-neutral-500">
-                  {shownVoice.phone || "Unknown caller"}
-                </p>
-                <VoiceActivityTimeline lines={timeline} />
-              </div>
+              <VoiceCallHistory
+                calls={selectedContact.calls}
+                shownVoices={shownVoices}
+                selectedVoiceId={selectedVoiceId}
+                onSelectCall={onSelectCall}
+              />
             )}
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+function VoiceCallHistory({
+  calls,
+  shownVoices,
+  selectedVoiceId,
+  onSelectCall,
+}: {
+  calls: VoiceCallRow[];
+  shownVoices: VoiceCallRow[];
+  selectedVoiceId: string | null;
+  onSelectCall: (id: string) => void;
+}) {
+  const overlay = new Map(shownVoices.map((row) => [row.id, row]));
+  const history = [...calls]
+    .sort((a, b) => ts(a.createdAt) - ts(b.createdAt))
+    .map((call) => overlay.get(call.id) ?? call);
+
+  return (
+    <div className="space-y-3">
+      {history.map((call, index) => {
+        const key = dateGroupKey(call.createdAt);
+        const prevKey =
+          index > 0 ? dateGroupKey(history[index - 1].createdAt) : "";
+        const duration = formatDuration(call.durationSeconds);
+        const lines = voiceTimelineLines(call.communication, call.transcript);
+        const active = selectedVoiceId === call.id;
+        return (
+          <Fragment key={call.id}>
+            {key && key !== prevKey ? (
+              <div className="py-1 text-center text-[11px] font-medium text-neutral-400">
+                {dateGroupLabel(call.createdAt)}
+              </div>
+            ) : null}
+            <div
+              className={`space-y-2 rounded-lg border px-3 py-2 ${
+                active
+                  ? "border-brand-orange"
+                  : "border-[var(--staff-border)]"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => onSelectCall(call.id)}
+                className="flex w-full items-baseline justify-between gap-2 text-left"
+              >
+                <span className="text-[13px] font-medium text-brand-dark">
+                  {call.direction === "outbound" ? "Outbound call" : "Inbound call"}
+                  {duration ? ` · ${duration}` : ""}
+                </span>
+                <span className="text-[10px] text-neutral-400">
+                  {formatRelativeTime(call.createdAt)}
+                </span>
+              </button>
+              {call.recordingUrl ? (
+                <audio controls src={call.recordingUrl} className="w-full" />
+              ) : null}
+              <VoiceActivityTimeline lines={lines} />
+            </div>
+          </Fragment>
+        );
+      })}
     </div>
   );
 }

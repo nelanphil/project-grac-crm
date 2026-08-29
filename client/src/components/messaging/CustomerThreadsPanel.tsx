@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Loader2, Phone, Send, X } from "lucide-react";
 import {
   ApiError,
@@ -16,6 +16,8 @@ import {
   contactDisplayName,
   contactThreadKey,
   compactVoicePreview,
+  dateGroupKey,
+  dateGroupLabel,
   formatPhone,
   formatRelativeTime,
   mergeMessages,
@@ -366,9 +368,23 @@ export default function CustomerThreadsPanel({
             ) : conversationMessages.length === 0 ? (
               <p className="text-xs text-neutral-500">No messages yet.</p>
             ) : (
-              conversationMessages.map((m) => (
-                <MessageBubble key={m._id} msg={m} />
-              ))
+              conversationMessages.map((m, index) => {
+                const key = dateGroupKey(m.createdAt);
+                const prevKey =
+                  index > 0
+                    ? dateGroupKey(conversationMessages[index - 1].createdAt)
+                    : "";
+                return (
+                  <Fragment key={m._id}>
+                    {key && key !== prevKey ? (
+                      <div className="py-1 text-center text-[11px] font-medium text-neutral-400">
+                        {dateGroupLabel(m.createdAt)}
+                      </div>
+                    ) : null}
+                    <MessageBubble msg={m} />
+                  </Fragment>
+                );
+              })
             )}
           </div>
           {threadDetail ? (
