@@ -34,6 +34,11 @@ import {
   voiceRecordingWebhookPath,
 } from "./twilio.service";
 
+import {
+  mergeVoiceActivity,
+  voiceConversationPreview,
+} from "../utils/voiceActivity";
+
 const SESSION_MS = 30 * 60 * 1000;
 const PREVIEW_LENGTH = 160;
 const COMPANY_NAME = "Generator Maintenance of Florida";
@@ -56,43 +61,12 @@ function expiresAt(): Date {
   return new Date(Date.now() + SESSION_MS);
 }
 
-export function previewVoiceBody(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return "";
-  return trimmed.length <= PREVIEW_LENGTH
-    ? trimmed
-    : `${trimmed.slice(0, PREVIEW_LENGTH - 1)}…`;
-}
-
-export function formatVoicemailLine(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return "";
-  if (/^voicemail:/i.test(trimmed)) return trimmed;
-  return `Voicemail: ${trimmed}`;
-}
-
-/** Newline-separated activity log. Skips blank or duplicate lines. */
-export function mergeVoiceActivity(existing: string, line: string): string {
-  const prev = (existing || "").trim();
-  const next = (line || "").trim();
-  if (!next) return prev;
-  if (!prev) return next;
-  const lines = prev.split("\n").map((entry) => entry.trim());
-  if (lines.includes(next)) return prev;
-  const unprefixed = next.replace(/^voicemail:\s*/i, "");
-  if (
-    unprefixed &&
-    /^voicemail:/i.test(next) &&
-    lines.some(
-      (entry) =>
-        entry === unprefixed ||
-        entry.replace(/^voicemail:\s*/i, "") === unprefixed,
-    )
-  ) {
-    return prev;
-  }
-  return `${prev}\n${next}`;
-}
+export {
+  formatVoicemailLine,
+  mergeVoiceActivity,
+  previewVoiceBody,
+  voiceConversationPreview,
+} from "../utils/voiceActivity";
 
 export async function appendVoiceActivity(opts: {
   accountSid: string;
@@ -112,7 +86,7 @@ export async function appendVoiceActivity(opts: {
     const transcript = mergeVoiceActivity(existing.transcript || "", line);
     if (transcript === (existing.transcript || "").trim()) return;
 
-    const body = previewVoiceBody(transcript);
+    const body = voiceConversationPreview(transcript);
     await TwilioCommunication.updateOne(
       { _id: existing._id },
       { $set: { transcript, body } },
@@ -419,9 +393,12 @@ async function attachCallToCustomer(opts: {
         contactRef: opts.contactRef,
         threadRef: thread._id,
         ...(existingTranscript
-          ? { body: previewVoiceBody(existingTranscript) }
+          ? { body: voiceConversationPreview(existingTranscript) }
           : summary
-            ? { body: summary.slice(0, PREVIEW_LENGTH), transcript: summary }
+            ? {
+                body: voiceConversationPreview(summary),
+                transcript: summary,
+              }
             : {}),
       },
     },
@@ -430,11 +407,13 @@ async function attachCallToCustomer(opts: {
   const previewSource = existingTranscript || summary;
   if (!previewSource) return;
 
+  const shortPreview = voiceConversationPreview(previewSource);
+
   if (threadChanged || (summary && !existingTranscript)) {
     await touchThreadAfterMessage(thread._id, {
       direction: "inbound",
       channel: "voice",
-      body: previewVoiceBody(previewSource),
+      body: shortPreview,
       transcript: previewSource,
       at: new Date(),
     });
@@ -448,10 +427,7 @@ async function attachCallToCustomer(opts: {
         lastMessageAt: new Date(),
         lastMessageDirection: "inbound",
         lastMessageChannel: "voice",
-        lastMessagePreview: previewVoiceBody(previewSource).slice(
-          0,
-          PREVIEW_LENGTH,
-        ),
+        lastMessagePreview: shortPreview.slice(0, PREVIEW_LENGTH),
       },
     },
   );

@@ -7,6 +7,8 @@ import {
 import { Customer } from "../models/mongo/Customer";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { normalizePhoneDigits } from "./customerSites";
+import { publicMediaUrls } from "./recordingPlayback";
+import { toTranscriptLines } from "./voiceActivity";
 
 export function mapTwilioMessageStatus(
   status: string | undefined | null,
@@ -184,7 +186,10 @@ export function toPublicCommunication(
     toNumber: d.toNumber ?? "",
     body: d.body ?? "",
     transcript: typeof d.transcript === "string" ? d.transcript : "",
-    mediaUrls: d.mediaUrls ?? [],
+    transcriptLines: toTranscriptLines(
+      typeof d.transcript === "string" ? d.transcript : "",
+    ),
+    mediaUrls: publicMediaUrls(d),
     durationSeconds: d.durationSeconds ?? null,
     twilioSid: d.twilioSid ?? null,
     customerRef: d.customerRef ? String(d.customerRef) : null,

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   authenticate,
+  authenticateRecordingPlayback,
   requirePermission,
   requireRole,
 } from "../middleware/auth.middleware";
@@ -16,11 +17,18 @@ import {
   checkThreadConflict,
   closeThreadEndpoint,
   getWebhookInfo,
+  streamCommunicationRecording,
 } from "../controllers/messaging.controller";
 
 const router = Router();
 
 const adminRoles = requireRole("admin", "super-admin", "owner");
+
+router.get(
+  "/communications/:id/recording",
+  authenticateRecordingPlayback,
+  streamCommunicationRecording,
+);
 
 router.use(authenticate);
 router.use(adminRoles);

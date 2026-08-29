@@ -7,6 +7,7 @@
     "dev": "npm run dev:server",
     "build": "tsc",
     "lint": "eslint .",
+    "test": "tsx --test src/utils/voiceActivity.test.ts src/utils/recordingPlayback.test.ts src/services/twilioRecordingMedia.test.ts",
     "migrate": "node dist/migrations/run.js",
     "copy-prod-to-dev": "tsx src/scripts/copy-prod-to-dev.ts --yes --drop",
     "start:server": "node dist/index.js",

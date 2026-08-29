@@ -5,6 +5,7 @@ import { decryptCredential } from "../utils/credentialsCrypto";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
 import { resolvePublicApiBase } from "../utils/publicUrl";
 import { buildOutboundSayTwiml } from "../utils/twilioVoiceTwiml";
+import { isTwilioApiUrl } from "../utils/recordingPlayback";
 
 export class TwilioServiceError extends Error {
   constructor(message: string) {
@@ -279,6 +280,55 @@ export function messageWebhookAbsoluteUrl(accountSid?: string): string {
 
 export function statusWebhookAbsoluteUrl(accountSid?: string): string {
   return webhookAbsoluteUrl("/webhooks/twilio/status", accountSid);
+}
+
+export function twilioRecordingMediaUrl(storedUrl: string): string {
+  const trimmed = storedUrl.trim();
+  try {
+    const parsed = new URL(trimmed);
+    if (!/\.(mp3|wav|ogg)$/i.test(parsed.pathname)) {
+      parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}.mp3`;
+    }
+    return parsed.toString();
+  } catch {
+    if (/\.(mp3|wav|ogg)(\?|$)/i.test(trimmed)) return trimmed;
+    return `${trimmed.replace(/\/+$/, "")}.mp3`;
+  }
+}
+
+export async function fetchTwilioRecordingMedia(params: {
+  account: ITwilioAccount;
+  recordingUrl: string;
+  range?: string;
+}): Promise<{
+  status: number;
+  contentType: string;
+  contentLength?: string;
+  contentRange?: string;
+  acceptRanges?: string;
+  body: ReadableStream<Uint8Array> | null;
+}> {
+  if (!isTwilioApiUrl(params.recordingUrl)) {
+    throw new TwilioServiceError("Recording URL is not a Twilio recording");
+  }
+
+  const { accountSid, authToken } = resolveCredentials(params.account);
+  const url = twilioRecordingMediaUrl(params.recordingUrl);
+  const headers: Record<string, string> = {
+    Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+    Accept: "audio/mpeg, audio/wav, audio/*, */*",
+  };
+  if (params.range) headers.Range = params.range;
+
+  const res = await fetch(url, { headers });
+  return {
+    status: res.status,
+    contentType: res.headers.get("content-type") || "audio/mpeg",
+    contentLength: res.headers.get("content-length") || undefined,
+    contentRange: res.headers.get("content-range") || undefined,
+    acceptRanges: res.headers.get("accept-ranges") || undefined,
+    body: res.body,
+  };
 }
 
 /** Best-effort: Twilio sometimes delivers RecordingUrl before TranscriptionText. */

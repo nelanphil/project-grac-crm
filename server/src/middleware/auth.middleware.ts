@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { getPermissionsForRole } from "../models/mongo/RolePermission";
+import { verifyRecordingPlaybackToken } from "../utils/recordingPlayback";
 
 export interface AuthTokenPayload {
   sub: string;
@@ -65,4 +66,33 @@ export function requirePermission(permission: string) {
     }
     next();
   };
+}
+
+/**
+ * GET recording: HTML <audio> cannot send Authorization, so a short-lived
+ * signed query token is accepted. Bearer JWT + messages:read also works.
+ */
+export async function authenticateRecordingPlayback(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const commId = String(req.params.id || "");
+  const queryToken =
+    typeof req.query.token === "string" ? req.query.token.trim() : "";
+
+  if (queryToken) {
+    if (verifyRecordingPlaybackToken(queryToken, commId)) {
+      next();
+      return;
+    }
+    res.status(403).json({ message: "Invalid or expired recording token" });
+    return;
+  }
+
+  await authenticate(req, res, () => {
+    requireRole("admin", "super-admin", "owner")(req, res, () => {
+      requirePermission("messages:read")(req, res, next);
+    });
+  });
 }
