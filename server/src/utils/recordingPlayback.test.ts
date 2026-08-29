@@ -10,10 +10,13 @@ import {
 
 const TWILIO_URL =
   "https://api.twilio.com/2010-04-01/Accounts/ACxxx/Recordings/RExxx";
+const TWILIO_MEDIA_URL =
+  "https://media.twilio.com/2010-04-01/Accounts/ACxxx/Recordings/RExxx";
 
 describe("recording playback tokens and public mediaUrls", () => {
   it("recognizes Twilio recording URLs", () => {
     assert.equal(isTwilioApiUrl(TWILIO_URL), true);
+    assert.equal(isTwilioApiUrl(TWILIO_MEDIA_URL), true);
     assert.equal(isTwilioApiUrl("https://example.com/audio.mp3"), false);
   });
 
@@ -51,10 +54,31 @@ describe("recording playback tokens and public mediaUrls", () => {
       publicUrls[0],
       /^\/messaging\/communications\/64b000000000000000000001\/recording\?token=/,
     );
+    assert.equal(publicUrls[0].startsWith("/"), true);
+    assert.equal(publicUrls[0].includes("://"), false);
+    assert.equal(/https?:\/\//i.test(publicUrls[0]), false);
     assert.equal(publicUrls[0].includes("api.twilio.com"), false);
+    assert.equal(publicUrls[0].includes("media.twilio.com"), false);
     assert.equal(storedTwilioRecordingUrl(doc.mediaUrls), TWILIO_URL);
 
-    assert.equal(JSON.stringify(publicUrls).includes("api.twilio.com"), false);
+    const leaked = JSON.stringify(publicUrls);
+    assert.equal(leaked.includes("api.twilio.com"), false);
+    assert.equal(leaked.includes("media.twilio.com"), false);
+  });
+
+  it("rewrites media.twilio.com voice recordings to the same path-only CRM URL", () => {
+    const publicUrls = publicMediaUrls({
+      _id: "64b000000000000000000001",
+      channel: "voice",
+      mediaUrls: [TWILIO_MEDIA_URL],
+    });
+    assert.equal(publicUrls.length, 1);
+    assert.match(
+      publicUrls[0],
+      /^\/messaging\/communications\/64b000000000000000000001\/recording\?token=/,
+    );
+    assert.equal(publicUrls[0].includes("media.twilio.com"), false);
+    assert.equal(publicUrls[0].includes("://"), false);
   });
 
   it("strips Twilio URLs from non-voice mediaUrls", () => {

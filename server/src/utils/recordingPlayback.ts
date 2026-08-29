@@ -68,7 +68,11 @@ export function storedTwilioRecordingUrl(
   return null;
 }
 
-/** Public mediaUrls: CRM playback path for voice; never api.twilio.com. */
+/**
+ * Public mediaUrls. Voice: one path-only CRM URL
+ * `/messaging/communications/{id}/recording?token=…` (no host).
+ * Never emit api.twilio.com or media.twilio.com.
+ */
 export function publicMediaUrls(doc: {
   _id?: unknown;
   channel?: unknown;
