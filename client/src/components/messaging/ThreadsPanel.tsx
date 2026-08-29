@@ -20,6 +20,7 @@ import {
   formatDuration,
   formatRelativeTime,
   groupCustomersByRef,
+  voiceTimelineLines,
   voiceRowFromMessage,
 } from "./conversationUtils";
 
@@ -160,6 +161,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
 
   const shownVoice = voiceDetail ?? selectedVoiceRow;
   const transcriptText = shownVoice?.transcript ?? "";
+  const timeline = voiceTimelineLines(shownVoice?.communication, transcriptText);
 
   function selectCustomer(customerRef: string) {
     setSelectedVoiceId(null);
@@ -399,10 +401,22 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                   <p className="text-sm text-neutral-500">
                     {shownVoice.phone || "Unknown caller"}
                   </p>
-                  {transcriptText ? (
-                    <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-brand-dark sm:text-base">
-                      {transcriptText}
-                    </p>
+                  {timeline.length > 0 ? (
+                    <ol className="space-y-2">
+                      {timeline.map((line, index) => (
+                        <li
+                          key={`${index}-${line.kind}-${line.text.slice(0, 24)}`}
+                          className="rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2 text-[15px] leading-relaxed text-brand-dark sm:text-base"
+                        >
+                          {line.kind === "voicemail" ? (
+                            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-neutral-500">
+                              Voicemail
+                            </span>
+                          ) : null}
+                          {line.text}
+                        </li>
+                      ))}
+                    </ol>
                   ) : (
                     <p className="text-[15px] text-neutral-500 sm:text-base">
                       Transcript isn&apos;t available yet.

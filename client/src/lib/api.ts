@@ -2971,6 +2971,7 @@ export interface TwilioCommunicationItem {
   toNumber: string;
   body: string;
   transcript: string;
+  transcriptLines?: { kind: "event" | "voicemail"; text: string }[];
   mediaUrls: string[];
   durationSeconds: number | null;
   twilioSid: string | null;

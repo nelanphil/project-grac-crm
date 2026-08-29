@@ -1,4 +1,5 @@
 import {
+  API_URL,
   CommunicationChannel,
   CommunicationDirection,
   MessageThreadItem,
@@ -9,6 +10,31 @@ import {
   formatCustomerName,
   formatCustomerRecordName,
 } from "@/lib/formatName";
+
+/** Playback URL for <audio src>. SERVER puts a signed CRM path in mediaUrls[0]. */
+export function crmPlaybackSrc(url: string | null | undefined): string | null {
+  const raw = (url || "").trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const host = new URL(raw).hostname.toLowerCase();
+      if (host === "api.twilio.com" || host.endsWith(".twilio.com")) return null;
+    } catch {
+      return null;
+    }
+    return raw;
+  }
+  const path = raw.startsWith("/") ? raw : `/${raw}`;
+  return `${API_URL.replace(/\/$/, "")}${path}`;
+}
+
+/** IVR / voice activity as timeline lines (newline-separated log). */
+export function voiceActivityLines(transcript: string): string[] {
+  return transcript
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
 
 export function ts(iso: string | null | undefined): number {
   if (!iso) return 0;
@@ -255,7 +281,7 @@ export function buildVoiceCallRows(
           durationSeconds: c.durationSeconds,
           createdAt: c.createdAt,
           transcript: voiceTranscript(c),
-          recordingUrl: c.mediaUrls[0] ?? null,
+          recordingUrl: crmPlaybackSrc(c.mediaUrls[0]),
           communication: c,
           thread,
         };
@@ -306,8 +332,30 @@ export function voiceRowFromMessage(
     durationSeconds: msg.durationSeconds,
     createdAt: msg.createdAt,
     transcript: voiceTranscript(msg),
-    recordingUrl: msg.mediaUrls[0] ?? null,
+    recordingUrl: crmPlaybackSrc(msg.mediaUrls[0]),
     communication: msg,
     thread,
   };
+}
+
+export type VoiceTimelineLine = { kind: "event" | "voicemail"; text: string };
+
+/** Prefer SERVER transcriptLines; fall back to splitting transcript. */
+export function voiceTimelineLines(
+  communication: TwilioCommunicationItem | null | undefined,
+  transcriptFallback: string,
+): VoiceTimelineLine[] {
+  const fromApi = communication?.transcriptLines;
+  if (Array.isArray(fromApi) && fromApi.length > 0) {
+    return fromApi
+      .filter((line) => line && typeof line.text === "string" && line.text.trim())
+      .map((line) => ({
+        kind: line.kind === "voicemail" ? "voicemail" : "event",
+        text: line.text.trim(),
+      }));
+  }
+  return voiceActivityLines(transcriptFallback).map((text) => ({
+    kind: /^voicemail:/i.test(text) ? "voicemail" : "event",
+    text,
+  }));
 }
