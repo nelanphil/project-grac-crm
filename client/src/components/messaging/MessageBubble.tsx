@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { AlertTriangle, Phone, X } from "lucide-react";
 import { TwilioCommunicationItem } from "@/lib/api";
-import { formatDuration, voiceTranscript } from "./conversationUtils";
+import {
+  crmPlaybackSrc,
+  formatDuration,
+  voiceTimelineLines,
+  voiceTranscript,
+} from "./conversationUtils";
+import { VoiceActivityTimeline } from "./VoiceActivityTimeline";
 
 export function truncateSid(sid: string): string {
   if (sid.length <= 10) return sid;
@@ -127,36 +133,34 @@ export function VoiceCallChip({ msg }: { msg: TwilioCommunicationItem }) {
     msg.direction === "inbound" ? "Inbound call" : "Outbound call";
   const dur =
     msg.durationSeconds != null ? formatDuration(msg.durationSeconds) : "";
-  const transcript = voiceTranscript(msg);
-  const recordingUrl = msg.mediaUrls[0] ?? null;
+  const timeline = voiceTimelineLines(msg, voiceTranscript(msg));
+  const recordingUrl = crmPlaybackSrc(msg.mediaUrls[0]);
 
   return (
     <div className="flex justify-center py-0.5">
       <div className="w-full max-w-[90%] space-y-2 rounded-2xl border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
-        <div className="inline-flex max-w-full items-center gap-1.5 text-[11px] text-neutral-500">
-          <Phone className="h-3 w-3 shrink-0 text-brand-orange" />
-          <span className="truncate">
-            {label}
-            {dur ? ` · ${dur}` : ""}
-          </span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-neutral-500">
+            <Phone className="h-3 w-3 shrink-0 text-brand-orange" />
+            <span className="truncate">
+              {label}
+              {dur ? ` · ${dur}` : ""}
+            </span>
+          </div>
+          <div className="shrink-0 text-[10px] text-neutral-400">
+            {formatTime(msg.createdAt)}
+          </div>
         </div>
-        {transcript ? (
-          <p className="text-[13px] leading-snug whitespace-pre-wrap text-brand-dark">
-            {transcript}
-          </p>
+        {recordingUrl ? (
+          <audio controls src={recordingUrl} className="w-full" />
+        ) : null}
+        {timeline.length > 0 ? (
+          <VoiceActivityTimeline lines={timeline} compact />
         ) : (
           <p className="text-[13px] text-neutral-500">
             Transcript isn&apos;t available yet.
           </p>
         )}
-        {recordingUrl ? (
-          <audio controls src={recordingUrl} className="w-full">
-            <a href={recordingUrl}>Download recording</a>
-          </audio>
-        ) : null}
-        <div className="text-[10px] text-neutral-400">
-          {formatTime(msg.createdAt)}
-        </div>
       </div>
     </div>
   );

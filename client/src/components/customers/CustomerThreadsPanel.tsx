@@ -12,6 +12,7 @@ import {
 import { formatCustomerName, toProperCase } from "@/lib/formatName";
 import { useAuthStore } from "@/store/useAuthStore";
 import { formatTime } from "@/components/messaging/MessageBubble";
+import { compactVoicePreview } from "@/components/messaging/conversationUtils";
 
 type CustomerThreadsPanelProps = {
   customerId: string;
@@ -148,7 +149,11 @@ export default function CustomerThreadsPanel({
                         </span>
                       </div>
                       <p className="mt-1 truncate text-sm text-brand-dark">
-                        {t.lastMessagePreview || "(no messages)"}
+                        {compactVoicePreview(
+                          t.lastMessagePreview || "",
+                          t.lastMessageChannel,
+                          t.lastMessageDirection,
+                        ) || "(no messages)"}
                       </p>
                       <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-400">
                         <span>{formatTime(t.lastMessageAt) || "—"}</span>
