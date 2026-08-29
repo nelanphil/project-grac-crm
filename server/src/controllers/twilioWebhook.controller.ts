@@ -27,6 +27,7 @@ import {
   startInboundIvr,
   voicemailTwiml,
 } from "../services/voiceIvr.service";
+import { voiceConversationPreview } from "../utils/voiceActivity";
 import { buildSayHangupTwiml } from "../utils/twilioVoiceTwiml";
 import { resolveSayVoice } from "../utils/twilioVoices";
 
@@ -231,6 +232,35 @@ function withRecordingFirst(existing: string[], recordingUrl: string): string[] 
   return [recordingUrl, ...rest];
 }
 
+function voiceSidCandidates(
+  params: Record<string, string>,
+  extra?: string,
+): string[] {
+  return [
+    ...new Set(
+      [extra, params.CallSid, params.ParentCallSid]
+        .map((sid) => (sid || "").trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+async function findVoiceCommunication(
+  accountSid: string,
+  sids: string[],
+) {
+  if (sids.length === 0) return null;
+  return TwilioCommunication.findOne({
+    accountSid,
+    channel: "voice",
+    twilioSid: sids.length === 1 ? sids[0] : { $in: sids },
+  });
+}
+
+function inboundVoiceBody(transcript: string): string {
+  return voiceConversationPreview(transcript);
+}
+
 async function resolveInboundVoiceThread(params: {
   account: ITwilioAccount;
   fromNumber: string;
@@ -270,6 +300,7 @@ async function resolveInboundVoiceThread(params: {
 async function ingestInboundVoice(opts: {
   account: ITwilioAccount;
   callSid: string;
+  parentCallSid?: string;
   fromNumber: string;
   toNumber: string;
   statusRaw?: string;
@@ -278,10 +309,23 @@ async function ingestInboundVoice(opts: {
   recordingUrl?: string;
   durationSeconds?: number | null;
 }): Promise<void> {
-  const existing = await TwilioCommunication.findOne({
-    accountSid: opts.account.accountSid,
-    twilioSid: opts.callSid,
-  });
+  const sidCandidates = voiceSidCandidates(
+    {
+      CallSid: opts.callSid,
+      ParentCallSid: opts.parentCallSid || "",
+    },
+    opts.callSid,
+  );
+  const existing = await findVoiceCommunication(
+    opts.account.accountSid,
+    sidCandidates,
+  );
+  const canonicalSid =
+    (existing?.twilioSid || "").trim() ||
+    (opts.parentCallSid || "").trim() ||
+    opts.callSid ||
+    "";
+  if (!canonicalSid) return;
 
   const fromNumber = opts.fromNumber || existing?.fromNumber || "";
   const toNumber = opts.toNumber || existing?.toNumber || "";
@@ -334,12 +378,12 @@ async function ingestInboundVoice(opts: {
 
   if (incomingTranscript) {
     $set.transcript = mergedTranscript;
-    $set.body = previewBody(mergedTranscript);
+    $set.body = inboundVoiceBody(mergedTranscript);
   } else if (!existing) {
-    $set.body = "";
+    $set.body = inboundVoiceBody("");
     $set.transcript = "";
-  } else if (existing.body === "Voice message") {
-    $set.body = "";
+  } else {
+    $set.body = inboundVoiceBody(existing.transcript || "");
   }
 
   if (opts.recordingUrl) {
@@ -356,21 +400,19 @@ async function ingestInboundVoice(opts: {
   }
 
   const doc = await TwilioCommunication.findOneAndUpdate(
-    { accountSid: opts.account.accountSid, twilioSid: opts.callSid },
+    { accountSid: opts.account.accountSid, twilioSid: canonicalSid },
     {
       $set,
       $setOnInsert: {
         createdByUserRef: null,
-        twilioSid: opts.callSid,
+        twilioSid: canonicalSid,
       },
     },
     { upsert: true, new: true },
   );
 
   const preview =
-    (typeof $set.body === "string" && $set.body) ||
-    (existing?.body && existing.body !== "Voice message" ? existing.body : "") ||
-    "";
+    (typeof $set.body === "string" && $set.body) || inboundVoiceBody(mergedTranscript);
 
   if (!alreadyOnThread) {
     await touchThreadAfterMessage(threadRef, {
@@ -419,17 +461,15 @@ export async function statusWebhook(
     }
 
     const params = asStringRecord(req.body);
-    const twilioSid =
-      params.MessageSid ||
-      params.SmsSid ||
-      params.CallSid ||
-      params.ParentCallSid;
+    const isCall = Boolean(params.CallSid || params.CallStatus || params.ParentCallSid);
+    const callSids = isCall ? voiceSidCandidates(params) : [];
+    const twilioSid = isCall
+      ? params.ParentCallSid || params.CallSid || callSids[0] || ""
+      : params.MessageSid || params.SmsSid || "";
     if (!twilioSid) {
       res.status(200).send("OK");
       return;
     }
-
-    const isCall = Boolean(params.CallSid || params.CallStatus);
     const status = isCall
       ? mapTwilioCallStatus(params.CallStatus || params.DialCallStatus)
       : mapTwilioMessageStatus(params.MessageStatus || params.SmsStatus);
@@ -449,10 +489,12 @@ export async function statusWebhook(
     const fromNumber = params.From || "";
     const toNumber = params.To || "";
 
-    const existing = await TwilioCommunication.findOne({
-      accountSid: account.accountSid,
-      twilioSid,
-    });
+    const existing = isCall
+      ? await findVoiceCommunication(account.accountSid, callSids)
+      : await TwilioCommunication.findOne({
+          accountSid: account.accountSid,
+          twilioSid,
+        });
 
     if (existing) {
       const mediaUrls = recordingUrl
@@ -498,8 +540,18 @@ export async function statusWebhook(
             errorMessage,
             ...(mediaUrls ? { mediaUrls } : {}),
             ...(nextTranscript
-              ? { transcript: nextTranscript, body: previewBody(nextTranscript) }
-              : {}),
+              ? {
+                  transcript: nextTranscript,
+                  body:
+                    existing.channel === "voice" &&
+                    existing.direction === "inbound"
+                      ? inboundVoiceBody(nextTranscript)
+                      : previewBody(nextTranscript),
+                }
+              : existing.channel === "voice" &&
+                  existing.direction === "inbound"
+                ? { body: inboundVoiceBody(existing.transcript || "") }
+                : {}),
             ...identity,
           },
         },
@@ -509,11 +561,15 @@ export async function statusWebhook(
         (identity.threadRef as typeof existing.threadRef | undefined) ??
         existing.threadRef;
       if (nextTranscript && threadRef) {
+        const listPreview =
+          existing.channel === "voice" && existing.direction === "inbound"
+            ? inboundVoiceBody(nextTranscript)
+            : previewBody(nextTranscript);
         await MessageThread.updateOne(
           { _id: threadRef },
           {
             $set: {
-              lastMessagePreview: previewBody(nextTranscript),
+              lastMessagePreview: listPreview,
               lastMessageChannel: "voice",
             },
           },
@@ -547,7 +603,10 @@ export async function statusWebhook(
         resolved.direction === "inbound" && transcript
           ? formatVoicemailLine(transcript)
           : transcript;
-      const body = previewBody(storedTranscript);
+      const body =
+        resolved.direction === "inbound"
+          ? inboundVoiceBody(storedTranscript)
+          : previewBody(storedTranscript);
       const mediaUrls = recordingUrl ? [recordingUrl] : [];
 
       const doc = await TwilioCommunication.create({
@@ -746,6 +805,7 @@ export async function inboundVoiceRecordingWebhook(
     await ingestInboundVoice({
       account,
       callSid,
+      parentCallSid: params.ParentCallSid || undefined,
       fromNumber: params.From || params.Caller || "",
       toNumber: params.To || params.Called || "",
       statusRaw,

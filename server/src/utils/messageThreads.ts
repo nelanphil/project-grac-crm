@@ -7,6 +7,7 @@ import {
 } from "../models/mongo/TwilioCommunication";
 import { IMessageThread, MessageThread } from "../models/mongo/MessageThread";
 import { toE164 } from "./messagingContext";
+import { voiceConversationPreview } from "./voiceActivity";
 
 const PREVIEW_LENGTH = 160;
 
@@ -436,7 +437,10 @@ export async function touchThreadAfterMessage(
         lastMessageAt: info.at,
         lastMessageDirection: info.direction,
         lastMessageChannel: info.channel,
-        lastMessagePreview: previewText(info.body, info.transcript),
+        lastMessagePreview:
+          info.channel === "voice" && info.direction === "inbound"
+            ? voiceConversationPreview(info.transcript || info.body || "")
+            : previewText(info.body, info.transcript),
       },
       $inc: { messageCount: 1 },
     },

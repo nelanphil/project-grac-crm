@@ -1,4 +1,5 @@
 import { Response } from "express";
+import { Readable } from "stream";
 import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { CustomerContact } from "../models/mongo/CustomerContact";
@@ -38,6 +39,7 @@ import {
 } from "../utils/messageThreads";
 import {
   createOutboundCall,
+  fetchTwilioRecordingMedia,
   getTwilioAccountForSend,
   getTwilioCredentialPair,
   getTwilioRuntimeEnvironment,
@@ -45,6 +47,7 @@ import {
   sendSms,
   TwilioServiceError,
 } from "../services/twilio.service";
+import { storedTwilioRecordingUrl } from "../utils/recordingPlayback";
 import {
   isPubliclyReachableApiHost,
   resolvePublicApiBase,
@@ -956,6 +959,79 @@ function toPublicThread(
         ? thread.updatedAt.toISOString()
         : String(thread.updatedAt ?? ""),
   };
+}
+
+// GET /messaging/communications/:id/recording
+export async function streamCommunicationRecording(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const id = String(req.params.id || "");
+    if (!Types.ObjectId.isValid(id)) {
+      res.status(404).json({ message: "Recording not found" });
+      return;
+    }
+
+    const doc = await TwilioCommunication.findById(id);
+    if (!doc || doc.channel !== "voice") {
+      res.status(404).json({ message: "Recording not found" });
+      return;
+    }
+
+    const recordingUrl = storedTwilioRecordingUrl(doc.mediaUrls);
+    if (!recordingUrl) {
+      res.status(404).json({ message: "Recording not found" });
+      return;
+    }
+
+    const account = doc.twilioAccountRef
+      ? await TwilioAccount.findById(doc.twilioAccountRef)
+      : await TwilioAccount.findOne({ accountSid: doc.accountSid });
+    if (!account) {
+      res.status(404).json({ message: "Recording not found" });
+      return;
+    }
+
+    const rangeHeader = req.headers.range;
+    const range = Array.isArray(rangeHeader) ? rangeHeader[0] : rangeHeader;
+
+    const upstream = await fetchTwilioRecordingMedia({
+      account,
+      recordingUrl,
+      range,
+    });
+
+    if (upstream.status === 404) {
+      res.status(404).json({ message: "Recording not found" });
+      return;
+    }
+    if (upstream.status >= 400 || !upstream.body) {
+      res.status(502).json({ message: "Failed to fetch recording" });
+      return;
+    }
+
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.contentType);
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Cache-Control", "private, no-store");
+    if (upstream.contentLength) {
+      res.setHeader("Content-Length", upstream.contentLength);
+    }
+    if (upstream.contentRange) {
+      res.setHeader("Content-Range", upstream.contentRange);
+    }
+    res.setHeader("Accept-Ranges", upstream.acceptRanges || "bytes");
+
+    Readable.fromWeb(
+      upstream.body as import("stream/web").ReadableStream,
+    ).pipe(res);
+  } catch (err) {
+    console.error("GET /messaging/communications/:id/recording error:", err);
+    if (!res.headersSent) {
+      res.status(502).json({ message: "Failed to fetch recording" });
+    }
+  }
 }
 
 // GET /messaging/threads
