@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment } from "react";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import {
   VoiceContactGroup,
@@ -171,7 +171,10 @@ export default function VoiceCustomerPanel({
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3">
+          <VoiceHistoryPane
+            pinKey={`${selectedContactKey ?? ""}:${shownVoices.length}`}
+            loading={loadingVoiceDetail && !selectedContact}
+          >
             {loadingVoiceDetail && !selectedContact ? (
               <div className="flex items-center gap-2 text-xs text-neutral-500">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -189,13 +192,35 @@ export default function VoiceCustomerPanel({
                 onSelectCall={onSelectCall}
               />
             )}
-          </div>
+          </VoiceHistoryPane>
         </div>
       </div>
     </div>
   );
 }
 
+
+function VoiceHistoryPane({
+  pinKey,
+  loading,
+  children,
+}: {
+  pinKey: string | null;
+  loading: boolean;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || loading) return;
+    el.scrollTop = el.scrollHeight;
+  }, [pinKey, loading]);
+  return (
+    <div ref={ref} className="flex-1 overflow-y-auto p-3">
+      {children}
+    </div>
+  );
+}
 
 function VoiceCallHistory({
   calls,
@@ -225,7 +250,7 @@ function VoiceCallHistory({
         return (
           <Fragment key={call.id}>
             {key && key !== prevKey ? (
-              <div className="py-1 text-center text-[11px] font-medium text-neutral-400">
+              <div className="sticky top-0 z-10 bg-[var(--staff-surface)] py-1 text-center text-[11px] font-medium text-neutral-500">
                 {dateGroupLabel(call.createdAt)}
               </div>
             ) : null}

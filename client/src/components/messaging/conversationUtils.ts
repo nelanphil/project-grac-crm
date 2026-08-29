@@ -543,7 +543,7 @@ export function dateGroupKey(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** Today / Yesterday / weekday (within 7 days) / M/D/YYYY */
+/** Today / Yesterday / weekday (this local calendar week) / M/D/YYYY */
 export function dateGroupLabel(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -555,8 +555,11 @@ export function dateGroupLabel(iso: string | null | undefined): string {
   const yesterday = today - 86400000;
   if (day === today) return "Today";
   if (day === yesterday) return "Yesterday";
-  const diffDays = Math.round((today - day) / 86400000);
-  if (diffDays > 0 && diffDays < 7) {
+  const now = new Date();
+  const weekStart = start(
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()),
+  );
+  if (day >= weekStart && day < today) {
     return d.toLocaleDateString(undefined, { weekday: "long" });
   }
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;

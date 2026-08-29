@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Phone, Send, X } from "lucide-react";
 import {
   ApiError,
@@ -135,6 +135,13 @@ export default function CustomerThreadsPanel({
   const contactRef =
     replyThread?.contactRef ?? threadDetail?.thread.contactRef ?? null;
   const conversationMessages = threadDetail?.messages ?? [];
+  const messageScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = messageScrollRef.current;
+    if (!el || loadingThreadDetail) return;
+    el.scrollTop = el.scrollHeight;
+  }, [conversationMessages, loadingThreadDetail, selectedThreadId]);
 
   async function handleSendReply() {
     if (!threadDetail || !replyText.trim() || !contactRef) return;
@@ -355,7 +362,7 @@ export default function CustomerThreadsPanel({
               </span>
             </div>
           ) : null}
-          <div className="flex flex-1 flex-col gap-2 overflow-y-auto bg-[var(--staff-surface)] p-3">
+          <div ref={messageScrollRef} className="flex flex-1 flex-col gap-2 overflow-y-auto bg-[var(--staff-surface)] p-3">
             {loadingThreadDetail ? (
               <div className="flex items-center gap-2 text-xs text-neutral-500">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -377,7 +384,7 @@ export default function CustomerThreadsPanel({
                 return (
                   <Fragment key={m._id}>
                     {key && key !== prevKey ? (
-                      <div className="py-1 text-center text-[11px] font-medium text-neutral-400">
+                      <div className="sticky top-0 z-10 bg-[var(--staff-surface)] py-1 text-center text-[11px] font-medium text-neutral-500">
                         {dateGroupLabel(m.createdAt)}
                       </div>
                     ) : null}
