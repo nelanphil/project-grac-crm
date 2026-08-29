@@ -15,6 +15,7 @@ import MessageBubble from "./MessageBubble";
 import {
   contactDisplayName,
   contactThreadKey,
+  compactVoicePreview,
   formatPhone,
   formatRelativeTime,
   mergeMessages,
@@ -257,7 +258,11 @@ export default function CustomerThreadsPanel({
                         </span>
                       </div>
                       <div className="truncate text-[11px] text-neutral-500">
-                        {t.lastMessagePreview || t.lastMessageChannel || "—"}
+                        {compactVoicePreview(
+                          t.lastMessagePreview || "",
+                          t.lastMessageChannel,
+                          t.lastMessageDirection,
+                        ) || t.lastMessageChannel || "—"}
                       </div>
                       <div className="flex items-center gap-1 text-[10px] text-neutral-400">
                         <span className="truncate">

@@ -154,7 +154,11 @@ export function groupCustomersByRef(
     groups.push({
       customerRef,
       displayName: customerDisplayName(latest),
-      preview: latest.lastMessagePreview || "",
+      preview: compactVoicePreview(
+        latest.lastMessagePreview || "",
+        latest.lastMessageChannel,
+        latest.lastMessageDirection,
+      ),
       lastMessageAt: latest.lastMessageAt,
       lastMessageChannel: latest.lastMessageChannel,
       lastMessageDirection: latest.lastMessageDirection,
@@ -358,4 +362,39 @@ export function voiceTimelineLines(
     kind: /^voicemail:/i.test(text) ? "voicemail" : "event",
     text,
   }));
+}
+
+export function voicemailDisplayText(text: string): string {
+  const stripped = text.replace(/^voicemail:\s*/i, "").trim();
+  return stripped || text.trim();
+}
+
+/** Conversations list preview for voice: never dump the IVR log. */
+export function compactVoicePreview(
+  preview: string,
+  channel: CommunicationChannel | null | undefined,
+  direction: CommunicationDirection | null | undefined,
+): string {
+  if (channel !== "voice") return (preview || "").trim();
+  const trimmed = (preview || "").trim();
+  if (!trimmed) {
+    return direction === "outbound" ? "Outbound call" : "Inbound call";
+  }
+  const needsCompact = /\n/.test(trimmed) || /^call started/i.test(trimmed);
+  if (!needsCompact) {
+    return trimmed.length > 40 ? `${trimmed.slice(0, 39)}…` : trimmed;
+  }
+  const lines = trimmed
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.some((line) => /^voicemail:/i.test(line) || /left a voicemail/i.test(line))) {
+    return "Left a voicemail";
+  }
+  const events = lines.filter((line) => !/^voicemail:/i.test(line));
+  const lastEvent = events[events.length - 1] || "";
+  if (lastEvent && !/^call started/i.test(lastEvent)) {
+    return lastEvent.length > 40 ? `${lastEvent.slice(0, 39)}…` : lastEvent;
+  }
+  return direction === "outbound" ? "Outbound call" : "Inbound call";
 }

@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { AlertTriangle, Phone, X } from "lucide-react";
 import { TwilioCommunicationItem } from "@/lib/api";
-import { formatDuration, voiceTranscript } from "./conversationUtils";
+import {
+  crmPlaybackSrc,
+  formatDuration,
+  voiceTimelineLines,
+  voiceTranscript,
+} from "./conversationUtils";
+import { VoiceActivityTimeline } from "./VoiceActivityTimeline";
 
 export function truncateSid(sid: string): string {
   if (sid.length <= 10) return sid;
@@ -127,8 +133,8 @@ export function VoiceCallChip({ msg }: { msg: TwilioCommunicationItem }) {
     msg.direction === "inbound" ? "Inbound call" : "Outbound call";
   const dur =
     msg.durationSeconds != null ? formatDuration(msg.durationSeconds) : "";
-  const transcript = voiceTranscript(msg);
-  const recordingUrl = msg.mediaUrls[0] ?? null;
+  const timeline = voiceTimelineLines(msg, voiceTranscript(msg));
+  const recordingUrl = crmPlaybackSrc(msg.mediaUrls[0]);
 
   return (
     <div className="flex justify-center py-0.5">
@@ -140,19 +146,15 @@ export function VoiceCallChip({ msg }: { msg: TwilioCommunicationItem }) {
             {dur ? ` · ${dur}` : ""}
           </span>
         </div>
-        {transcript ? (
-          <p className="text-[13px] leading-snug whitespace-pre-wrap text-brand-dark">
-            {transcript}
-          </p>
+        {timeline.length > 0 ? (
+          <VoiceActivityTimeline lines={timeline} compact />
         ) : (
           <p className="text-[13px] text-neutral-500">
             Transcript isn&apos;t available yet.
           </p>
         )}
         {recordingUrl ? (
-          <audio controls src={recordingUrl} className="w-full">
-            <a href={recordingUrl}>Download recording</a>
-          </audio>
+          <audio controls src={recordingUrl} className="w-full" />
         ) : null}
         <div className="text-[10px] text-neutral-400">
           {formatTime(msg.createdAt)}
