@@ -379,29 +379,38 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
               selectedVoiceId ? "flex min-h-0 flex-1" : "hidden min-h-[240px] md:flex"
             }`}
           >
-            <div className="flex items-center gap-2 border-b border-[var(--staff-border)] px-3 py-2">
-              {selectedVoiceId ? (
-                <button
-                  type="button"
-                  onClick={() => setSelectedVoiceId(null)}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--staff-border)] px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-white md:hidden"
-                >
-                  Back
-                </button>
-              ) : null}
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-brand-dark">
-                  {shownVoice ? shownVoice.displayName : "Select a call"}
-                </p>
-                {shownVoice ? (
-                  <p className="text-[11px] text-neutral-500">
-                    {new Date(shownVoice.createdAt).toLocaleString()}
-                    {shownVoice.durationSeconds != null
-                      ? ` · ${formatDuration(shownVoice.durationSeconds)}`
-                      : ""}
-                  </p>
+            <div className="space-y-2 border-b border-[var(--staff-border)] px-3 py-2">
+              <div className="flex items-center gap-2">
+                {selectedVoiceId ? (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedVoiceId(null)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--staff-border)] px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-white md:hidden"
+                  >
+                    Back
+                  </button>
                 ) : null}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-brand-dark">
+                    {shownVoice ? shownVoice.displayName : "Select a call"}
+                  </p>
+                  {shownVoice ? (
+                    <p className="text-[11px] text-neutral-500">
+                      {new Date(shownVoice.createdAt).toLocaleString()}
+                      {shownVoice.durationSeconds != null
+                        ? ` · ${formatDuration(shownVoice.durationSeconds)}`
+                        : ""}
+                    </p>
+                  ) : null}
+                </div>
               </div>
+              {shownVoice?.recordingUrl ? (
+                <audio
+                  controls
+                  src={shownVoice.recordingUrl}
+                  className="w-full"
+                />
+              ) : null}
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
@@ -420,13 +429,6 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                     {shownVoice.phone || "Unknown caller"}
                   </p>
                   <VoiceActivityTimeline lines={timeline} />
-                  {shownVoice.recordingUrl ? (
-                    <audio
-                      controls
-                      src={shownVoice.recordingUrl}
-                      className="w-full"
-                    />
-                  ) : null}
                 </div>
               )}
             </div>

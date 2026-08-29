@@ -139,13 +139,21 @@ export function VoiceCallChip({ msg }: { msg: TwilioCommunicationItem }) {
   return (
     <div className="flex justify-center py-0.5">
       <div className="w-full max-w-[90%] space-y-2 rounded-2xl border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
-        <div className="inline-flex max-w-full items-center gap-1.5 text-[11px] text-neutral-500">
-          <Phone className="h-3 w-3 shrink-0 text-brand-orange" />
-          <span className="truncate">
-            {label}
-            {dur ? ` · ${dur}` : ""}
-          </span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="inline-flex min-w-0 items-center gap-1.5 text-[11px] text-neutral-500">
+            <Phone className="h-3 w-3 shrink-0 text-brand-orange" />
+            <span className="truncate">
+              {label}
+              {dur ? ` · ${dur}` : ""}
+            </span>
+          </div>
+          <div className="shrink-0 text-[10px] text-neutral-400">
+            {formatTime(msg.createdAt)}
+          </div>
         </div>
+        {recordingUrl ? (
+          <audio controls src={recordingUrl} className="w-full" />
+        ) : null}
         {timeline.length > 0 ? (
           <VoiceActivityTimeline lines={timeline} compact />
         ) : (
@@ -153,12 +161,6 @@ export function VoiceCallChip({ msg }: { msg: TwilioCommunicationItem }) {
             Transcript isn&apos;t available yet.
           </p>
         )}
-        {recordingUrl ? (
-          <audio controls src={recordingUrl} className="w-full" />
-        ) : null}
-        <div className="text-[10px] text-neutral-400">
-          {formatTime(msg.createdAt)}
-        </div>
       </div>
     </div>
   );
