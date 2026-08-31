@@ -214,7 +214,6 @@ export async function authRegister(data: {
   password: string;
   first_name: string;
   last_name: string;
-  role?: "admin" | "manager" | "agent";
   phone?: string;
   acceptTerms: true;
   acceptPrivacy: true;
@@ -1972,6 +1971,7 @@ export interface ProductItem {
   productAltCode: string;
   partNumber: string;
   name: string;
+  manufacturer: { _id: string; name: string } | null;
   kind: ProductKind;
   listPrice: number;
   unitPrice: number;
@@ -1988,6 +1988,7 @@ export type ProductWritePayload = {
   productCode: string;
   productNumber?: string;
   name: string;
+  manufacturer?: string;
   kind?: ProductKind;
   listPrice?: number;
   cost?: number;
@@ -2040,6 +2041,37 @@ export async function deleteProduct(token: string, id: string): Promise<void> {
   await authRequest<void>(`/products/${id}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Manufacturers
+// ---------------------------------------------------------------------------
+
+export interface ManufacturerItem {
+  _id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getManufacturers(
+  token: string,
+): Promise<{ manufacturers: ManufacturerItem[] }> {
+  return authRequest<{ manufacturers: ManufacturerItem[] }>("/manufacturers", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createManufacturer(
+  token: string,
+  data: { name: string },
+): Promise<{ manufacturer: ManufacturerItem }> {
+  return authRequest<{ manufacturer: ManufacturerItem }>("/manufacturers", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
   });
 }
 

@@ -38,6 +38,11 @@ import {
   previewUsernameAssignment,
   usernameNumberFromKey,
 } from "../utils/username";
+import {
+  EMAIL_CONFLICT_SIGNUP,
+  findEmailConflict,
+  provisionCrmCustomerForUser,
+} from "../utils/provisionCustomerAccount";
 
 function toIsoOrNull(value: Date | string | null | undefined): string | null {
   if (!value) return null;
@@ -158,24 +163,25 @@ export async function register(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const { email, password, first_name, last_name, role, smsOptIn, phone } =
+  const { email, password, first_name, last_name, smsOptIn, phone } =
     parsed.data;
+  const role = "customer";
 
   try {
-    const existing = await User.findOne({
-      email: email.toLowerCase(),
-      ...activeUserFilter,
-    }).lean();
-    if (existing) {
-      res.status(409).json({ message: "Email already in use" });
+    const normalizedEmail = email.toLowerCase();
+    const softDeleted = await User.findOne({
+      email: normalizedEmail,
+      deletedAt: { $ne: null },
+    });
+    const emailConflict = await findEmailConflict(normalizedEmail, {
+      excludeUserId: softDeleted?._id ?? null,
+    });
+    if (emailConflict) {
+      res.status(409).json({ message: EMAIL_CONFLICT_SIGNUP });
       return;
     }
 
     // Soft-deleted account with same email: restore instead of duplicating
-    const softDeleted = await User.findOne({
-      email: email.toLowerCase(),
-      deletedAt: { $ne: null },
-    });
     if (softDeleted) {
       softDeleted.password_hash = await bcrypt.hash(password, 10);
       softDeleted.first_name = first_name;
@@ -185,6 +191,14 @@ export async function register(req: Request, res: Response): Promise<void> {
       applyLegalConsent(softDeleted, smsOptIn);
       if (phone) softDeleted.phone = phone;
       await softDeleted.save();
+
+      try {
+        await provisionCrmCustomerForUser(softDeleted, { phone });
+      } catch (err) {
+        console.error("register CRM provision error:", err);
+        res.status(500).json({ message: "Internal server error" });
+        return;
+      }
 
       const permissions = await getPermissionsForRole(softDeleted.role);
       void sendSignupConfirmationEmail({
@@ -213,6 +227,13 @@ export async function register(req: Request, res: Response): Promise<void> {
       smsOptInAt: smsOptIn ? now : null,
       phone: phone || "",
     });
+
+    try {
+      await provisionCrmCustomerForUser(user, { phone });
+    } catch (err) {
+      await User.deleteOne({ _id: user._id });
+      throw err;
+    }
 
     const permissions = await getPermissionsForRole(user.role);
     void sendSignupConfirmationEmail({
@@ -413,13 +434,16 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
     }
 
     if (email) {
-      const conflict = await User.findOne({
-        email: email.toLowerCase(),
-        _id: { $ne: req.user.id },
-        ...activeUserFilter,
-      }).lean();
-      if (conflict) {
-        res.status(409).json({ message: "Email already in use" });
+      const emailConflict = await findEmailConflict(email.toLowerCase(), {
+        excludeUserId: user._id,
+      });
+      if (emailConflict) {
+        res.status(409).json({
+          message:
+            user.role === "customer" || emailConflict.type === "contact"
+              ? EMAIL_CONFLICT_SIGNUP
+              : "Email already in use",
+        });
         return;
       }
       user.email = email.toLowerCase();

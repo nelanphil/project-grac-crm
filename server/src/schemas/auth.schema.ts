@@ -47,7 +47,6 @@ export const registerSchema = z
       .max(100, "Password is too long"),
     first_name: z.string().min(1, "First name is required").max(100),
     last_name: z.string().min(1, "Last name is required").max(100),
-    role: z.string().min(1).optional().default("agent"),
     phone: phoneField,
     acceptTerms: z.literal(true, {
       error: "You must accept the Terms of Service",
