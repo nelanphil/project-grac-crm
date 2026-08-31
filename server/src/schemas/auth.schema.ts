@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizePhoneDigits } from "../utils/customerSites";
 
 export const loginSchema = z
   .object({
@@ -18,35 +19,58 @@ export const loginSchema = z
   });
 
 /** Bump when Terms or Privacy copy changes and re-acceptance is required. */
-export const LEGAL_DOCS_VERSION = "2026-08-03";
+export const LEGAL_DOCS_VERSION = "2026-08-31";
 
-export const registerSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .max(100, "Password is too long"),
-  first_name: z.string().min(1, "First name is required").max(100),
-  last_name: z.string().min(1, "Last name is required").max(100),
-  role: z.string().min(1).optional().default("agent"),
-  acceptTerms: z.literal(true, {
-    error: "You must accept the Terms of Service",
-  }),
-  acceptPrivacy: z.literal(true, {
-    error: "You must accept the Privacy Policy",
-  }),
-  smsOptIn: z.boolean().optional().default(false),
-});
+const phoneField = z.string().trim().max(40).optional().default("");
 
-export const legalConsentSchema = z.object({
-  acceptTerms: z.literal(true, {
-    error: "You must accept the Terms of Service",
-  }),
-  acceptPrivacy: z.literal(true, {
-    error: "You must accept the Privacy Policy",
-  }),
-  smsOptIn: z.boolean().optional().default(false),
-});
+function requirePhoneWhenSmsOptIn(
+  data: { smsOptIn?: boolean; phone?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (!data.smsOptIn) return;
+  if (normalizePhoneDigits(data.phone).length !== 10) {
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "A valid 10-digit mobile number is required to opt in to text messages",
+      path: ["phone"],
+    });
+  }
+}
+
+export const registerSchema = z
+  .object({
+    email: z.string().email("Invalid email address"),
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters")
+      .max(100, "Password is too long"),
+    first_name: z.string().min(1, "First name is required").max(100),
+    last_name: z.string().min(1, "Last name is required").max(100),
+    role: z.string().min(1).optional().default("agent"),
+    phone: phoneField,
+    acceptTerms: z.literal(true, {
+      error: "You must accept the Terms of Service",
+    }),
+    acceptPrivacy: z.literal(true, {
+      error: "You must accept the Privacy Policy",
+    }),
+    smsOptIn: z.boolean().optional().default(false),
+  })
+  .superRefine(requirePhoneWhenSmsOptIn);
+
+export const legalConsentSchema = z
+  .object({
+    acceptTerms: z.literal(true, {
+      error: "You must accept the Terms of Service",
+    }),
+    acceptPrivacy: z.literal(true, {
+      error: "You must accept the Privacy Policy",
+    }),
+    smsOptIn: z.boolean().optional().default(false),
+    phone: phoneField,
+  })
+  .superRefine(requirePhoneWhenSmsOptIn);
 
 const usernameField = z
   .union([

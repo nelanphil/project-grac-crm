@@ -111,8 +111,9 @@ export default function HomeFinancingStep({
         <p className="text-xs leading-relaxed text-neutral-600">
           By clicking Submit, you consent to {COMPANY.name} sharing your contact
           information for the purpose of providing a generator estimate. You also
-          agree to receive phone calls, emails, and automated messages from us
-          regarding your request.{" "}
+          agree to receive phone calls and emails from us regarding your request.
+          Text messages are optional and require a separate opt-in on the previous
+          step.{" "}
           <Link
             href="/privacy"
             className="text-brand-orange underline-offset-2 hover:underline"

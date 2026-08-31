@@ -6,6 +6,7 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import TwilioAccountsCard from "@/components/control-panel/TwilioAccountsCard";
 import EmailAccountsCard from "@/components/control-panel/EmailAccountsCard";
 import GoogleCredentialsCard from "@/components/control-panel/GoogleCredentialsCard";
+import RecaptchaCredentialsCard from "@/components/control-panel/RecaptchaCredentialsCard";
 import PaymentProvidersCard from "@/components/control-panel/PaymentProvidersCard";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -131,7 +132,12 @@ function ControlPanelContent() {
         </div>
       )}
 
-      {activeTab === "api-services" && <GoogleCredentialsCard />}
+      {activeTab === "api-services" && (
+        <div className="space-y-6">
+          <GoogleCredentialsCard />
+          <RecaptchaCredentialsCard />
+        </div>
+      )}
     </div>
   );
 }

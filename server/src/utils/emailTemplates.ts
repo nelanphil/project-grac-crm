@@ -40,6 +40,8 @@ export interface BrandedEmailContent {
   cta?: { label: string; url: string };
   /** Small print under the CTA */
   footnoteHtml?: string;
+  /** Hide the default “do not reply” footer line (e.g. contact-form mail). */
+  hideNoReplyNote?: boolean;
 }
 
 /**
@@ -71,6 +73,13 @@ export function renderBrandedEmail(content: BrandedEmailContent): string {
         </td>
       </tr>`
     : "";
+
+  const noReplyNote = content.hideNoReplyNote
+    ? ""
+    : `
+              <div style="margin-top:12px;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#888888;">
+                This is an automated message from GRAC CRM. Please do not reply directly to this email.
+              </div>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -126,9 +135,7 @@ export function renderBrandedEmail(content: BrandedEmailContent): string {
                 &nbsp;·&nbsp;
                 <a href="mailto:${escapeHtml(COMPANY.email)}" style="color:${BRAND.orange};text-decoration:none;">${escapeHtml(COMPANY.email)}</a>
               </div>
-              <div style="margin-top:12px;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#888888;">
-                This is an automated message from GRAC CRM. Please do not reply directly to this email.
-              </div>
+              ${noReplyNote}
             </td>
           </tr>
         </table>
@@ -183,6 +190,51 @@ export function buildSignupWelcomeEmail(opts: {
     cta: { label: "Sign in to your account", url: opts.loginUrl },
     footnoteHtml: `
       <p style="margin:0;">If you did not create this account, you can safely ignore this email.</p>
+    `,
+  });
+
+  return { subject, text, html };
+}
+
+export function buildContactFormEmail(opts: {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  message: string;
+}): { subject: string; text: string; html: string } {
+  const name = `${opts.firstName} ${opts.lastName}`.trim();
+  const subject = `Website contact from ${name}`;
+
+  const text = [
+    `New contact form submission from ${name}.`,
+    "",
+    `Name: ${name}`,
+    `Email: ${opts.email}`,
+    `Phone: ${opts.phone.trim() || "(not provided)"}`,
+    "",
+    "Message:",
+    opts.message,
+    "",
+    "Reply to this email to respond to the sender.",
+    "",
+    `— ${COMPANY.name}`,
+  ].join("\n");
+
+  const html = renderBrandedEmail({
+    heading: "New contact form message",
+    previewText: `${name} sent a message from the website contact form.`,
+    hideNoReplyNote: true,
+    bodyHtml: `
+      <p style="margin:0 0 16px;">Someone submitted the website contact form.</p>
+      <p style="margin:0 0 4px;"><strong>Name:</strong> ${escapeHtml(name)}</p>
+      <p style="margin:0 0 4px;"><strong>Email:</strong> <a href="mailto:${escapeHtml(opts.email)}" style="color:${BRAND.orange};">${escapeHtml(opts.email)}</a></p>
+      <p style="margin:0 0 16px;"><strong>Phone:</strong> ${escapeHtml(opts.phone.trim() || "(not provided)")}</p>
+      <p style="margin:0 0 8px;"><strong>Message:</strong></p>
+      <p style="margin:0;white-space:pre-wrap;">${escapeHtml(opts.message)}</p>
+    `,
+    footnoteHtml: `
+      <p style="margin:16px 0 0;">Reply to this email to respond to the sender.</p>
     `,
   });
 

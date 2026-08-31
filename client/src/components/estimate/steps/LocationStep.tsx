@@ -1,5 +1,6 @@
 import { US_STATES } from "@/lib/constants";
 import type { EstimateFormData } from "@/lib/estimate-types";
+import SmsConsentDisclosure from "@/components/legal/SmsConsentDisclosure";
 
 interface LocationStepProps {
   data: EstimateFormData;
@@ -133,8 +134,7 @@ export default function LocationStep({ data, errors, onChange }: LocationStepPro
             className="mt-1 h-4 w-4 rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
           />
           <span>
-            I agree to receive automated text messages at the phone number provided.
-            Message and data rates may apply. Reply STOP to opt out.
+            <SmsConsentDisclosure />
           </span>
         </label>
       </div>

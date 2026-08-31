@@ -1,6 +1,7 @@
+import Link from "next/link";
 import { COMPANY } from "@/lib/constants";
 
-const LAST_UPDATED = "August 1, 2026";
+const LAST_UPDATED = "August 31, 2026";
 
 export default function PrivacyPolicyContent() {
   return (
@@ -81,17 +82,51 @@ export default function PrivacyPolicyContent() {
             4. Phone numbers, SMS, and voice communications
           </h2>
           <p className="mt-3">
-            When you provide a phone number and agree to receive automated text
-            messages (for example, via the checkbox on our estimate form), you
-            consent to receive automated SMS/MMS messages from us at that number
-            about your request, appointments, and related service. Message and data
-            rates may apply. Message frequency varies. Reply <strong>STOP</strong>{" "}
-            to opt out of text messages; reply <strong>HELP</strong> for help.
+            {COMPANY.name} offers an optional SMS program for transactional account
+            and service notifications. If you provide a mobile number and opt in
+            (for example, by checking an unchecked box on our signup form, first-login
+            consent screen, or estimate request), you consent to receive automated
+            SMS/MMS messages from {COMPANY.name} at that number. Messages may include
+            appointment confirmations and reminders, invoices, payment receipts, and
+            account or service alerts. Message frequency varies. Message and data
+            rates may apply. Reply <strong>STOP</strong> to opt out; reply{" "}
+            <strong>HELP</strong> for help. For help you may also contact us at{" "}
+            <a
+              href={`mailto:${COMPANY.email}`}
+              className="text-brand-orange underline-offset-2 hover:underline"
+            >
+              {COMPANY.email}
+            </a>{" "}
+            or{" "}
+            <a
+              href={COMPANY.phoneHref}
+              className="text-brand-orange underline-offset-2 hover:underline"
+            >
+              {COMPANY.phone}
+            </a>
+            . Consent is not a condition of purchase. Program details are also on
+            our{" "}
+            <Link
+              href="/sms-program"
+              className="text-brand-orange underline-offset-2 hover:underline"
+            >
+              SMS program
+            </Link>{" "}
+            page.
+          </p>
+          <p className="mt-3">
+            We do not share, sell, or provide your mobile phone number or messaging
+            consent data to third parties or affiliates for marketing or promotional
+            purposes. Information sharing with service providers that send messages
+            on our behalf (for example Twilio) is permitted solely to deliver those
+            messages. Text messaging originator opt-in data and consent will not be
+            shared with any third parties.
           </p>
           <p className="mt-3">
             By submitting an estimate request, you may also consent to receive phone
-            calls, emails, and automated messages from us regarding your request, as
-            described on the form at the time of submission.
+            calls and emails from us regarding your request, as described on the form
+            at the time of submission. SMS is optional and is collected only through
+            a separate, unchecked checkbox.
           </p>
           <p className="mt-3">
             Consent to marketing or promotional messages is separate from consent
@@ -145,10 +180,18 @@ export default function PrivacyPolicyContent() {
           </h2>
           <p className="mt-3">
             We do not sell your personal information. We may share information with
-            service providers (including Twilio as described above), with partners
-            involved in fulfilling your estimate or service request when you have
-            consented, when required by law, or in connection with a business
-            transfer such as a merger or sale of assets.
+            service providers who process data on our behalf (including Twilio,
+            solely to deliver messages and calls you have consented to), when
+            required by law, or in connection with a business transfer such as a
+            merger or sale of assets.
+          </p>
+          <p className="mt-3">
+            No mobile information will be shared with third parties or affiliates
+            for marketing or promotional purposes. Information sharing to
+            subcontractors in support services, such as customer service, is
+            permitted. All other categories exclude text messaging originator opt-in
+            data and consent; this information will not be shared with any third
+            parties.
           </p>
         </section>
 

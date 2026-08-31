@@ -17,9 +17,11 @@ import {
   resetPasswordSchema,
 } from "../schemas/user.schema";
 import { User, UserRole, activeUserFilter } from "../models/mongo/User";
+import { CustomerContact } from "../models/mongo/CustomerContact";
 import { PasswordResetToken } from "../models/mongo/PasswordResetToken";
 import { getPermissionsForRole } from "../models/mongo/RolePermission";
 import { AuthRequest } from "../middleware/auth.middleware";
+import { normalizePhoneDigits } from "../utils/customerSites";
 import {
   buildLoginUrl,
   buildPasswordResetUrl,
@@ -55,6 +57,7 @@ function buildUserPayload(user: {
   privacyAcceptedAt?: Date | string | null;
   smsOptIn?: boolean;
   smsOptInAt?: Date | string | null;
+  phone?: string | null;
   legalDocsVersion?: string | null;
   uiPreferences?: {
     navOrder?: {
@@ -78,12 +81,47 @@ function buildUserPayload(user: {
     privacyAcceptedAt: toIsoOrNull(user.privacyAcceptedAt),
     smsOptIn: Boolean(user.smsOptIn),
     smsOptInAt: toIsoOrNull(user.smsOptInAt),
+    phone: (user.phone ?? "").trim() || null,
     legalDocsVersion: user.legalDocsVersion ?? null,
     uiPreferences: {
       navOrder: user.uiPreferences?.navOrder ?? { order: [], children: {} },
     },
     needsLegalConsent: user.role === "customer" && !termsAcceptedAt,
   };
+}
+
+async function lookupContactPhone(userId: unknown): Promise<string> {
+  const contact = await CustomerContact.findOne({ userRef: userId })
+    .sort({ isPrimary: -1 })
+    .select("phone")
+    .lean();
+  return (contact?.phone ?? "").trim();
+}
+
+async function toUserPayload(
+  user: Parameters<typeof buildUserPayload>[0] & {
+    _id: unknown;
+    phone?: string | null;
+  },
+) {
+  const own = (user.phone ?? "").trim();
+  const phone = own || (await lookupContactPhone(user._id));
+  return buildUserPayload({ ...user, phone });
+}
+
+async function syncEmptyContactPhone(
+  userId: unknown,
+  phone: string,
+): Promise<void> {
+  const digits = normalizePhoneDigits(phone);
+  if (digits.length !== 10) return;
+  const contact = await CustomerContact.findOne({ userRef: userId }).sort({
+    isPrimary: -1,
+  });
+  if (!contact) return;
+  if (normalizePhoneDigits(contact.phone)) return;
+  contact.phone = phone.trim();
+  await contact.save();
 }
 
 function applyLegalConsent(
@@ -120,7 +158,7 @@ export async function register(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const { email, password, first_name, last_name, role, smsOptIn } =
+  const { email, password, first_name, last_name, role, smsOptIn, phone } =
     parsed.data;
 
   try {
@@ -145,6 +183,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       softDeleted.role = role;
       softDeleted.deletedAt = null;
       applyLegalConsent(softDeleted, smsOptIn);
+      if (phone) softDeleted.phone = phone;
       await softDeleted.save();
 
       const permissions = await getPermissionsForRole(softDeleted.role);
@@ -154,7 +193,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       });
       res.status(201).json({
         message: "User registered successfully",
-        user: buildUserPayload({ ...softDeleted.toObject(), permissions }),
+        user: await toUserPayload({ ...softDeleted.toObject(), permissions }),
       });
       return;
     }
@@ -172,6 +211,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       legalDocsVersion: LEGAL_DOCS_VERSION,
       smsOptIn,
       smsOptInAt: smsOptIn ? now : null,
+      phone: phone || "",
     });
 
     const permissions = await getPermissionsForRole(user.role);
@@ -181,7 +221,7 @@ export async function register(req: Request, res: Response): Promise<void> {
     });
     res.status(201).json({
       message: "User registered successfully",
-      user: buildUserPayload({ ...user.toObject(), permissions }),
+      user: await toUserPayload({ ...user.toObject(), permissions }),
     });
   } catch (err) {
     console.error("register error:", err);
@@ -247,11 +287,16 @@ export async function acceptLegalConsent(
     }
 
     applyLegalConsent(user, parsed.data.smsOptIn);
+    if (parsed.data.phone) user.phone = parsed.data.phone;
     await user.save();
+
+    if (user.role === "customer" && parsed.data.phone) {
+      await syncEmptyContactPhone(user._id, parsed.data.phone);
+    }
 
     const permissions = await getPermissionsForRole(user.role);
     res.status(200).json({
-      user: buildUserPayload({ ...user.toObject(), permissions }),
+      user: await toUserPayload({ ...user.toObject(), permissions }),
     });
   } catch (err) {
     console.error("acceptLegalConsent error:", err);
@@ -335,7 +380,7 @@ export async function login(req: Request, res: Response): Promise<void> {
 
     res.status(200).json({
       token,
-      user: buildUserPayload({ ...matchedUser.toObject(), permissions }),
+      user: await toUserPayload({ ...matchedUser.toObject(), permissions }),
     });
   } catch (err) {
     console.error("login error:", err);
@@ -404,7 +449,7 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
 
     const permissions = await getPermissionsForRole(fresh.role);
     res.status(200).json({
-      user: buildUserPayload({ ...fresh, permissions }),
+      user: await toUserPayload({ ...fresh, permissions }),
     });
   } catch (err) {
     console.error("updateMe error:", err);
@@ -507,7 +552,7 @@ export async function me(req: AuthRequest, res: Response): Promise<void> {
     const permissions = await getPermissionsForRole(user.role);
 
     res.status(200).json({
-      user: buildUserPayload({ ...user, permissions }),
+      user: await toUserPayload({ ...user, permissions }),
     });
   } catch (err) {
     console.error("me error:", err);

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff, RefreshCw, ShieldCheck, Upload } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import PaymentPlatformAppsCard from "@/components/admin/PaymentPlatformAppsCard";
+import ContactFormEmailsCard from "@/components/admin/ContactFormEmailsCard";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -63,14 +64,16 @@ function AdminContent() {
       <div>
         <h1 className="text-2xl font-bold text-brand-dark">Admin Panel</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Manage payment platform credentials, public image links, and the
-          Cloudinary integration used to upload them.
+          Manage payment platform credentials, public image links, the
+          Cloudinary integration used to upload them, and contact form
+          recipients.
         </p>
       </div>
 
       <PaymentPlatformAppsCard token={token} />
       <CloudinaryCredentialsCard token={token} />
       <PublicAssetManagerCard token={token} />
+      <ContactFormEmailsCard token={token} />
     </div>
   );
 }

@@ -45,6 +45,8 @@ export interface IUser extends Document {
   smsOptIn: boolean;
   /** When smsOptIn was last set to true. */
   smsOptInAt: Date | null;
+  /** Mobile number collected at signup or legal consent. */
+  phone: string;
   /** Version string of the legal docs accepted (e.g. "2026-08-03"). */
   legalDocsVersion: string | null;
   /** Per-user dashboard nav customization. */
@@ -182,6 +184,7 @@ const userSchema = new Schema<IUser>(
     privacyAcceptedAt: { type: Date, default: null },
     smsOptIn: { type: Boolean, default: false },
     smsOptInAt: { type: Date, default: null },
+    phone: { type: String, default: "" },
     legalDocsVersion: { type: String, default: null },
     uiPreferences: {
       type: uiPreferencesSchema,

@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { authRegister, ApiError } from "@/lib/api";
 import PasswordInput from "@/components/ui/PasswordInput";
 import LegalConsentFields from "@/components/auth/LegalConsentFields";
+import {
+  isValidUsPhone,
+  SMS_OPT_IN_REQUIRED_MESSAGE,
+} from "@/lib/smsConsent";
 
 export default function SignupForm() {
   const router = useRouter();
@@ -16,6 +20,7 @@ export default function SignupForm() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [acceptLegal, setAcceptLegal] = useState(false);
   const [smsOptIn, setSmsOptIn] = useState(false);
+  const [phone, setPhone] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -33,6 +38,11 @@ export default function SignupForm() {
       return;
     }
 
+    if (smsOptIn && !isValidUsPhone(phone)) {
+      setError(SMS_OPT_IN_REQUIRED_MESSAGE);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -41,6 +51,7 @@ export default function SignupForm() {
         password,
         first_name: firstName,
         last_name: lastName,
+        phone: phone.trim() || undefined,
         acceptTerms: true,
         acceptPrivacy: true,
         smsOptIn,
@@ -171,6 +182,9 @@ export default function SignupForm() {
         onAcceptLegalChange={setAcceptLegal}
         smsOptIn={smsOptIn}
         onSmsOptInChange={setSmsOptIn}
+        showPhone
+        phone={phone}
+        onPhoneChange={setPhone}
       />
 
       <button

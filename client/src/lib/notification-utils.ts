@@ -15,6 +15,7 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   contract_template: "Template",
   lead: "Lead",
   google_credentials: "Google",
+  recaptcha_credentials: "reCAPTCHA",
   payment_provider_account: "Payment provider",
   invoice: "Invoice",
   product: "Product",
@@ -44,6 +45,7 @@ export function notificationHref(item: NotificationItem): string | null {
     case "email_account":
       return "/dashboard/control-panel?tab=communications";
     case "google_credentials":
+    case "recaptcha_credentials":
       return "/dashboard/control-panel?tab=api-services";
     case "payment_provider_account":
       return "/dashboard/control-panel?tab=payments";

@@ -12,6 +12,7 @@ export interface SendMailOptions {
   subject: string;
   text: string;
   html?: string;
+  replyTo?: string;
 }
 
 export interface SendMailResult {
@@ -149,6 +150,7 @@ async function sendWithConfig(
   const info = await transporter.sendMail({
     from: config.from,
     to: options.to,
+    replyTo: options.replyTo,
     subject: options.subject,
     text: options.text,
     html: options.html,

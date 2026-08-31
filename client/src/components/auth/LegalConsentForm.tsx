@@ -5,16 +5,25 @@ import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/useAuthStore";
 import { authAcceptLegalConsent, ApiError } from "@/lib/api";
 import LegalConsentFields from "@/components/auth/LegalConsentFields";
+import {
+  formatUsPhoneInput,
+  isValidUsPhone,
+  SMS_OPT_IN_REQUIRED_MESSAGE,
+} from "@/lib/smsConsent";
 
 export default function LegalConsentForm() {
   const router = useRouter();
   const token = useAuthStore((s) => s.token);
+  const storedUser = useAuthStore((s) => s.user);
   const login = useAuthStore((s) => s.login);
   const redirectAfterAuth = useAuthStore((s) => s.redirectAfterAuth);
   const setRedirectAfterAuth = useAuthStore((s) => s.setRedirectAfterAuth);
 
   const [acceptLegal, setAcceptLegal] = useState(false);
   const [smsOptIn, setSmsOptIn] = useState(false);
+  const [phone, setPhone] = useState(() =>
+    formatUsPhoneInput(storedUser?.phone ?? ""),
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -24,6 +33,11 @@ export default function LegalConsentForm() {
 
     if (!acceptLegal) {
       setError("You must accept the Terms of Service and Privacy Policy.");
+      return;
+    }
+
+    if (smsOptIn && !isValidUsPhone(phone)) {
+      setError(SMS_OPT_IN_REQUIRED_MESSAGE);
       return;
     }
 
@@ -40,6 +54,7 @@ export default function LegalConsentForm() {
         acceptTerms: true,
         acceptPrivacy: true,
         smsOptIn,
+        phone: phone.trim() || undefined,
       });
       login(token, user);
 
@@ -76,6 +91,9 @@ export default function LegalConsentForm() {
         onAcceptLegalChange={setAcceptLegal}
         smsOptIn={smsOptIn}
         onSmsOptInChange={setSmsOptIn}
+        showPhone
+        phone={phone}
+        onPhoneChange={setPhone}
       />
 
       <button

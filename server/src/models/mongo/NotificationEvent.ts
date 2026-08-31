@@ -15,6 +15,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "contract_template",
   "lead",
   "google_credentials",
+  "recaptcha_credentials",
   "payment_provider_account",
   "invoice",
   "product",

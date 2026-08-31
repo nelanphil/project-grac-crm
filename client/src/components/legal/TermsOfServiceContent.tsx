@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { COMPANY } from "@/lib/constants";
 
-const LAST_UPDATED = "August 3, 2026";
+const LAST_UPDATED = "August 31, 2026";
 
 export default function TermsOfServiceContent() {
   return (
@@ -104,20 +104,30 @@ export default function TermsOfServiceContent() {
             6. Communications and text messages
           </h2>
           <p className="mt-3">
-            If you opt in to receive automated text message alerts, you consent to
-            receive SMS/MMS messages from us at the phone number associated with your
-            account or request about appointments, service updates, and related
-            communications. Message and data rates may apply. Message frequency
-            varies. Reply <strong>STOP</strong> to opt out; reply{" "}
+            {COMPANY.name} may send optional automated transactional SMS/MMS
+            messages if you opt in by providing a mobile number and checking an
+            unchecked consent box (on signup, first login, or an estimate request).
+            Messages are sent by {COMPANY.name} and may include appointment
+            confirmations and reminders, invoices, payment receipts, and account or
+            service alerts. Message frequency varies. Message and data rates may
+            apply. Reply <strong>STOP</strong> to opt out; reply{" "}
             <strong>HELP</strong> for help. Consent is not a condition of purchase.
-            Additional details are in our{" "}
+            Additional details, including how we use and do not share mobile numbers,
+            are in our{" "}
             <Link
               href="/privacy"
               className="text-brand-orange underline-offset-2 hover:underline"
             >
               Privacy Policy
-            </Link>
-            .
+            </Link>{" "}
+            and{" "}
+            <Link
+              href="/sms-program"
+              className="text-brand-orange underline-offset-2 hover:underline"
+            >
+              SMS program
+            </Link>{" "}
+            page.
           </p>
         </section>
 

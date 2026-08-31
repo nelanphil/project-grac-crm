@@ -30,6 +30,10 @@ import payLinkRoutes from "./payLink.routes";
 import cloudinaryCredentialsRoutes from "./cloudinaryCredentials.routes";
 import paymentPlatformAppRoutes from "./paymentPlatformApp.routes";
 import publicAssetRoutes from "./publicAsset.routes";
+import contactRouter, {
+  contactFormSettingsRouter,
+} from "./contactForm.routes";
+import recaptchaCredentialsRoutes from "./recaptchaCredentials.routes";
 
 const router = Router();
 
@@ -54,6 +58,7 @@ router.use("/contract-templates", contractTemplateRoutes);
 router.use("/twilio-accounts", twilioAccountRoutes);
 router.use("/email-accounts", emailAccountRoutes);
 router.use("/google-credentials", googleCredentialsRoutes);
+router.use("/recaptcha-credentials", recaptchaCredentialsRoutes);
 router.use("/message-templates", messageTemplateRoutes);
 router.use("/messaging", messagingRoutes);
 router.use("/notifications", notificationRoutes);
@@ -68,5 +73,7 @@ router.use("/payment-platform-apps", paymentPlatformAppRoutes);
 router.get("/public-assets/:slug/health", publicAssetHealth);
 router.get("/public-assets/:slug", getPublicAssetBySlug);
 router.use("/public-assets", publicAssetRoutes);
+router.use("/contact", contactRouter);
+router.use("/contact-form-settings", contactFormSettingsRouter);
 
 export default router;

@@ -42,6 +42,38 @@ export async function submitLead(
   return body;
 }
 
+export interface ContactFormPayload {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  message: string;
+  website?: string;
+  recaptchaToken?: string;
+}
+
+export async function submitContactForm(
+  data: ContactFormPayload,
+): Promise<{ message: string }> {
+  const res = await fetch(`${API_URL}/contact`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new ApiError(
+      body.message ?? "Something went wrong. Please try again.",
+      res.status,
+      body.errors,
+    );
+  }
+
+  return body;
+}
+
 // ---------------------------------------------------------------------------
 // Leads
 // ---------------------------------------------------------------------------
@@ -183,6 +215,7 @@ export async function authRegister(data: {
   first_name: string;
   last_name: string;
   role?: "admin" | "manager" | "agent";
+  phone?: string;
   acceptTerms: true;
   acceptPrivacy: true;
   smsOptIn?: boolean;
@@ -199,6 +232,7 @@ export async function authAcceptLegalConsent(
     acceptTerms: true;
     acceptPrivacy: true;
     smsOptIn?: boolean;
+    phone?: string;
   },
 ): Promise<{ user: AuthUser }> {
   return authRequest<{ user: AuthUser }>("/auth/legal-consent", {
@@ -2765,6 +2799,83 @@ export async function deleteGoogleCredentials(
 }
 
 // ---------------------------------------------------------------------------
+// reCAPTCHA credentials (Control Panel → API Services)
+// ---------------------------------------------------------------------------
+
+export type RecaptchaVersion = "v2" | "v3";
+
+export interface RecaptchaCredentialsItem {
+  _id: string;
+  siteKey: string;
+  version: RecaptchaVersion;
+  minScore: number;
+  isActive: boolean;
+  hasSecretKey: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecaptchaCredentialsInput {
+  siteKey?: string;
+  secretKey?: string;
+  version?: RecaptchaVersion;
+  minScore?: number;
+  isActive?: boolean;
+}
+
+export interface RecaptchaSiteKeyResponse {
+  siteKey: string | null;
+  version: RecaptchaVersion;
+}
+
+export async function getRecaptchaSiteKey(): Promise<RecaptchaSiteKeyResponse> {
+  const res = await fetch(`${API_URL}/recaptcha-credentials/site-key`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError(
+      body.message ?? "Failed to load reCAPTCHA.",
+      res.status,
+    );
+  }
+  return body as RecaptchaSiteKeyResponse;
+}
+
+export async function getRecaptchaCredentials(
+  token: string,
+): Promise<{ credentials: RecaptchaCredentialsItem | null }> {
+  return authRequest<{ credentials: RecaptchaCredentialsItem | null }>(
+    "/recaptcha-credentials",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function saveRecaptchaCredentials(
+  token: string,
+  data: RecaptchaCredentialsInput,
+): Promise<{ credentials: RecaptchaCredentialsItem }> {
+  return authRequest<{ credentials: RecaptchaCredentialsItem }>(
+    "/recaptcha-credentials",
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deleteRecaptchaCredentials(
+  token: string,
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>("/recaptcha-credentials", {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Cloudinary credentials and public image assets
 // ---------------------------------------------------------------------------
 
@@ -2819,6 +2930,26 @@ export async function deleteCloudinaryCredentials(
   return authRequest<{ message: string }>("/cloudinary-credentials", {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getContactFormSettings(
+  token: string,
+): Promise<{ emails: string[] }> {
+  return authRequest<{ emails: string[] }>("/contact-form-settings", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function saveContactFormSettings(
+  token: string,
+  emails: string[],
+): Promise<{ emails: string[] }> {
+  return authRequest<{ emails: string[] }>("/contact-form-settings", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ emails }),
   });
 }
 
@@ -3454,6 +3585,7 @@ export type NotificationEntityType =
   | "contract_template"
   | "lead"
   | "google_credentials"
+  | "recaptcha_credentials"
   | "payment_provider_account"
   | "invoice"
   | "product"

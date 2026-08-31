@@ -16,6 +16,7 @@ export const NAV_LINKS = [
   { label: "Generac", href: "/#generac" },
   { label: "FAQ", href: "/#faq" },
   { label: "Service Areas", href: "/#service-areas" },
+  { label: "Contact", href: "/contact" },
 ] as const;
 
 export const SERVICES = [
@@ -199,11 +200,12 @@ export const FOOTER_LINKS = {
   ],
   Contact: [
     { label: COMPANY.phone, href: COMPANY.phoneHref },
-    { label: COMPANY.email, href: `mailto:${COMPANY.email}` },
+    { label: "Contact Us", href: "/contact" },
   ],
   Legal: [
     { label: "Terms of Service", href: "/terms" },
     { label: "Privacy Policy", href: "/privacy" },
+    { label: "SMS Program", href: "/sms-program" },
   ],
 } as const;
 

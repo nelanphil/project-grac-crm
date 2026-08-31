@@ -31,6 +31,8 @@ export interface AuthUser {
   smsOptIn?: boolean;
   /** ISO timestamp when SMS opt-in was recorded. */
   smsOptInAt?: string | null;
+  /** Mobile number used for SMS opt-in (user record or linked contact). */
+  phone?: string | null;
   /** Version of legal docs accepted. */
   legalDocsVersion?: string | null;
   /** True when a customer must accept legal terms before using the app. */
