@@ -1,6 +1,12 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
+import { Types } from "mongoose";
 import { Product, IProduct, ProductKind } from "../models/mongo/Product";
+import {
+  DEFAULT_MANUFACTURER_NAME,
+  findManufacturerByName,
+  Manufacturer,
+} from "../models/mongo/Manufacturer";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { Estimate } from "../models/mongo/Estimate";
 import {
@@ -14,10 +20,20 @@ import {
 import {
   buildProductAltCode,
   normalizeProductCode,
+  uppercaseText,
 } from "../utils/productCodes";
 
 function asProductKind(value: unknown): ProductKind {
   return value === "labor" ? "labor" : "part";
+}
+
+type PublicManufacturer = { _id: string; name: string };
+
+function asManufacturer(value: unknown): PublicManufacturer | null {
+  if (!value || typeof value !== "object") return null;
+  const m = value as { _id?: unknown; name?: unknown };
+  if (!m._id || m.name == null || m.name === "") return null;
+  return { _id: String(m._id), name: uppercaseText(String(m.name)) };
 }
 
 function toPublic(doc: IProduct | Record<string, unknown>) {
@@ -34,21 +50,40 @@ function toPublic(doc: IProduct | Record<string, unknown>) {
   return {
     _id: d._id,
     productCode,
-    productNumber: d.productNumber ?? "",
+    productNumber: uppercaseText(String(d.productNumber ?? "")),
     productAltCode: buildProductAltCode(productCode),
-    partNumber: d.partNumber || productCode,
-    name: d.name,
+    partNumber: normalizeProductCode(String(d.partNumber || productCode)),
+    name: uppercaseText(String(d.name ?? "")),
+    manufacturer: asManufacturer(d.manufacturer),
     kind: asProductKind(d.kind),
     listPrice,
     unitPrice: Number(d.unitPrice ?? listPrice),
     cost: Number(d.cost ?? 0),
     strikeThroughPrice: Number(d.strikeThroughPrice ?? 0),
     active: d.active !== false,
-    notes: d.notes ?? "",
+    notes: uppercaseText(String(d.notes ?? "")),
     usageCount: Number(d.usageCount) || 0,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
   };
+}
+
+const PRODUCT_POPULATE = { path: "manufacturer", select: "name" } as const;
+
+async function defaultManufacturerId(): Promise<Types.ObjectId | null> {
+  const generac = await findManufacturerByName(DEFAULT_MANUFACTURER_NAME);
+  return generac?._id ?? null;
+}
+
+async function resolveManufacturerId(
+  id: string | undefined,
+): Promise<Types.ObjectId | null> {
+  if (id) {
+    if (!Types.ObjectId.isValid(id)) return null;
+    const found = await Manufacturer.findById(id).lean();
+    return found?._id ?? null;
+  }
+  return defaultManufacturerId();
 }
 
 const USAGE_SORT_MIN_USED = 3;
@@ -103,7 +138,7 @@ export async function getProducts(
     }
 
     const [products, usage] = await Promise.all([
-      Product.find(filter).lean(),
+      Product.find(filter).populate(PRODUCT_POPULATE).lean(),
       productUsageCounts(),
     ]);
     const publicProducts = products.map((product) =>
@@ -140,7 +175,9 @@ export async function getProductById(
   res: Response,
 ): Promise<void> {
   try {
-    const product = await Product.findById(req.params.id).lean();
+    const product = await Product.findById(req.params.id)
+      .populate(PRODUCT_POPULATE)
+      .lean();
     if (!product) {
       res.status(404).json({ message: "Product not found" });
       return;
@@ -177,12 +214,19 @@ export async function createProduct(
       return;
     }
 
+    const manufacturerId = await resolveManufacturerId(data.manufacturer);
+    if (data.manufacturer && !manufacturerId) {
+      res.status(400).json({ message: "Manufacturer not found" });
+      return;
+    }
+
     const product = await Product.create({
       productCode,
       productNumber: data.productNumber ?? "",
       productAltCode: buildProductAltCode(productCode),
       partNumber: productCode,
       name: data.name,
+      manufacturer: manufacturerId ?? undefined,
       kind: data.kind ?? "part",
       listPrice,
       unitPrice: listPrice,
@@ -191,6 +235,7 @@ export async function createProduct(
       active: data.active ?? true,
       notes: data.notes ?? "",
     });
+    await product.populate(PRODUCT_POPULATE);
 
     logNotificationAsync({
       entityType: "product",
@@ -262,8 +307,17 @@ export async function updateProduct(
     }
     if (data.active !== undefined) product.active = data.active;
     if (data.notes !== undefined) product.notes = data.notes;
+    if (data.manufacturer !== undefined) {
+      const manufacturerId = await resolveManufacturerId(data.manufacturer);
+      if (!manufacturerId) {
+        res.status(400).json({ message: "Manufacturer not found" });
+        return;
+      }
+      product.manufacturer = manufacturerId;
+    }
 
     await product.save();
+    await product.populate(PRODUCT_POPULATE);
 
     logNotificationAsync({
       entityType: "product",

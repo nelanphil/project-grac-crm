@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, { Schema, Document, Types } from "mongoose";
 
 export const PRODUCT_KINDS = ["part", "labor"] as const;
 export type ProductKind = (typeof PRODUCT_KINDS)[number];
@@ -9,6 +9,7 @@ export interface IProduct extends Document {
   productAltCode: string;
   partNumber: string;
   name: string;
+  manufacturer?: Types.ObjectId;
   kind: ProductKind;
   listPrice: number;
   unitPrice: number;
@@ -22,17 +23,23 @@ export interface IProduct extends Document {
 
 const productSchema = new Schema<IProduct>(
   {
-    productCode: { type: String, trim: true, index: true },
-    productNumber: { type: String, default: "", trim: true },
-    productAltCode: { type: String, default: "", trim: true, index: true },
+    productCode: { type: String, trim: true, uppercase: true, index: true },
+    productNumber: { type: String, default: "", trim: true, uppercase: true },
+    productAltCode: { type: String, default: "", trim: true, uppercase: true, index: true },
     partNumber: {
       type: String,
       required: true,
       trim: true,
+      uppercase: true,
       unique: true,
       index: true,
     },
-    name: { type: String, required: true, trim: true },
+    name: { type: String, required: true, trim: true, uppercase: true },
+    manufacturer: {
+      type: Schema.Types.ObjectId,
+      ref: "Manufacturer",
+      index: true,
+    },
     kind: {
       type: String,
       enum: PRODUCT_KINDS,
@@ -44,7 +51,7 @@ const productSchema = new Schema<IProduct>(
     cost: { type: Number, default: 0, min: 0 },
     strikeThroughPrice: { type: Number, default: 0, min: 0 },
     active: { type: Boolean, default: true, index: true },
-    notes: { type: String, default: "" },
+    notes: { type: String, default: "", trim: true, uppercase: true },
   },
   { timestamps: true },
 );

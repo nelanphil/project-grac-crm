@@ -168,6 +168,7 @@ export default function UsersTab() {
     () => roleList.filter((r) => r.slug !== "customer"),
     [roleList],
   );
+  const createRoles = roleList;
 
   const staffUsers = useMemo(
     () => users.filter((user) => user.role !== "customer"),
@@ -228,7 +229,8 @@ export default function UsersTab() {
   }
 
   function openCreate() {
-    const role = staffRoles[0]?.slug ?? "agent";
+    const role =
+      view === "customers" ? "customer" : (staffRoles[0]?.slug ?? "agent");
     const schedulable = role === "tech";
     setForm({
       ...emptyForm,
@@ -353,14 +355,17 @@ export default function UsersTab() {
           payload.password = form.password;
         }
         if (territories) payload.territories = territories;
-        payload.schedulable = form.schedulable;
-        if (form.schedulable) {
+        payload.schedulable = form.role === "customer" ? false : form.schedulable;
+        if (payload.schedulable) {
           payload.weeklyHours = weeklyHoursNeverEnabled(form.weeklyHours)
             ? defaultWeeklyHours(true)
             : form.weeklyHours;
         }
         const { user, temporaryPassword } = await createUser(token, payload);
         setUsers((prev) => [user, ...prev]);
+        if (user.role === "customer" && view !== "customers") {
+          setUserView("customers");
+        }
         if (temporaryPassword) {
           setTempPassword(temporaryPassword);
         } else {
@@ -812,7 +817,7 @@ export default function UsersTab() {
                   <label className="block text-sm font-medium text-brand-dark">
                     Role
                   </label>
-                  {isCustomerForm ? (
+                  {modal === "edit" && isCustomerForm ? (
                     <input
                       readOnly
                       value={getRoleLabel("customer")}
@@ -826,6 +831,8 @@ export default function UsersTab() {
                         setForm((f) => ({
                           ...f,
                           role,
+                          schedulable:
+                            role === "customer" ? false : f.schedulable,
                           ...(role !== "owner"
                             ? { counties: [], zips: [] }
                             : {}),
@@ -833,11 +840,13 @@ export default function UsersTab() {
                       }}
                       className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
                     >
-                      {staffRoles.map((r) => (
-                        <option key={r.slug} value={r.slug}>
-                          {r.label}
-                        </option>
-                      ))}
+                      {(modal === "create" ? createRoles : staffRoles).map(
+                        (r) => (
+                          <option key={r.slug} value={r.slug}>
+                            {r.label}
+                          </option>
+                        ),
+                      )}
                     </select>
                   )}
                 </div>

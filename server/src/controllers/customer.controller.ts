@@ -33,6 +33,11 @@ import {
 } from "../utils/customerContacts";
 import { ensureCustomerUser } from "../utils/ensureCustomerUser";
 import {
+  EMAIL_CONFLICT_ADMIN,
+  findEmailConflict,
+  normalizeAccountEmail,
+} from "../utils/provisionCustomerAccount";
+import {
   customerHasSiteData,
   defaultAddressLabel,
   ensureCustomerSiteFromFlat,
@@ -933,6 +938,22 @@ export async function createCustomer(
           "Primary contact requires a valid phone number and/or email address",
       });
       return;
+    }
+
+    const seenEmails = new Set<string>();
+    for (const contact of contacts) {
+      const contactEmail = normalizeAccountEmail(trimStr(contact.email));
+      if (!contactEmail) continue;
+      if (seenEmails.has(contactEmail)) {
+        res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
+        return;
+      }
+      seenEmails.add(contactEmail);
+      const emailConflict = await findEmailConflict(contactEmail);
+      if (emailConflict) {
+        res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
+        return;
+      }
     }
 
     let accountName = trimStr(input.accountName);
@@ -2401,6 +2422,15 @@ export async function createCustomerContact(
       return;
     }
 
+    const contactEmail = normalizeAccountEmail(parsed.data.email ?? "");
+    if (contactEmail) {
+      const emailConflict = await findEmailConflict(contactEmail);
+      if (emailConflict) {
+        res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
+        return;
+      }
+    }
+
     const existingCount = await CustomerContact.countDocuments({
       customerRef: customer._id,
     });
@@ -2415,7 +2445,7 @@ export async function createCustomerContact(
       first: parsed.data.first,
       last: parsed.data.last,
       phone: parsed.data.phone,
-      email: parsed.data.email,
+      email: contactEmail,
       label: parsed.data.label,
       isPrimary: makePrimary,
       legacyCustomerId: null,
@@ -2489,7 +2519,20 @@ export async function updateCustomerContact(
     if (parsed.data.first !== undefined) contact.first = parsed.data.first;
     if (parsed.data.last !== undefined) contact.last = parsed.data.last;
     if (parsed.data.phone !== undefined) contact.phone = parsed.data.phone;
-    if (parsed.data.email !== undefined) contact.email = parsed.data.email;
+    if (parsed.data.email !== undefined) {
+      const nextEmail = normalizeAccountEmail(parsed.data.email);
+      if (nextEmail) {
+        const emailConflict = await findEmailConflict(nextEmail, {
+          excludeContactId: contact._id,
+          excludeUserId: contact.userRef ?? null,
+        });
+        if (emailConflict) {
+          res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
+          return;
+        }
+      }
+      contact.email = nextEmail;
+    }
     if (parsed.data.label !== undefined) contact.label = parsed.data.label;
 
     if (parsed.data.isPrimary === true) {

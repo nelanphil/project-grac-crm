@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { Package, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
@@ -8,9 +8,12 @@ import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
+  createManufacturer,
   createProduct,
   deleteProduct,
+  getManufacturers,
   getProducts,
+  ManufacturerItem,
   ProductItem,
   ProductKind,
   updateProduct,
@@ -23,8 +26,16 @@ function formatMoney(amount: number): string {
   }).format(amount || 0);
 }
 
+function normalizeProductCode(productCode: string): string {
+  return productCode.replace(/\s+/g, "").toUpperCase();
+}
+
+function uppercaseText(value: string): string {
+  return value.toUpperCase();
+}
+
 function buildProductAltCode(productCode: string): string {
-  const code = productCode.trim().toUpperCase();
+  const code = normalizeProductCode(productCode);
   if (!code) return "";
   if (code.startsWith("GMOF")) return code;
   return `GMOF${code}`;
@@ -44,7 +55,7 @@ function moneyString(amount: number): string {
 }
 
 function productCodeOf(product: ProductItem): string {
-  return (product.productCode || product.partNumber || "").toUpperCase();
+  return normalizeProductCode(product.productCode || product.partNumber || "");
 }
 
 function listPriceOf(product: ProductItem): number {
@@ -89,6 +100,7 @@ type ProductFormState = {
   productCode: string;
   productNumber: string;
   name: string;
+  manufacturer: string;
   kind: ProductKind;
   listPrice: string;
   cost: string;
@@ -101,6 +113,7 @@ const EMPTY_FORM: ProductFormState = {
   productCode: "",
   productNumber: "",
   name: "",
+  manufacturer: "",
   kind: "part",
   listPrice: "0.00",
   cost: "0.00",
@@ -109,8 +122,82 @@ const EMPTY_FORM: ProductFormState = {
   notes: "",
 };
 
+const ADD_MANUFACTURER = "__add__";
+const DEFAULT_MANUFACTURER_NAME = "GENERAC";
+
+function defaultManufacturerId(list: ManufacturerItem[]): string {
+  const match = list.find(
+    (m) => m.name.toUpperCase() === DEFAULT_MANUFACTURER_NAME,
+  );
+  return match?._id ?? list[0]?._id ?? "";
+}
+
 const inputClass =
   "w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue";
+
+const textInputClass = `${inputClass} uppercase`;
+
+function applyUppercaseInput(
+  value: string,
+  onChange: (value: string) => void,
+  transform: (raw: string) => string,
+) {
+  onChange(transform(value));
+}
+
+function UppercaseInput({
+  value,
+  onChange,
+  transform = uppercaseText,
+  className,
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
+  value: string;
+  onChange: (value: string) => void;
+  transform?: (raw: string) => string;
+}) {
+  return (
+    <input
+      {...props}
+      value={value}
+      autoCapitalize="characters"
+      autoCorrect="off"
+      spellCheck={false}
+      onChange={(e) => applyUppercaseInput(e.target.value, onChange, transform)}
+      onBlur={(e) => {
+        applyUppercaseInput(e.target.value, onChange, transform);
+        props.onBlur?.(e);
+      }}
+      className={`${textInputClass} ${className ?? ""}`.trim()}
+    />
+  );
+}
+
+function UppercaseTextarea({
+  value,
+  onChange,
+  className,
+  ...props
+}: Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange"> & {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <textarea
+      {...props}
+      value={value}
+      autoCapitalize="characters"
+      autoCorrect="off"
+      spellCheck={false}
+      onChange={(e) => applyUppercaseInput(e.target.value, onChange, uppercaseText)}
+      onBlur={(e) => {
+        applyUppercaseInput(e.target.value, onChange, uppercaseText);
+        props.onBlur?.(e);
+      }}
+      className={`${textInputClass} ${className ?? ""}`.trim()}
+    />
+  );
+}
 
 function FieldLabel({
   children,
@@ -195,6 +282,11 @@ function ProductsContent() {
   const [form, setForm] = useState<ProductFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [manufacturers, setManufacturers] = useState<ManufacturerItem[]>([]);
+  const [addingManufacturer, setAddingManufacturer] = useState(false);
+  const [newManufacturerName, setNewManufacturerName] = useState("");
+  const [addingManufacturerSaving, setAddingManufacturerSaving] =
+    useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);
@@ -223,21 +315,60 @@ function ProductsContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, debouncedSearch, showInactive]);
 
+  useEffect(() => {
+    if (!modalOpen || !token) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { manufacturers: list } = await getManufacturers(token);
+        if (cancelled) return;
+        setManufacturers(list);
+        setForm((prev) => {
+          if (
+            prev.manufacturer &&
+            list.some((m) => m._id === prev.manufacturer)
+          ) {
+            return prev;
+          }
+          return { ...prev, manufacturer: defaultManufacturerId(list) };
+        });
+      } catch (err) {
+        if (cancelled) return;
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Failed to load manufacturers.",
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [modalOpen, token]);
+
   const visible = useMemo(() => products, [products]);
   const previewAltCode = buildProductAltCode(form.productCode);
+
+  function resetManufacturerAdd() {
+    setAddingManufacturer(false);
+    setNewManufacturerName("");
+    setAddingManufacturerSaving(false);
+  }
 
   function openCreate() {
     setEditing(null);
     setForm(EMPTY_FORM);
+    resetManufacturerAdd();
     setModalOpen(true);
   }
 
   function openEdit(product: ProductItem) {
     setEditing(product);
     setForm({
-      productCode: productCodeOf(product).toUpperCase(),
-      productNumber: product.productNumber ?? "",
-      name: product.name,
+      productCode: productCodeOf(product),
+      productNumber: uppercaseText(product.productNumber ?? ""),
+      name: uppercaseText(product.name),
+      manufacturer: product.manufacturer?._id ?? "",
       kind: product.kind === "labor" ? "labor" : "part",
       listPrice: moneyString(listPriceOf(product)),
       cost: moneyString(product.cost ?? 0),
@@ -246,9 +377,37 @@ function ProductsContent() {
           ? moneyString(product.strikeThroughPrice)
           : "",
       active: product.active,
-      notes: product.notes ?? "",
+      notes: uppercaseText(product.notes ?? ""),
     });
+    resetManufacturerAdd();
     setModalOpen(true);
+  }
+
+  async function handleAddManufacturer() {
+    if (!token) return;
+    const name = uppercaseText(newManufacturerName.trim());
+    if (!name) return;
+    setAddingManufacturerSaving(true);
+    setError(null);
+    try {
+      const { manufacturer } = await createManufacturer(token, { name });
+      setManufacturers((prev) =>
+        prev.some((m) => m._id === manufacturer._id)
+          ? prev
+          : [...prev, manufacturer].sort((a, b) =>
+              a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+            ),
+      );
+      setForm((prev) => ({ ...prev, manufacturer: manufacturer._id }));
+      resetManufacturerAdd();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to add manufacturer.",
+      );
+      setAddingManufacturerSaving(false);
+    }
   }
 
   async function handleSave() {
@@ -257,15 +416,16 @@ function ProductsContent() {
     setError(null);
     try {
       const payload = {
-        productCode: form.productCode.trim().toUpperCase(),
-        productNumber: form.productNumber.trim(),
-        name: form.name.trim(),
+        productCode: normalizeProductCode(form.productCode),
+        productNumber: uppercaseText(form.productNumber.trim()),
+        name: uppercaseText(form.name.trim()),
+        manufacturer: form.manufacturer || undefined,
         kind: form.kind,
         listPrice: Number(form.listPrice) || 0,
         cost: Number(form.cost) || 0,
         strikeThroughPrice: Number(form.strikeThroughPrice) || 0,
         active: form.active,
-        notes: form.notes.trim(),
+        notes: uppercaseText(form.notes.trim()),
       };
       if (editing) {
         await updateProduct(token, editing._id, payload);
@@ -543,45 +703,37 @@ function ProductsContent() {
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="block text-sm">
                 <FieldLabel required>Product code</FieldLabel>
-                <input
+                <UppercaseInput
                   value={form.productCode}
-                  autoCapitalize="characters"
-                  spellCheck={false}
-                  onChange={(e) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      productCode: e.target.value.toUpperCase(),
-                    }))
+                  transform={normalizeProductCode}
+                  onChange={(productCode) =>
+                    setForm((prev) => ({ ...prev, productCode }))
                   }
-                  className={`${inputClass} uppercase`}
                 />
               </label>
               <label className="block text-sm">
                 <FieldLabel>Product number</FieldLabel>
-                <input
+                <UppercaseInput
                   value={form.productNumber}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, productNumber: e.target.value }))
+                  onChange={(productNumber) =>
+                    setForm((prev) => ({ ...prev, productNumber }))
                   }
-                  className={inputClass}
                 />
               </label>
               <label className="block text-sm sm:col-span-2">
                 <FieldLabel>Product alt code</FieldLabel>
-                <input
+                <UppercaseInput
                   value={previewAltCode}
                   readOnly
-                  className={`${inputClass} bg-neutral-50 uppercase text-neutral-500`}
+                  className="bg-neutral-50 text-neutral-500"
+                  onChange={() => undefined}
                 />
               </label>
               <label className="block text-sm sm:col-span-2">
                 <FieldLabel required>Name</FieldLabel>
-                <input
+                <UppercaseInput
                   value={form.name}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, name: e.target.value }))
-                  }
-                  className={inputClass}
+                  onChange={(name) => setForm((prev) => ({ ...prev, name }))}
                 />
               </label>
               <label className="block text-sm">
@@ -600,6 +752,57 @@ function ProductsContent() {
                   <option value="labor">Labor</option>
                 </select>
               </label>
+              <div className="block text-sm">
+                <FieldLabel required>Manufacturer</FieldLabel>
+                <select
+                  value={addingManufacturer ? ADD_MANUFACTURER : form.manufacturer}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === ADD_MANUFACTURER) {
+                      setAddingManufacturer(true);
+                      setNewManufacturerName("");
+                      return;
+                    }
+                    setAddingManufacturer(false);
+                    setNewManufacturerName("");
+                    setForm((prev) => ({ ...prev, manufacturer: v }));
+                  }}
+                  className={textInputClass}
+                >
+                  {manufacturers.map((m) => (
+                    <option key={m._id} value={m._id}>
+                      {uppercaseText(m.name)}
+                    </option>
+                  ))}
+                  <option value={ADD_MANUFACTURER}>Add manufacturer…</option>
+                </select>
+                {addingManufacturer ? (
+                  <div className="mt-2 flex gap-2">
+                    <UppercaseInput
+                      value={newManufacturerName}
+                      placeholder="MANUFACTURER NAME"
+                      autoFocus
+                      onChange={setNewManufacturerName}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleAddManufacturer();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={
+                        addingManufacturerSaving || !newManufacturerName.trim()
+                      }
+                      onClick={() => void handleAddManufacturer()}
+                      className="shrink-0 rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
+                    >
+                      {addingManufacturerSaving ? "Adding…" : "Add"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <label className="block text-sm">
                 <FieldLabel required>List price</FieldLabel>
                 <MoneyInput
@@ -628,13 +831,10 @@ function ProductsContent() {
               </label>
               <label className="block text-sm sm:col-span-2">
                 <FieldLabel>Description</FieldLabel>
-                <textarea
+                <UppercaseTextarea
                   value={form.notes}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, notes: e.target.value }))
-                  }
                   rows={3}
-                  className={inputClass}
+                  onChange={(notes) => setForm((prev) => ({ ...prev, notes }))}
                 />
               </label>
               <label className="inline-flex items-center gap-2 text-sm text-neutral-600 sm:col-span-2">
@@ -660,8 +860,10 @@ function ProductsContent() {
                 type="button"
                 disabled={
                   saving ||
-                  !form.productCode.trim() ||
+                  !form.productCode ||
                   !form.name.trim() ||
+                  !form.manufacturer ||
+                  addingManufacturer ||
                   form.listPrice.trim() === "" ||
                   Number.isNaN(Number(form.listPrice))
                 }

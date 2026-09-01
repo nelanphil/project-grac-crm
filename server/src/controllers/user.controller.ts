@@ -34,6 +34,11 @@ import {
   normalizeTerritoriesInput,
   scheduleOwnerReassignment,
 } from "../utils/ownerTerritory";
+import {
+  EMAIL_CONFLICT_ADMIN,
+  findEmailConflict,
+  provisionCrmCustomerForUser,
+} from "../utils/provisionCustomerAccount";
 
 function generateTempPassword(): string {
   return crypto.randomBytes(12).toString("base64url");
@@ -223,12 +228,20 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       }
     }
 
-    const activeExisting = await User.findOne({
-      email: email.toLowerCase(),
-      ...activeUserFilter,
-    }).lean();
-    if (activeExisting) {
-      res.status(409).json({ message: "Email already in use" });
+    const normalizedEmail = email.toLowerCase();
+    const softDeleted = await User.findOne({
+      email: normalizedEmail,
+      deletedAt: { $ne: null },
+    });
+    const emailConflict = await findEmailConflict(normalizedEmail, {
+      excludeUserId: softDeleted?._id ?? null,
+    });
+    if (emailConflict) {
+      const message =
+        role === "customer" || emailConflict.type === "contact"
+          ? EMAIL_CONFLICT_ADMIN
+          : "Email already in use";
+      res.status(409).json({ message });
       return;
     }
 
@@ -253,12 +266,8 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
 
     const scheduleExceptions = parsed.data.scheduleExceptions ?? [];
 
-    const softDeleted = await User.findOne({
-      email: email.toLowerCase(),
-      deletedAt: { $ne: null },
-    });
-
     let user;
+    let restored = false;
     if (softDeleted) {
       softDeleted.password_hash = password_hash;
       softDeleted.first_name = first_name;
@@ -282,6 +291,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       }
       await softDeleted.save();
       user = softDeleted;
+      restored = true;
     } else {
       user = await User.create({
         email,
@@ -306,6 +316,17 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
           });
           return;
         }
+      }
+    }
+
+    if (role === "customer") {
+      try {
+        await provisionCrmCustomerForUser(user);
+      } catch (err) {
+        if (!restored) {
+          await User.deleteOne({ _id: user._id });
+        }
+        throw err;
       }
     }
 
@@ -365,13 +386,16 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     const previousTerritories = formatTerritories(user.territories);
 
     if (email !== undefined) {
-      const conflict = await User.findOne({
-        email: email.toLowerCase(),
-        _id: { $ne: user._id },
-        ...activeUserFilter,
-      }).lean();
-      if (conflict) {
-        res.status(409).json({ message: "Email already in use" });
+      const emailConflict = await findEmailConflict(email.toLowerCase(), {
+        excludeUserId: user._id,
+      });
+      if (emailConflict) {
+        const nextRoleForConflict = role ?? user.role;
+        const message =
+          nextRoleForConflict === "customer" || emailConflict.type === "contact"
+            ? EMAIL_CONFLICT_ADMIN
+            : "Email already in use";
+        res.status(409).json({ message });
         return;
       }
       user.email = email.toLowerCase();
