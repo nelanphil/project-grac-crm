@@ -42,6 +42,19 @@ const PAGE_SIZES = new Set([25, 50, 100, 150, 200, 250]);
 const SEND_CONCURRENCY = 5;
 const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
 
+function createStartPacer(perSecond: number): () => Promise<void> {
+  const intervalMs = 1000 / Math.max(1, perSecond);
+  let nextAllowed = 0;
+  return async function pace() {
+    const now = Date.now();
+    const wait = Math.max(0, nextAllowed - now);
+    nextAllowed = Math.max(now, nextAllowed) + intervalMs;
+    if (wait > 0) {
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+  };
+}
+
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -352,10 +365,16 @@ export async function sendEmailMessages(
       ? createPaymentLinkCache(scope)
       : null;
 
+    const sendFromName = data.fromName?.trim() || account.fromName;
+    const replyTo = data.replyTo;
+    const emailsPerSecond = data.emailsPerSecond ?? 2;
+    const paceStart = createStartPacer(emailsPerSecond);
+
     const results = await mapWithConcurrency(
       uniqueContactIds,
-      SEND_CONCURRENCY,
+      Math.min(SEND_CONCURRENCY, emailsPerSecond),
       async (contactId) => {
+        await paceStart();
         if (!Types.ObjectId.isValid(contactId)) {
           return {
             contactId,
@@ -420,11 +439,13 @@ export async function sendEmailMessages(
             subject: wrapped.subject,
             text: wrapped.text,
             html: wrapped.html,
+            fromName: sendFromName,
+            replyTo,
           });
 
           const row = await EmailCommunication.create({
             emailAccountRef: account._id,
-            fromName: account.fromName,
+            fromName: sendFromName,
             fromEmail: account.fromEmail,
             toEmail,
             subject: wrapped.subject,
@@ -450,7 +471,7 @@ export async function sendEmailMessages(
 
           const row = await EmailCommunication.create({
             emailAccountRef: account._id,
-            fromName: account.fromName,
+            fromName: sendFromName,
             fromEmail: account.fromEmail,
             toEmail,
             subject: wrapped.subject,
@@ -481,7 +502,7 @@ export async function sendEmailMessages(
     res.json({
       results,
       summary: { total: results.length, sent, failed },
-      fromName: account.fromName,
+      fromName: sendFromName,
       fromEmail: account.fromEmail,
       emailAccountId: String(account._id),
     });

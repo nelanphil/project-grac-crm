@@ -3848,6 +3848,9 @@ export async function sendEmailMessages(
     emailChrome?: EmailChrome;
     templateId?: string;
     emailAccountId: string;
+    fromName?: string;
+    replyTo?: string;
+    emailsPerSecond?: number;
     renewalYear?: number;
     renewalMonth?: number;
   },

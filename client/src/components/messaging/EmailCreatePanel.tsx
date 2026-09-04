@@ -24,9 +24,10 @@ import {
 } from "@/lib/formatName";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
-import { isEmailBodyEmpty } from "@/lib/emailChrome";
-import EmailBodyEditor, { EmailBodyEditorHandle } from "./EmailBodyEditor";
+import { EmailChrome, isEmailBodyEmpty } from "@/lib/emailChrome";
+import { EmailBodyEditorHandle } from "./EmailBodyEditor";
 import EmailPreview from "./EmailPreview";
+import EmailTemplateWorkspace from "./EmailTemplateWorkspace";
 
 const MONTH_NAMES = [
   "January",
@@ -46,12 +47,9 @@ const MONTH_NAMES = [
 const STEPS = [
   { key: "recipients", label: "Recipients" },
   { key: "message", label: "Message" },
-  { key: "account", label: "Account" },
+  { key: "account", label: "Configuration" },
   { key: "review", label: "Review & send" },
 ] as const;
-
-const EMAIL_BODY_MAX = 25_000;
-const EMAIL_SUBJECT_MAX = 200;
 
 function formatRenewalDate(iso: string | null): string {
   if (!iso) return "—";
@@ -87,12 +85,22 @@ type EmailCreatePanelProps = {
   onToggleContact: (contact: MessagingContactItem) => void;
   onToggleSelectPage: () => void;
   onClearSelection: () => void;
+  showSelectAllPrompt: boolean;
+  selectingAll: boolean;
+  onSelectAll: () => void;
   maxSend: number;
 
   templates: MessageTemplateItem[];
+  loadingTemplates: boolean;
   selectedTemplateId: string | null;
   onSelectTemplate: (template: MessageTemplateItem) => void;
   onStartNewTemplate: () => void;
+  onDeleteTemplate: (id: string) => void;
+
+  templateName: string;
+  onTemplateNameChange: (value: string) => void;
+  savingTemplate: boolean;
+  onSaveTemplate: () => void;
 
   mergeFields: MergeFieldItem[];
   onInsertMergeField: (key: string) => void;
@@ -102,10 +110,18 @@ type EmailCreatePanelProps = {
   onSubjectChange: (value: string) => void;
   body: string;
   onBodyChange: (value: string) => void;
+  emailChrome: EmailChrome;
+  onEmailChromeChange: (value: EmailChrome) => void;
 
   accounts: EmailSendAccountItem[];
   accountId: string;
   onAccountIdChange: (value: string) => void;
+  fromNickname: string;
+  onFromNicknameChange: (value: string) => void;
+  replyTo: string;
+  onReplyToChange: (value: string) => void;
+  emailsPerSecond: number;
+  onEmailsPerSecondChange: (value: number) => void;
 
   sending: boolean;
   confirmOpen: boolean;
@@ -162,11 +178,20 @@ export default function EmailCreatePanel({
   onToggleContact,
   onToggleSelectPage,
   onClearSelection,
+  showSelectAllPrompt,
+  selectingAll,
+  onSelectAll,
   maxSend,
   templates,
+  loadingTemplates,
   selectedTemplateId,
   onSelectTemplate,
   onStartNewTemplate,
+  onDeleteTemplate,
+  templateName,
+  onTemplateNameChange,
+  savingTemplate,
+  onSaveTemplate,
   mergeFields,
   onInsertMergeField,
   bodyRef,
@@ -175,9 +200,17 @@ export default function EmailCreatePanel({
   onSubjectChange,
   body,
   onBodyChange,
+  emailChrome,
+  onEmailChromeChange,
   accounts,
   accountId,
   onAccountIdChange,
+  fromNickname,
+  onFromNicknameChange,
+  replyTo,
+  onReplyToChange,
+  emailsPerSecond,
+  onEmailsPerSecondChange,
   sending,
   confirmOpen,
   onOpenConfirm,
@@ -327,28 +360,30 @@ export default function EmailCreatePanel({
           </div>
 
           {useRenewalsFilter ? (
-            <div className="mb-3 flex items-center justify-between rounded-lg bg-neutral-50 px-2 py-1.5">
-              <button
-                type="button"
-                onClick={() => onShiftMonth(-1)}
-                className="rounded p-1 text-neutral-500 hover:bg-white hover:text-brand-dark"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </button>
-              <span className="text-sm font-medium text-brand-dark">
-                {MONTH_NAMES[viewMonth]} {viewYear}
-              </span>
-              <button
-                type="button"
-                onClick={() => onShiftMonth(1)}
-                className="rounded p-1 text-neutral-500 hover:bg-white hover:text-brand-dark"
-              >
-                <ArrowRight className="h-4 w-4" />
-              </button>
+            <div className="mb-3 flex justify-center">
+              <div className="inline-flex items-center gap-3 rounded-lg bg-neutral-50 px-2 py-1.5">
+                <button
+                  type="button"
+                  onClick={() => onShiftMonth(-1)}
+                  className="rounded p-1 text-neutral-500 hover:bg-white hover:text-brand-dark"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </button>
+                <span className="min-w-[10rem] text-center text-sm font-medium text-brand-dark">
+                  {MONTH_NAMES[viewMonth]} {viewYear}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onShiftMonth(1)}
+                  className="rounded p-1 text-neutral-500 hover:bg-white hover:text-brand-dark"
+                >
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           ) : null}
 
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={onToggleSelectPage}
@@ -368,6 +403,19 @@ export default function EmailCreatePanel({
             >
               Clear
             </button>
+            {showSelectAllPrompt ? (
+              <button
+                type="button"
+                onClick={onSelectAll}
+                disabled={selectingAll}
+                className="inline-flex items-center gap-1 text-xs font-medium text-brand-orange hover:text-brand-dark disabled:opacity-60"
+              >
+                {selectingAll ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : null}
+                Select all {Math.min(contactsTotal, maxSend)} matching contacts?
+              </button>
+            ) : null}
           </div>
 
           <div className="max-h-[320px] overflow-auto rounded-lg border border-neutral-100 md:max-h-[440px]">
@@ -558,83 +606,39 @@ export default function EmailCreatePanel({
       ) : null}
 
       {step === "message" ? (
-        <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
-          <label className="mb-3 block text-sm">
-            <span className="mb-1 block text-xs font-medium text-neutral-500">
-              Template
-            </span>
-            <select
-              value={selectedTemplateId ?? ""}
-              onChange={(e) => {
-                const id = e.target.value;
-                if (!id) {
-                  onStartNewTemplate();
-                  return;
-                }
-                const t = templates.find((tpl) => tpl._id === id);
-                if (t) onSelectTemplate(t);
-              }}
-              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-            >
-              <option value="">Custom email (no template)</option>
-              {templates.map((t) => (
-                <option key={t._id} value={t._id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="mb-3 block text-sm">
-            <span className="mb-1 block text-xs font-medium text-neutral-500">
-              Subject
-            </span>
-            <input
-              ref={subjectRef}
-              type="text"
-              value={subject}
-              maxLength={EMAIL_SUBJECT_MAX}
-              onChange={(e) => onSubjectChange(e.target.value)}
-              placeholder="Service renewal reminder"
-              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-            />
-            <p className="mt-1 text-right text-[11px] text-neutral-400">
-              {subject.length}/{EMAIL_SUBJECT_MAX}
-            </p>
-          </label>
-
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {mergeFields.map((field) => (
-              <button
-                key={field.key}
-                type="button"
-                title={field.description}
-                onClick={() => onInsertMergeField(field.key)}
-                className="rounded-md border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[11px] font-medium text-neutral-700 hover:border-brand-orange hover:text-brand-orange"
-              >
-                {`{{${field.key}}}`}
-              </button>
-            ))}
-          </div>
-
-          <EmailBodyEditor
-            ref={bodyRef}
-            value={body}
-            onChange={onBodyChange}
-            placeholder="Write your email…"
-            maxLength={EMAIL_BODY_MAX}
-          />
-          <p className="mt-2 text-xs text-neutral-400">
-            Header and footer come from the selected template, or the general
-            brand for a custom email.
-          </p>
-        </div>
+        <EmailTemplateWorkspace
+          templates={templates}
+          loadingTemplates={loadingTemplates}
+          selectedTemplateId={selectedTemplateId}
+          onSelectTemplate={onSelectTemplate}
+          onStartNewTemplate={onStartNewTemplate}
+          onDeleteTemplate={onDeleteTemplate}
+          templateName={templateName}
+          onTemplateNameChange={onTemplateNameChange}
+          savingTemplate={savingTemplate}
+          onSaveTemplate={onSaveTemplate}
+          mergeFields={mergeFields}
+          onInsertMergeField={onInsertMergeField}
+          bodyRef={bodyRef}
+          subjectRef={subjectRef}
+          subject={subject}
+          onSubjectChange={onSubjectChange}
+          body={body}
+          onBodyChange={onBodyChange}
+          emailChrome={emailChrome}
+          onEmailChromeChange={onEmailChromeChange}
+          previewSubject={previewSubject}
+          previewHtml={previewHtml}
+          previewFromLabel={previewFromLabel}
+          previewToLabel={previewToLabel}
+          previewSample={previewSample}
+        />
       ) : null}
 
       {step === "account" ? (
         <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 text-sm font-semibold text-brand-dark">
-            Send from
+            Configuration
           </h2>
           <label className="block min-w-[220px] text-sm">
             <span className="mb-1 block text-xs font-medium text-neutral-500">
@@ -656,11 +660,44 @@ export default function EmailCreatePanel({
               )}
             </select>
           </label>
+          <label className="mt-3 block text-sm">
+            <span className="mb-1 block text-xs font-medium text-neutral-500">
+              From nickname
+            </span>
+            <input
+              type="text"
+              value={fromNickname}
+              maxLength={120}
+              onChange={(e) => onFromNicknameChange(e.target.value)}
+              placeholder={selectedAccount?.fromName || "Display name"}
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+            />
+            <p className="mt-1 text-xs text-neutral-500">
+              Recipients see this name with the account address. It does not
+              change the Control Panel account.
+            </p>
+          </label>
+          <label className="mt-3 block text-sm">
+            <span className="mb-1 block text-xs font-medium text-neutral-500">
+              Reply-To
+            </span>
+            <input
+              type="email"
+              value={replyTo}
+              onChange={(e) => onReplyToChange(e.target.value)}
+              placeholder="optional@example.com"
+              className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+            />
+            <p className="mt-1 text-xs text-neutral-500">
+              Leave blank to omit a Reply-To header.
+            </p>
+          </label>
           {selectedAccount ? (
             <p className="mt-3 text-sm text-neutral-600">
               Messages will be sent as{" "}
               <strong>
-                {selectedAccount.fromName} &lt;{selectedAccount.fromEmail}&gt;
+                {fromNickname.trim() || selectedAccount.fromName} &lt;
+                {selectedAccount.fromEmail}&gt;
               </strong>
               .
             </p>
@@ -670,83 +707,122 @@ export default function EmailCreatePanel({
               Configure an active email account in Control Panel before sending.
             </p>
           ) : null}
+
+          <details className="mt-4 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
+            <summary className="cursor-pointer text-xs font-medium text-neutral-700">
+              Advanced
+            </summary>
+            <label className="mt-3 block text-sm">
+              <span className="mb-1 block text-xs font-medium text-neutral-500">
+                Emails per second
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={emailsPerSecond}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  if (!Number.isFinite(next)) return;
+                  onEmailsPerSecondChange(Math.min(10, Math.max(1, next)));
+                }}
+                className="w-28 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+              />
+              <p className="mt-1 text-xs text-neutral-500">
+                Paces the bulk send (1–10) to reduce SMTP throttling.
+              </p>
+            </label>
+          </details>
         </div>
       ) : null}
 
       {step === "review" ? (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)]">
+        <div className="space-y-4">
           <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold text-brand-dark">
               Review
             </h2>
-            <dl className="mb-4 space-y-2 text-sm">
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
-                <dt className="text-neutral-500">Recipients</dt>
-                <dd className="font-medium text-brand-dark">
-                  {selectedIds.size} selected
-                </dd>
-              </div>
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
-                <dt className="text-neutral-500">From</dt>
-                <dd className="text-right font-medium text-brand-dark">
-                  {selectedAccount
-                    ? `${selectedAccount.fromName} <${selectedAccount.fromEmail}>`
-                    : "—"}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
-                <dt className="text-neutral-500">Subject</dt>
-                <dd className="max-w-[60%] truncate text-right font-medium text-brand-dark">
-                  {previewSubject || subject || "—"}
-                </dd>
-              </div>
-            </dl>
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+              <div>
+                <dl className="mb-4 space-y-2 text-sm">
+                  <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                    <dt className="text-neutral-500">Recipients</dt>
+                    <dd className="font-medium text-brand-dark">
+                      {selectedIds.size} selected
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                    <dt className="text-neutral-500">From</dt>
+                    <dd className="text-right font-medium text-brand-dark">
+                      {selectedAccount
+                        ? `${fromNickname.trim() || selectedAccount.fromName} <${selectedAccount.fromEmail}>`
+                        : "—"}
+                    </dd>
+                  </div>
+                  {replyTo.trim() ? (
+                    <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                      <dt className="text-neutral-500">Reply-To</dt>
+                      <dd className="text-right font-medium text-brand-dark">
+                        {replyTo.trim()}
+                      </dd>
+                    </div>
+                  ) : null}
+                  <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                    <dt className="text-neutral-500">Subject</dt>
+                    <dd className="max-w-[60%] truncate text-right font-medium text-brand-dark">
+                      {previewSubject || subject || "—"}
+                    </dd>
+                  </div>
+                </dl>
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <button
-                type="button"
-                disabled={
-                  sending ||
-                  selectedIds.size === 0 ||
-                  !accountId ||
-                  !subject.trim() ||
-                  isEmailBodyEmpty(body)
-                }
-                onClick={onOpenConfirm}
-                className="btn-primary inline-flex flex-1 items-center justify-center gap-1.5 disabled:opacity-60"
-              >
-                <Mail className="h-4 w-4" />
-                Send to {selectedIds.size}
-              </button>
-              <button
-                type="button"
-                onClick={onCancelFlow}
-                className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
-              >
-                Cancel
-              </button>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <button
+                    type="button"
+                    disabled={
+                      sending ||
+                      selectedIds.size === 0 ||
+                      !accountId ||
+                      !subject.trim() ||
+                      isEmailBodyEmpty(body)
+                    }
+                    onClick={onOpenConfirm}
+                    className="btn-primary inline-flex flex-1 items-center justify-center gap-1.5 disabled:opacity-60"
+                  >
+                    <Mail className="h-4 w-4" />
+                    Send to {selectedIds.size}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onCancelFlow}
+                    className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+
+              <div className="border-t border-neutral-100 pt-6 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-6">
+                <h3 className="text-sm font-semibold text-brand-dark">
+                  Email preview
+                </h3>
+                <p className="mb-4 mt-1 text-xs text-neutral-500">
+                  {selectedIds.size === 1
+                    ? "Preview uses the selected contact’s data."
+                    : "Select a single contact for a live merge preview, or view sample data."}
+                </p>
+                <EmailPreview
+                  fromLabel={previewFromLabel}
+                  toLabel={previewToLabel}
+                  subject={previewSubject}
+                  html={previewHtml}
+                  isSample={previewSample}
+                  fullWidth
+                />
+              </div>
             </div>
           </div>
 
-          <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold text-brand-dark">
-              Email preview
-            </h2>
-            <p className="mb-4 text-xs text-neutral-500">
-              {selectedIds.size === 1
-                ? "Preview uses the selected contact’s data."
-                : "Select a single contact for a live merge preview, or view sample data."}
-            </p>
-            <EmailPreview
-              fromLabel={previewFromLabel}
-              toLabel={previewToLabel}
-              subject={previewSubject}
-              html={previewHtml}
-              isSample={previewSample}
-            />
-          </section>
-
-          <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm lg:col-span-2">
+          <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold text-brand-dark">
               Recipients ({selectedIds.size})
             </h2>
@@ -897,7 +973,7 @@ export default function EmailCreatePanel({
               {selectedIds.size === 1 ? "" : "s"} from{" "}
               <strong>
                 {selectedAccount
-                  ? `${selectedAccount.fromName} <${selectedAccount.fromEmail}>`
+                  ? `${fromNickname.trim() || selectedAccount.fromName} <${selectedAccount.fromEmail}>`
                   : "the selected account"}
               </strong>
               ?

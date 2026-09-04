@@ -97,6 +97,9 @@ type CreatePanelProps = {
   onToggleContact: (contact: MessagingContactItem) => void;
   onToggleSelectPage: () => void;
   onClearSelection: () => void;
+  showSelectAllPrompt: boolean;
+  selectingAll: boolean;
+  onSelectAll: () => void;
   maxSend: number;
 
   templates: MessageTemplateItem[];
@@ -157,6 +160,9 @@ export default function CreatePanel({
   onToggleContact,
   onToggleSelectPage,
   onClearSelection,
+  showSelectAllPrompt,
+  selectingAll,
+  onSelectAll,
   maxSend,
   templates,
   selectedTemplateId,
@@ -349,28 +355,30 @@ export default function CreatePanel({
           </div>
 
           {useRenewalsFilter ? (
-            <div className="mb-3 flex items-center justify-between rounded-lg bg-neutral-50 px-2 py-1.5">
-              <button
-                type="button"
-                onClick={() => onShiftMonth(-1)}
-                className="rounded p-1 text-neutral-500 hover:bg-white hover:text-brand-dark"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </button>
-              <span className="text-sm font-medium text-brand-dark">
-                {MONTH_NAMES[viewMonth]} {viewYear}
-              </span>
-              <button
-                type="button"
-                onClick={() => onShiftMonth(1)}
-                className="rounded p-1 text-neutral-500 hover:bg-white hover:text-brand-dark"
-              >
-                <ArrowRight className="h-4 w-4" />
-              </button>
+            <div className="mb-3 flex justify-center">
+              <div className="inline-flex items-center gap-3 rounded-lg bg-neutral-50 px-2 py-1.5">
+                <button
+                  type="button"
+                  onClick={() => onShiftMonth(-1)}
+                  className="rounded p-1 text-neutral-500 hover:bg-white hover:text-brand-dark"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </button>
+                <span className="min-w-[10rem] text-center text-sm font-medium text-brand-dark">
+                  {MONTH_NAMES[viewMonth]} {viewYear}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onShiftMonth(1)}
+                  className="rounded p-1 text-neutral-500 hover:bg-white hover:text-brand-dark"
+                >
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           ) : null}
 
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={onToggleSelectPage}
@@ -390,6 +398,19 @@ export default function CreatePanel({
             >
               Clear
             </button>
+            {showSelectAllPrompt ? (
+              <button
+                type="button"
+                onClick={onSelectAll}
+                disabled={selectingAll}
+                className="inline-flex items-center gap-1 text-xs font-medium text-brand-orange hover:text-brand-dark disabled:opacity-60"
+              >
+                {selectingAll ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : null}
+                Select all {Math.min(contactsTotal, maxSend)} matching contacts?
+              </button>
+            ) : null}
           </div>
 
           <div className="max-h-[320px] overflow-auto rounded-lg border border-neutral-100 md:max-h-[440px]">

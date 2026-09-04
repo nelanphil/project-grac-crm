@@ -13,6 +13,7 @@ export interface SendMailOptions {
   text: string;
   html?: string;
   replyTo?: string;
+  fromName?: string;
 }
 
 export interface SendMailResult {
@@ -197,7 +198,12 @@ export async function sendWithEmailAccount(
   account: IEmailAccount,
   options: SendMailOptions
 ): Promise<SendMailResult> {
-  return sendWithConfig(configFromAccount(account), options);
+  const config = configFromAccount(account);
+  const nickname = options.fromName?.trim();
+  if (nickname) {
+    config.from = formatFrom(nickname, account.fromEmail);
+  }
+  return sendWithConfig(config, options);
 }
 
 /**

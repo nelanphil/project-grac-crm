@@ -36,6 +36,12 @@ export const emailMessageSendSchema = z
     emailChrome: emailChromeSchema.optional(),
     templateId: z.string().trim().min(1).optional(),
     emailAccountId: z.string().trim().min(1),
+    fromName: z.string().trim().max(120).optional(),
+    replyTo: z
+      .union([z.string().trim().email().max(255), z.literal("")])
+      .optional()
+      .transform((value) => (value ? value : undefined)),
+    emailsPerSecond: z.number().int().min(1).max(10).optional().default(2),
     renewalYear: z.number().int().min(1970).max(2100).optional(),
     renewalMonth: z.number().int().min(1).max(12).optional(),
   })

@@ -4,6 +4,7 @@ type EmailPreviewProps = {
   subject: string;
   html: string;
   isSample?: boolean;
+  fullWidth?: boolean;
 };
 
 export default function EmailPreview({
@@ -12,13 +13,14 @@ export default function EmailPreview({
   subject,
   html,
   isSample,
+  fullWidth,
 }: EmailPreviewProps) {
   const displaySubject = subject.trim() || "Subject will appear here…";
   const emptySubject = !subject.trim();
   const emptyBody = !html.trim();
 
   return (
-    <div className="mx-auto w-full max-w-[520px]">
+    <div className={fullWidth ? "w-full" : "mx-auto w-full max-w-[580px]"}>
       <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
         <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
@@ -66,7 +68,7 @@ export default function EmailPreview({
               title="Email preview"
               sandbox=""
               srcDoc={html}
-              className="h-[420px] w-full border-0 bg-white"
+              className="h-[620px] w-full border-0 bg-white"
             />
           )}
         </div>

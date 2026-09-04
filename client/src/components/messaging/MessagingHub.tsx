@@ -149,6 +149,11 @@ export default function MessagingHub() {
 
   const [resetSignal, setResetSignal] = useState(0);
   const [emailResetSignal, setEmailResetSignal] = useState(0);
+  const [showSelectAllPrompt, setShowSelectAllPrompt] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
+  const [emailShowSelectAllPrompt, setEmailShowSelectAllPrompt] =
+    useState(false);
+  const [emailSelectingAll, setEmailSelectingAll] = useState(false);
 
   useEffect(() => {
     selectedIdsRef.current = selectedIds;
@@ -162,6 +167,9 @@ export default function MessagingHub() {
   const [fromNumber, setFromNumber] = useState("");
   const [mediaUrlsRaw, setMediaUrlsRaw] = useState("");
   const [emailAccountId, setEmailAccountId] = useState("");
+  const [emailFromNickname, setEmailFromNickname] = useState("");
+  const [emailReplyTo, setEmailReplyTo] = useState("");
+  const [emailEmailsPerSecond, setEmailEmailsPerSecond] = useState(2);
 
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [loadingContacts, setLoadingContacts] = useState(false);
@@ -205,8 +213,10 @@ export default function MessagingHub() {
   const selectedEmailAccount = emailAccounts.find(
     (a) => a._id === emailAccountId,
   );
+  const emailFromDisplayName =
+    emailFromNickname.trim() || selectedEmailAccount?.fromName || "";
   const emailFromLabel = selectedEmailAccount
-    ? `${selectedEmailAccount.fromName} <${selectedEmailAccount.fromEmail}>`
+    ? `${emailFromDisplayName} <${selectedEmailAccount.fromEmail}>`
     : undefined;
 
   const smsTemplates = useMemo(
@@ -284,6 +294,7 @@ export default function MessagingHub() {
         setEmailAccounts(emailAcctRes.accounts);
         if (emailAcctRes.accounts.length > 0) {
           setEmailAccountId((prev) => prev || emailAcctRes.accounts[0]._id);
+          setEmailFromNickname((prev) => prev || emailAcctRes.accounts[0].fromName);
         }
       })
       .catch((err) => {
@@ -646,9 +657,9 @@ export default function MessagingHub() {
     emailBodyRef.current?.insertText(tokenText);
   }
 
-  async function handleSaveTemplate() {
+  async function persistTemplate(type: MessageTemplateType) {
     if (!token) return;
-    const isEmail = templateEditorType === "email";
+    const isEmail = type === "email";
     const name = (isEmail ? emailTemplateName : templateName).trim();
     if (!name) {
       setError("Template name is required.");
@@ -665,7 +676,7 @@ export default function MessagingHub() {
           name,
           body: isEmail ? emailBody : body,
           subject: isEmail ? emailSubject : "",
-          templateType: templateEditorType,
+          templateType: type,
           emailChrome: isEmail ? mergeEmailChrome(emailChrome) : undefined,
         });
         setTemplates((prev) =>
@@ -676,7 +687,7 @@ export default function MessagingHub() {
           name,
           body: isEmail ? emailBody : body,
           subject: isEmail ? emailSubject : undefined,
-          templateType: templateEditorType,
+          templateType: type,
           emailChrome: isEmail ? mergeEmailChrome(emailChrome) : undefined,
         });
         setTemplates((prev) =>
@@ -692,6 +703,14 @@ export default function MessagingHub() {
     } finally {
       setSavingTemplate(false);
     }
+  }
+
+  function handleSaveTemplate() {
+    void persistTemplate(templateEditorType);
+  }
+
+  function handleSaveEmailTemplate() {
+    void persistTemplate("email");
   }
 
   async function handleDeleteTemplate(id: string) {
@@ -743,7 +762,7 @@ export default function MessagingHub() {
     setIds: (next: Set<string>) => void,
     byId: Record<string, MessagingContactItem>,
     setById: (next: Record<string, MessagingContactItem>) => void,
-  ) {
+  ): { selected: boolean; nextSize: number } {
     const pageIds = pageContacts.map((c) => c._id);
     const allSelected = pageIds.every((id) => ids.has(id));
     const next = new Set(ids);
@@ -762,11 +781,13 @@ export default function MessagingHub() {
     }
     setIds(next);
     setById(nextById);
+    return { selected: !allSelected, nextSize: next.size };
   }
 
   function resetCreateFlow() {
     setSelectedIds(new Set());
     setSelectedContactsById({});
+    setShowSelectAllPrompt(false);
     setSelectedTemplateId(null);
     setTemplateName("");
     setBody(DEFAULT_SMS_BODY);
@@ -779,11 +800,15 @@ export default function MessagingHub() {
   function resetEmailCreateFlow() {
     setEmailSelectedIds(new Set());
     setEmailSelectedContactsById({});
+    setEmailShowSelectAllPrompt(false);
     setSelectedEmailTemplateId(null);
     setEmailTemplateName("");
     setEmailSubject(DEFAULT_EMAIL_SUBJECT);
     setEmailBody(DEFAULT_EMAIL_BODY);
     setEmailChrome(DEFAULT_EMAIL_CHROME);
+    setEmailFromNickname(selectedEmailAccount?.fromName ?? "");
+    setEmailReplyTo("");
+    setEmailEmailsPerSecond(2);
     setError(null);
     setEmailSendResult(null);
     setEmailResetSignal((n) => n + 1);
@@ -809,6 +834,59 @@ export default function MessagingHub() {
     }
     setYear(nextYear);
     setMonth(next);
+  }
+
+  async function selectAllMatching(channel: "sms" | "email") {
+    if (!token) return;
+    const isEmail = channel === "email";
+    const setLoading = isEmail ? setEmailSelectingAll : setSelectingAll;
+    const setPrompt = isEmail
+      ? setEmailShowSelectAllPrompt
+      : setShowSelectAllPrompt;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = isEmail
+        ? await searchEmailContacts(token, {
+            search: emailDebouncedSearch || undefined,
+            year: emailUseRenewalsFilter ? emailViewYear : undefined,
+            month: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
+            page: 1,
+            pageSize: MAX_SEND,
+          })
+        : await searchMessagingContacts(token, {
+            search: debouncedSearch || undefined,
+            year: useRenewalsFilter ? viewYear : undefined,
+            month: useRenewalsFilter ? viewMonth + 1 : undefined,
+            page: 1,
+            pageSize: MAX_SEND,
+          });
+      const ids = isEmail ? emailSelectedIds : selectedIds;
+      const byId = isEmail ? emailSelectedContactsById : selectedContactsById;
+      const next = new Set(ids);
+      const nextById = { ...byId };
+      for (const c of res.contacts) {
+        if (next.size >= MAX_SEND) break;
+        next.add(c._id);
+        nextById[c._id] = c;
+      }
+      if (isEmail) {
+        setEmailSelectedIds(next);
+        setEmailSelectedContactsById(nextById);
+      } else {
+        setSelectedIds(next);
+        setSelectedContactsById(nextById);
+      }
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to select matching contacts.",
+      );
+    } finally {
+      setLoading(false);
+      setPrompt(false);
+    }
   }
 
   async function handleSend() {
@@ -882,6 +960,9 @@ export default function MessagingHub() {
         emailChrome: mergeEmailChrome(emailChrome),
         templateId: selectedEmailTemplateId ?? undefined,
         emailAccountId,
+        fromName: emailFromDisplayName || undefined,
+        replyTo: emailReplyTo.trim() || undefined,
+        emailsPerSecond: emailEmailsPerSecond,
         renewalYear: emailUseRenewalsFilter ? emailViewYear : undefined,
         renewalMonth: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
       });
@@ -993,15 +1074,18 @@ export default function MessagingHub() {
           onSearchChange={(v) => {
             setSearch(v);
             setPage(1);
+            setShowSelectAllPrompt(false);
           }}
           useRenewalsFilter={useRenewalsFilter}
           onToggleRenewalsFilter={(v) => {
             setUseRenewalsFilter(v);
             setPage(1);
+            setShowSelectAllPrompt(false);
           }}
           viewYear={viewYear}
           viewMonth={viewMonth}
-          onShiftMonth={(delta) =>
+          onShiftMonth={(delta) => {
+            setShowSelectAllPrompt(false);
             shiftMonth(
               delta,
               viewMonth,
@@ -1009,8 +1093,8 @@ export default function MessagingHub() {
               setViewMonth,
               setViewYear,
               setPage,
-            )
-          }
+            );
+          }}
           contacts={contacts}
           contactsTotal={contactsTotal}
           loadingContacts={loadingContacts}
@@ -1020,6 +1104,7 @@ export default function MessagingHub() {
           onPageSizeChange={(size) => {
             setPageSize(size);
             setPage(1);
+            setShowSelectAllPrompt(false);
           }}
           selectedIds={selectedIds}
           selectedContacts={selectedContacts}
@@ -1032,18 +1117,29 @@ export default function MessagingHub() {
               setSelectedContactsById,
             )
           }
-          onToggleSelectPage={() =>
-            toggleSelectPage(
+          onToggleSelectPage={() => {
+            const result = toggleSelectPage(
               contacts,
               selectedIds,
               setSelectedIds,
               selectedContactsById,
               setSelectedContactsById,
-            )
-          }
+            );
+            setShowSelectAllPrompt(
+              result.selected &&
+                contactsTotal > contacts.length &&
+                result.nextSize < MAX_SEND,
+            );
+          }}
           onClearSelection={() => {
             setSelectedIds(new Set());
             setSelectedContactsById({});
+            setShowSelectAllPrompt(false);
+          }}
+          showSelectAllPrompt={showSelectAllPrompt}
+          selectingAll={selectingAll}
+          onSelectAll={() => {
+            void selectAllMatching("sms");
           }}
           maxSend={MAX_SEND}
           templates={smsTemplates}
@@ -1083,15 +1179,18 @@ export default function MessagingHub() {
           onSearchChange={(v) => {
             setEmailSearch(v);
             setEmailPage(1);
+            setEmailShowSelectAllPrompt(false);
           }}
           useRenewalsFilter={emailUseRenewalsFilter}
           onToggleRenewalsFilter={(v) => {
             setEmailUseRenewalsFilter(v);
             setEmailPage(1);
+            setEmailShowSelectAllPrompt(false);
           }}
           viewYear={emailViewYear}
           viewMonth={emailViewMonth}
-          onShiftMonth={(delta) =>
+          onShiftMonth={(delta) => {
+            setEmailShowSelectAllPrompt(false);
             shiftMonth(
               delta,
               emailViewMonth,
@@ -1099,8 +1198,8 @@ export default function MessagingHub() {
               setEmailViewMonth,
               setEmailViewYear,
               setEmailPage,
-            )
-          }
+            );
+          }}
           contacts={emailContacts}
           contactsTotal={emailContactsTotal}
           loadingContacts={loadingEmailContacts}
@@ -1110,6 +1209,7 @@ export default function MessagingHub() {
           onPageSizeChange={(size) => {
             setEmailPageSize(size);
             setEmailPage(1);
+            setEmailShowSelectAllPrompt(false);
           }}
           selectedIds={emailSelectedIds}
           selectedContacts={selectedEmailContacts}
@@ -1122,24 +1222,41 @@ export default function MessagingHub() {
               setEmailSelectedContactsById,
             )
           }
-          onToggleSelectPage={() =>
-            toggleSelectPage(
+          onToggleSelectPage={() => {
+            const result = toggleSelectPage(
               emailContacts,
               emailSelectedIds,
               setEmailSelectedIds,
               emailSelectedContactsById,
               setEmailSelectedContactsById,
-            )
-          }
+            );
+            setEmailShowSelectAllPrompt(
+              result.selected &&
+                emailContactsTotal > emailContacts.length &&
+                result.nextSize < MAX_SEND,
+            );
+          }}
           onClearSelection={() => {
             setEmailSelectedIds(new Set());
             setEmailSelectedContactsById({});
+            setEmailShowSelectAllPrompt(false);
+          }}
+          showSelectAllPrompt={emailShowSelectAllPrompt}
+          selectingAll={emailSelectingAll}
+          onSelectAll={() => {
+            void selectAllMatching("email");
           }}
           maxSend={MAX_SEND}
           templates={emailTemplates}
+          loadingTemplates={loadingTemplates}
           selectedTemplateId={selectedEmailTemplateId}
           onSelectTemplate={selectEmailTemplate}
           onStartNewTemplate={startNewEmailTemplate}
+          onDeleteTemplate={handleDeleteTemplate}
+          templateName={emailTemplateName}
+          onTemplateNameChange={setEmailTemplateName}
+          savingTemplate={savingTemplate}
+          onSaveTemplate={handleSaveEmailTemplate}
           mergeFields={emailMergeFields}
           onInsertMergeField={insertEmailMergeField}
           bodyRef={emailBodyRef}
@@ -1148,9 +1265,21 @@ export default function MessagingHub() {
           onSubjectChange={setEmailSubject}
           body={emailBody}
           onBodyChange={setEmailBody}
+          emailChrome={emailChrome}
+          onEmailChromeChange={setEmailChrome}
           accounts={emailAccounts}
           accountId={emailAccountId}
-          onAccountIdChange={setEmailAccountId}
+          onAccountIdChange={(value) => {
+            setEmailAccountId(value);
+            const next = emailAccounts.find((a) => a._id === value);
+            setEmailFromNickname(next?.fromName ?? "");
+          }}
+          fromNickname={emailFromNickname}
+          onFromNicknameChange={setEmailFromNickname}
+          replyTo={emailReplyTo}
+          onReplyToChange={setEmailReplyTo}
+          emailsPerSecond={emailEmailsPerSecond}
+          onEmailsPerSecondChange={setEmailEmailsPerSecond}
           sending={emailSending}
           confirmOpen={emailConfirmOpen}
           onOpenConfirm={() => setEmailConfirmOpen(true)}
