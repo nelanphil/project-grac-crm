@@ -1,9 +1,16 @@
 import mongoose, { Schema, Document } from "mongoose";
+import type { EmailChrome } from "../../utils/emailChrome";
+
+export const MESSAGE_TEMPLATE_TYPES = ["sms", "email"] as const;
+export type MessageTemplateType = (typeof MESSAGE_TEMPLATE_TYPES)[number];
 
 export interface IMessageTemplate extends Document {
   name: string;
   slug: string;
   body: string;
+  subject: string;
+  templateType: MessageTemplateType;
+  emailChrome?: EmailChrome | null;
   deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -20,6 +27,14 @@ const messageTemplateSchema = new Schema<IMessageTemplate>(
       lowercase: true,
     },
     body: { type: String, default: "" },
+    subject: { type: String, default: "" },
+    templateType: {
+      type: String,
+      enum: MESSAGE_TEMPLATE_TYPES,
+      default: "sms",
+      index: true,
+    },
+    emailChrome: { type: Schema.Types.Mixed, default: undefined },
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true },

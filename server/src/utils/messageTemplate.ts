@@ -2,6 +2,8 @@ export interface MergeFieldDef {
   key: string;
   label: string;
   description: string;
+  /** When set, the chip is only offered for these template types. */
+  templateTypes?: Array<"sms" | "email">;
 }
 
 export const MERGE_FIELDS: MergeFieldDef[] = [
@@ -34,11 +36,24 @@ export const MERGE_FIELDS: MergeFieldDef[] = [
     label: "Contract type",
     description: "Contract type for the renewal context",
   },
+  {
+    key: "payment_link",
+    label: "Payment link",
+    description:
+      "Pay securely button — only included when the customer has an open invoice",
+    templateTypes: ["email"],
+  },
 ];
 
 export type MessageTemplateContext = Record<string, string>;
 
 const TOKEN_RE = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
+const PAYMENT_LINK_TOKEN_RE = /\{\{\s*payment_link\s*\}\}/;
+
+/** True when subject or body includes {{payment_link}}. */
+export function templateUsesPaymentLink(...parts: Array<string | undefined>): boolean {
+  return parts.some((part) => Boolean(part && PAYMENT_LINK_TOKEN_RE.test(part)));
+}
 
 /** Replace {{key}} tokens. Unknown keys become empty strings. */
 export function renderMessageTemplate(
@@ -75,4 +90,5 @@ export const SAMPLE_TEMPLATE_CONTEXT: MessageTemplateContext = {
   zip: "33601",
   renewal_due_date: "08/15/2026",
   contract_type: "Service Contract",
+  payment_link: "",
 };

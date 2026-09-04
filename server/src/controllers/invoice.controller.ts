@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from "crypto";
 import { Response } from "express";
 import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
@@ -22,6 +21,7 @@ import {
 import { resolveCheckoutProviderForInvoice } from "../payments/registry";
 import { resolveCheckoutBuyer } from "../payments/checkoutBuyer";
 import { env } from "../config/env";
+import { buildPayUrl, hashPayToken, mintPayToken } from "../utils/payToken";
 
 function workOrderInvoiceLineItems(wo: {
   parts?: Array<{
@@ -239,15 +239,7 @@ function isStaff(role?: string): boolean {
   return Boolean(role && STAFF_ROLES.has(role));
 }
 
-function hashPayToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-export function mintPayToken(): { token: string; hash: string; expiresAt: Date } {
-  const token = randomBytes(24).toString("base64url");
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  return { token, hash: hashPayToken(token), expiresAt };
-}
+export { mintPayToken } from "../utils/payToken";
 
 export async function getInvoices(
   req: AuthRequest,
@@ -597,7 +589,7 @@ export async function createInvoicePayLink(
     await invoice.save();
 
     // Static export uses query params (not dynamic path segments).
-    const payUrl = `${env.clientUrl.replace(/\/$/, "")}/pay/?token=${encodeURIComponent(token)}`;
+    const payUrl = buildPayUrl(token);
     res.json({
       payUrl,
       expiresAt,

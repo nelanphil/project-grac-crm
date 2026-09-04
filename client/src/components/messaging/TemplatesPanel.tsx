@@ -2,8 +2,20 @@
 
 import { RefObject } from "react";
 import { Loader2, Plus, Save, Trash2 } from "lucide-react";
-import { MergeFieldItem, MessageTemplateItem } from "@/lib/api";
+import {
+  MergeFieldItem,
+  MessageTemplateItem,
+  MessageTemplateType,
+} from "@/lib/api";
+import { EmailChrome } from "@/lib/emailChrome";
 import PhonePreview from "./PhonePreview";
+import EmailPreview from "./EmailPreview";
+import EmailBodyEditor, { EmailBodyEditorHandle } from "./EmailBodyEditor";
+import EmailChromeFields from "./EmailChromeFields";
+
+const SMS_BODY_MAX = 1600;
+const EMAIL_BODY_MAX = 25_000;
+const EMAIL_SUBJECT_MAX = 200;
 
 type TemplatesPanelProps = {
   templates: MessageTemplateItem[];
@@ -13,6 +25,9 @@ type TemplatesPanelProps = {
   onStartNewTemplate: () => void;
   onDeleteTemplate: (id: string) => void;
 
+  templateType: MessageTemplateType;
+  onTemplateTypeChange: (type: MessageTemplateType) => void;
+
   templateName: string;
   onTemplateNameChange: (value: string) => void;
   savingTemplate: boolean;
@@ -21,10 +36,20 @@ type TemplatesPanelProps = {
   mergeFields: MergeFieldItem[];
   onInsertMergeField: (key: string) => void;
   bodyRef: RefObject<HTMLTextAreaElement | null>;
+  emailEditorRef?: RefObject<EmailBodyEditorHandle | null>;
+  subjectRef?: RefObject<HTMLInputElement | null>;
+  subject: string;
+  onSubjectChange: (value: string) => void;
   body: string;
   onBodyChange: (value: string) => void;
+  emailChrome: EmailChrome;
+  onEmailChromeChange: (value: EmailChrome) => void;
 
   previewText: string;
+  previewSubject: string;
+  previewHtml: string;
+  previewFromLabel?: string;
+  previewToLabel?: string;
   previewContactLabel?: string;
   previewSample: boolean;
 
@@ -38,6 +63,8 @@ export default function TemplatesPanel({
   onSelectTemplate,
   onStartNewTemplate,
   onDeleteTemplate,
+  templateType,
+  onTemplateTypeChange,
   templateName,
   onTemplateNameChange,
   savingTemplate,
@@ -45,13 +72,26 @@ export default function TemplatesPanel({
   mergeFields,
   onInsertMergeField,
   bodyRef,
+  emailEditorRef,
+  subjectRef,
+  subject,
+  onSubjectChange,
   body,
   onBodyChange,
+  emailChrome,
+  onEmailChromeChange,
   previewText,
+  previewSubject,
+  previewHtml,
+  previewFromLabel,
+  previewToLabel,
   previewContactLabel,
   previewSample,
   error,
 }: TemplatesPanelProps) {
+  const isEmail = templateType === "email";
+  const bodyMax = isEmail ? EMAIL_BODY_MAX : SMS_BODY_MAX;
+
   return (
     <div className="space-y-4">
       {error ? (
@@ -60,8 +100,30 @@ export default function TemplatesPanel({
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)_300px]">
-        {/* Templates list */}
+      <div className="flex gap-2">
+        {(["sms", "email"] as const).map((type) => (
+          <button
+            key={type}
+            type="button"
+            onClick={() => onTemplateTypeChange(type)}
+            className={`rounded-full px-3 py-1.5 text-xs font-medium capitalize ${
+              templateType === type
+                ? "bg-brand-dark text-white"
+                : "border border-neutral-200 bg-white text-neutral-600 hover:border-brand-orange hover:text-brand-orange"
+            }`}
+          >
+            {type === "sms" ? "SMS" : "Email"}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className={`grid grid-cols-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)] ${
+          isEmail
+            ? "xl:grid-cols-[240px_minmax(0,1fr)_minmax(280px,420px)]"
+            : "xl:grid-cols-[240px_minmax(0,1fr)_300px]"
+        }`}
+      >
         <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-brand-dark">Templates</h2>
@@ -81,7 +143,8 @@ export default function TemplatesPanel({
             </div>
           ) : templates.length === 0 ? (
             <p className="text-xs text-neutral-500">
-              No saved templates yet. Compose a message and save it.
+              No saved {isEmail ? "email" : "SMS"} templates yet. Compose a
+              message and save it.
             </p>
           ) : (
             <ul className="max-h-[520px] space-y-1 overflow-y-auto">
@@ -103,7 +166,9 @@ export default function TemplatesPanel({
                         {t.name}
                       </span>
                       <span className="block truncate text-[11px] text-neutral-400">
-                        {t.body || "Empty"}
+                        {isEmail
+                          ? t.subject || t.body || "Empty"
+                          : t.body || "Empty"}
                       </span>
                     </button>
                     <button
@@ -121,7 +186,6 @@ export default function TemplatesPanel({
           )}
         </section>
 
-        {/* Composer */}
         <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap items-end gap-3">
             <label className="min-w-[200px] flex-1 text-sm">
@@ -132,7 +196,9 @@ export default function TemplatesPanel({
                 type="text"
                 value={templateName}
                 onChange={(e) => onTemplateNameChange(e.target.value)}
-                placeholder="e.g. Renewal reminder"
+                placeholder={
+                  isEmail ? "e.g. Renewal reminder email" : "e.g. Renewal reminder"
+                }
                 className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
               />
             </label>
@@ -151,6 +217,36 @@ export default function TemplatesPanel({
             </button>
           </div>
 
+          {isEmail ? (
+            <label className="mb-3 block text-sm">
+              <span className="mb-1 block text-xs font-medium text-neutral-500">
+                Subject
+              </span>
+              <input
+                ref={subjectRef}
+                type="text"
+                value={subject}
+                maxLength={EMAIL_SUBJECT_MAX}
+                onChange={(e) => onSubjectChange(e.target.value)}
+                placeholder="Service renewal reminder"
+                className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+              />
+              <p className="mt-1 text-right text-[11px] text-neutral-400">
+                {subject.length}/{EMAIL_SUBJECT_MAX}
+              </p>
+            </label>
+          ) : null}
+
+          {isEmail ? (
+            <div className="mb-4">
+              <EmailChromeFields
+                value={emailChrome}
+                onChange={onEmailChromeChange}
+                sections={["header"]}
+              />
+            </div>
+          ) : null}
+
           <div className="mb-2 flex flex-wrap gap-1.5">
             {mergeFields.map((field) => (
               <button
@@ -165,38 +261,71 @@ export default function TemplatesPanel({
             ))}
           </div>
 
-          <textarea
-            ref={bodyRef}
-            value={body}
-            onChange={(e) => onBodyChange(e.target.value)}
-            rows={10}
-            maxLength={1600}
-            className="w-full resize-y rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-            placeholder="Write your SMS template…"
-          />
-          <p className="mt-1 text-right text-[11px] text-neutral-400">
-            {body.length}/1600
-          </p>
+          {isEmail ? (
+            <EmailBodyEditor
+              ref={emailEditorRef}
+              value={body}
+              onChange={onBodyChange}
+              placeholder="Write your email template…"
+              maxLength={EMAIL_BODY_MAX}
+            />
+          ) : (
+            <>
+              <textarea
+                ref={bodyRef}
+                value={body}
+                onChange={(e) => onBodyChange(e.target.value)}
+                rows={10}
+                maxLength={bodyMax}
+                className="w-full resize-y rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+                placeholder="Write your SMS template…"
+              />
+              <p className="mt-1 text-right text-[11px] text-neutral-400">
+                {body.length}/{bodyMax}
+              </p>
+            </>
+          )}
+          {isEmail ? (
+            <div className="mt-4">
+              <EmailChromeFields
+                value={emailChrome}
+                onChange={onEmailChromeChange}
+                showReset={false}
+                sections={["footer"]}
+              />
+            </div>
+          ) : null}
           <p className="mt-2 text-xs text-neutral-400">
-            Pick a template and recipients in Message Wizard to send a message.
+            {isEmail
+              ? "Pick a template and recipients in Email Wizard to send an email."
+              : "Pick a template and recipients in Message Wizard to send a message."}
           </p>
         </section>
 
-        {/* Phone preview */}
         <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm lg:col-span-2 xl:col-span-1">
           <h2 className="mb-3 text-sm font-semibold text-brand-dark">
-            Phone preview
+            {isEmail ? "Email preview" : "Phone preview"}
           </h2>
           <p className="mb-4 text-xs text-neutral-500">
             {previewSample
               ? "Showing sample contact data."
               : "Preview uses the selected contact’s data."}
           </p>
-          <PhonePreview
-            message={previewText}
-            contactLabel={previewContactLabel}
-            isSample={previewSample}
-          />
+          {isEmail ? (
+            <EmailPreview
+              fromLabel={previewFromLabel}
+              toLabel={previewToLabel}
+              subject={previewSubject}
+              html={previewHtml}
+              isSample={previewSample}
+            />
+          ) : (
+            <PhonePreview
+              message={previewText}
+              contactLabel={previewContactLabel}
+              isSample={previewSample}
+            />
+          )}
         </section>
       </div>
     </div>

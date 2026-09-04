@@ -5,11 +5,26 @@ import {
   IMessageTemplate,
   slugifyMessageTemplateName,
   uniqueMessageTemplateSlug,
+  MessageTemplateType,
 } from "../models/mongo/MessageTemplate";
 import {
   createMessageTemplateSchema,
   updateMessageTemplateSchema,
+  SMS_BODY_MAX,
 } from "../schemas/messageTemplate.schema";
+import {
+  DEFAULT_EMAIL_CHROME,
+  EmailChrome,
+  mergeEmailChrome,
+  sanitizeEmailBody,
+  sanitizeEmailChrome,
+} from "../utils/emailChrome";
+
+function resolveTemplateType(
+  value: unknown,
+): MessageTemplateType {
+  return value === "email" ? "email" : "sms";
+}
 
 function toPublic(doc: IMessageTemplate | Record<string, unknown>) {
   const d =
@@ -17,14 +32,46 @@ function toPublic(doc: IMessageTemplate | Record<string, unknown>) {
       ? (doc as IMessageTemplate).toObject()
       : (doc as Record<string, unknown>);
 
+  const templateType = resolveTemplateType(d.templateType);
+
   return {
     _id: d._id,
     name: d.name,
     slug: d.slug,
     body: d.body ?? "",
+    subject: templateType === "email" ? (d.subject ?? "") : "",
+    templateType,
+    emailChrome:
+      templateType === "email"
+        ? mergeEmailChrome((d.emailChrome as EmailChrome | null) ?? undefined)
+        : undefined,
     deletedAt: d.deletedAt ?? null,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
+  };
+}
+
+function applyTypeFields(
+  templateType: MessageTemplateType,
+  body: string,
+  subject: string,
+  emailChrome?: EmailChrome,
+): {
+  body: string;
+  subject: string;
+  templateType: MessageTemplateType;
+  emailChrome?: EmailChrome;
+} {
+  if (templateType === "sms") {
+    return { templateType, body, subject: "" };
+  }
+  return {
+    templateType,
+    body: sanitizeEmailBody(body),
+    subject,
+    emailChrome: sanitizeEmailChrome(
+      mergeEmailChrome(emailChrome ?? DEFAULT_EMAIL_CHROME),
+    ),
   };
 }
 
@@ -37,7 +84,21 @@ export async function getMessageTemplates(
     const includeDeleted =
       req.query.includeDeleted === "1" || req.query.includeDeleted === "true";
 
-    const filter = includeDeleted ? {} : { deletedAt: null };
+    const filter: Record<string, unknown> = includeDeleted
+      ? {}
+      : { deletedAt: null };
+
+    const typeRaw = String(req.query.templateType ?? "").trim();
+    if (typeRaw === "email") {
+      filter.templateType = "email";
+    } else if (typeRaw === "sms") {
+      filter.$or = [
+        { templateType: "sms" },
+        { templateType: { $exists: false } },
+        { templateType: null },
+      ];
+    }
+
     const templates = await MessageTemplate.find(filter)
       .sort({ name: 1 })
       .lean();
@@ -83,6 +144,13 @@ export async function createMessageTemplate(
     }
 
     const data = parsed.data;
+    const templateType = resolveTemplateType(data.templateType);
+    const fields = applyTypeFields(
+      templateType,
+      data.body ?? "",
+      data.subject ?? "",
+      data.emailChrome,
+    );
     const slug =
       data.slug ??
       (await uniqueMessageTemplateSlug(
@@ -94,7 +162,10 @@ export async function createMessageTemplate(
       if (existing.deletedAt) {
         existing.deletedAt = null;
         existing.name = data.name;
-        existing.body = data.body ?? "";
+        existing.body = fields.body;
+        existing.subject = fields.subject;
+        existing.templateType = fields.templateType;
+        existing.emailChrome = fields.emailChrome ?? null;
         await existing.save();
         res.status(200).json({ template: toPublic(existing) });
         return;
@@ -108,7 +179,10 @@ export async function createMessageTemplate(
     const template = await MessageTemplate.create({
       name: data.name,
       slug,
-      body: data.body ?? "",
+      body: fields.body,
+      subject: fields.subject,
+      templateType: fields.templateType,
+      emailChrome: fields.emailChrome,
       deletedAt: null,
     });
 
@@ -140,8 +214,40 @@ export async function updateMessageTemplate(
       return;
     }
 
+    const nextType = resolveTemplateType(
+      parsed.data.templateType ?? template.templateType,
+    );
+    const nextBody = parsed.data.body ?? template.body ?? "";
+    if (nextType === "sms" && nextBody.length > SMS_BODY_MAX) {
+      res.status(400).json({
+        message: "Validation failed",
+        errors: {
+          body: [`Body must be at most ${SMS_BODY_MAX} characters`],
+        },
+      });
+      return;
+    }
+
     if (parsed.data.name !== undefined) template.name = parsed.data.name;
-    if (parsed.data.body !== undefined) template.body = parsed.data.body;
+    template.templateType = nextType;
+    template.body =
+      nextType === "email" ? sanitizeEmailBody(nextBody) : nextBody;
+    if (nextType === "sms") {
+      template.subject = "";
+      template.emailChrome = undefined;
+    } else {
+      if (parsed.data.subject !== undefined) {
+        template.subject = parsed.data.subject;
+      }
+      template.emailChrome = sanitizeEmailChrome(
+        mergeEmailChrome(
+          parsed.data.emailChrome ??
+            template.emailChrome ??
+            DEFAULT_EMAIL_CHROME,
+        ),
+      );
+    }
+
     await template.save();
 
     res.json({ template: toPublic(template) });
@@ -168,7 +274,7 @@ export async function deleteMessageTemplate(
 
     res.json({ message: "Message template deleted" });
   } catch (err) {
-    console.error("DELETE /message-templates/:id error:", err);
+    console.error("DELETE /message-templates error:", err);
     res.status(500).json({ message: "Failed to delete message template" });
   }
 }

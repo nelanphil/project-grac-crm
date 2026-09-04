@@ -205,6 +205,7 @@ export async function buildTemplateContextForContact(
     zip: customer.zip ?? "",
     renewal_due_date: formatDateForTemplate(renewal.renewalDueDate),
     contract_type: renewal.contractType ?? "",
+    payment_link: "",
   };
 
   return {
@@ -236,6 +237,12 @@ export function sampleTemplateContext(): MessageTemplateContext {
 
 export function contactHasValidPhone(phone: string | null | undefined): boolean {
   return normalizePhoneDigits(phone).length >= 7;
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function contactHasValidEmail(email: string | null | undefined): boolean {
+  return EMAIL_RE.test((email ?? "").trim());
 }
 
 /** Best-effort E.164 for US numbers (10 digits → +1…). Leaves already-international alone. */

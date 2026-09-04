@@ -16,14 +16,14 @@ import {
 import { MERGE_FIELDS, renderMessageTemplate } from "../utils/messageTemplate";
 import {
   buildTemplateContextForContact,
-  contactHasValidPhone,
-  customerRefsWithRenewalsInMonth,
-  resolveRenewalsForCustomers,
   sampleTemplateContext,
   toE164,
-  type RenewalScope,
 } from "../utils/messagingContext";
-import { normalizePhoneDigits } from "../utils/customerSites";
+import {
+  parseHubContactPaging,
+  parseRenewalScope,
+  searchHubContacts,
+} from "../utils/messagingContacts";
 import {
   accountNameMap,
   toPublicCommunication,
@@ -70,10 +70,6 @@ function objectIdStrings(values: unknown[]): string[] {
 const DEFAULT_SAY_TEXT =
   "Hello, this is a call from GRAC. Please call us back at your earliest convenience.";
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
  * Twilio rejects StatusCallback URLs that aren't publicly resolvable (e.g.
  * `localhost`, `127.0.0.1`, bare hostnames without a dot) with a 21609
@@ -91,33 +87,6 @@ function buildStatusCallbackUrl(
   return `${apiBase}/webhooks/twilio/status?accountSid=${encodeURIComponent(accountSid)}`;
 }
 
-function parseRenewalScope(
-  yearRaw: unknown,
-  monthRaw: unknown,
-): { scope?: RenewalScope; error?: string } {
-  if (yearRaw === undefined && monthRaw === undefined) {
-    return {};
-  }
-  if (yearRaw === undefined || monthRaw === undefined) {
-    return {
-      error: "Both year and month are required when filtering by renewals",
-    };
-  }
-  const year = parseInt(String(yearRaw), 10);
-  const month = parseInt(String(monthRaw), 10);
-  if (
-    Number.isNaN(year) ||
-    Number.isNaN(month) ||
-    month < 1 ||
-    month > 12 ||
-    year < 1970 ||
-    year > 2100
-  ) {
-    return { error: "Invalid year or month" };
-  }
-  return { scope: { year, month } };
-}
-
 // GET /messaging/merge-fields
 export async function getMergeFields(
   _req: AuthRequest,
@@ -132,148 +101,21 @@ export async function searchMessagingContacts(
   res: Response,
 ): Promise<void> {
   try {
-    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
-    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "50"), 10) || 50;
-    const pageSize = PAGE_SIZES.has(pageSizeRaw) ? pageSizeRaw : 50;
-
+    const { page, pageSize } = parseHubContactPaging(req.query);
     const renewal = parseRenewalScope(req.query.year, req.query.month);
     if (renewal.error) {
       res.status(400).json({ message: renewal.error });
       return;
     }
 
-    let customerRefFilter: Types.ObjectId[] | null = null;
-    if (renewal.scope) {
-      customerRefFilter = await customerRefsWithRenewalsInMonth(renewal.scope);
-      if (customerRefFilter.length === 0) {
-        res.json({ contacts: [], total: 0, page, pageSize });
-        return;
-      }
-    }
-
-    const search = String(req.query.search ?? "").trim();
-    const match: Record<string, unknown> = {
-      phone: { $exists: true, $nin: [null, ""] },
-    };
-
-    if (customerRefFilter) {
-      match.customerRef = { $in: customerRefFilter };
-    }
-
-    if (search) {
-      const re = new RegExp(escapeRegex(search), "i");
-      const digits = normalizePhoneDigits(search);
-      const or: Record<string, unknown>[] = [
-        { first: re },
-        { last: re },
-        { phone: re },
-        { email: re },
-        { label: re },
-      ];
-      if (digits.length >= 3) {
-        or.push({ phone: new RegExp(escapeRegex(digits), "i") });
-      }
-
-      // Also match customer denorm fields
-      const customerOr: Record<string, unknown>[] = [
-        { first: re },
-        { last: re },
-        { address: re },
-        { city: re },
-        { phone: re },
-      ];
-      if (digits.length >= 3) {
-        customerOr.push({ phoneDigits: new RegExp(escapeRegex(digits)) });
-      }
-
-      const matchingCustomers = await Customer.find({
-        deletedAt: null,
-        $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
-        $and: [{ $or: customerOr }],
-      })
-        .select("_id")
-        .lean();
-
-      const customerIds = matchingCustomers.map((c) => c._id);
-      if (customerIds.length > 0) {
-        or.push({ customerRef: { $in: customerIds } });
-      }
-
-      match.$or = or;
-    }
-
-    // Fetch a wider window then filter by valid phone digits, then page in memory.
-    // Contacts without usable phones are excluded from the messaging hub.
-    const candidates = await CustomerContact.find(match)
-      .sort({ last: 1, first: 1 })
-      .lean();
-
-    const withPhone = candidates.filter((c) => contactHasValidPhone(c.phone));
-
-    // Exclude contacts on deleted/merged customers
-    const customerIds = [
-      ...new Set(withPhone.map((c) => String(c.customerRef))),
-    ];
-    const customers = await Customer.find({
-      _id: { $in: customerIds },
-      deletedAt: null,
-      $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
-    })
-      .select("_id first last address city state zip phone")
-      .lean();
-
-    const customerById = new Map(customers.map((c) => [String(c._id), c]));
-
-    const activeContacts = withPhone.filter((c) =>
-      customerById.has(String(c.customerRef)),
-    );
-
-    const total = activeContacts.length;
-    const start = (page - 1) * pageSize;
-    const pageRows = activeContacts.slice(start, start + pageSize);
-
-    const renewalMap = renewal.scope
-      ? await resolveRenewalsForCustomers(
-          pageRows.map((c) => c.customerRef),
-          renewal.scope,
-        )
-      : new Map();
-
-    const contacts = pageRows.map((c) => {
-      const customer = customerById.get(String(c.customerRef))!;
-      const renewalInfo = renewalMap.get(String(c.customerRef)) ?? {
-        renewalDueDate: null as Date | null,
-        contractType: null as string | null,
-      };
-
-      return {
-        _id: String(c._id),
-        first: c.first ?? "",
-        last: c.last ?? "",
-        phone: c.phone ?? "",
-        email: c.email ?? "",
-        label: c.label ?? "",
-        isPrimary: Boolean(c.isPrimary),
-        customerRef: String(c.customerRef),
-        customer: {
-          _id: String(customer._id),
-          accountName: customer.accountName ?? "",
-          first: customer.first ?? "",
-          last: customer.last ?? "",
-          address: customer.address ?? "",
-          city: customer.city ?? "",
-          state: customer.state ?? "",
-          zip: customer.zip ?? "",
-          phone: customer.phone ?? "",
-        },
-        renewalDueDate: renewalInfo.renewalDueDate
-          ? renewalInfo.renewalDueDate.toISOString()
-          : null,
-        contractType: renewalInfo.contractType,
-      };
+    const result = await searchHubContacts({
+      channel: "sms",
+      search: String(req.query.search ?? ""),
+      scope: renewal.scope,
+      page,
+      pageSize,
     });
-
-    res.json({ contacts, total, page, pageSize });
+    res.json(result);
   } catch (err) {
     console.error("GET /messaging/contacts error:", err);
     res.status(500).json({ message: "Failed to search messaging contacts" });
@@ -377,6 +219,12 @@ export async function sendMessages(
       const template = await MessageTemplate.findById(data.templateId);
       if (!template || template.deletedAt) {
         res.status(404).json({ message: "Message template not found" });
+        return;
+      }
+      if (template.templateType === "email") {
+        res.status(400).json({
+          message: "Cannot send an email template as SMS",
+        });
         return;
       }
       if (!bodyTemplate) {

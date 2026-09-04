@@ -3,6 +3,15 @@
  * Colors match the marketing site (client/src/app/globals.css).
  */
 
+import {
+  EmailChrome,
+  htmlToPlainText,
+  looksLikeHtml,
+  mergeEmailChrome,
+  sanitizeEmailBodyHtml,
+  sanitizeEmailChromeHtml,
+} from "./emailChrome";
+
 const BRAND = {
   dark: "#231f20",
   orange: "#f36c21",
@@ -42,6 +51,8 @@ export interface BrandedEmailContent {
   footnoteHtml?: string;
   /** Hide the default “do not reply” footer line (e.g. contact-form mail). */
   hideNoReplyNote?: boolean;
+  /** Per-template header/footer chrome. Falls back to the general GMF brand. */
+  chrome?: EmailChrome;
 }
 
 /**
@@ -49,6 +60,13 @@ export interface BrandedEmailContent {
  * (header + card + footer). Uses table layout for email clients.
  */
 export function renderBrandedEmail(content: BrandedEmailContent): string {
+  const chrome = content.chrome ? mergeEmailChrome(content.chrome) : null;
+  const headerHtml = chrome
+    ? sanitizeEmailChromeHtml(chrome.headerHtml)
+    : "";
+  const footerHtml = chrome
+    ? sanitizeEmailChromeHtml(chrome.footerHtml)
+    : "";
   const preview = content.previewText
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${escapeHtml(content.previewText)}</div>`
     : "";
@@ -87,6 +105,11 @@ export function renderBrandedEmail(content: BrandedEmailContent): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(content.heading)}</title>
+  <style>
+    body, td, p, div, span, a, li, h1, h2, h3 {
+      font-family: Arial, Helvetica, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+    }
+  </style>
 </head>
 <body style="margin:0;padding:0;background-color:${BRAND.neutral100};">
   ${preview}
@@ -95,7 +118,10 @@ export function renderBrandedEmail(content: BrandedEmailContent): string {
       <td align="center" style="padding:32px 16px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
           <!-- Header -->
-          <tr>
+          ${
+            chrome
+              ? `<tr><td style="padding:0;">${headerHtml}</td></tr>`
+              : `<tr>
             <td style="background-color:${BRAND.midnight};border-radius:12px 12px 0 0;padding:28px 32px;text-align:center;">
               <div style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.02em;color:${BRAND.white};">
                 ${escapeHtml(COMPANY.name)}
@@ -104,18 +130,19 @@ export function renderBrandedEmail(content: BrandedEmailContent): string {
                 ${escapeHtml(COMPANY.tagline)}
               </div>
             </td>
-          </tr>
+          </tr>`
+          }
           <!-- Body card -->
           <tr>
             <td style="background-color:${BRAND.white};padding:32px;border-left:1px solid ${BRAND.neutral200};border-right:1px solid ${BRAND.neutral200};">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td style="padding:0 0 16px;font-family:Arial,Helvetica,sans-serif;font-size:22px;font-weight:700;color:${BRAND.dark};">
+                  <td style="padding:0 0 16px;font-family:Arial,Helvetica,sans-serif,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji';font-size:22px;font-weight:700;color:${BRAND.dark};">
                     ${escapeHtml(content.heading)}
                   </td>
                 </tr>
                 <tr>
-                  <td style="padding:0 0 8px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;color:${BRAND.dark};">
+                  <td style="padding:0 0 8px;font-family:Arial,Helvetica,sans-serif,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji';font-size:15px;line-height:1.6;color:${BRAND.dark};">
                     ${content.bodyHtml}
                   </td>
                 </tr>
@@ -125,7 +152,10 @@ export function renderBrandedEmail(content: BrandedEmailContent): string {
             </td>
           </tr>
           <!-- Footer -->
-          <tr>
+          ${
+            chrome
+              ? `<tr><td style="padding:0;">${footerHtml}${noReplyNote}</td></tr>`
+              : `<tr>
             <td style="background-color:${BRAND.dark};border-radius:0 0 12px 12px;padding:24px 32px;text-align:center;">
               <div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:${BRAND.white};">
                 ${escapeHtml(COMPANY.name)}
@@ -137,7 +167,8 @@ export function renderBrandedEmail(content: BrandedEmailContent): string {
               </div>
               ${noReplyNote}
             </td>
-          </tr>
+          </tr>`
+          }
         </table>
       </td>
     </tr>
@@ -237,6 +268,65 @@ export function buildContactFormEmail(opts: {
       <p style="margin:16px 0 0;">Reply to this email to respond to the sender.</p>
     `,
   });
+
+  return { subject, text, html };
+}
+
+function stripPaymentLinkFromText(text: string, paymentUrl: string): string {
+  return text
+    .split(paymentUrl)
+    .join("")
+    .replace(/\{\{\s*payment_link\s*\}\}/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Wrap staff-composed plain text or HTML in the branded GMF email shell. */
+export function buildStaffOutboundEmail(opts: {
+  subject: string;
+  bodyText: string;
+  paymentUrl?: string;
+  chrome?: EmailChrome;
+}): { subject: string; text: string; html: string } {
+  const paymentUrl = opts.paymentUrl?.trim();
+  const chrome = mergeEmailChrome(opts.chrome);
+  const subjectRaw = paymentUrl
+    ? stripPaymentLinkFromText(opts.subject, paymentUrl)
+    : opts.subject;
+  const subject = subjectRaw.trim() || "Message";
+  const bodyForHtml = paymentUrl
+    ? stripPaymentLinkFromText(opts.bodyText, paymentUrl)
+    : opts.bodyText;
+  const isHtml = looksLikeHtml(bodyForHtml);
+  const bodyHtml = isHtml
+    ? sanitizeEmailBodyHtml(bodyForHtml)
+    : escapeHtml(bodyForHtml)
+        .split(/\n{2,}/)
+        .map(
+          (block) =>
+            `<p style="margin:0 0 12px;">${block.replace(/\n/g, "<br />")}</p>`,
+        )
+        .join("");
+  const plainBody = isHtml ? htmlToPlainText(bodyForHtml) : bodyForHtml;
+  const previewText = plainBody.replace(/\s+/g, " ").trim().slice(0, 140);
+
+  const html = renderBrandedEmail({
+    heading: subject,
+    previewText,
+    bodyHtml: bodyHtml || `<p style="margin:0;"></p>`,
+    hideNoReplyNote: true,
+    cta: paymentUrl
+      ? { label: "Pay securely", url: paymentUrl }
+      : undefined,
+    chrome,
+  });
+
+  const text = paymentUrl
+    ? [plainBody, "", `Pay securely: ${paymentUrl}`].filter(Boolean).join("\n")
+    : isHtml
+      ? htmlToPlainText(opts.bodyText)
+      : opts.bodyText;
 
   return { subject, text, html };
 }

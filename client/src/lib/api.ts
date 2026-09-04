@@ -1,3 +1,4 @@
+import type { EmailChrome } from "@/lib/emailChrome";
 import type { EstimatePayload } from "./estimate-types";
 import type { LeadListItem, LeadStatus } from "./lead-types";
 import type { AuthUser, NavOrder } from "@/store/useAuthStore";
@@ -3050,11 +3051,17 @@ export async function togglePublicAssetStatus(
 // Messaging (templates, contacts, send)
 // ---------------------------------------------------------------------------
 
+export type { EmailChrome };
+export type MessageTemplateType = "sms" | "email";
+
 export interface MessageTemplateItem {
   _id: string;
   name: string;
   slug: string;
   body: string;
+  subject: string;
+  templateType: MessageTemplateType;
+  emailChrome?: EmailChrome;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -3063,6 +3070,9 @@ export interface MessageTemplateItem {
 export interface MessageTemplateInput {
   name: string;
   body?: string;
+  subject?: string;
+  templateType?: MessageTemplateType;
+  emailChrome?: EmailChrome;
   slug?: string;
 }
 
@@ -3070,6 +3080,7 @@ export interface MergeFieldItem {
   key: string;
   label: string;
   description: string;
+  templateTypes?: MessageTemplateType[];
 }
 
 export interface MessagingContactItem {
@@ -3094,6 +3105,7 @@ export interface MessagingContactItem {
   };
   renewalDueDate: string | null;
   contractType: string | null;
+  hasPayableInvoice?: boolean;
 }
 
 export interface MessagingPreviewResult {
@@ -3217,11 +3229,14 @@ export interface MessagingWebhookInfo {
 
 export async function getMessageTemplates(
   token: string,
-  options?: { includeDeleted?: boolean },
+  options?: { includeDeleted?: boolean; templateType?: MessageTemplateType },
 ): Promise<{ templates: MessageTemplateItem[] }> {
-  const params = options?.includeDeleted ? "?includeDeleted=1" : "";
+  const params = new URLSearchParams();
+  if (options?.includeDeleted) params.set("includeDeleted", "1");
+  if (options?.templateType) params.set("templateType", options.templateType);
+  const qs = params.toString();
   return authRequest<{ templates: MessageTemplateItem[] }>(
-    `/message-templates${params}`,
+    `/message-templates${qs ? `?${qs}` : ""}`,
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
@@ -3688,4 +3703,210 @@ export async function markAllNotificationsRead(
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Outbound email (wizard, preview, sent history)
+// ---------------------------------------------------------------------------
+
+export interface EmailSendAccountItem {
+  _id: string;
+  friendlyName: string;
+  fromName: string;
+  fromEmail: string;
+  isActive: boolean;
+}
+
+export interface EmailPreviewResult {
+  renderedSubject: string;
+  renderedBody: string;
+  html: string;
+  context: Record<string, string>;
+  sample: boolean;
+}
+
+export interface EmailSendResultItem {
+  contactId: string;
+  status: "sent" | "failed";
+  emailId?: string;
+  error?: string;
+}
+
+export interface EmailSendResponse {
+  results: EmailSendResultItem[];
+  summary: { total: number; sent: number; failed: number };
+  fromName: string;
+  fromEmail: string;
+  emailAccountId: string;
+}
+
+export interface EmailCommunicationItem {
+  _id: string;
+  emailAccountRef: string | null;
+  accountFriendlyName: string | null;
+  fromName: string;
+  fromEmail: string;
+  toEmail: string;
+  subject: string;
+  body: string;
+  html: string;
+  status: "sent" | "failed";
+  providerMessageId: string | null;
+  errorMessage: string | null;
+  customerRef: string | null;
+  contactRef: string | null;
+  templateRef: string | null;
+  createdByUserRef: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getEmailSendAccounts(
+  token: string,
+): Promise<{ accounts: EmailSendAccountItem[] }> {
+  return authRequest<{ accounts: EmailSendAccountItem[] }>(
+    "/email-messages/accounts",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function searchEmailContacts(
+  token: string,
+  options?: {
+    search?: string;
+    year?: number;
+    month?: number;
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  contacts: MessagingContactItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (options?.search) params.set("search", options.search);
+  if (options?.year !== undefined) params.set("year", String(options.year));
+  if (options?.month !== undefined) params.set("month", String(options.month));
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
+  const qs = params.toString();
+  return authRequest<{
+    contacts: MessagingContactItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/email-messages/contacts${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getEmailPaymentLinkAvailability(
+  token: string,
+  customerIds: string[],
+): Promise<{ available: { customerId: string; hasPayableInvoice: boolean }[] }> {
+  return authRequest<{
+    available: { customerId: string; hasPayableInvoice: boolean }[];
+  }>("/email-messages/payment-link-availability", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ customerIds }),
+  });
+}
+
+export async function previewEmailMessage(
+  token: string,
+  data: {
+    subject: string;
+    body: string;
+    emailChrome?: EmailChrome;
+    contactId?: string;
+    renewalYear?: number;
+    renewalMonth?: number;
+  },
+): Promise<EmailPreviewResult> {
+  return authRequest<EmailPreviewResult>("/email-messages/preview", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function sendEmailMessages(
+  token: string,
+  data: {
+    contactIds: string[];
+    subject?: string;
+    body?: string;
+    emailChrome?: EmailChrome;
+    templateId?: string;
+    emailAccountId: string;
+    renewalYear?: number;
+    renewalMonth?: number;
+  },
+): Promise<EmailSendResponse> {
+  return authRequest<EmailSendResponse>("/email-messages/send", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getSentEmails(
+  token: string,
+  options?: {
+    customerId?: string;
+    contactId?: string;
+    emailAccountId?: string;
+    status?: "sent" | "failed";
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  emails: EmailCommunicationItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (options?.customerId) params.set("customerId", options.customerId);
+  if (options?.contactId) params.set("contactId", options.contactId);
+  if (options?.emailAccountId) {
+    params.set("emailAccountId", options.emailAccountId);
+  }
+  if (options?.status) params.set("status", options.status);
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
+  const qs = params.toString();
+  return authRequest<{
+    emails: EmailCommunicationItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/email-messages${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getSentEmail(
+  token: string,
+  id: string,
+): Promise<{ email: EmailCommunicationItem }> {
+  return authRequest<{ email: EmailCommunicationItem }>(
+    `/email-messages/${id}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }

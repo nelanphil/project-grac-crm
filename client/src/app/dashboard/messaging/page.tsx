@@ -35,7 +35,7 @@ function MessagingPageContent() {
       <div>
         <h1 className="text-2xl font-bold text-brand-dark">Messages</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Templates, conversations, and call transcripts.
+          Templates, SMS and email wizards, conversations, and call transcripts.
         </p>
       </div>
 

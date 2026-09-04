@@ -4,30 +4,60 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   ApiError,
+  EmailSendAccountItem,
+  EmailSendResponse,
   MergeFieldItem,
   MessageTemplateItem,
+  MessageTemplateType,
   MessagingContactItem,
   MessagingSendResponse,
   TwilioAccountItem,
   createMessageTemplate,
   deleteMessageTemplate,
+  getEmailPaymentLinkAvailability,
+  getEmailSendAccounts,
   getMessageTemplates,
   getMessagingMergeFields,
   getTwilioAccounts,
+  previewEmailMessage,
   previewMessagingMessage,
+  searchEmailContacts,
   searchMessagingContacts,
+  sendEmailMessages,
   sendMessagingMessages,
   updateMessageTemplate,
 } from "@/lib/api";
+import {
+  DEFAULT_EMAIL_CHROME,
+  isEmailBodyEmpty,
+  mergeEmailChrome,
+} from "@/lib/emailChrome";
 import { formatCustomerName } from "@/lib/formatName";
 import { useAuthStore } from "@/store/useAuthStore";
 import CreatePanel from "./CreatePanel";
+import EmailCreatePanel from "./EmailCreatePanel";
+import { EmailBodyEditorHandle } from "./EmailBodyEditor";
+import SentEmailsPanel from "./SentEmailsPanel";
 import TemplatesPanel from "./TemplatesPanel";
 import ThreadsPanel from "./ThreadsPanel";
 
 const MAX_SEND = 200;
 
-type MessagingTab = "templates" | "create" | "threads";
+const DEFAULT_SMS_BODY =
+  "Hi {{first_name}}, this is a reminder about your upcoming service renewal on {{renewal_due_date}}. Reply if you'd like to schedule.";
+const DEFAULT_EMAIL_SUBJECT = "Service renewal reminder";
+const DEFAULT_EMAIL_BODY = DEFAULT_SMS_BODY;
+
+type MessagingTab =
+  | "templates"
+  | "create"
+  | "email"
+  | "threads"
+  | "sent-emails";
+
+function templateTypeOf(template: MessageTemplateItem): MessageTemplateType {
+  return template.templateType === "email" ? "email" : "sms";
+}
 
 export default function MessagingHub() {
   const token = useAuthStore((s) => s.token);
@@ -36,7 +66,10 @@ export default function MessagingHub() {
   const initialTab = searchParams.get("tab");
 
   const [activeTab, setActiveTab] = useState<MessagingTab>(
-    initialTab === "threads" || initialTab === "create"
+    initialTab === "threads" ||
+      initialTab === "create" ||
+      initialTab === "email" ||
+      initialTab === "sent-emails"
       ? initialTab
       : "templates",
   );
@@ -44,14 +77,26 @@ export default function MessagingHub() {
   const [templates, setTemplates] = useState<MessageTemplateItem[]>([]);
   const [mergeFields, setMergeFields] = useState<MergeFieldItem[]>([]);
   const [accounts, setAccounts] = useState<TwilioAccountItem[]>([]);
+  const [emailAccounts, setEmailAccounts] = useState<EmailSendAccountItem[]>(
+    [],
+  );
+
+  const [templateEditorType, setTemplateEditorType] =
+    useState<MessageTemplateType>("sms");
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
     null,
   );
   const [templateName, setTemplateName] = useState("");
-  const [body, setBody] = useState(
-    "Hi {{first_name}}, this is a reminder about your upcoming service renewal on {{renewal_due_date}}. Reply if you'd like to schedule.",
-  );
+  const [body, setBody] = useState(DEFAULT_SMS_BODY);
+
+  const [selectedEmailTemplateId, setSelectedEmailTemplateId] = useState<
+    string | null
+  >(null);
+  const [emailTemplateName, setEmailTemplateName] = useState("");
+  const [emailSubject, setEmailSubject] = useState(DEFAULT_EMAIL_SUBJECT);
+  const [emailBody, setEmailBody] = useState(DEFAULT_EMAIL_BODY);
+  const [emailChrome, setEmailChrome] = useState(DEFAULT_EMAIL_CHROME);
 
   const [previewText, setPreviewText] = useState("");
   const [previewSample, setPreviewSample] = useState(true);
@@ -59,12 +104,17 @@ export default function MessagingHub() {
     string | undefined
   >();
 
+  const [emailPreviewSubject, setEmailPreviewSubject] = useState("");
+  const [emailPreviewHtml, setEmailPreviewHtml] = useState("");
+  const [emailPreviewSample, setEmailPreviewSample] = useState(true);
+  const [emailPreviewTo, setEmailPreviewTo] = useState<string | undefined>();
+
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [useRenewalsFilter, setUseRenewalsFilter] = useState(true);
   const now = useMemo(() => new Date(), []);
   const [viewYear, setViewYear] = useState(now.getFullYear());
-  const [viewMonth, setViewMonth] = useState(now.getMonth()); // 0-11
+  const [viewMonth, setViewMonth] = useState(now.getMonth());
 
   const [contacts, setContacts] = useState<MessagingContactItem[]>([]);
   const [contactsTotal, setContactsTotal] = useState(0);
@@ -77,27 +127,60 @@ export default function MessagingHub() {
     Record<string, MessagingContactItem>
   >({});
   const selectedIdsRef = useRef(selectedIds);
+
+  const [emailSearch, setEmailSearch] = useState("");
+  const [emailDebouncedSearch, setEmailDebouncedSearch] = useState("");
+  const [emailUseRenewalsFilter, setEmailUseRenewalsFilter] = useState(true);
+  const [emailViewYear, setEmailViewYear] = useState(now.getFullYear());
+  const [emailViewMonth, setEmailViewMonth] = useState(now.getMonth());
+  const [emailContacts, setEmailContacts] = useState<MessagingContactItem[]>(
+    [],
+  );
+  const [emailContactsTotal, setEmailContactsTotal] = useState(0);
+  const [emailPage, setEmailPage] = useState(1);
+  const [emailPageSize, setEmailPageSize] = useState(150);
+  const [emailSelectedIds, setEmailSelectedIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [emailSelectedContactsById, setEmailSelectedContactsById] = useState<
+    Record<string, MessagingContactItem>
+  >({});
+  const emailSelectedIdsRef = useRef(emailSelectedIds);
+
   const [resetSignal, setResetSignal] = useState(0);
+  const [emailResetSignal, setEmailResetSignal] = useState(0);
 
   useEffect(() => {
     selectedIdsRef.current = selectedIds;
   }, [selectedIds]);
 
+  useEffect(() => {
+    emailSelectedIdsRef.current = emailSelectedIds;
+  }, [emailSelectedIds]);
+
   const [accountId, setAccountId] = useState("");
   const [fromNumber, setFromNumber] = useState("");
   const [mediaUrlsRaw, setMediaUrlsRaw] = useState("");
+  const [emailAccountId, setEmailAccountId] = useState("");
 
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [loadingContacts, setLoadingContacts] = useState(false);
+  const [loadingEmailContacts, setLoadingEmailContacts] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [sending, setSending] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [emailConfirmOpen, setEmailConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sendResult, setSendResult] = useState<MessagingSendResponse | null>(
     null,
   );
+  const [emailSendResult, setEmailSendResult] =
+    useState<EmailSendResponse | null>(null);
 
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const emailBodyRef = useRef<EmailBodyEditorHandle>(null);
+  const emailSubjectRef = useRef<HTMLInputElement>(null);
 
   const selectedAccount = accounts.find((a) => a._id === accountId);
   const fromOptions = selectedAccount?.phoneNumbers ?? [];
@@ -108,17 +191,68 @@ export default function MessagingHub() {
         .filter((c): c is MessagingContactItem => Boolean(c)),
     [selectedIds, selectedContactsById],
   );
+  const selectedEmailContacts = useMemo(
+    () =>
+      [...emailSelectedIds]
+        .map((id) => emailSelectedContactsById[id])
+        .filter((c): c is MessagingContactItem => Boolean(c)),
+    [emailSelectedIds, emailSelectedContactsById],
+  );
   const effectiveFromNumber = fromOptions.includes(fromNumber)
     ? fromNumber
     : (fromOptions[0] ?? "");
 
-  // Debounce search
+  const selectedEmailAccount = emailAccounts.find(
+    (a) => a._id === emailAccountId,
+  );
+  const emailFromLabel = selectedEmailAccount
+    ? `${selectedEmailAccount.fromName} <${selectedEmailAccount.fromEmail}>`
+    : undefined;
+
+  const smsTemplates = useMemo(
+    () => templates.filter((t) => templateTypeOf(t) === "sms"),
+    [templates],
+  );
+  const emailTemplates = useMemo(
+    () => templates.filter((t) => templateTypeOf(t) === "email"),
+    [templates],
+  );
+  const editorTemplates =
+    templateEditorType === "email" ? emailTemplates : smsTemplates;
+  const smsMergeFields = useMemo(
+    () =>
+      mergeFields.filter(
+        (f) => !f.templateTypes || f.templateTypes.includes("sms"),
+      ),
+    [mergeFields],
+  );
+  const emailMergeFields = useMemo(
+    () =>
+      mergeFields.filter(
+        (f) => !f.templateTypes || f.templateTypes.includes("email"),
+      ),
+    [mergeFields],
+  );
+  const editorMergeFields =
+    templateEditorType === "email" ? emailMergeFields : smsMergeFields;
+
+  const loadEmailContacts =
+    activeTab === "email" ||
+    (activeTab === "templates" && templateEditorType === "email");
+  const emailUsesPaymentLink = /\{\{\s*payment_link\s*\}\}/.test(
+    `${emailSubject}\n${emailBody}`,
+  );
+
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
 
-  // Load templates, merge fields, Twilio accounts
+  useEffect(() => {
+    const t = setTimeout(() => setEmailDebouncedSearch(emailSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [emailSearch]);
+
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
@@ -132,8 +266,9 @@ export default function MessagingHub() {
       getMessageTemplates(token),
       getMessagingMergeFields(token),
       getTwilioAccounts(token),
+      getEmailSendAccounts(token),
     ])
-      .then(([tplRes, fieldsRes, acctRes]) => {
+      .then(([tplRes, fieldsRes, acctRes, emailAcctRes]) => {
         if (cancelled) return;
         setTemplates(tplRes.templates);
         setMergeFields(fieldsRes.fields);
@@ -145,6 +280,10 @@ export default function MessagingHub() {
           if (nums.length > 0) {
             setFromNumber((prev) => prev || nums[0]);
           }
+        }
+        setEmailAccounts(emailAcctRes.accounts);
+        if (emailAcctRes.accounts.length > 0) {
+          setEmailAccountId((prev) => prev || emailAcctRes.accounts[0]._id);
         }
       })
       .catch((err) => {
@@ -164,7 +303,6 @@ export default function MessagingHub() {
     };
   }, [token]);
 
-  // Load contacts
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
@@ -184,8 +322,6 @@ export default function MessagingHub() {
         if (cancelled) return;
         setContacts(res.contacts);
         setContactsTotal(res.total);
-        // Backfill full contact details for ids selected before this page
-        // (e.g. the initial ?contactId=) loaded.
         setSelectedContactsById((prev) => {
           let changed = false;
           const next = { ...prev };
@@ -221,9 +357,124 @@ export default function MessagingHub() {
     pageSize,
   ]);
 
-  // Preview rendering
+  useEffect(() => {
+    if (!token || !loadEmailContacts) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setLoadingEmailContacts(true);
+    });
+
+    searchEmailContacts(token, {
+      search: emailDebouncedSearch || undefined,
+      year: emailUseRenewalsFilter ? emailViewYear : undefined,
+      month: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
+      page: emailPage,
+      pageSize: emailPageSize,
+    })
+      .then((res) => {
+        if (cancelled) return;
+        setEmailContacts(res.contacts);
+        setEmailContactsTotal(res.total);
+        setEmailSelectedContactsById((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const c of res.contacts) {
+            if (emailSelectedIdsRef.current.has(c._id) && !next[c._id]) {
+              next[c._id] = c;
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Failed to search email contacts.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingEmailContacts(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    token,
+    loadEmailContacts,
+    emailDebouncedSearch,
+    emailUseRenewalsFilter,
+    emailViewYear,
+    emailViewMonth,
+    emailPage,
+    emailPageSize,
+  ]);
+
+  useEffect(() => {
+    if (!token || !emailUsesPaymentLink) return;
+    const customerIds = [
+      ...new Set([
+        ...emailContacts.map((c) => c.customerRef),
+        ...Object.values(emailSelectedContactsById).map((c) => c.customerRef),
+      ]),
+    ].filter(Boolean);
+    if (customerIds.length === 0) return;
+
+    let cancelled = false;
+    getEmailPaymentLinkAvailability(token, customerIds)
+      .then((res) => {
+        if (cancelled) return;
+        const map = new Map(
+          res.available.map((row) => [row.customerId, row.hasPayableInvoice]),
+        );
+        setEmailContacts((prev) => {
+          let changed = false;
+          const next = prev.map((c) => {
+            const value = map.get(c.customerRef);
+            if (value === undefined || c.hasPayableInvoice === value) return c;
+            changed = true;
+            return { ...c, hasPayableInvoice: value };
+          });
+          return changed ? next : prev;
+        });
+        setEmailSelectedContactsById((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const [id, contact] of Object.entries(prev)) {
+            const value = map.get(contact.customerRef);
+            if (value === undefined || contact.hasPayableInvoice === value) {
+              continue;
+            }
+            next[id] = { ...contact, hasPayableInvoice: value };
+            changed = true;
+          }
+          return changed ? next : prev;
+        });
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    token,
+    emailUsesPaymentLink,
+    emailContacts,
+    emailSelectedContactsById,
+  ]);
+
   useEffect(() => {
     if (!token) return;
+    if (
+      activeTab !== "create" &&
+      !(activeTab === "templates" && templateEditorType === "sms")
+    ) {
+      return;
+    }
     let cancelled = false;
     const previewContactId =
       selectedIds.size === 1 ? [...selectedIds][0] : undefined;
@@ -261,6 +512,8 @@ export default function MessagingHub() {
     };
   }, [
     token,
+    activeTab,
+    templateEditorType,
     body,
     selectedIds,
     contacts,
@@ -269,31 +522,109 @@ export default function MessagingHub() {
     viewMonth,
   ]);
 
-  function selectTemplate(template: MessageTemplateItem) {
+  useEffect(() => {
+    if (!token) return;
+    if (
+      activeTab !== "email" &&
+      !(activeTab === "templates" && templateEditorType === "email")
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const previewContactId =
+      emailSelectedIds.size === 1 ? [...emailSelectedIds][0] : undefined;
+
+    const timer = setTimeout(() => {
+      previewEmailMessage(token, {
+        subject: emailSubject,
+        body: emailBody,
+        emailChrome: mergeEmailChrome(emailChrome),
+        contactId: previewContactId,
+        renewalYear: emailUseRenewalsFilter ? emailViewYear : undefined,
+        renewalMonth: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
+      })
+        .then((res) => {
+          if (cancelled) return;
+          setEmailPreviewSubject(res.renderedSubject);
+          setEmailPreviewHtml(res.html);
+          setEmailPreviewSample(res.sample);
+          if (previewContactId) {
+            const c = emailContacts.find((x) => x._id === previewContactId);
+            setEmailPreviewTo(
+              c?.email || "jordan.lee@example.com",
+            );
+          } else {
+            setEmailPreviewTo("jordan.lee@example.com");
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setEmailPreviewSubject(emailSubject);
+          setEmailPreviewHtml("");
+          setEmailPreviewSample(true);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    token,
+    activeTab,
+    templateEditorType,
+    emailSubject,
+    emailBody,
+    emailChrome,
+    emailSelectedIds,
+    emailContacts,
+    emailUseRenewalsFilter,
+    emailViewYear,
+    emailViewMonth,
+  ]);
+
+  function selectSmsTemplate(template: MessageTemplateItem) {
     setSelectedTemplateId(template._id);
     setTemplateName(template.name);
     setBody(template.body ?? "");
   }
 
-  function startNewTemplate() {
+  function startNewSmsTemplate() {
     setSelectedTemplateId(null);
     setTemplateName("");
-    setBody(
-      "Hi {{first_name}}, this is a reminder about your upcoming service renewal on {{renewal_due_date}}. Reply if you'd like to schedule.",
-    );
+    setBody(DEFAULT_SMS_BODY);
   }
 
-  function insertMergeField(key: string) {
-    const tokenText = `{{${key}}}`;
-    const el = bodyRef.current;
+  function selectEmailTemplate(template: MessageTemplateItem) {
+    setSelectedEmailTemplateId(template._id);
+    setEmailTemplateName(template.name);
+    setEmailSubject(template.subject || DEFAULT_EMAIL_SUBJECT);
+    setEmailBody(template.body ?? "");
+    setEmailChrome(mergeEmailChrome(template.emailChrome));
+  }
+
+  function startNewEmailTemplate() {
+    setSelectedEmailTemplateId(null);
+    setEmailTemplateName("");
+    setEmailSubject(DEFAULT_EMAIL_SUBJECT);
+    setEmailBody(DEFAULT_EMAIL_BODY);
+    setEmailChrome(DEFAULT_EMAIL_CHROME);
+  }
+
+  function insertAtCursor(
+    el: HTMLTextAreaElement | HTMLInputElement | null,
+    current: string,
+    setValue: (next: string) => void,
+    tokenText: string,
+  ) {
     if (!el) {
-      setBody((prev) => prev + tokenText);
+      setValue(current + tokenText);
       return;
     }
-    const start = el.selectionStart ?? body.length;
-    const end = el.selectionEnd ?? body.length;
-    const next = body.slice(0, start) + tokenText + body.slice(end);
-    setBody(next);
+    const start = el.selectionStart ?? current.length;
+    const end = el.selectionEnd ?? current.length;
+    const next = current.slice(0, start) + tokenText + current.slice(end);
+    setValue(next);
     requestAnimationFrame(() => {
       el.focus();
       const pos = start + tokenText.length;
@@ -301,33 +632,58 @@ export default function MessagingHub() {
     });
   }
 
+  function insertSmsMergeField(key: string) {
+    insertAtCursor(bodyRef.current, body, setBody, `{{${key}}}`);
+  }
+
+  function insertEmailMergeField(key: string) {
+    const tokenText = `{{${key}}}`;
+    const subjectEl = emailSubjectRef.current;
+    if (subjectEl && document.activeElement === subjectEl) {
+      insertAtCursor(subjectEl, emailSubject, setEmailSubject, tokenText);
+      return;
+    }
+    emailBodyRef.current?.insertText(tokenText);
+  }
+
   async function handleSaveTemplate() {
     if (!token) return;
-    if (!templateName.trim()) {
+    const isEmail = templateEditorType === "email";
+    const name = (isEmail ? emailTemplateName : templateName).trim();
+    if (!name) {
       setError("Template name is required.");
       return;
     }
     setSavingTemplate(true);
     setError(null);
     try {
-      if (selectedTemplateId) {
-        const { template } = await updateMessageTemplate(
-          token,
-          selectedTemplateId,
-          { name: templateName.trim(), body },
-        );
+      const selectedId = isEmail
+        ? selectedEmailTemplateId
+        : selectedTemplateId;
+      if (selectedId) {
+        const { template } = await updateMessageTemplate(token, selectedId, {
+          name,
+          body: isEmail ? emailBody : body,
+          subject: isEmail ? emailSubject : "",
+          templateType: templateEditorType,
+          emailChrome: isEmail ? mergeEmailChrome(emailChrome) : undefined,
+        });
         setTemplates((prev) =>
           prev.map((t) => (t._id === template._id ? template : t)),
         );
       } else {
         const { template } = await createMessageTemplate(token, {
-          name: templateName.trim(),
-          body,
+          name,
+          body: isEmail ? emailBody : body,
+          subject: isEmail ? emailSubject : undefined,
+          templateType: templateEditorType,
+          emailChrome: isEmail ? mergeEmailChrome(emailChrome) : undefined,
         });
         setTemplates((prev) =>
           [...prev, template].sort((a, b) => a.name.localeCompare(b.name)),
         );
-        setSelectedTemplateId(template._id);
+        if (isEmail) setSelectedEmailTemplateId(template._id);
+        else setSelectedTemplateId(template._id);
       }
     } catch (err) {
       setError(
@@ -345,7 +701,8 @@ export default function MessagingHub() {
     try {
       await deleteMessageTemplate(token, id);
       setTemplates((prev) => prev.filter((t) => t._id !== id));
-      if (selectedTemplateId === id) startNewTemplate();
+      if (selectedTemplateId === id) startNewSmsTemplate();
+      if (selectedEmailTemplateId === id) startNewEmailTemplate();
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : "Failed to delete template.",
@@ -353,54 +710,58 @@ export default function MessagingHub() {
     }
   }
 
-  function toggleContact(contact: MessagingContactItem) {
+  function toggleContact(
+    contact: MessagingContactItem,
+    ids: Set<string>,
+    setIds: (next: Set<string>) => void,
+    byId: Record<string, MessagingContactItem>,
+    setById: (next: Record<string, MessagingContactItem>) => void,
+  ) {
     const { _id: id } = contact;
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else {
-        if (next.size >= MAX_SEND) {
-          setError(`You can select at most ${MAX_SEND} contacts per send.`);
-          return prev;
-        }
-        next.add(id);
+    const next = new Set(ids);
+    if (next.has(id)) next.delete(id);
+    else {
+      if (next.size >= MAX_SEND) {
+        setError(`You can select at most ${MAX_SEND} contacts per send.`);
+        return;
       }
-      return next;
-    });
-    setSelectedContactsById((prev) => {
-      if (prev[id]) {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      }
-      return { ...prev, [id]: contact };
-    });
+      next.add(id);
+    }
+    setIds(next);
+    if (byId[id]) {
+      const copy = { ...byId };
+      delete copy[id];
+      setById(copy);
+    } else {
+      setById({ ...byId, [id]: contact });
+    }
   }
 
-  function toggleSelectPage() {
-    const pageIds = contacts.map((c) => c._id);
-    const allSelected = pageIds.every((id) => selectedIds.has(id));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (allSelected) {
-        for (const id of pageIds) next.delete(id);
-      } else {
-        for (const id of pageIds) {
-          if (next.size >= MAX_SEND) break;
-          next.add(id);
-        }
+  function toggleSelectPage(
+    pageContacts: MessagingContactItem[],
+    ids: Set<string>,
+    setIds: (next: Set<string>) => void,
+    byId: Record<string, MessagingContactItem>,
+    setById: (next: Record<string, MessagingContactItem>) => void,
+  ) {
+    const pageIds = pageContacts.map((c) => c._id);
+    const allSelected = pageIds.every((id) => ids.has(id));
+    const next = new Set(ids);
+    const nextById = { ...byId };
+    if (allSelected) {
+      for (const id of pageIds) {
+        next.delete(id);
+        delete nextById[id];
       }
-      return next;
-    });
-    setSelectedContactsById((prev) => {
-      const next = { ...prev };
-      if (allSelected) {
-        for (const id of pageIds) delete next[id];
-      } else {
-        for (const c of contacts) next[c._id] = c;
+    } else {
+      for (const c of pageContacts) {
+        if (next.size >= MAX_SEND) break;
+        next.add(c._id);
+        nextById[c._id] = c;
       }
-      return next;
-    });
+    }
+    setIds(next);
+    setById(nextById);
   }
 
   function resetCreateFlow() {
@@ -408,30 +769,46 @@ export default function MessagingHub() {
     setSelectedContactsById({});
     setSelectedTemplateId(null);
     setTemplateName("");
-    setBody(
-      "Hi {{first_name}}, this is a reminder about your upcoming service renewal on {{renewal_due_date}}. Reply if you'd like to schedule.",
-    );
+    setBody(DEFAULT_SMS_BODY);
     setMediaUrlsRaw("");
     setError(null);
     setSendResult(null);
     setResetSignal((n) => n + 1);
   }
 
-  function shiftMonth(delta: number) {
-    setPage(1);
-    setViewMonth((m) => {
-      let next = m + delta;
-      let year = viewYear;
-      if (next < 0) {
-        next = 11;
-        year -= 1;
-      } else if (next > 11) {
-        next = 0;
-        year += 1;
-      }
-      setViewYear(year);
-      return next;
-    });
+  function resetEmailCreateFlow() {
+    setEmailSelectedIds(new Set());
+    setEmailSelectedContactsById({});
+    setSelectedEmailTemplateId(null);
+    setEmailTemplateName("");
+    setEmailSubject(DEFAULT_EMAIL_SUBJECT);
+    setEmailBody(DEFAULT_EMAIL_BODY);
+    setEmailChrome(DEFAULT_EMAIL_CHROME);
+    setError(null);
+    setEmailSendResult(null);
+    setEmailResetSignal((n) => n + 1);
+  }
+
+  function shiftMonth(
+    delta: number,
+    month: number,
+    year: number,
+    setMonth: (m: number) => void,
+    setYear: (y: number) => void,
+    setPageNum: (p: number) => void,
+  ) {
+    setPageNum(1);
+    let next = month + delta;
+    let nextYear = year;
+    if (next < 0) {
+      next = 11;
+      nextYear -= 1;
+    } else if (next > 11) {
+      next = 0;
+      nextYear += 1;
+    }
+    setYear(nextYear);
+    setMonth(next);
   }
 
   async function handleSend() {
@@ -479,16 +856,58 @@ export default function MessagingHub() {
     }
   }
 
+  async function handleEmailSend() {
+    if (!token) return;
+    if (emailSelectedIds.size === 0) {
+      setError("Select at least one contact.");
+      return;
+    }
+    if (!emailSubject.trim() || isEmailBodyEmpty(emailBody)) {
+      setError("Email subject and body are required.");
+      return;
+    }
+    if (!emailAccountId) {
+      setError("Select an email account to send from.");
+      return;
+    }
+
+    setEmailSending(true);
+    setError(null);
+    setEmailSendResult(null);
+    try {
+      const result = await sendEmailMessages(token, {
+        contactIds: [...emailSelectedIds],
+        subject: emailSubject,
+        body: emailBody,
+        emailChrome: mergeEmailChrome(emailChrome),
+        templateId: selectedEmailTemplateId ?? undefined,
+        emailAccountId,
+        renewalYear: emailUseRenewalsFilter ? emailViewYear : undefined,
+        renewalMonth: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
+      });
+      setEmailSendResult(result);
+      setEmailConfirmOpen(false);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to send emails.",
+      );
+    } finally {
+      setEmailSending(false);
+    }
+  }
+
   if (!token) return null;
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 border-b border-neutral-200">
+      <div className="flex flex-wrap gap-2 border-b border-neutral-200">
         {(
           [
             ["templates", "Templates"],
             ["threads", "Threads"],
             ["create", "Message Wizard"],
+            ["email", "Email Wizard"],
+            ["sent-emails", "Sent Emails"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -508,24 +927,62 @@ export default function MessagingHub() {
 
       {activeTab === "templates" ? (
         <TemplatesPanel
-          templates={templates}
+          templates={editorTemplates}
           loadingTemplates={loadingTemplates}
-          selectedTemplateId={selectedTemplateId}
-          onSelectTemplate={selectTemplate}
-          onStartNewTemplate={startNewTemplate}
+          selectedTemplateId={
+            templateEditorType === "email"
+              ? selectedEmailTemplateId
+              : selectedTemplateId
+          }
+          onSelectTemplate={
+            templateEditorType === "email"
+              ? selectEmailTemplate
+              : selectSmsTemplate
+          }
+          onStartNewTemplate={
+            templateEditorType === "email"
+              ? startNewEmailTemplate
+              : startNewSmsTemplate
+          }
           onDeleteTemplate={handleDeleteTemplate}
-          templateName={templateName}
-          onTemplateNameChange={setTemplateName}
+          templateType={templateEditorType}
+          onTemplateTypeChange={setTemplateEditorType}
+          templateName={
+            templateEditorType === "email" ? emailTemplateName : templateName
+          }
+          onTemplateNameChange={
+            templateEditorType === "email"
+              ? setEmailTemplateName
+              : setTemplateName
+          }
           savingTemplate={savingTemplate}
           onSaveTemplate={handleSaveTemplate}
-          mergeFields={mergeFields}
-          onInsertMergeField={insertMergeField}
+          mergeFields={editorMergeFields}
+          onInsertMergeField={
+            templateEditorType === "email"
+              ? insertEmailMergeField
+              : insertSmsMergeField
+          }
           bodyRef={bodyRef}
-          body={body}
-          onBodyChange={setBody}
+          emailEditorRef={emailBodyRef}
+          subjectRef={emailSubjectRef}
+          subject={emailSubject}
+          onSubjectChange={setEmailSubject}
+          body={templateEditorType === "email" ? emailBody : body}
+          onBodyChange={
+            templateEditorType === "email" ? setEmailBody : setBody
+          }
+          emailChrome={emailChrome}
+          onEmailChromeChange={setEmailChrome}
           previewText={previewText}
+          previewSubject={emailPreviewSubject}
+          previewHtml={emailPreviewHtml}
+          previewFromLabel={emailFromLabel}
+          previewToLabel={emailPreviewTo}
           previewContactLabel={previewContactLabel}
-          previewSample={previewSample}
+          previewSample={
+            templateEditorType === "email" ? emailPreviewSample : previewSample
+          }
           error={error}
         />
       ) : activeTab === "create" ? (
@@ -544,7 +1001,16 @@ export default function MessagingHub() {
           }}
           viewYear={viewYear}
           viewMonth={viewMonth}
-          onShiftMonth={shiftMonth}
+          onShiftMonth={(delta) =>
+            shiftMonth(
+              delta,
+              viewMonth,
+              viewYear,
+              setViewMonth,
+              setViewYear,
+              setPage,
+            )
+          }
           contacts={contacts}
           contactsTotal={contactsTotal}
           loadingContacts={loadingContacts}
@@ -557,19 +1023,35 @@ export default function MessagingHub() {
           }}
           selectedIds={selectedIds}
           selectedContacts={selectedContacts}
-          onToggleContact={toggleContact}
-          onToggleSelectPage={toggleSelectPage}
+          onToggleContact={(c) =>
+            toggleContact(
+              c,
+              selectedIds,
+              setSelectedIds,
+              selectedContactsById,
+              setSelectedContactsById,
+            )
+          }
+          onToggleSelectPage={() =>
+            toggleSelectPage(
+              contacts,
+              selectedIds,
+              setSelectedIds,
+              selectedContactsById,
+              setSelectedContactsById,
+            )
+          }
           onClearSelection={() => {
             setSelectedIds(new Set());
             setSelectedContactsById({});
           }}
           maxSend={MAX_SEND}
-          templates={templates}
+          templates={smsTemplates}
           selectedTemplateId={selectedTemplateId}
-          onSelectTemplate={selectTemplate}
-          onStartNewTemplate={startNewTemplate}
-          mergeFields={mergeFields}
-          onInsertMergeField={insertMergeField}
+          onSelectTemplate={selectSmsTemplate}
+          onStartNewTemplate={startNewSmsTemplate}
+          mergeFields={smsMergeFields}
+          onInsertMergeField={insertSmsMergeField}
           bodyRef={bodyRef}
           body={body}
           onBodyChange={setBody}
@@ -594,6 +1076,99 @@ export default function MessagingHub() {
           sendResult={sendResult}
           onDismissSendResult={() => setSendResult(null)}
         />
+      ) : activeTab === "email" ? (
+        <EmailCreatePanel
+          key={emailResetSignal}
+          search={emailSearch}
+          onSearchChange={(v) => {
+            setEmailSearch(v);
+            setEmailPage(1);
+          }}
+          useRenewalsFilter={emailUseRenewalsFilter}
+          onToggleRenewalsFilter={(v) => {
+            setEmailUseRenewalsFilter(v);
+            setEmailPage(1);
+          }}
+          viewYear={emailViewYear}
+          viewMonth={emailViewMonth}
+          onShiftMonth={(delta) =>
+            shiftMonth(
+              delta,
+              emailViewMonth,
+              emailViewYear,
+              setEmailViewMonth,
+              setEmailViewYear,
+              setEmailPage,
+            )
+          }
+          contacts={emailContacts}
+          contactsTotal={emailContactsTotal}
+          loadingContacts={loadingEmailContacts}
+          page={emailPage}
+          pageSize={emailPageSize}
+          onPageChange={setEmailPage}
+          onPageSizeChange={(size) => {
+            setEmailPageSize(size);
+            setEmailPage(1);
+          }}
+          selectedIds={emailSelectedIds}
+          selectedContacts={selectedEmailContacts}
+          onToggleContact={(c) =>
+            toggleContact(
+              c,
+              emailSelectedIds,
+              setEmailSelectedIds,
+              emailSelectedContactsById,
+              setEmailSelectedContactsById,
+            )
+          }
+          onToggleSelectPage={() =>
+            toggleSelectPage(
+              emailContacts,
+              emailSelectedIds,
+              setEmailSelectedIds,
+              emailSelectedContactsById,
+              setEmailSelectedContactsById,
+            )
+          }
+          onClearSelection={() => {
+            setEmailSelectedIds(new Set());
+            setEmailSelectedContactsById({});
+          }}
+          maxSend={MAX_SEND}
+          templates={emailTemplates}
+          selectedTemplateId={selectedEmailTemplateId}
+          onSelectTemplate={selectEmailTemplate}
+          onStartNewTemplate={startNewEmailTemplate}
+          mergeFields={emailMergeFields}
+          onInsertMergeField={insertEmailMergeField}
+          bodyRef={emailBodyRef}
+          subjectRef={emailSubjectRef}
+          subject={emailSubject}
+          onSubjectChange={setEmailSubject}
+          body={emailBody}
+          onBodyChange={setEmailBody}
+          accounts={emailAccounts}
+          accountId={emailAccountId}
+          onAccountIdChange={setEmailAccountId}
+          sending={emailSending}
+          confirmOpen={emailConfirmOpen}
+          onOpenConfirm={() => setEmailConfirmOpen(true)}
+          onCloseConfirm={() => setEmailConfirmOpen(false)}
+          onConfirmSend={handleEmailSend}
+          onCancelFlow={resetEmailCreateFlow}
+          previewSubject={emailPreviewSubject}
+          previewHtml={emailPreviewHtml}
+          previewFromLabel={emailFromLabel}
+          previewToLabel={emailPreviewTo}
+          previewSample={emailPreviewSample}
+          showPaymentLinkColumn={emailUsesPaymentLink}
+          error={error}
+          sendResult={emailSendResult}
+          onDismissSendResult={() => setEmailSendResult(null)}
+        />
+      ) : activeTab === "sent-emails" ? (
+        <SentEmailsPanel token={token} />
       ) : (
         <ThreadsPanel token={token} accounts={accounts} />
       )}

@@ -7,16 +7,20 @@ import {
   ApiError,
   CommunicationChannel,
   CustomerContact,
+  EmailCommunicationItem,
+  EmailSendAccountItem,
   TwilioAccountItem,
   TwilioCommunicationItem,
+  getEmailSendAccounts,
   getMessagingCommunications,
+  getSentEmails,
   getTwilioAccounts,
   placeMessagingCall,
 } from "@/lib/api";
 import { formatCustomerName } from "@/lib/formatName";
 import { useAuthStore } from "@/store/useAuthStore";
 
-type ChannelFilter = "all" | CommunicationChannel;
+type ChannelFilter = "all" | CommunicationChannel | "email";
 
 function truncateSid(sid: string): string {
   if (sid.length <= 10) return sid;
@@ -49,7 +53,11 @@ export default function CommunicationHistoryPanel({
   const [contactId, setContactId] = useState("");
   const [accountId, setAccountId] = useState("");
   const [accounts, setAccounts] = useState<TwilioAccountItem[]>([]);
+  const [emailAccounts, setEmailAccounts] = useState<EmailSendAccountItem[]>(
+    [],
+  );
   const [rows, setRows] = useState<TwilioCommunicationItem[]>([]);
+  const [emailRows, setEmailRows] = useState<EmailCommunicationItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -60,6 +68,9 @@ export default function CommunicationHistoryPanel({
     if (!isAdmin) return;
     getTwilioAccounts(token)
       .then((res) => setAccounts(res.accounts.filter((a) => a.isActive)))
+      .catch(() => undefined);
+    getEmailSendAccounts(token)
+      .then((res) => setEmailAccounts(res.accounts))
       .catch(() => undefined);
   }, [token, isAdmin]);
 
@@ -72,19 +83,35 @@ export default function CommunicationHistoryPanel({
       setError(null);
     });
 
-    getMessagingCommunications(token, {
-      customerId,
-      contactId: contactId || undefined,
-      twilioAccountId: accountId || undefined,
-      channel,
-      page,
-      pageSize: 25,
-    })
-      .then((res) => {
-        if (cancelled) return;
-        setRows(res.communications);
-        setTotal(res.total);
-      })
+    const request =
+      channel === "email"
+        ? getSentEmails(token, {
+            customerId,
+            contactId: contactId || undefined,
+            emailAccountId: accountId || undefined,
+            page,
+            pageSize: 25,
+          }).then((res) => {
+            if (cancelled) return;
+            setEmailRows(res.emails);
+            setRows([]);
+            setTotal(res.total);
+          })
+        : getMessagingCommunications(token, {
+            customerId,
+            contactId: contactId || undefined,
+            twilioAccountId: accountId || undefined,
+            channel,
+            page,
+            pageSize: 25,
+          }).then((res) => {
+            if (cancelled) return;
+            setRows(res.communications);
+            setEmailRows([]);
+            setTotal(res.total);
+          });
+
+    request
       .catch((err) => {
         if (cancelled) return;
         setError(
@@ -142,7 +169,7 @@ export default function CommunicationHistoryPanel({
         customerId,
         contactId: contactId || undefined,
         twilioAccountId: accountId || undefined,
-        channel,
+        channel: channel === "email" ? "all" : channel,
         page: 1,
         pageSize: 25,
       });
@@ -164,12 +191,13 @@ export default function CommunicationHistoryPanel({
           Communication history
         </h2>
         <div className="flex flex-wrap gap-2">
-          {(["all", "sms", "mms", "voice"] as const).map((c) => (
+          {(["all", "sms", "mms", "voice", "email"] as const).map((c) => (
             <button
               key={c}
               type="button"
               onClick={() => {
                 setChannel(c);
+                setAccountId("");
                 setPage(1);
               }}
               className={`rounded-md px-2 py-1 text-xs font-medium capitalize ${
@@ -193,12 +221,25 @@ export default function CommunicationHistoryPanel({
           }}
           className="rounded-lg border border-neutral-300 px-2 py-1.5 text-sm"
         >
-          <option value="">All Twilio accounts</option>
-          {accounts.map((a) => (
-            <option key={a._id} value={a._id}>
-              {a.friendlyName} ({truncateSid(a.accountSid)})
-            </option>
-          ))}
+          {channel === "email" ? (
+            <>
+              <option value="">All email accounts</option>
+              {emailAccounts.map((a) => (
+                <option key={a._id} value={a._id}>
+                  {a.friendlyName}
+                </option>
+              ))}
+            </>
+          ) : (
+            <>
+              <option value="">All Twilio accounts</option>
+              {accounts.map((a) => (
+                <option key={a._id} value={a._id}>
+                  {a.friendlyName} ({truncateSid(a.accountSid)})
+                </option>
+              ))}
+            </>
+          )}
         </select>
         <select
           value={contactId}
@@ -228,10 +269,55 @@ export default function CommunicationHistoryPanel({
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading history…
         </div>
-      ) : rows.length === 0 ? (
+      ) : channel === "email" && emailRows.length === 0 ? (
+        <p className="py-6 text-sm text-neutral-500">
+          No emails logged for this customer yet.
+        </p>
+      ) : rows.length === 0 && channel !== "email" ? (
         <p className="py-6 text-sm text-neutral-500">
           No communications logged for this customer yet.
         </p>
+      ) : channel === "email" ? (
+        <ul className="divide-y divide-neutral-100">
+          {emailRows.map((row) => (
+            <li key={row._id} className="py-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+                    <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium uppercase text-neutral-700">
+                      email
+                    </span>
+                    <span className="capitalize">{row.status}</span>
+                    <span className="rounded bg-neutral-50 px-1.5 py-0.5">
+                      {row.accountFriendlyName ||
+                        `${row.fromName} <${row.fromEmail}>`}
+                    </span>
+                    <span>{row.toEmail}</span>
+                    {row.contactRef ? (
+                      <span>
+                        {contactNameById.get(row.contactRef) || "Contact"}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 text-sm font-medium text-brand-dark">
+                    {row.subject || "(no subject)"}
+                  </p>
+                  <p className="mt-1 text-sm text-neutral-600 whitespace-pre-wrap">
+                    {row.body || "(no text)"}
+                  </p>
+                  {row.errorMessage ? (
+                    <p className="mt-1 text-xs text-red-600">
+                      {row.errorMessage}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="text-right text-[11px] text-neutral-400">
+                  <div>{formatTime(row.createdAt)}</div>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
       ) : (
         <ul className="divide-y divide-neutral-100">
           {rows.map((row) => (
