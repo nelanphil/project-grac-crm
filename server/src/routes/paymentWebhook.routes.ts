@@ -6,7 +6,7 @@ import {
 import { getAdapter } from "../payments/registry";
 import { getPaymentProviderAccountsForWebhook } from "../services/paymentProvider.service";
 import {
-  findInvoiceForWebhook,
+  findInvoicesForWebhook,
   markInvoicePaid,
 } from "../services/invoice.service";
 
@@ -38,26 +38,33 @@ router.post("/:provider", async (req: Request, res: Response) => {
       return;
     }
 
-    const invoice = await findInvoiceForWebhook({
+    const invoices = await findInvoicesForWebhook({
       invoiceId: verified.invoiceId,
+      invoiceIds: verified.invoiceIds,
       providerOrderId: verified.providerOrderId,
       providerPaymentId: verified.providerPaymentId,
     });
 
-    if (!invoice) {
+    if (invoices.length === 0) {
       res.status(200).json({ ok: true, unmatched: true });
       return;
     }
 
     if (verified.status === "paid") {
-      await markInvoicePaid({
-        invoice,
-        providerPaymentId: verified.providerPaymentId,
-        providerOrderId: verified.providerOrderId,
-      });
-    } else if (verified.status === "failed" && invoice.status !== "paid") {
-      invoice.status = "failed";
-      await invoice.save();
+      for (const invoice of invoices) {
+        await markInvoicePaid({
+          invoice,
+          providerPaymentId: verified.providerPaymentId,
+          providerOrderId: verified.providerOrderId,
+        });
+      }
+    } else if (verified.status === "failed") {
+      for (const invoice of invoices) {
+        if (invoice.status !== "paid") {
+          invoice.status = "failed";
+          await invoice.save();
+        }
+      }
     }
 
     res.status(200).json({ ok: true });

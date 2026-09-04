@@ -1,77 +1,31 @@
 import { Types } from "mongoose";
-import { Contract } from "../models/mongo/Contract";
 import { Invoice, IInvoice } from "../models/mongo/Invoice";
-import { renewalDueDateFilterForMonth } from "./contractDates";
 import { buildPayUrl, mintPayToken } from "./payToken";
 import type { RenewalScope } from "./messagingContext";
 
-async function findSoonestContract(
-  customerRef: Types.ObjectId,
-  scope?: RenewalScope,
-) {
-  const filter: Record<string, unknown> = {
-    customerRef,
-    renewalDueDate: { $ne: null },
-  };
-  if (scope) {
-    Object.assign(filter, renewalDueDateFilterForMonth(scope.year, scope.month));
-  } else {
-    filter.renewalDueDate = { $ne: null, $gte: new Date() };
-  }
+const OPEN_STATUSES = ["open", "draft"] as const;
 
-  const upcoming = await Contract.findOne(filter).sort({ renewalDueDate: 1 });
-  if (upcoming) return upcoming;
-
-  return Contract.findOne({
-    customerRef,
-    renewalDueDate: { $ne: null },
-  }).sort({ renewalDueDate: 1 });
-}
-
-async function findOpenInvoiceForCustomer(
-  customerRef: Types.ObjectId,
-  contractId?: Types.ObjectId | null,
-): Promise<IInvoice | null> {
-  if (contractId) {
-    const renewal = await Invoice.findOne({
-      customerRef,
-      contractRef: contractId,
-      sourceType: "contract_renewal",
-      status: { $in: ["open", "draft"] },
-    }).sort({ issuedAt: -1 });
-    if (renewal) return renewal;
-  }
-
-  return Invoice.findOne({
-    customerRef,
-    status: { $in: ["open", "draft"] },
-  }).sort({ issuedAt: -1 });
-}
-
-async function resolvePayableInvoice(
+export async function findOpenInvoicesForCustomer(
   customerId: string,
-  scope?: RenewalScope,
-): Promise<IInvoice | null> {
-  if (!Types.ObjectId.isValid(customerId)) return null;
-  const customerRef = new Types.ObjectId(customerId);
-  const contract = await findSoonestContract(customerRef, scope);
-  const invoice = await findOpenInvoiceForCustomer(
-    customerRef,
-    contract?._id as Types.ObjectId | undefined,
-  );
-  if (!invoice || invoice.status === "paid" || invoice.status === "void") {
-    return null;
-  }
-  return invoice;
+): Promise<IInvoice[]> {
+  if (!Types.ObjectId.isValid(customerId)) return [];
+  return Invoice.find({
+    customerRef: new Types.ObjectId(customerId),
+    status: { $in: OPEN_STATUSES },
+  }).sort({ issuedAt: 1 });
 }
 
 /** True when the customer already has an open/draft invoice we can attach a pay link to. */
 export async function customerHasPayableInvoice(
   customerId: string,
-  scope?: RenewalScope,
+  _scope?: RenewalScope,
 ): Promise<boolean> {
-  const invoice = await resolvePayableInvoice(customerId, scope);
-  return invoice != null;
+  if (!Types.ObjectId.isValid(customerId)) return false;
+  const count = await Invoice.countDocuments({
+    customerRef: new Types.ObjectId(customerId),
+    status: { $in: OPEN_STATUSES },
+  });
+  return count > 0;
 }
 
 /** Customer ids that already have an open/draft invoice. */
@@ -79,15 +33,13 @@ export async function payableInvoiceCustomerIds(
   customerIds: string[],
 ): Promise<Set<string>> {
   const unique = [
-    ...new Set(
-      customerIds.filter((id) => Types.ObjectId.isValid(id)),
-    ),
+    ...new Set(customerIds.filter((id) => Types.ObjectId.isValid(id))),
   ];
   if (unique.length === 0) return new Set();
 
   const rows = await Invoice.find({
     customerRef: { $in: unique.map((id) => new Types.ObjectId(id)) },
-    status: { $in: ["open", "draft"] },
+    status: { $in: OPEN_STATUSES },
   })
     .select("customerRef")
     .lean();
@@ -96,24 +48,25 @@ export async function payableInvoiceCustomerIds(
 }
 
 /**
- * Mint a CRM pay-page token for an existing open invoice.
+ * Mint a CRM pay-page token for every open/draft invoice on the customer.
  * Does not create invoices. Checkout still uses the owner account or fallback.
  */
 export async function mintPaymentLinkForCustomer(
   customerId: string,
-  scope?: RenewalScope,
+  _scope?: RenewalScope,
 ): Promise<{ payUrl: string; invoiceId: string } | null> {
-  const invoice = await resolvePayableInvoice(customerId, scope);
-  if (!invoice) return null;
+  const invoices = await findOpenInvoicesForCustomer(customerId);
+  if (invoices.length === 0) return null;
 
   const { token, hash, expiresAt } = mintPayToken();
-  invoice.payTokenHash = hash;
-  invoice.payTokenExpiresAt = expiresAt;
-  await invoice.save();
+  await Invoice.updateMany(
+    { _id: { $in: invoices.map((inv) => inv._id) } },
+    { $set: { payTokenHash: hash, payTokenExpiresAt: expiresAt } },
+  );
 
   return {
     payUrl: buildPayUrl(token),
-    invoiceId: String(invoice._id),
+    invoiceId: String(invoices[0]._id),
   };
 }
 
@@ -130,4 +83,23 @@ export function createPaymentLinkCache(scope?: RenewalScope) {
     inflight.set(customerId, pending);
     return pending;
   };
+}
+
+export function paymentNoteForInvoiceIds(ids: string[]): string {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length <= 1) return `invoice:${unique[0] ?? ""}`;
+  return `invoices:${unique.join(",")}`;
+}
+
+export function parseInvoiceIdsFromPaymentNote(note: string): string[] {
+  if (!note) return [];
+  const multi = note.match(/invoices:([a-f0-9,]+)/i);
+  if (multi?.[1]) {
+    return multi[1]
+      .split(",")
+      .map((id) => id.trim())
+      .filter((id) => /^[a-f0-9]{24}$/i.test(id));
+  }
+  const single = note.match(/invoice:([a-f0-9]{24})/i);
+  return single?.[1] ? [single[1]] : [];
 }

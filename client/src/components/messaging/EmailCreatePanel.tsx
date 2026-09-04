@@ -141,6 +141,8 @@ type EmailCreatePanelProps = {
   onDismissSendResult: () => void;
 
   showPaymentLinkColumn?: boolean;
+  includePaymentLink?: boolean;
+  onIncludePaymentLinkChange?: (value: boolean) => void;
 };
 
 function PaymentLinkStatus({ available }: { available?: boolean }) {
@@ -226,6 +228,8 @@ export default function EmailCreatePanel({
   sendResult,
   onDismissSendResult,
   showPaymentLinkColumn = false,
+  includePaymentLink = false,
+  onIncludePaymentLinkChange,
 }: EmailCreatePanelProps) {
   const [stepIndex, setStepIndex] = useState(0);
   const [maxStepIndex, setMaxStepIndex] = useState(0);
@@ -381,6 +385,13 @@ export default function EmailCreatePanel({
                 </button>
               </div>
             </div>
+          ) : null}
+
+          {showPaymentLinkColumn ? (
+            <p className="mb-2 text-xs text-neutral-500">
+              “Will send” means this contact has unpaid invoices and will get a
+              Pay securely button. “No button” means they have none.
+            </p>
           ) : null}
 
           <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -632,6 +643,8 @@ export default function EmailCreatePanel({
           previewFromLabel={previewFromLabel}
           previewToLabel={previewToLabel}
           previewSample={previewSample}
+          includePaymentLink={includePaymentLink}
+          onIncludePaymentLinkChange={onIncludePaymentLinkChange}
         />
       ) : null}
 
@@ -828,7 +841,7 @@ export default function EmailCreatePanel({
             </h2>
             {showPaymentLinkColumn ? (
               <p className="mb-3 text-xs text-neutral-500">
-                Recipients marked “No button” have no open invoice, so their
+                Recipients marked “No button” have no unpaid invoices, so their
                 email will omit the Pay securely button.
               </p>
             ) : null}

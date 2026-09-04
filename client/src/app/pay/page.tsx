@@ -16,6 +16,16 @@ function formatMoney(cents: number): string {
   }).format(cents / 100);
 }
 
+function invoiceDescription(invoice: InvoiceItem): string {
+  return (
+    invoice.lineItems[0]?.description || invoice.sourceType.replace(/_/g, " ")
+  );
+}
+
+function isUnpaid(invoice: InvoiceItem): boolean {
+  return invoice.status !== "paid" && invoice.status !== "void";
+}
+
 /** Prefer ?token= (static-export safe); also accept /pay/{token}/ path segments. */
 function resolvePayToken(
   pathname: string | null,
@@ -42,7 +52,8 @@ function PayLinkContent() {
   const searchParams = useSearchParams();
   const token = resolvePayToken(pathname, searchParams.get("token"));
 
-  const [invoice, setInvoice] = useState<InvoiceItem | null>(null);
+  const [invoices, setInvoices] = useState<InvoiceItem[]>([]);
+  const [totalCents, setTotalCents] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
@@ -52,7 +63,17 @@ function PayLinkContent() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     getInvoiceByPayToken(token)
-      .then(({ invoice: inv }) => setInvoice(inv))
+      .then((res) => {
+        const list = res.invoices?.length ? res.invoices : [res.invoice];
+        setInvoices(list);
+        setTotalCents(
+          typeof res.totalCents === "number"
+            ? res.totalCents
+            : list
+                .filter(isUnpaid)
+                .reduce((sum, invoice) => sum + (invoice.amountCents || 0), 0),
+        );
+      })
       .catch((err) =>
         setError(err instanceof ApiError ? err.message : "Pay link not found."),
       )
@@ -73,40 +94,66 @@ function PayLinkContent() {
     }
   }
 
+  const unpaid = invoices.filter(isUnpaid);
+  const allPaid = invoices.length > 0 && unpaid.length === 0;
+  const heading =
+    invoices.length > 1 ? "Pay outstanding invoices" : "Pay invoice";
+
   return (
     <div className="min-h-screen bg-neutral-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-4">
-        <h1 className="text-xl font-bold text-brand-dark">Pay invoice</h1>
+        <h1 className="text-xl font-bold text-brand-dark">{heading}</h1>
 
         {!token ? (
           <p className="text-sm text-red-600">Pay link token is missing.</p>
         ) : loading ? (
           <p className="text-sm text-neutral-500">Loading…</p>
-        ) : error && !invoice ? (
+        ) : error && invoices.length === 0 ? (
           <p className="text-sm text-red-600">{error}</p>
-        ) : invoice ? (
+        ) : invoices.length > 0 ? (
           <>
-            <div className="rounded-lg bg-neutral-50 border border-neutral-200 px-4 py-3 text-sm space-y-1">
-              <div className="font-medium text-brand-dark">
-                {invoice.number}
+            <ul className="space-y-2">
+              {invoices.map((invoice) => (
+                <li
+                  key={invoice._id}
+                  className="rounded-lg bg-neutral-50 border border-neutral-200 px-4 py-3 text-sm space-y-1"
+                >
+                  <div className="font-medium text-brand-dark">
+                    {invoice.number}
+                  </div>
+                  <div className="text-neutral-600">
+                    {invoiceDescription(invoice)}
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3 pt-1">
+                    <div className="text-lg font-semibold text-brand-dark">
+                      {formatMoney(invoice.amountCents)}
+                    </div>
+                    <div className="text-xs text-neutral-500 capitalize">
+                      {invoice.status}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            {invoices.length > 1 ? (
+              <div className="flex items-baseline justify-between border-t border-neutral-200 pt-3">
+                <span className="text-sm font-medium text-neutral-600">
+                  Total due
+                </span>
+                <span className="text-lg font-semibold text-brand-dark">
+                  {formatMoney(totalCents)}
+                </span>
               </div>
-              <div className="text-neutral-600">
-                {invoice.lineItems[0]?.description ||
-                  invoice.sourceType.replace(/_/g, " ")}
-              </div>
-              <div className="text-lg font-semibold text-brand-dark pt-1">
-                {formatMoney(invoice.amountCents)}
-              </div>
-              <div className="text-xs text-neutral-500 capitalize">
-                Status: {invoice.status}
-              </div>
-            </div>
+            ) : null}
 
             {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
-            {invoice.status === "paid" ? (
+            {allPaid ? (
               <p className="text-sm text-green-700">
-                This invoice is paid. Thank you!
+                {invoices.length > 1
+                  ? "These invoices are paid. Thank you!"
+                  : "This invoice is paid. Thank you!"}
               </p>
             ) : (
               <button

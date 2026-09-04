@@ -97,6 +97,7 @@ export default function MessagingHub() {
   const [emailSubject, setEmailSubject] = useState(DEFAULT_EMAIL_SUBJECT);
   const [emailBody, setEmailBody] = useState(DEFAULT_EMAIL_BODY);
   const [emailChrome, setEmailChrome] = useState(DEFAULT_EMAIL_CHROME);
+  const [includePaymentLink, setIncludePaymentLink] = useState(false);
 
   const [previewText, setPreviewText] = useState("");
   const [previewSample, setPreviewSample] = useState(true);
@@ -249,9 +250,15 @@ export default function MessagingHub() {
   const loadEmailContacts =
     activeTab === "email" ||
     (activeTab === "templates" && templateEditorType === "email");
-  const emailUsesPaymentLink = /\{\{\s*payment_link\s*\}\}/.test(
-    `${emailSubject}\n${emailBody}`,
+  const emailHasPaymentLinkToken = /\{\{\s*payment_link\s*\}\}/.test(
+    `${emailSubject}\n${emailBody}\n${emailChrome.headerHtml}\n${emailChrome.footerHtml}`,
   );
+  const emailUsesPaymentLink =
+    includePaymentLink || emailHasPaymentLinkToken;
+
+  useEffect(() => {
+    if (emailHasPaymentLinkToken) setIncludePaymentLink(true);
+  }, [emailHasPaymentLinkToken]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -553,6 +560,7 @@ export default function MessagingHub() {
         contactId: previewContactId,
         renewalYear: emailUseRenewalsFilter ? emailViewYear : undefined,
         renewalMonth: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
+        includePaymentLink,
       })
         .then((res) => {
           if (cancelled) return;
@@ -592,6 +600,7 @@ export default function MessagingHub() {
     emailUseRenewalsFilter,
     emailViewYear,
     emailViewMonth,
+    includePaymentLink,
   ]);
 
   function selectSmsTemplate(template: MessageTemplateItem) {
@@ -806,6 +815,7 @@ export default function MessagingHub() {
     setEmailSubject(DEFAULT_EMAIL_SUBJECT);
     setEmailBody(DEFAULT_EMAIL_BODY);
     setEmailChrome(DEFAULT_EMAIL_CHROME);
+    setIncludePaymentLink(false);
     setEmailFromNickname(selectedEmailAccount?.fromName ?? "");
     setEmailReplyTo("");
     setEmailEmailsPerSecond(2);
@@ -965,6 +975,7 @@ export default function MessagingHub() {
         emailsPerSecond: emailEmailsPerSecond,
         renewalYear: emailUseRenewalsFilter ? emailViewYear : undefined,
         renewalMonth: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
+        includePaymentLink,
       });
       setEmailSendResult(result);
       setEmailConfirmOpen(false);
@@ -1292,6 +1303,8 @@ export default function MessagingHub() {
           previewToLabel={emailPreviewTo}
           previewSample={emailPreviewSample}
           showPaymentLinkColumn={emailUsesPaymentLink}
+          includePaymentLink={includePaymentLink}
+          onIncludePaymentLinkChange={setIncludePaymentLink}
           error={error}
           sendResult={emailSendResult}
           onDismissSendResult={() => setEmailSendResult(null)}

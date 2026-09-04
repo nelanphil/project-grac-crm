@@ -40,7 +40,7 @@ export const MERGE_FIELDS: MergeFieldDef[] = [
     key: "payment_link",
     label: "Payment link",
     description:
-      "Pay securely button — only included when the customer has an open invoice",
+      "Pay securely button covering every open invoice — only included when the customer has unpaid invoices",
     templateTypes: ["email"],
   },
 ];
@@ -50,7 +50,7 @@ export type MessageTemplateContext = Record<string, string>;
 const TOKEN_RE = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
 const PAYMENT_LINK_TOKEN_RE = /\{\{\s*payment_link\s*\}\}/;
 
-/** True when subject or body includes {{payment_link}}. */
+/** True when any part includes {{payment_link}}. */
 export function templateUsesPaymentLink(...parts: Array<string | undefined>): boolean {
   return parts.some((part) => Boolean(part && PAYMENT_LINK_TOKEN_RE.test(part)));
 }

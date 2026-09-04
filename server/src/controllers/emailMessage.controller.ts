@@ -245,7 +245,14 @@ export async function previewEmailMessage(
       customerRef = built.contact.customerRef;
     }
 
-    const wantsPayLink = templateUsesPaymentLink(subject, body);
+    const wantsPayLink =
+      parsed.data.includePaymentLink === true ||
+      templateUsesPaymentLink(
+        subject,
+        body,
+        chrome.headerHtml,
+        chrome.footerHtml,
+      );
     let paymentUrl: string | undefined;
     if (wantsPayLink) {
       const showButton = sample
@@ -357,10 +364,14 @@ export async function sendEmailMessages(
     const userId = req.user?.id
       ? new Types.ObjectId(req.user.id)
       : null;
-    const wantsPayLink = templateUsesPaymentLink(
-      subjectTemplate,
-      bodyTemplate,
-    );
+    const wantsPayLink =
+      data.includePaymentLink === true ||
+      templateUsesPaymentLink(
+        subjectTemplate,
+        bodyTemplate,
+        sendChrome.headerHtml,
+        sendChrome.footerHtml,
+      );
     const paymentLinkForCustomer = wantsPayLink
       ? createPaymentLinkCache(scope)
       : null;

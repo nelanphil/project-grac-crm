@@ -22,6 +22,7 @@ import { resolveCheckoutProviderForInvoice } from "../payments/registry";
 import { resolveCheckoutBuyer } from "../payments/checkoutBuyer";
 import { env } from "../config/env";
 import { buildPayUrl, hashPayToken, mintPayToken } from "../utils/payToken";
+import { paymentNoteForInvoiceIds } from "../utils/paymentLinkForCustomer";
 
 function workOrderInvoiceLineItems(wo: {
   parts?: Array<{
@@ -611,23 +612,37 @@ export async function getInvoiceByPayToken(
       return;
     }
     const hash = hashPayToken(token);
-    const invoice = await Invoice.findOne({ payTokenHash: hash }).lean();
-    if (!invoice) {
+    const invoices = await Invoice.find({ payTokenHash: hash })
+      .sort({ issuedAt: 1 })
+      .lean();
+    if (invoices.length === 0) {
       res.status(404).json({ message: "Pay link not found" });
       return;
     }
     if (
-      invoice.payTokenExpiresAt &&
-      new Date(invoice.payTokenExpiresAt) < new Date()
+      invoices.some(
+        (invoice) =>
+          invoice.payTokenExpiresAt &&
+          new Date(invoice.payTokenExpiresAt) < new Date(),
+      )
     ) {
       res.status(410).json({ message: "Pay link expired" });
       return;
     }
 
+    const publicInvoices = invoices.map((invoice) => toPublicInvoice(invoice));
+    const totalCents = invoices.reduce(
+      (sum, invoice) =>
+        invoice.status === "paid" || invoice.status === "void"
+          ? sum
+          : sum + (invoice.amountCents || 0),
+      0,
+    );
+
     res.json({
-      invoice: {
-        ...toPublicInvoice(invoice),
-      },
+      invoice: publicInvoices[0],
+      invoices: publicInvoices,
+      totalCents,
     });
   } catch {
     res.status(500).json({ message: "Failed to resolve pay link" });
@@ -641,42 +656,67 @@ export async function startCheckoutByPayToken(
   try {
     const token = String(req.params.token ?? "");
     const hash = hashPayToken(token);
-    const invoice = await Invoice.findOne({ payTokenHash: hash });
-    if (!invoice) {
+    const invoices = await Invoice.find({ payTokenHash: hash }).sort({
+      issuedAt: 1,
+    });
+    if (invoices.length === 0) {
       res.status(404).json({ message: "Pay link not found" });
       return;
     }
     if (
-      invoice.payTokenExpiresAt &&
-      invoice.payTokenExpiresAt < new Date()
+      invoices.some(
+        (invoice) =>
+          invoice.payTokenExpiresAt && invoice.payTokenExpiresAt < new Date(),
+      )
     ) {
       res.status(410).json({ message: "Pay link expired" });
       return;
     }
-    if (invoice.status === "paid") {
+    const unpaid = invoices.filter(
+      (invoice) => invoice.status !== "paid" && invoice.status !== "void",
+    );
+    if (unpaid.length === 0) {
       res.status(400).json({ message: "Invoice is already paid" });
       return;
     }
 
-    const { adapter, account } = await resolveCheckoutProviderForInvoice(
-      invoice.customerRef,
+    const primary = unpaid[0];
+    const amountCents = unpaid.reduce(
+      (sum, invoice) => sum + (invoice.amountCents || 0),
+      0,
     );
-    const redirectUrl = `${env.clientUrl.replace(/\/$/, "")}/checkout/complete?invoiceId=${invoice._id}`;
-    const buyer = await resolveCheckoutBuyer(invoice.customerRef);
+    const invoiceIds = unpaid.map((invoice) => String(invoice._id));
+    const { adapter, account } = await resolveCheckoutProviderForInvoice(
+      primary.customerRef,
+    );
+    const redirectUrl = `${env.clientUrl.replace(/\/$/, "")}/checkout/complete?invoiceId=${primary._id}`;
+    const buyer = await resolveCheckoutBuyer(primary.customerRef);
     const result = await adapter.createCheckout({
-      invoice,
+      invoice: primary,
       account,
       redirectUrl,
       buyer,
+      amountCents,
+      paymentNote: paymentNoteForInvoiceIds(invoiceIds),
+      checkoutName:
+        unpaid.length > 1
+          ? `Outstanding invoices (${unpaid.length})`
+          : undefined,
+      checkoutDescription:
+        unpaid.length > 1
+          ? unpaid.map((invoice) => invoice.number).join(", ")
+          : undefined,
     });
 
-    invoice.paymentProvider = adapter.name;
-    invoice.paymentProviderAccountRef = account.account._id as Types.ObjectId;
-    invoice.providerCheckoutId = result.checkoutId;
-    invoice.providerOrderId = result.orderId ?? invoice.providerOrderId;
-    await invoice.save();
+    for (const invoice of unpaid) {
+      invoice.paymentProvider = adapter.name;
+      invoice.paymentProviderAccountRef = account.account._id as Types.ObjectId;
+      invoice.providerCheckoutId = result.checkoutId;
+      invoice.providerOrderId = result.orderId ?? invoice.providerOrderId;
+      await invoice.save();
+    }
 
-    res.json({ url: result.url, invoice: toPublicInvoice(invoice) });
+    res.json({ url: result.url, invoice: toPublicInvoice(primary) });
   } catch (err) {
     console.error("[pay] checkout failed", err);
     res.status(500).json({

@@ -17,6 +17,7 @@ export const emailMessagePreviewSchema = z
     contactId: z.string().trim().min(1).optional(),
     renewalYear: z.number().int().min(1970).max(2100).optional(),
     renewalMonth: z.number().int().min(1).max(12).optional(),
+    includePaymentLink: z.boolean().optional(),
   })
   .refine(
     (data) =>
@@ -44,6 +45,7 @@ export const emailMessageSendSchema = z
     emailsPerSecond: z.number().int().min(1).max(10).optional().default(2),
     renewalYear: z.number().int().min(1970).max(2100).optional(),
     renewalMonth: z.number().int().min(1).max(12).optional(),
+    includePaymentLink: z.boolean().optional(),
   })
   .refine(
     (data) =>

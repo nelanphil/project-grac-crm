@@ -9,6 +9,7 @@ import {
   VerifiedWebhookPayment,
 } from "./types";
 import { PaymentAccountWithSecrets } from "../services/paymentProvider.service";
+import { parseInvoiceIdsFromPaymentNote } from "../utils/paymentLinkForCustomer";
 
 function squareClient(account: PaymentAccountWithSecrets): SquareClient {
   const token = account.secrets.accessToken;
@@ -98,25 +99,30 @@ export const squareAdapter: PaymentProviderAdapter = {
     const { invoice, account, redirectUrl, buyer } = input;
     const client = squareClient(account);
     const locationId = account.account.locationId!;
+    const amountCents = input.amountCents ?? invoice.amountCents;
+    const paymentNote = input.paymentNote ?? `invoice:${invoice._id}`;
 
     const name =
-      invoice.lineItems[0]?.description || `Invoice ${invoice.number}`;
+      input.checkoutName ||
+      invoice.lineItems[0]?.description ||
+      `Invoice ${invoice.number}`;
 
     const prePopulatedData = buildPrefill(buyer);
 
     const createLink = async (prefill: SquarePrefill) =>
       client.checkout.paymentLinks.create({
         idempotencyKey: randomUUID(),
-        description: `Invoice ${invoice.number}`,
+        description:
+          input.checkoutDescription || `Invoice ${invoice.number}`,
         quickPay: {
           name,
           priceMoney: {
-            amount: BigInt(invoice.amountCents),
+            amount: BigInt(amountCents),
             currency: (invoice.currency || "USD") as "USD",
           },
           locationId,
         },
-        paymentNote: `invoice:${invoice._id}`,
+        paymentNote,
         checkoutOptions: {
           redirectUrl,
           askForShippingAddress: false,
@@ -214,14 +220,15 @@ export const squareAdapter: PaymentProviderAdapter = {
       const payment = data?.payment;
       const status = String(payment?.status || "").toUpperCase();
       const note = String(payment?.note || "");
-      const invoiceIdMatch = note.match(/invoice:([a-f0-9]{24})/i);
+      const invoiceIds = parseInvoiceIdsFromPaymentNote(note);
 
       if (status === "COMPLETED") {
         return {
           status: "paid",
           providerPaymentId: payment?.id,
           providerOrderId: payment?.orderId,
-          invoiceId: invoiceIdMatch?.[1],
+          invoiceId: invoiceIds[0],
+          invoiceIds,
           raw: rawBody,
         };
       }
@@ -230,7 +237,8 @@ export const squareAdapter: PaymentProviderAdapter = {
           status: "failed",
           providerPaymentId: payment?.id,
           providerOrderId: payment?.orderId,
-          invoiceId: invoiceIdMatch?.[1],
+          invoiceId: invoiceIds[0],
+          invoiceIds,
           raw: rawBody,
         };
       }
@@ -239,10 +247,14 @@ export const squareAdapter: PaymentProviderAdapter = {
     if (type === "order.updated") {
       const order = data?.order;
       const state = String(order?.state || "").toUpperCase();
+      const note = String(order?.note || order?.metadata?.paymentNote || "");
+      const invoiceIds = parseInvoiceIdsFromPaymentNote(note);
       if (state === "COMPLETED") {
         return {
           status: "paid",
           providerOrderId: order?.id,
+          invoiceId: invoiceIds[0],
+          invoiceIds,
           raw: rawBody,
         };
       }

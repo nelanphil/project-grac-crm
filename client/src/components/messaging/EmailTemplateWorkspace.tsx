@@ -40,6 +40,9 @@ export type EmailTemplateWorkspaceProps = {
   previewFromLabel?: string;
   previewToLabel?: string;
   previewSample: boolean;
+
+  includePaymentLink?: boolean;
+  onIncludePaymentLinkChange?: (value: boolean) => void;
 };
 
 export default function EmailTemplateWorkspace({
@@ -68,6 +71,8 @@ export default function EmailTemplateWorkspace({
   previewFromLabel,
   previewToLabel,
   previewSample,
+  includePaymentLink,
+  onIncludePaymentLinkChange,
 }: EmailTemplateWorkspaceProps) {
   const [previewExpanded, setPreviewExpanded] = useState(false);
 
@@ -206,6 +211,26 @@ export default function EmailTemplateWorkspace({
             </button>
           ))}
         </div>
+
+        {onIncludePaymentLinkChange ? (
+          <label className="mb-3 flex items-start gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm">
+            <input
+              type="checkbox"
+              checked={Boolean(includePaymentLink)}
+              onChange={(e) => onIncludePaymentLinkChange(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-medium text-brand-dark">
+                Include payment link for all unpaid invoices
+              </span>
+              <span className="mt-0.5 block text-xs text-neutral-500">
+                Adds a Pay securely button covering every open invoice, even
+                without inserting {"{{payment_link}}"}.
+              </span>
+            </span>
+          </label>
+        ) : null}
 
         <EmailBodyEditor
           ref={bodyRef}

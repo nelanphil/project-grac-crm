@@ -1946,8 +1946,16 @@ export async function createInvoicePayLink(
 
 export async function getInvoiceByPayToken(
   token: string,
-): Promise<{ invoice: InvoiceItem }> {
-  return authRequest<{ invoice: InvoiceItem }>(`/pay/${token}`, {
+): Promise<{
+  invoice: InvoiceItem;
+  invoices?: InvoiceItem[];
+  totalCents?: number;
+}> {
+  return authRequest<{
+    invoice: InvoiceItem;
+    invoices?: InvoiceItem[];
+    totalCents?: number;
+  }>(`/pay/${token}`, {
     method: "GET",
   });
 }
@@ -3830,6 +3838,7 @@ export async function previewEmailMessage(
     contactId?: string;
     renewalYear?: number;
     renewalMonth?: number;
+    includePaymentLink?: boolean;
   },
 ): Promise<EmailPreviewResult> {
   return authRequest<EmailPreviewResult>("/email-messages/preview", {
@@ -3853,6 +3862,7 @@ export async function sendEmailMessages(
     emailsPerSecond?: number;
     renewalYear?: number;
     renewalMonth?: number;
+    includePaymentLink?: boolean;
   },
 ): Promise<EmailSendResponse> {
   return authRequest<EmailSendResponse>("/email-messages/send", {

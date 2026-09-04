@@ -16,6 +16,11 @@ export type CreateCheckoutInput = {
   redirectUrl: string;
   /** Optional CRM contact data used to prefill provider checkout forms. */
   buyer?: CheckoutBuyer;
+  /** Combined checkout total; defaults to invoice.amountCents. */
+  amountCents?: number;
+  paymentNote?: string;
+  checkoutName?: string;
+  checkoutDescription?: string;
 };
 
 export type CreateCheckoutResult = {
@@ -28,6 +33,7 @@ export type VerifiedWebhookPayment = {
   providerPaymentId?: string;
   providerOrderId?: string;
   invoiceId?: string;
+  invoiceIds?: string[];
   status: "paid" | "failed" | "ignored";
   raw?: unknown;
 };

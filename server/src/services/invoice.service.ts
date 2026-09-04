@@ -174,23 +174,59 @@ export async function findInvoiceForWebhook(params: {
   providerOrderId?: string;
   providerPaymentId?: string;
 }): Promise<IInvoice | null> {
-  if (params.invoiceId && Types.ObjectId.isValid(params.invoiceId)) {
-    const byId = await Invoice.findById(params.invoiceId);
-    if (byId) return byId;
+  const invoices = await findInvoicesForWebhook(params);
+  return invoices[0] ?? null;
+}
+
+export async function findInvoicesForWebhook(params: {
+  invoiceId?: string;
+  invoiceIds?: string[];
+  providerOrderId?: string;
+  providerPaymentId?: string;
+}): Promise<IInvoice[]> {
+  const found = new Map<string, IInvoice>();
+
+  const ids = [
+    ...new Set(
+      [...(params.invoiceIds ?? []), params.invoiceId].filter(
+        (id): id is string => Boolean(id) && Types.ObjectId.isValid(id),
+      ),
+    ),
+  ];
+  if (ids.length > 0) {
+    const byIds = await Invoice.find({ _id: { $in: ids } });
+    for (const invoice of byIds) found.set(String(invoice._id), invoice);
   }
   if (params.providerPaymentId) {
-    const byPayment = await Invoice.findOne({
+    const byPayment = await Invoice.find({
       providerPaymentId: params.providerPaymentId,
     });
-    if (byPayment) return byPayment;
+    for (const invoice of byPayment) found.set(String(invoice._id), invoice);
   }
   if (params.providerOrderId) {
-    const byOrder = await Invoice.findOne({
+    const byOrder = await Invoice.find({
       providerOrderId: params.providerOrderId,
     });
-    if (byOrder) return byOrder;
+    for (const invoice of byOrder) found.set(String(invoice._id), invoice);
   }
-  return null;
+
+  if (found.size === 0 && ids.length === 1) {
+    const one = await Invoice.findById(ids[0]);
+    if (one) found.set(String(one._id), one);
+  }
+
+  if (found.size === 1) {
+    const only = [...found.values()][0];
+    if (only.payTokenHash) {
+      const siblings = await Invoice.find({
+        payTokenHash: only.payTokenHash,
+        status: { $in: ["open", "draft", "failed"] },
+      });
+      for (const invoice of siblings) found.set(String(invoice._id), invoice);
+    }
+  }
+
+  return [...found.values()];
 }
 
 export function dollarsToCents(amount: number): number {
