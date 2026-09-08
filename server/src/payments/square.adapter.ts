@@ -6,18 +6,16 @@ import {
   CreateCheckoutInput,
   CreateCheckoutResult,
   PaymentProviderAdapter,
+  RetrievedProviderPayment,
   VerifiedWebhookPayment,
 } from "./types";
 import { PaymentAccountWithSecrets } from "../services/paymentProvider.service";
 import { parseInvoiceIdsFromPaymentNote } from "../utils/paymentLinkForCustomer";
 
-function squareClient(account: PaymentAccountWithSecrets): SquareClient {
+function squareClientForToken(account: PaymentAccountWithSecrets): SquareClient {
   const token = account.secrets.accessToken;
   if (!token) {
     throw new Error("Square access token is not configured");
-  }
-  if (!account.account.locationId) {
-    throw new Error("Square location ID is not configured");
   }
 
   return new SquareClient({
@@ -27,6 +25,31 @@ function squareClient(account: PaymentAccountWithSecrets): SquareClient {
         ? SquareEnvironment.Production
         : SquareEnvironment.Sandbox,
   });
+}
+
+function squareClient(account: PaymentAccountWithSecrets): SquareClient {
+  if (!account.account.locationId) {
+    throw new Error("Square location ID is not configured");
+  }
+  return squareClientForToken(account);
+}
+
+function mapSquarePaymentStatus(
+  status: string,
+): RetrievedProviderPayment["status"] {
+  const normalized = status.toUpperCase();
+  if (normalized === "COMPLETED") return "paid";
+  if (normalized === "FAILED" || normalized === "CANCELED") return "failed";
+  return "pending";
+}
+
+function mapSquareOrderState(
+  state: string,
+): RetrievedProviderPayment["status"] {
+  const normalized = state.toUpperCase();
+  if (normalized === "COMPLETED") return "paid";
+  if (normalized === "CANCELED") return "failed";
+  return "pending";
 }
 
 async function verifySquareSignature(
@@ -261,5 +284,91 @@ export const squareAdapter: PaymentProviderAdapter = {
     }
 
     return { status: "ignored", raw: rawBody };
+  },
+
+  async retrievePayment(
+    account: PaymentAccountWithSecrets,
+    paymentId: string,
+  ): Promise<RetrievedProviderPayment | null> {
+    const client = squareClientForToken(account);
+    const response = await client.payments.get({ paymentId });
+    const payment = response.payment;
+    if (!payment?.id) return null;
+    const note = String(payment.note || "");
+    return {
+      status: mapSquarePaymentStatus(String(payment.status || "")),
+      providerPaymentId: payment.id,
+      providerOrderId: payment.orderId,
+      invoiceIds: parseInvoiceIdsFromPaymentNote(note),
+      note,
+    };
+  },
+
+  async retrieveOrder(
+    account: PaymentAccountWithSecrets,
+    orderId: string,
+  ): Promise<RetrievedProviderPayment | null> {
+    const client = squareClientForToken(account);
+    const response = await client.orders.get({ orderId });
+    const order = response.order;
+    if (!order?.id) return null;
+
+    const notes = [
+      order.metadata?.paymentNote,
+      ...(order.tenders ?? []).map((tender) => tender.note),
+    ].filter((value): value is string => Boolean(value));
+    const invoiceIds = [
+      ...new Set(notes.flatMap((note) => parseInvoiceIdsFromPaymentNote(note))),
+    ];
+    const note = notes[0] || "";
+
+    const stateStatus = mapSquareOrderState(String(order.state || ""));
+    if (stateStatus !== "pending") {
+      return {
+        status: stateStatus,
+        providerOrderId: order.id,
+        invoiceIds,
+        note,
+      };
+    }
+
+    // Payment Links often leave the order OPEN after a completed card charge.
+    let pending: RetrievedProviderPayment | null = null;
+    for (const tender of order.tenders ?? []) {
+      const paymentId = tender.paymentId;
+      if (!paymentId) continue;
+      try {
+        const paymentResponse = await client.payments.get({ paymentId });
+        const payment = paymentResponse.payment;
+        if (!payment?.id) continue;
+        const paymentNote = String(payment.note || tender.note || note);
+        const retrieved: RetrievedProviderPayment = {
+          status: mapSquarePaymentStatus(String(payment.status || "")),
+          providerPaymentId: payment.id,
+          providerOrderId: order.id,
+          invoiceIds: [
+            ...new Set([
+              ...invoiceIds,
+              ...parseInvoiceIdsFromPaymentNote(paymentNote),
+            ]),
+          ],
+          note: paymentNote,
+        };
+        if (retrieved.status === "paid") return retrieved;
+        if (retrieved.status === "failed") return retrieved;
+        pending = retrieved;
+      } catch {
+        // Try the next tender if Square has not indexed this payment yet.
+      }
+    }
+
+    return (
+      pending ?? {
+        status: "pending",
+        providerOrderId: order.id,
+        invoiceIds,
+        note,
+      }
+    );
   },
 };

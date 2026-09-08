@@ -389,8 +389,9 @@ export default function EmailCreatePanel({
 
           {showPaymentLinkColumn ? (
             <p className="mb-2 text-xs text-neutral-500">
-              “Will send” means this contact has unpaid invoices and will get a
-              Pay securely button. “No button” means they have none.
+              “Will send” means this contact has unpaid invoices or unpaid work
+              orders and will get a Pay securely button. “No button” means they
+              have none.
             </p>
           ) : null}
 
@@ -841,8 +842,8 @@ export default function EmailCreatePanel({
             </h2>
             {showPaymentLinkColumn ? (
               <p className="mb-3 text-xs text-neutral-500">
-                Recipients marked “No button” have no unpaid invoices, so their
-                email will omit the Pay securely button.
+                Recipients marked “No button” have no unpaid invoices or unpaid
+                work orders, so their email will omit the Pay securely button.
               </p>
             ) : null}
             {selectedContacts.length === 0 ? (

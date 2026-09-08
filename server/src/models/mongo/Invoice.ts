@@ -35,6 +35,9 @@ export interface IInvoice extends Document {
   templateRef?: Types.ObjectId | null;
   lineItems: IInvoiceLineItem[];
   amountCents: number;
+  originalAmountCents?: number | null;
+  discountCode?: string | null;
+  discountCents?: number;
   currency: string;
   status: InvoiceStatus;
   dueDate: Date | null;
@@ -94,6 +97,9 @@ const invoiceSchema = new Schema<IInvoice>(
     },
     lineItems: { type: [lineItemSchema], default: [] },
     amountCents: { type: Number, required: true, min: 0 },
+    originalAmountCents: { type: Number, default: null, min: 0 },
+    discountCode: { type: String, default: null, trim: true, uppercase: true },
+    discountCents: { type: Number, default: 0, min: 0 },
     currency: { type: String, default: "USD" },
     status: {
       type: String,

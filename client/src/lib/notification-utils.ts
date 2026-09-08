@@ -20,13 +20,24 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   invoice: "Invoice",
   product: "Product",
   estimate: "Estimate",
+  discount_code: "Discount code",
 };
 
 export function notificationEntityLabel(type: NotificationEntityType): string {
   return ENTITY_LABELS[type] ?? type;
 }
 
-export function notificationHref(item: NotificationItem): string | null {
+export function notificationHref(
+  item: NotificationItem,
+  role?: string,
+): string | null {
+  if (role === "customer") {
+    if (item.entityType === "invoice") {
+      return `/dashboard/orders/detail?id=${item.entityId}`;
+    }
+    return "/dashboard";
+  }
+
   if (item.customerRef) {
     return `/dashboard/customers/detail?id=${item.customerRef}`;
   }
@@ -53,6 +64,8 @@ export function notificationHref(item: NotificationItem): string | null {
       return "/dashboard/orders";
     case "product":
       return "/dashboard/products";
+    case "discount_code":
+      return "/dashboard/discount-codes";
     case "estimate":
       return "/dashboard/estimates";
     case "lead":

@@ -5,7 +5,13 @@ import { Package, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
+import TablePagination from "@/components/ui/TablePagination";
 import { useAuthStore } from "@/store/useAuthStore";
+import {
+  DEFAULT_PAGE_SIZE,
+  paginationRange,
+  type PageSize,
+} from "@/lib/pagination";
 import {
   ApiError,
   createManufacturer,
@@ -287,11 +293,20 @@ function ProductsContent() {
   const [newManufacturerName, setNewManufacturerName] = useState("");
   const [addingManufacturerSaving, setAddingManufacturerSaving] =
     useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 250);
     return () => clearTimeout(t);
   }, [search]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [showInactive]);
 
   async function reload() {
     if (!token) return;
@@ -347,6 +362,29 @@ function ProductsContent() {
   }, [modalOpen, token]);
 
   const visible = useMemo(() => products, [products]);
+  const { safePage, totalPages, rangeStart, rangeEnd } = paginationRange(
+    page,
+    pageSize,
+    visible.length,
+  );
+  const paged = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return visible.slice(start, start + pageSize);
+  }, [visible, safePage, pageSize]);
+  const paginationProps = {
+    rangeStart,
+    rangeEnd,
+    total: visible.length,
+    pageSize,
+    safePage,
+    totalPages,
+    onPageSizeChange: (size: PageSize) => {
+      setPageSize(size);
+      setPage(1);
+    },
+    onPrev: () => setPage((p) => Math.max(1, p - 1)),
+    onNext: () => setPage((p) => Math.min(totalPages, p + 1)),
+  };
   const previewAltCode = buildProductAltCode(form.productCode);
 
   function resetManufacturerAdd() {
@@ -530,7 +568,12 @@ function ProductsContent() {
               ) : null}
             </div>
           }
-          mobile={visible.map((product) => (
+          mobile={
+            <div className="space-y-3">
+              <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+                <TablePagination {...paginationProps} position="top" />
+              </div>
+              {paged.map((product) => (
             <MobileDataCard
               key={product._id}
               title={productCodeOf(product)}
@@ -594,8 +637,14 @@ function ProductsContent() {
               }
             />
           ))}
+              <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+                <TablePagination {...paginationProps} position="bottom" />
+              </div>
+            </div>
+          }
           desktop={
             <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+              <TablePagination {...paginationProps} position="top" />
               <table className="min-w-full divide-y divide-neutral-100 text-sm">
                 <thead className="bg-neutral-50">
                   <tr>
@@ -623,7 +672,7 @@ function ProductsContent() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
-                  {visible.map((product) => (
+                  {paged.map((product) => (
                     <tr key={product._id} className="hover:bg-neutral-50">
                       <td className="px-6 py-4 font-medium text-brand-dark">
                         <div>{productCodeOf(product)}</div>
@@ -686,6 +735,7 @@ function ProductsContent() {
                   ))}
                 </tbody>
               </table>
+              <TablePagination {...paginationProps} position="bottom" />
             </div>
           }
         />

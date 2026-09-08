@@ -1,6 +1,7 @@
 import { US_STATES } from "@/lib/constants";
 import type { EstimateFormData } from "@/lib/estimate-types";
 import SmsConsentDisclosure from "@/components/legal/SmsConsentDisclosure";
+import PhoneInput from "@/components/ui/PhoneInput";
 
 interface LocationStepProps {
   data: EstimateFormData;
@@ -116,9 +117,8 @@ export default function LocationStep({ data, errors, onChange }: LocationStepPro
         </div>
 
         <Field id="phone" label="Phone Number" error={errors.phone}>
-          <input
+          <PhoneInput
             id="phone"
-            type="tel"
             placeholder="Phone Number"
             value={data.phone}
             onChange={(e) => onChange("phone", e.target.value)}

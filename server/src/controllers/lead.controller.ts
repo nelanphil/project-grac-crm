@@ -117,8 +117,8 @@ export async function listLeads(
   try {
     const pageRaw = parseInt(String(req.query.page ?? "1"), 10);
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
-    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "25"), 10);
-    const pageSize = LEAD_PAGE_SIZES.includes(pageSizeRaw) ? pageSizeRaw : 25;
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "50"), 10);
+    const pageSize = LEAD_PAGE_SIZES.includes(pageSizeRaw) ? pageSizeRaw : 50;
 
     const statusRaw = String(req.query.status ?? "");
     const status = LEAD_STATUSES.has(statusRaw) ? statusRaw : null;

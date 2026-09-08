@@ -7,10 +7,14 @@ import {
   CustomerAddress,
   CustomerAddressPropertyType,
 } from "../models/mongo/CustomerAddress";
-import { CustomerContact } from "../models/mongo/CustomerContact";
+import {
+  activeContactFilter,
+  CustomerContact,
+} from "../models/mongo/CustomerContact";
 import { CustomerNote } from "../models/mongo/CustomerNote";
 import { Contract } from "../models/mongo/Contract";
 import { Equipment } from "../models/mongo/Equipment";
+import { Invoice } from "../models/mongo/Invoice";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import {
   createCustomerAddressSchema,
@@ -28,16 +32,22 @@ import {
   type CreateCustomerContactNested,
 } from "../schemas/customer.schema";
 import {
+  applyContactPrimaryFlag,
+  clearOtherPrimaryContacts,
   ensureCustomerContactFromFlat,
+  LastContactError,
+  softDeleteCustomerContact,
   syncCustomerPrimaryContactFields,
 } from "../utils/customerContacts";
-import { ensureCustomerUser } from "../utils/ensureCustomerUser";
+import { ensureCustomerLoginForPrimaryEmail } from "../utils/ensureCustomerLogin";
 import {
   EMAIL_CONFLICT_ADMIN,
   findEmailConflict,
   normalizeAccountEmail,
 } from "../utils/provisionCustomerAccount";
 import {
+  applyAddressPrimaryFlag,
+  clearOtherPrimary,
   customerHasSiteData,
   defaultAddressLabel,
   ensureCustomerSiteFromFlat,
@@ -59,6 +69,11 @@ import {
 } from "../utils/ownerTerritory";
 import { User } from "../models/mongo/User";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
+import { mintCheckoutKey } from "../utils/checkoutKey";
+import {
+  customerOwnedFilter,
+  reassignCustomerOwnedRecords,
+} from "../utils/reassignCustomerRecords";
 
 function parseLastSvc(value: unknown): Date | null | undefined {
   if (value === undefined) return undefined;
@@ -369,32 +384,13 @@ async function loadSitesForCustomer(customerId: mongoose.Types.ObjectId) {
 }
 
 async function loadContactsForCustomer(customerId: mongoose.Types.ObjectId) {
-  const contacts = await CustomerContact.find({ customerRef: customerId })
+  const contacts = await CustomerContact.find({
+    customerRef: customerId,
+    ...activeContactFilter,
+  })
     .sort({ isPrimary: -1, createdAt: 1 })
     .lean();
   return contacts.map(formatContact);
-}
-
-async function clearOtherPrimary(
-  customerId: mongoose.Types.ObjectId,
-  keepAddressId?: mongoose.Types.ObjectId,
-): Promise<void> {
-  const filter: Record<string, unknown> = { customerRef: customerId };
-  if (keepAddressId) {
-    filter._id = { $ne: keepAddressId };
-  }
-  await CustomerAddress.updateMany(filter, { $set: { isPrimary: false } });
-}
-
-async function clearOtherPrimaryContacts(
-  customerId: mongoose.Types.ObjectId,
-  keepContactId?: mongoose.Types.ObjectId,
-): Promise<void> {
-  const filter: Record<string, unknown> = { customerRef: customerId };
-  if (keepContactId) {
-    filter._id = { $ne: keepContactId };
-  }
-  await CustomerContact.updateMany(filter, { $set: { isPrimary: false } });
 }
 
 // GET /customers — exclude merged; ?deleted=1 for soft-deleted only.
@@ -469,10 +465,10 @@ export async function listCustomers(
 
     const pageRaw = parseInt(String(req.query.page ?? "1"), 10);
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
-    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "25"), 10);
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "50"), 10);
     const pageSize = CUSTOMER_PAGE_SIZES.includes(pageSizeRaw)
       ? pageSizeRaw
-      : 25;
+      : 50;
 
     const sortDir = req.query.sortDir === "desc" ? -1 : 1;
     const sortKeyRaw = String(req.query.sortKey ?? "customer");
@@ -755,10 +751,10 @@ export async function listContacts(
   try {
     const pageRaw = parseInt(String(req.query.page ?? "1"), 10);
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
-    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "25"), 10);
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "50"), 10);
     const pageSize = CONTACT_PAGE_SIZES.includes(pageSizeRaw)
       ? pageSizeRaw
-      : 25;
+      : 50;
 
     const sortDir: 1 | -1 = req.query.sortDir === "desc" ? -1 : 1;
     const sortKeyRaw = String(req.query.sortKey ?? "name");
@@ -805,6 +801,7 @@ export async function listContacts(
       : null;
 
     const pipeline: mongoose.PipelineStage[] = [
+      { $match: activeContactFilter },
       {
         $lookup: {
           from: "customers",
@@ -949,7 +946,10 @@ export async function createCustomer(
         return;
       }
       seenEmails.add(contactEmail);
-      const emailConflict = await findEmailConflict(contactEmail);
+    }
+    const primaryEmail = normalizeAccountEmail(trimStr(primary.email));
+    if (primaryEmail) {
+      const emailConflict = await findEmailConflict(primaryEmail);
       if (emailConflict) {
         res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
         return;
@@ -1114,11 +1114,12 @@ export async function createCustomer(
       deletedAt: null,
       mergedIntoRef: null,
       mergedAt: null,
+      checkoutKey: mintCheckoutKey(),
     });
 
     try {
       for (const contact of contacts) {
-        const contactDoc = await CustomerContact.create({
+        await CustomerContact.create({
           customerRef: customer._id,
           first: trimStr(contact.first),
           last: trimStr(contact.last),
@@ -1128,8 +1129,8 @@ export async function createCustomer(
           isPrimary: contact.isPrimary === true,
           legacyCustomerId: legacyId,
         });
-        await ensureCustomerUser(contactDoc);
       }
+      await ensureCustomerLoginForPrimaryEmail(customer._id);
 
       for (const addr of preparedAddresses) {
         const addressDoc = await CustomerAddress.create({
@@ -1580,6 +1581,7 @@ export async function getCustomerDuplicates(
 
     const contacts = await CustomerContact.find({
       customerRef: { $in: customers.map((c) => c._id) },
+      ...activeContactFilter,
     })
       .select("customerRef phone")
       .lean();
@@ -1933,32 +1935,11 @@ export async function updateCustomerAddress(
       address.countyManual = parsed.data.countyManual;
     }
 
-    if (parsed.data.isPrimary === true) {
-      await clearOtherPrimary(
-        customer._id,
-        address._id as mongoose.Types.ObjectId,
-      );
-      address.isPrimary = true;
-    } else if (parsed.data.isPrimary === false && address.isPrimary) {
-      // Keep at least one primary if this is the only address
-      const others = await CustomerAddress.countDocuments({
-        customerRef: customer._id,
-        _id: { $ne: address._id },
-      });
-      if (others === 0) {
-        address.isPrimary = true;
-      } else {
-        address.isPrimary = false;
-        const next = await CustomerAddress.findOne({
-          customerRef: customer._id,
-          _id: { $ne: address._id },
-        }).sort({ createdAt: 1 });
-        if (next) {
-          next.isPrimary = true;
-          await next.save();
-        }
-      }
-    }
+    await applyAddressPrimaryFlag(
+      customer._id,
+      address,
+      parsed.data.isPrimary,
+    );
 
     await address.save();
     await syncCustomerPrimaryFields(customer._id);
@@ -2423,18 +2404,23 @@ export async function createCustomerContact(
     }
 
     const contactEmail = normalizeAccountEmail(parsed.data.email ?? "");
-    if (contactEmail) {
-      const emailConflict = await findEmailConflict(contactEmail);
+    const existingCount = await CustomerContact.countDocuments({
+      customerRef: customer._id,
+      ...activeContactFilter,
+    });
+    const makePrimary = parsed.data.isPrimary === true || existingCount === 0;
+    const previousEmail = customer.email ?? "";
+
+    if (makePrimary && contactEmail) {
+      const emailConflict = await findEmailConflict(contactEmail, {
+        excludeCustomerId: customer._id,
+        allowCustomerUser: true,
+      });
       if (emailConflict) {
         res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
         return;
       }
     }
-
-    const existingCount = await CustomerContact.countDocuments({
-      customerRef: customer._id,
-    });
-    const makePrimary = parsed.data.isPrimary === true || existingCount === 0;
 
     if (makePrimary) {
       await clearOtherPrimaryContacts(customer._id);
@@ -2451,9 +2437,11 @@ export async function createCustomerContact(
       legacyCustomerId: null,
     });
 
-    await ensureCustomerUser(contact);
     const refreshed = await CustomerContact.findById(contact._id);
     await syncCustomerPrimaryContactFields(customer._id);
+    if (makePrimary) {
+      await ensureCustomerLoginForPrimaryEmail(customer._id, { previousEmail });
+    }
 
     const custName = customerDisplayName(customer);
     const contactName = `${contact.first} ${contact.last}`.trim() || "Contact";
@@ -2510,61 +2498,53 @@ export async function updateCustomerContact(
     const contact = await CustomerContact.findOne({
       _id: contactId,
       customerRef: customer._id,
+      ...activeContactFilter,
     });
     if (!contact) {
       res.status(404).json({ message: "Contact not found" });
       return;
     }
 
+    const previousEmail = customer.email ?? "";
+    const wasPrimary = contact.isPrimary;
+
     if (parsed.data.first !== undefined) contact.first = parsed.data.first;
     if (parsed.data.last !== undefined) contact.last = parsed.data.last;
     if (parsed.data.phone !== undefined) contact.phone = parsed.data.phone;
     if (parsed.data.email !== undefined) {
-      const nextEmail = normalizeAccountEmail(parsed.data.email);
-      if (nextEmail) {
-        const emailConflict = await findEmailConflict(nextEmail, {
-          excludeContactId: contact._id,
-          excludeUserId: contact.userRef ?? null,
-        });
-        if (emailConflict) {
-          res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
-          return;
-        }
-      }
-      contact.email = nextEmail;
+      contact.email = normalizeAccountEmail(parsed.data.email);
     }
     if (parsed.data.label !== undefined) contact.label = parsed.data.label;
 
-    if (parsed.data.isPrimary === true) {
-      await clearOtherPrimaryContacts(
-        customer._id,
-        contact._id as mongoose.Types.ObjectId,
-      );
-      contact.isPrimary = true;
-    } else if (parsed.data.isPrimary === false && contact.isPrimary) {
-      const others = await CustomerContact.countDocuments({
-        customerRef: customer._id,
-        _id: { $ne: contact._id },
+    const willBePrimary =
+      parsed.data.isPrimary === true ||
+      (parsed.data.isPrimary !== false && contact.isPrimary);
+    const nextPrimaryEmail = willBePrimary
+      ? normalizeAccountEmail(contact.email ?? "")
+      : "";
+    if (willBePrimary && nextPrimaryEmail) {
+      const emailConflict = await findEmailConflict(nextPrimaryEmail, {
+        excludeCustomerId: customer._id,
+        allowCustomerUser: true,
       });
-      if (others === 0) {
-        contact.isPrimary = true;
-      } else {
-        contact.isPrimary = false;
-        const next = await CustomerContact.findOne({
-          customerRef: customer._id,
-          _id: { $ne: contact._id },
-        }).sort({ createdAt: 1 });
-        if (next) {
-          next.isPrimary = true;
-          await next.save();
-        }
+      if (emailConflict) {
+        res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
+        return;
       }
     }
 
+    await applyContactPrimaryFlag(
+      customer._id,
+      contact,
+      parsed.data.isPrimary,
+    );
+
     await contact.save();
-    await ensureCustomerUser(contact);
     const refreshed = await CustomerContact.findById(contact._id);
     await syncCustomerPrimaryContactFields(customer._id);
+    if (wasPrimary || willBePrimary) {
+      await ensureCustomerLoginForPrimaryEmail(customer._id, { previousEmail });
+    }
 
     const custName = customerDisplayName(customer);
     const contactName = `${contact.first} ${contact.last}`.trim() || "Contact";
@@ -2613,36 +2593,28 @@ export async function deleteCustomerContact(
     const contact = await CustomerContact.findOne({
       _id: contactId,
       customerRef: customer._id,
+      ...activeContactFilter,
     });
     if (!contact) {
       res.status(404).json({ message: "Contact not found" });
       return;
     }
 
-    const total = await CustomerContact.countDocuments({
-      customerRef: customer._id,
-    });
-    if (total <= 1) {
-      res.status(409).json({
-        message: "Cannot delete the last contact on a customer.",
-      });
-      return;
+    const previousEmail = customer.email ?? "";
+    let wasPrimary = false;
+    try {
+      ({ wasPrimary } = await softDeleteCustomerContact(contact));
+    } catch (err) {
+      if (err instanceof LastContactError) {
+        res.status(409).json({ message: err.message });
+        return;
+      }
+      throw err;
     }
-
-    const wasPrimary = contact.isPrimary;
-    await contact.deleteOne();
 
     if (wasPrimary) {
-      const next = await CustomerContact.findOne({
-        customerRef: customer._id,
-      }).sort({ createdAt: 1 });
-      if (next) {
-        next.isPrimary = true;
-        await next.save();
-      }
+      await ensureCustomerLoginForPrimaryEmail(customer._id, { previousEmail });
     }
-
-    await syncCustomerPrimaryContactFields(customer._id);
 
     const custName = customerDisplayName(customer);
     logNotificationAsync({
@@ -2714,6 +2686,8 @@ export async function getMergePreview(
       sourceContracts,
       survivorNoteCount,
       sourceNoteCount,
+      survivorInvoiceCount,
+      sourceInvoiceCount,
     ] = await Promise.all([
       CustomerAddress.find({ customerRef: survivor._id })
         .sort({ isPrimary: -1, createdAt: 1 })
@@ -2723,30 +2697,40 @@ export async function getMergePreview(
         .lean(),
       Equipment.find({ customerRef: survivor._id }).lean(),
       Equipment.find({ customerRef: source._id }).lean(),
-      CustomerContact.find({ customerRef: survivor._id })
+      CustomerContact.find({
+        customerRef: survivor._id,
+        ...activeContactFilter,
+      })
         .sort({ isPrimary: -1, createdAt: 1 })
         .lean(),
-      CustomerContact.find({ customerRef: source._id })
+      CustomerContact.find({
+        customerRef: source._id,
+        ...activeContactFilter,
+      })
         .sort({ isPrimary: -1, createdAt: 1 })
         .lean(),
-      WorkOrder.find({ customerId: survivor.legacyId })
+      WorkOrder.find(customerOwnedFilter(survivor._id, survivor.legacyId))
         .select("_id addressRef")
         .lean(),
-      WorkOrder.find({ customerId: source.legacyId })
+      WorkOrder.find(customerOwnedFilter(source._id, source.legacyId))
         .select("_id addressRef")
         .lean(),
-      Contract.find({ customerId: survivor.legacyId })
+      Contract.find(customerOwnedFilter(survivor._id, survivor.legacyId))
         .select(
           "_id description contractType templateId renewalDueDate addressRef equipmentRef",
         )
         .lean(),
-      Contract.find({ customerId: source.legacyId })
+      Contract.find(customerOwnedFilter(source._id, source.legacyId))
         .select(
           "_id description contractType templateId renewalDueDate addressRef equipmentRef",
         )
         .lean(),
       CustomerNote.countDocuments({ customerRef: survivor._id }),
       CustomerNote.countDocuments({ customerRef: source._id }),
+      Invoice.countDocuments(
+        customerOwnedFilter(survivor._id, survivor.legacyId),
+      ),
+      Invoice.countDocuments(customerOwnedFilter(source._id, source.legacyId)),
     ]);
 
     const templateIds = [
@@ -2951,6 +2935,7 @@ export async function getMergePreview(
       addresses: survivorAddresses.length + sourceAddresses.length,
       equipment: survivorEquipment.length + sourceEquipment.length,
       workOrders: survivorWos.length + sourceWos.length,
+      invoices: survivorInvoiceCount + sourceInvoiceCount,
       contracts: survivorContracts.length + sourceContracts.length,
       notes: survivorNoteCount + sourceNoteCount,
       contacts: survivorContacts.length + sourceContacts.length,
@@ -3030,6 +3015,7 @@ export async function mergeCustomers(
 
     const survivor = await Customer.findById(survivorId);
     const source = await Customer.findById(sourceCustomerId);
+    const previousSurvivorEmail = survivor?.email ?? "";
 
     if (!survivor || !source) {
       res.status(404).json({ message: "Customer not found" });
@@ -3090,20 +3076,17 @@ export async function mergeCustomers(
         tagFields.equipmentRef = sourceEquipmentId;
       }
 
-      await WorkOrder.updateMany(
-        {
-          customerId: source.legacyId,
-          $or: [{ addressRef: null }, { addressRef: { $exists: false } }],
-        },
-        { $set: tagFields },
-      );
-      await Contract.updateMany(
-        {
-          customerId: source.legacyId,
-          $or: [{ addressRef: null }, { addressRef: { $exists: false } }],
-        },
-        { $set: tagFields },
-      );
+      const untaggedOnSource = {
+        $and: [
+          customerOwnedFilter(
+            source._id as mongoose.Types.ObjectId,
+            source.legacyId,
+          ),
+          { $or: [{ addressRef: null }, { addressRef: { $exists: false } }] },
+        ],
+      };
+      await WorkOrder.updateMany(untaggedOnSource, { $set: tagFields });
+      await Contract.updateMany(untaggedOnSource, { $set: tagFields });
     }
 
     // Source addresses become non-primary on survivor (survivor keeps its primary)
@@ -3117,25 +3100,12 @@ export async function mergeCustomers(
       { $set: { customerRef: survivor._id } },
     );
 
-    await WorkOrder.updateMany(
-      { customerId: source.legacyId },
-      {
-        $set: {
-          customerId: survivor.legacyId,
-          customerRef: survivor._id,
-        },
-      },
-    );
-
-    await Contract.updateMany(
-      { customerId: source.legacyId },
-      {
-        $set: {
-          customerId: survivor.legacyId,
-          customerRef: survivor._id,
-        },
-      },
-    );
+    await reassignCustomerOwnedRecords({
+      sourceId: source._id as mongoose.Types.ObjectId,
+      sourceLegacyId: source.legacyId,
+      survivorId: survivor._id as mongoose.Types.ObjectId,
+      survivorLegacyId: survivor.legacyId,
+    });
 
     await CustomerNote.updateMany(
       { customerRef: source._id },
@@ -3166,6 +3136,9 @@ export async function mergeCustomers(
     await syncCustomerPrimaryFields(survivor._id);
     await assignCustomerOwner(survivor._id);
     await syncCustomerPrimaryContactFields(survivor._id);
+    await ensureCustomerLoginForPrimaryEmail(survivor._id, {
+      previousEmail: previousSurvivorEmail,
+    });
 
     const [addresses, contacts, refreshed] = await Promise.all([
       loadSitesForCustomer(survivor._id as mongoose.Types.ObjectId),

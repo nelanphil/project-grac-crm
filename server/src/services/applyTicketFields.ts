@@ -2,6 +2,7 @@ import mongoose, { Types } from "mongoose";
 import { Customer, ICustomer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { Equipment } from "../models/mongo/Equipment";
+import { syncCustomerPrimaryFields } from "../utils/customerSites";
 import { customerDisplayName } from "./notification.service";
 import {
   computeTicketTotals,
@@ -217,6 +218,95 @@ export function applyTicketMoney(
   target.total = totals.total;
 }
 
+async function resolveAddressForEquipment(
+  customerId: Types.ObjectId,
+  addressRef?: string | null,
+): Promise<Types.ObjectId | null> {
+  if (addressRef && mongoose.Types.ObjectId.isValid(addressRef)) {
+    const site = await CustomerAddress.findOne({
+      _id: addressRef,
+      customerRef: customerId,
+    })
+      .select("_id")
+      .lean();
+    if (site) return site._id as Types.ObjectId;
+  }
+
+  const primary = await CustomerAddress.findOne({
+    customerRef: customerId,
+    isPrimary: true,
+  })
+    .select("_id")
+    .lean();
+  if (primary) return primary._id as Types.ObjectId;
+
+  const first = await CustomerAddress.findOne({ customerRef: customerId })
+    .sort({ createdAt: 1 })
+    .select("_id")
+    .lean();
+  return first ? (first._id as Types.ObjectId) : null;
+}
+
+async function ensureTicketEquipment(
+  customer: ICustomer,
+  body: TicketBodyFields,
+  target: Record<string, unknown>,
+): Promise<string | null> {
+  const requestedRef =
+    body.equipmentRef !== undefined
+      ? body.equipmentRef
+      : target.equipmentRef
+        ? String(target.equipmentRef)
+        : null;
+
+  if (requestedRef && mongoose.Types.ObjectId.isValid(requestedRef)) {
+    const existing = await Equipment.findOne({
+      _id: requestedRef,
+      customerRef: customer._id,
+    })
+      .select("_id")
+      .lean();
+    if (existing) return String(existing._id);
+  }
+
+  const serial = (body.serialNumber ?? "").trim();
+  const generatorModel = (body.generatorModel ?? "").trim();
+  if (!serial && !generatorModel) return null;
+
+  const addressId = await resolveAddressForEquipment(
+    customer._id,
+    body.addressRef !== undefined
+      ? body.addressRef
+      : target.addressRef
+        ? String(target.addressRef)
+        : null,
+  );
+  if (!addressId) return null;
+
+  if (serial) {
+    const match = await Equipment.findOne({
+      customerRef: customer._id,
+      serial,
+    })
+      .select("_id")
+      .lean();
+    if (match) return String(match._id);
+  }
+
+  const created = await Equipment.create({
+    customerRef: customer._id,
+    addressRef: addressId,
+    generatorModel,
+    serial,
+    atsSerial: "",
+    lastSvc: null,
+    exday: (body.exerciseDay ?? "").trim(),
+    extime: (body.exerciseTime ?? "").trim(),
+  });
+  await syncCustomerPrimaryFields(customer._id);
+  return String(created._id);
+}
+
 export async function applyTicketFields(
   target: Record<string, unknown>,
   body: TicketBodyFields,
@@ -235,7 +325,15 @@ export async function applyTicketFields(
   if (body.addressRef !== undefined) {
     target.addressRef = asObjectId(body.addressRef);
   }
-  if (body.equipmentRef !== undefined) {
+
+  const resolvedEquipmentId = await ensureTicketEquipment(
+    customer,
+    body,
+    target,
+  );
+  if (resolvedEquipmentId) {
+    target.equipmentRef = new mongoose.Types.ObjectId(resolvedEquipmentId);
+  } else if (body.equipmentRef !== undefined) {
     target.equipmentRef = asObjectId(body.equipmentRef);
   }
 
@@ -247,8 +345,9 @@ export async function applyTicketFields(
         : target.addressRef
           ? String(target.addressRef)
           : null,
-    equipmentRef:
-      body.equipmentRef !== undefined
+    equipmentRef: resolvedEquipmentId
+      ? resolvedEquipmentId
+      : body.equipmentRef !== undefined
         ? body.equipmentRef
         : target.equipmentRef
           ? String(target.equipmentRef)

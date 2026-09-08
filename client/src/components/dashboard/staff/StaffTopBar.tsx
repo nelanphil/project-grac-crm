@@ -47,6 +47,10 @@ export default function StaffTopBar() {
   const canWriteCustomers = useAuthStore((s) =>
     s.hasPermission("customers:write"),
   );
+  const canWriteJobs = useAuthStore((s) => s.hasPermission("jobs:write"));
+  const canWriteEstimates = useAuthStore((s) =>
+    s.hasPermission("estimates:write"),
+  );
   const [mobileOpen, setMobileOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -125,6 +129,52 @@ export default function StaffTopBar() {
     setNewOpen(false);
   }
 
+  const newMenuItems = (
+    <>
+      {canWriteCustomers ? (
+        <Link
+          href="/dashboard/customers/create"
+          className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+          onClick={closeMenus}
+        >
+          Customer
+        </Link>
+      ) : null}
+      <Link
+        href="/dashboard/contracts"
+        className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+        onClick={closeMenus}
+      >
+        Contracts
+      </Link>
+      {canWriteJobs ? (
+        <Link
+          href="/dashboard/work-orders/create"
+          className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+          onClick={closeMenus}
+        >
+          Work order
+        </Link>
+      ) : null}
+      {canWriteEstimates ? (
+        <Link
+          href="/dashboard/estimates/create"
+          className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+          onClick={closeMenus}
+        >
+          Estimate
+        </Link>
+      ) : null}
+      <Link
+        href="/dashboard/orders"
+        className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+        onClick={closeMenus}
+      >
+        Invoices
+      </Link>
+    </>
+  );
+
   return (
     <header className="sticky top-0 z-30 w-full border-b border-[var(--staff-border)] bg-[var(--staff-surface)]/95 backdrop-blur">
       <div className="relative flex w-full items-center gap-2 px-3 py-3 sm:gap-3 sm:px-5 lg:px-6">
@@ -163,29 +213,7 @@ export default function StaffTopBar() {
                   onClick={() => setNewOpen(false)}
                 />
                 <div className="absolute left-0 z-50 mt-2 w-48 overflow-hidden rounded-xl border border-[var(--staff-border)] bg-white py-1 shadow-lg">
-                  {canWriteCustomers ? (
-                    <Link
-                      href="/dashboard/customers/create"
-                      className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-                      onClick={closeMenus}
-                    >
-                      Customer
-                    </Link>
-                  ) : null}
-                  <Link
-                    href="/dashboard/contracts"
-                    className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-                    onClick={closeMenus}
-                  >
-                    Contracts
-                  </Link>
-                  <Link
-                    href="/dashboard/orders"
-                    className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-                    onClick={closeMenus}
-                  >
-                    Invoices
-                  </Link>
+                  {newMenuItems}
                 </div>
               </>
             )}
@@ -211,29 +239,7 @@ export default function StaffTopBar() {
                   onClick={() => setNewOpen(false)}
                 />
                 <div className="absolute right-0 z-50 mt-2 w-48 overflow-hidden rounded-xl border border-[var(--staff-border)] bg-white py-1 shadow-lg">
-                  {canWriteCustomers ? (
-                    <Link
-                      href="/dashboard/customers/create"
-                      className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-                      onClick={closeMenus}
-                    >
-                      Customer
-                    </Link>
-                  ) : null}
-                  <Link
-                    href="/dashboard/contracts"
-                    className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-                    onClick={closeMenus}
-                  >
-                    Contracts
-                  </Link>
-                  <Link
-                    href="/dashboard/orders"
-                    className="block px-4 py-2.5 text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-                    onClick={closeMenus}
-                  >
-                    Invoices
-                  </Link>
+                  {newMenuItems}
                 </div>
               </>
             )}

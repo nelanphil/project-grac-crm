@@ -274,6 +274,43 @@ export async function listSchedulableStaff(): Promise<LeanUser[]> {
     .lean();
 }
 
+export async function countTechnicianJobsOnDate(opts: {
+  userIds: Array<mongoose.Types.ObjectId | string>;
+  localDate: string;
+  excludeWorkOrderId?: string;
+}): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (opts.userIds.length === 0) return counts;
+
+  const { start, end } = rangeUtc(opts.localDate, opts.localDate);
+  const utcDateStart = new Date(`${opts.localDate}T00:00:00.000Z`);
+  const utcDateEnd = new Date(`${opts.localDate}T23:59:59.999Z`);
+
+  const filter: Record<string, unknown> = {
+    assignedUserRef: { $in: opts.userIds },
+    $or: [
+      { scheduledStart: { $gte: start, $lte: end } },
+      {
+        scheduledStart: null,
+        date: { $gte: utcDateStart, $lte: utcDateEnd },
+      },
+    ],
+  };
+  if (
+    opts.excludeWorkOrderId &&
+    mongoose.Types.ObjectId.isValid(opts.excludeWorkOrderId)
+  ) {
+    filter._id = { $ne: new mongoose.Types.ObjectId(opts.excludeWorkOrderId) };
+  }
+
+  const rows = await WorkOrder.find(filter).select("assignedUserRef").lean();
+  for (const row of rows) {
+    const key = String(row.assignedUserRef);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
 function parseCoord(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() !== "") {

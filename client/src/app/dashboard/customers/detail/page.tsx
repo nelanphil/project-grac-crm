@@ -12,6 +12,7 @@ import {
   Pencil,
   Plus,
   ScrollText,
+  Trash2,
   X,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
@@ -34,8 +35,10 @@ import {
   getContractsForCustomer,
   createInvoice,
   createInvoicePayLink,
+  getCustomerCheckoutLink,
   updateCustomer,
   promoteCustomer,
+  softDeleteCustomer,
   CustomerDetail,
   WorkOrderListItem,
   ContractListItem,
@@ -143,6 +146,12 @@ function CustomerDetailContent() {
   const user = useAuthStore((s) => s.user);
   const canWrite = useAuthStore((s) => s.hasPermission("customers:write"));
   const canWriteJobs = useAuthStore((s) => s.hasPermission("jobs:write"));
+  const canWriteContracts = useAuthStore((s) =>
+    s.hasPermission("contracts:write"),
+  );
+  const canManageCustomers = useAuthStore((s) =>
+    s.hasRole("admin", "super-admin", "owner"),
+  );
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [workOrders, setWorkOrders] = useState<WorkOrderListItem[]>([]);
@@ -158,6 +167,12 @@ function CustomerDetailContent() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [promoting, setPromoting] = useState(false);
   const [promoteError, setPromoteError] = useState<string | null>(null);
+  const [copyingCheckout, setCopyingCheckout] = useState(false);
+  const [checkoutLinkMessage, setCheckoutLinkMessage] = useState<string | null>(
+    null,
+  );
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user?.role === "customer") {
@@ -211,6 +226,30 @@ function CustomerDetailContent() {
       (c) => c.addressRef === addressFilter || c.address?._id === addressFilter,
     );
   }, [contracts, addressFilter]);
+
+  async function handleSoftDelete() {
+    if (!token || !customer) return;
+    const name = formatCustomerRecordName(customer) || "this customer";
+    if (
+      !window.confirm(
+        `Soft-delete ${name}? They can be restored from the Deleted view.`,
+      )
+    ) {
+      return;
+    }
+
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await softDeleteCustomer(token, customer._id);
+      router.push("/dashboard/customers");
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiError ? err.message : "Failed to delete customer.",
+      );
+      setDeleting(false);
+    }
+  }
 
   if (!user || user.role === "customer") return null;
 
@@ -411,6 +450,39 @@ function CustomerDetailContent() {
               Promote to full customer
             </button>
           ) : null}
+          {canWriteContracts ? (
+            <button
+              type="button"
+              disabled={copyingCheckout}
+              onClick={async () => {
+                if (!token || !customer) return;
+                setCopyingCheckout(true);
+                setCheckoutLinkMessage(null);
+                try {
+                  const { checkoutUrl } = await getCustomerCheckoutLink(
+                    token,
+                    customer._id,
+                  );
+                  await navigator.clipboard?.writeText(checkoutUrl);
+                  setCheckoutLinkMessage("Checkout link copied");
+                } catch (err) {
+                  setCheckoutLinkMessage(
+                    err instanceof ApiError
+                      ? err.message
+                      : "Failed to copy checkout link.",
+                  );
+                } finally {
+                  setCopyingCheckout(false);
+                }
+              }}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange disabled:opacity-60 sm:w-auto"
+            >
+              {copyingCheckout ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : null}
+              Copy checkout link
+            </button>
+          ) : null}
           {canWrite ? (
             <button
               type="button"
@@ -421,14 +493,41 @@ function CustomerDetailContent() {
               Merge customer
             </button>
           ) : null}
+          {canManageCustomers ? (
+            <button
+              type="button"
+              disabled={deleting}
+              onClick={() => void handleSoftDelete()}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:border-red-200 hover:bg-red-50 disabled:opacity-60 sm:w-auto"
+            >
+              {deleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              Delete customer
+            </button>
+          ) : null}
         </div>
       </div>
 
       <MobileSectionNav sections={sectionLinks} />
 
+      {deleteError ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {deleteError}
+        </div>
+      ) : null}
+
       {mergeToast ? (
         <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
           {mergeToast}
+        </div>
+      ) : null}
+
+      {checkoutLinkMessage ? (
+        <div className="rounded-md border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-700 break-all">
+          {checkoutLinkMessage}
         </div>
       ) : null}
 
@@ -526,8 +625,12 @@ function CustomerDetailContent() {
         ) : (
           <ServiceContractsTable
             contracts={filteredContracts}
-            showAddress={addresses.length > 0}
             returnTo={`/dashboard/customers/detail?id=${id}`}
+            onUpdated={(updated) =>
+              setContracts((prev) =>
+                prev.map((c) => (c._id === updated._id ? updated : c)),
+              )
+            }
           />
         )}
       </section>

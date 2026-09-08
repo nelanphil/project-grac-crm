@@ -17,6 +17,15 @@ import {
 } from "../services/notification.service";
 import { estimatedMinutesForWorkOrder } from "../services/schedule.service";
 import { nextPrefixedNumber } from "../services/serviceTicket";
+import { syncWorkOrderInvoice } from "../services/invoice.service";
+
+const ESTIMATE_STATUS_GROUPS = {
+  active: ["draft", "sent"],
+  awarded: ["accepted", "converted"],
+  lost: ["declined"],
+} as const;
+
+type EstimateStatusGroup = keyof typeof ESTIMATE_STATUS_GROUPS;
 
 function toPublic(doc: Record<string, unknown>) {
   return {
@@ -43,14 +52,21 @@ export async function getEstimates(
       typeof req.query.search === "string" ? req.query.search.trim() : "";
     const status =
       typeof req.query.status === "string" ? req.query.status : "";
+    const statusGroupRaw =
+      typeof req.query.statusGroup === "string" ? req.query.statusGroup : "";
+    const statusGroup = (
+      statusGroupRaw in ESTIMATE_STATUS_GROUPS ? statusGroupRaw : ""
+    ) as EstimateStatusGroup | "";
     const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
     const pageSize = Math.min(
-      200,
+      500,
       Math.max(1, parseInt(String(req.query.pageSize ?? "50"), 10) || 50),
     );
 
     const filter: Record<string, unknown> = {};
-    if (status && (ESTIMATE_STATUSES as readonly string[]).includes(status)) {
+    if (statusGroup) {
+      filter.status = { $in: [...ESTIMATE_STATUS_GROUPS[statusGroup]] };
+    } else if (status && (ESTIMATE_STATUSES as readonly string[]).includes(status)) {
       filter.status = status;
     }
     if (req.query.customerId) {
@@ -67,20 +83,37 @@ export async function getEstimates(
       ];
     }
 
-    const [total, estimates] = await Promise.all([
-      Estimate.countDocuments(filter),
-      Estimate.find(filter)
-        .sort({ date: -1, createdAt: -1 })
-        .skip((page - 1) * pageSize)
-        .limit(pageSize)
-        .lean(),
-    ]);
+    const [total, estimates, statsTotal, activeCount, awardedCount, lostCount] =
+      await Promise.all([
+        Estimate.countDocuments(filter),
+        Estimate.find(filter)
+          .sort({ date: -1, createdAt: -1 })
+          .skip((page - 1) * pageSize)
+          .limit(pageSize)
+          .lean(),
+        Estimate.countDocuments({}),
+        Estimate.countDocuments({
+          status: { $in: [...ESTIMATE_STATUS_GROUPS.active] },
+        }),
+        Estimate.countDocuments({
+          status: { $in: [...ESTIMATE_STATUS_GROUPS.awarded] },
+        }),
+        Estimate.countDocuments({
+          status: { $in: [...ESTIMATE_STATUS_GROUPS.lost] },
+        }),
+      ]);
 
     res.json({
       estimates: estimates.map((e) => toPublic(e as Record<string, unknown>)),
       total,
       page,
       pageSize,
+      stats: {
+        total: statsTotal,
+        active: activeCount,
+        awarded: awardedCount,
+        lost: lostCount,
+      },
     });
   } catch (err) {
     console.error("GET /estimates error:", err);
@@ -304,6 +337,7 @@ export async function convertEstimate(
       }),
     });
     await workOrder.save();
+    await syncWorkOrderInvoice(workOrder);
 
     estimate.status = "converted";
     estimate.workOrderRef = workOrder._id as mongoose.Types.ObjectId;

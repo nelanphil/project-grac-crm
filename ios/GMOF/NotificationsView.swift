@@ -110,6 +110,10 @@ struct NotificationsView: View {
 private struct NotificationRow: View {
     let notification: AppNotification
 
+    private var actorLabel: String {
+        (notification.actorName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Circle()
@@ -124,13 +128,15 @@ private struct NotificationRow: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 6) {
-                    if let actor = notification.actorName {
-                        Text(actor)
+                    if !actorLabel.isEmpty {
+                        Text(actorLabel)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     if let type = notification.entityType {
-                        Text("·").foregroundStyle(.tertiary).font(.caption)
+                        if !actorLabel.isEmpty {
+                            Text("·").foregroundStyle(.tertiary).font(.caption)
+                        }
                         Text(type.capitalized)
                             .font(.caption)
                             .foregroundStyle(.tertiary)

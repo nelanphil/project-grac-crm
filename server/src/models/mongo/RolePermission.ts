@@ -28,6 +28,7 @@ const ALL_PERMISSIONS = [
   "jobs:read", "jobs:write", "jobs:delete",
   "estimates:read", "estimates:write", "estimates:delete",
   "products:read", "products:write", "products:delete",
+  "discounts:read", "discounts:write", "discounts:delete",
   "reports:read",
   "integrations:read", "integrations:write", "integrations:delete",
   "messages:read", "messages:write",
@@ -62,6 +63,9 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "products:read"],
   ["admin", "products:write"],
   ["admin", "products:delete"],
+  ["admin", "discounts:read"],
+  ["admin", "discounts:write"],
+  ["admin", "discounts:delete"],
   ["admin", "reports:read"],
   ["admin", "integrations:read"],
   ["admin", "integrations:write"],
@@ -89,6 +93,8 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["manager", "estimates:write"],
   ["manager", "products:read"],
   ["manager", "products:write"],
+  ["manager", "discounts:read"],
+  ["manager", "discounts:write"],
   ["manager", "reports:read"],
 
   // tech — read/write jobs and customers; read leads
@@ -101,6 +107,7 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["tech", "estimates:read"],
   ["tech", "estimates:write"],
   ["tech", "products:read"],
+  ["tech", "discounts:read"],
 
   // agent — read-only leads, accounts, customers
   ["agent", "leads:read"],
@@ -250,6 +257,31 @@ const PRODUCT_PERMISSIONS: [UserRole, string][] = [
 
 export async function ensureProductPermissions(): Promise<void> {
   for (const [role, permission] of PRODUCT_PERMISSIONS) {
+    await RolePermission.updateOne(
+      { role, permission },
+      { $setOnInsert: { role, permission } },
+      { upsert: true },
+    );
+  }
+}
+
+const DISCOUNT_PERMISSIONS: [UserRole, string][] = [
+  ["super-admin", "discounts:read"],
+  ["super-admin", "discounts:write"],
+  ["super-admin", "discounts:delete"],
+  ["admin", "discounts:read"],
+  ["admin", "discounts:write"],
+  ["admin", "discounts:delete"],
+  ["owner", "discounts:read"],
+  ["owner", "discounts:write"],
+  ["owner", "discounts:delete"],
+  ["manager", "discounts:read"],
+  ["manager", "discounts:write"],
+  ["tech", "discounts:read"],
+];
+
+export async function ensureDiscountPermissions(): Promise<void> {
+  for (const [role, permission] of DISCOUNT_PERMISSIONS) {
     await RolePermission.updateOne(
       { role, permission },
       { $setOnInsert: { role, permission } },

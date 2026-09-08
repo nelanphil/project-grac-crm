@@ -1,6 +1,5 @@
 import mongoose, { FilterQuery, Types } from "mongoose";
 import { Customer } from "../models/mongo/Customer";
-import { CustomerContact } from "../models/mongo/CustomerContact";
 import {
   INotificationEvent,
   NotificationAction,
@@ -11,6 +10,7 @@ import {
 } from "../models/mongo/NotificationEvent";
 import { NotificationRead } from "../models/mongo/NotificationRead";
 import { User } from "../models/mongo/User";
+import { resolveCustomerRefsForUser } from "../utils/resolveCustomerLogin";
 
 /** Org-wide notification visibility (owners are territory-scoped). */
 const FULL_ACCESS_ROLES = new Set(["super-admin", "admin"]);
@@ -118,20 +118,7 @@ export function logNotificationAsync(input: LogNotificationInput): void {
   void logNotification(input);
 }
 
-export async function resolveCustomerRefsForUser(
-  userId: string
-): Promise<Types.ObjectId[]> {
-  const id = toObjectId(userId);
-  if (!id) return [];
-  const contacts = await CustomerContact.find({ userRef: id })
-    .select("customerRef")
-    .lean();
-  const unique = new Map<string, Types.ObjectId>();
-  for (const c of contacts) {
-    if (c.customerRef) unique.set(String(c.customerRef), c.customerRef as Types.ObjectId);
-  }
-  return [...unique.values()];
-}
+export { resolveCustomerRefsForUser };
 
 async function resolveOwnerCustomerRefs(
   userId: string
@@ -164,7 +151,14 @@ export async function buildVisibilityFilter(
     if (refs.length === 0) {
       return { _id: { $in: [] } };
     }
-    return { customerRef: { $in: refs } };
+    const userObjectId = toObjectId(user.id);
+    return {
+      customerRef: { $in: refs },
+      $or: [
+        ...(userObjectId ? [{ actorUserId: userObjectId }] : []),
+        { entityType: "invoice", action: { $in: ["created", "updated"] } },
+      ],
+    };
   }
 
   // manager, tech, agent, and unknown non-customer roles: operational CRM only
@@ -173,16 +167,19 @@ export async function buildVisibilityFilter(
 
 function serializeEvent(
   event: INotificationEvent | (INotificationEvent & { _id: Types.ObjectId }),
-  readIds: Set<string>
+  readIds: Set<string>,
+  user?: AuthUserLike
 ): NotificationListItem {
   const id = String(event._id);
+  const actorUserId = event.actorUserId ? String(event.actorUserId) : null;
+  const redactActor = user?.role === "customer" && actorUserId !== user.id;
   return {
     id,
     entityType: event.entityType,
     action: event.action,
     actorType: event.actorType,
-    actorUserId: event.actorUserId ? String(event.actorUserId) : null,
-    actorName: event.actorName,
+    actorUserId: redactActor ? null : actorUserId,
+    actorName: redactActor ? "" : event.actorName,
     customerRef: event.customerRef ? String(event.customerRef) : null,
     entityId: event.entityId,
     summary: event.summary,
@@ -198,20 +195,25 @@ export async function listForUser(
 ): Promise<{ items: NotificationListItem[]; nextCursor: string | null }> {
   const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
   const visibility = await buildVisibilityFilter(user);
-  const filter: FilterQuery<INotificationEvent> = { ...visibility };
+  const clauses: FilterQuery<INotificationEvent>[] = [visibility];
 
   if (opts.before) {
     const beforeId = toObjectId(opts.before);
     if (beforeId) {
       const beforeDoc = await NotificationEvent.findById(beforeId).select("createdAt").lean();
       if (beforeDoc) {
-        filter.$or = [
-          { createdAt: { $lt: beforeDoc.createdAt } },
-          { createdAt: beforeDoc.createdAt, _id: { $lt: beforeId } },
-        ];
+        clauses.push({
+          $or: [
+            { createdAt: { $lt: beforeDoc.createdAt } },
+            { createdAt: beforeDoc.createdAt, _id: { $lt: beforeId } },
+          ],
+        });
       }
     }
   }
+
+  const filter: FilterQuery<INotificationEvent> =
+    clauses.length === 1 ? clauses[0] : { $and: clauses };
 
   const events = await NotificationEvent.find(filter)
     .sort({ createdAt: -1, _id: -1 })
@@ -229,10 +231,7 @@ export async function listForUser(
 
   const readIds = new Set(reads.map((r) => String(r.eventId)));
   const items = page.map((e) =>
-    serializeEvent(
-      e as unknown as INotificationEvent,
-      readIds
-    )
+    serializeEvent(e as unknown as INotificationEvent, readIds, user)
   );
   const nextCursor =
     events.length > limit ? String(page[page.length - 1]._id) : null;

@@ -40,7 +40,7 @@ export const MERGE_FIELDS: MergeFieldDef[] = [
     key: "payment_link",
     label: "Payment link",
     description:
-      "Pay securely button covering every open invoice — only included when the customer has unpaid invoices",
+      "Pay securely button covering every open invoice and unpaid work order — only included when the customer has unpaid invoices or work orders",
     templateTypes: ["email"],
   },
 ];

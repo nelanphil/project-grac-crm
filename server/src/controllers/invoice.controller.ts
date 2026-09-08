@@ -11,6 +11,8 @@ import { CustomerContact } from "../models/mongo/CustomerContact";
 import { createInvoiceSchema } from "../schemas/invoice.schema";
 import {
   dollarsToCents,
+  ensureOpenInvoiceForWorkOrder,
+  InvoiceAmountError,
   markInvoicePaid,
   nextInvoiceNumber,
 } from "../services/invoice.service";
@@ -20,69 +22,16 @@ import {
 } from "../services/notification.service";
 import { resolveCheckoutProviderForInvoice } from "../payments/registry";
 import { resolveCheckoutBuyer } from "../payments/checkoutBuyer";
-import { env } from "../config/env";
-import { buildPayUrl, hashPayToken, mintPayToken } from "../utils/payToken";
+import { hashPayToken } from "../utils/payToken";
 import { paymentNoteForInvoiceIds } from "../utils/paymentLinkForCustomer";
+import {
+  buildCheckoutCompleteUrl,
+  buildCheckoutUrl,
+  getOrCreateCheckoutKey,
+} from "../utils/checkoutKey";
+import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 
-function workOrderInvoiceLineItems(wo: {
-  parts?: Array<{
-    partNumber?: string;
-    description?: string;
-    quantity?: number;
-    amount?: number;
-    lineType?: string;
-    kind?: string;
-  }>;
-  totalLabor?: number;
-  miscExp?: number;
-  shipping?: number;
-  total?: number;
-  descPerform?: string;
-  number?: string;
-}): { description: string; amountCents: number }[] {
-  const items: { description: string; amountCents: number }[] = [];
-  const parts = wo.parts ?? [];
-  let hasLaborProductLines = false;
-  for (const part of parts) {
-    if (part.lineType === "note") continue;
-    if (part.kind === "labor") hasLaborProductLines = true;
-    const cents = dollarsToCents(part.amount || 0);
-    if (cents <= 0) continue;
-    const qty = part.quantity && part.quantity !== 1 ? `${part.quantity} × ` : "";
-    const label =
-      part.description?.trim() ||
-      part.partNumber?.trim() ||
-      (part.kind === "labor" ? "Labor" : "Part");
-    items.push({
-      description: `${qty}${label}${part.partNumber && part.description ? ` (${part.partNumber})` : ""}`,
-      amountCents: cents,
-    });
-  }
-  const laborCents = dollarsToCents(wo.totalLabor || 0);
-  if (!hasLaborProductLines && laborCents > 0) {
-    items.push({ description: "Labor", amountCents: laborCents });
-  }
-  const miscCents = dollarsToCents(wo.miscExp || 0);
-  if (miscCents > 0) {
-    items.push({ description: "Miscellaneous", amountCents: miscCents });
-  }
-  const shippingCents = dollarsToCents(wo.shipping || 0);
-  if (shippingCents > 0) {
-    items.push({ description: "Shipping", amountCents: shippingCents });
-  }
-  if (items.length > 0) return items;
-  const lump = dollarsToCents(wo.total || 0);
-  if (lump > 0) {
-    return [
-      {
-        description:
-          `Work order${wo.number ? ` ${wo.number}` : ""}${wo.descPerform ? `: ${wo.descPerform}` : ""}`.trim(),
-        amountCents: lump,
-      },
-    ];
-  }
-  return [];
-}
+export { resolveCustomerRefsForAuthUser };
 
 const STAFF_ROLES = new Set([
   "admin",
@@ -110,6 +59,10 @@ function toPublicInvoice(doc: IInvoice | Record<string, unknown>) {
     templateRef: d.templateRef ? String(d.templateRef) : null,
     lineItems: d.lineItems ?? [],
     amountCents: d.amountCents,
+    originalAmountCents:
+      typeof d.originalAmountCents === "number" ? d.originalAmountCents : null,
+    discountCode: d.discountCode ? String(d.discountCode) : null,
+    discountCents: Number(d.discountCents) || 0,
     currency: d.currency,
     status: d.status,
     dueDate: d.dueDate,
@@ -222,25 +175,98 @@ async function enrichInvoiceDetail(invoice: {
   return { customer, serviceAddress };
 }
 
-export async function resolveCustomerRefsForAuthUser(
-  userId: string,
-): Promise<Types.ObjectId[]> {
-  if (!Types.ObjectId.isValid(userId)) return [];
-  const contacts = await CustomerContact.find({
-    userRef: new Types.ObjectId(userId),
-  })
-    .select("customerRef")
-    .lean();
-  return contacts
-    .map((c) => c.customerRef)
-    .filter((id): id is Types.ObjectId => Boolean(id));
-}
-
 function isStaff(role?: string): boolean {
   return Boolean(role && STAFF_ROLES.has(role));
 }
 
 export { mintPayToken } from "../utils/payToken";
+
+const INVOICE_PAGE_SIZES = [50, 150, 250, 500];
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function customerRefsMatchingSearch(
+  search: string,
+): Promise<Types.ObjectId[]> {
+  const re = new RegExp(escapeRegex(search), "i");
+  const digits = search.replace(/\D/g, "");
+  const customerOr: Record<string, unknown>[] = [
+    { accountName: re },
+    { first: re },
+    { last: re },
+    { email: re },
+    { phone: re },
+  ];
+  if (digits) {
+    customerOr.push({ phoneDigits: new RegExp(escapeRegex(digits), "i") });
+  }
+  const contactOr: Record<string, unknown>[] = [
+    { first: re },
+    { last: re },
+    { email: re },
+    { phone: re },
+  ];
+
+  const [customers, contacts] = await Promise.all([
+    Customer.find({ $or: customerOr }).select("_id").lean(),
+    CustomerContact.find({ $or: contactOr }).select("customerRef").lean(),
+  ]);
+
+  const ids = new Set<string>();
+  for (const customer of customers) ids.add(String(customer._id));
+  for (const contact of contacts) {
+    if (contact.customerRef) ids.add(String(contact.customerRef));
+  }
+  return [...ids].map((id) => new Types.ObjectId(id));
+}
+
+async function invoiceListNames(
+  invoices: Array<{ customerRef?: Types.ObjectId | null }>,
+): Promise<Map<string, { customerName: string; contactName: string }>> {
+  const unique = [
+    ...new Set(
+      invoices
+        .map((invoice) =>
+          invoice.customerRef ? String(invoice.customerRef) : "",
+        )
+        .filter(Boolean),
+    ),
+  ];
+  if (unique.length === 0) return new Map();
+
+  const objectIds = unique.map((id) => new Types.ObjectId(id));
+  const [customers, contacts] = await Promise.all([
+    Customer.find({ _id: { $in: objectIds } })
+      .select("accountName first last legacyId")
+      .lean(),
+    CustomerContact.find({
+      customerRef: { $in: objectIds },
+      isPrimary: true,
+    })
+      .select("customerRef first last")
+      .lean(),
+  ]);
+
+  const contactByCustomer = new Map(
+    contacts.map((contact) => [
+      String(contact.customerRef),
+      `${contact.first ?? ""} ${contact.last ?? ""}`.trim(),
+    ]),
+  );
+
+  const names = new Map<string, { customerName: string; contactName: string }>();
+  for (const customer of customers) {
+    const id = String(customer._id);
+    names.set(id, {
+      customerName:
+        customerDisplayName(customer) || `Customer #${customer.legacyId}`,
+      contactName: contactByCustomer.get(id) ?? "",
+    });
+  }
+  return names;
+}
 
 export async function getInvoices(
   req: AuthRequest,
@@ -249,6 +275,10 @@ export async function getInvoices(
   try {
     const filter: Record<string, unknown> = {};
     const { status, customerRef, contractRef, workOrderRef } = req.query;
+    const search =
+      typeof req.query.search === "string" ? req.query.search.trim() : "";
+    const pageRaw = typeof req.query.page === "string" ? req.query.page : "";
+    const paginate = Boolean(pageRaw);
 
     if (typeof status === "string" && status) {
       filter.status = status;
@@ -276,11 +306,56 @@ export async function getInvoices(
       return;
     }
 
-    const invoices = await Invoice.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(200)
-      .lean();
-    res.json({ invoices: invoices.map(toPublicInvoice) });
+    if (search) {
+      const re = new RegExp(escapeRegex(search), "i");
+      const matchingRefs = await customerRefsMatchingSearch(search);
+      const searchOr: Record<string, unknown>[] = [{ number: re }];
+      if (matchingRefs.length > 0) {
+        searchOr.push({ customerRef: { $in: matchingRefs } });
+      }
+      filter.$or = searchOr;
+    }
+
+    if (!paginate) {
+      const invoices = await Invoice.find(filter)
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .lean();
+      res.json({ invoices: invoices.map(toPublicInvoice) });
+      return;
+    }
+
+    const page = Math.max(1, parseInt(pageRaw, 10) || 1);
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "50"), 10);
+    const pageSize = INVOICE_PAGE_SIZES.includes(pageSizeRaw)
+      ? pageSizeRaw
+      : 50;
+
+    const [total, invoices] = await Promise.all([
+      Invoice.countDocuments(filter),
+      Invoice.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize)
+        .lean(),
+    ]);
+    const names = await invoiceListNames(invoices);
+
+    res.json({
+      invoices: invoices.map((invoice) => {
+        const extra = invoice.customerRef
+          ? names.get(String(invoice.customerRef))
+          : undefined;
+        return {
+          ...toPublicInvoice(invoice),
+          customerName: extra?.customerName ?? "",
+          contactName: extra?.contactName ?? "",
+        };
+      }),
+      total,
+      page,
+      pageSize,
+    });
   } catch {
     res.status(500).json({ message: "Failed to list invoices" });
   }
@@ -340,7 +415,6 @@ export async function createInvoice(
     let amountCents: number;
     let lineItems: { description: string; amountCents: number }[];
     let contractRef: Types.ObjectId | undefined;
-    let workOrderRef: Types.ObjectId | undefined;
     let templateRef: Types.ObjectId | undefined;
     let dueDate: Date | null = data.dueDate ? new Date(data.dueDate) : null;
     const metadata: Record<string, unknown> = {};
@@ -428,45 +502,27 @@ export async function createInvoice(
         res.status(404).json({ message: "Work order not found" });
         return;
       }
-      customerId = wo.customerId;
-      customerRef = wo.customerRef;
-      workOrderRef = wo._id as Types.ObjectId;
-      amountCents =
-        data.amountCents != null
-          ? data.amountCents
-          : dollarsToCents(wo.total || 0);
-      if (amountCents <= 0) {
-        res.status(400).json({
-          message: "Work order total must be greater than zero to invoice",
+      try {
+        const { invoice, created } = await ensureOpenInvoiceForWorkOrder(wo, {
+          amountCents: data.amountCents,
+          description: data.description,
+          actor: actorFromRequest(req.user),
         });
+        if (!created) {
+          res.status(409).json({
+            message: "An open invoice already exists for this work order",
+            invoice: toPublicInvoice(invoice),
+          });
+          return;
+        }
+        res.status(201).json({ invoice: toPublicInvoice(invoice) });
         return;
-      }
-      const builtItems = workOrderInvoiceLineItems(wo);
-      lineItems =
-        builtItems.length > 0
-          ? builtItems
-          : [
-              {
-                description:
-                  data.description ||
-                  `Work order${wo.descPerform ? `: ${wo.descPerform}` : ""}`,
-                amountCents,
-              },
-            ];
-      if (data.description && lineItems.length === 1) {
-        lineItems[0].description = data.description;
-      }
-
-      const existingOpen = await Invoice.findOne({
-        workOrderRef: wo._id,
-        status: { $in: ["open", "draft"] },
-      });
-      if (existingOpen) {
-        res.status(409).json({
-          message: "An open invoice already exists for this work order",
-          invoice: toPublicInvoice(existingOpen),
-        });
-        return;
+      } catch (err) {
+        if (err instanceof InvoiceAmountError) {
+          res.status(400).json({ message: err.message });
+          return;
+        }
+        throw err;
       }
     }
 
@@ -477,7 +533,7 @@ export async function createInvoice(
       customerRef,
       sourceType: data.sourceType,
       contractRef: contractRef ?? null,
-      workOrderRef: workOrderRef ?? null,
+      workOrderRef: null,
       templateRef: templateRef ?? null,
       lineItems,
       amountCents,
@@ -537,7 +593,7 @@ export async function startInvoiceCheckout(
     const { adapter, account } = await resolveCheckoutProviderForInvoice(
       invoice.customerRef,
     );
-    const redirectUrl = `${env.clientUrl.replace(/\/$/, "")}/checkout/complete?invoiceId=${invoice._id}`;
+    const redirectUrl = buildCheckoutCompleteUrl(String(invoice._id));
     const buyer = await resolveCheckoutBuyer(invoice.customerRef);
 
     const result = await adapter.createCheckout({
@@ -584,16 +640,15 @@ export async function createInvoicePayLink(
       return;
     }
 
-    const { token, hash, expiresAt } = mintPayToken();
-    invoice.payTokenHash = hash;
-    invoice.payTokenExpiresAt = expiresAt;
-    await invoice.save();
+    if (!invoice.customerRef) {
+      res.status(400).json({ message: "Invoice has no customer" });
+      return;
+    }
 
-    // Static export uses query params (not dynamic path segments).
-    const payUrl = buildPayUrl(token);
+    const key = await getOrCreateCheckoutKey(String(invoice.customerRef));
+    const payUrl = buildCheckoutUrl(key, { invoiceId: String(invoice._id) });
     res.json({
       payUrl,
-      expiresAt,
       invoice: toPublicInvoice(invoice),
     });
   } catch {
@@ -689,7 +744,7 @@ export async function startCheckoutByPayToken(
     const { adapter, account } = await resolveCheckoutProviderForInvoice(
       primary.customerRef,
     );
-    const redirectUrl = `${env.clientUrl.replace(/\/$/, "")}/checkout/complete?invoiceId=${primary._id}`;
+    const redirectUrl = buildCheckoutCompleteUrl(String(primary._id));
     const buyer = await resolveCheckoutBuyer(primary.customerRef);
     const result = await adapter.createCheckout({
       invoice: primary,

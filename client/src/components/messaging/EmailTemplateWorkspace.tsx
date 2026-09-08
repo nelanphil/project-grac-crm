@@ -222,11 +222,11 @@ export default function EmailTemplateWorkspace({
             />
             <span>
               <span className="font-medium text-brand-dark">
-                Include payment link for all unpaid invoices
+                Include payment link for all unpaid invoices and work orders
               </span>
               <span className="mt-0.5 block text-xs text-neutral-500">
-                Adds a Pay securely button covering every open invoice, even
-                without inserting {"{{payment_link}}"}.
+                Adds a Pay securely button covering every open invoice and
+                unpaid work order, even without inserting {"{{payment_link}}"}.
               </span>
             </span>
           </label>

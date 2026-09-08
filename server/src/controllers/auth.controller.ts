@@ -17,7 +17,7 @@ import {
   resetPasswordSchema,
 } from "../schemas/user.schema";
 import { User, UserRole, activeUserFilter } from "../models/mongo/User";
-import { CustomerContact } from "../models/mongo/CustomerContact";
+import { findPrimaryContactForUserEmail } from "../utils/resolveCustomerLogin";
 import { PasswordResetToken } from "../models/mongo/PasswordResetToken";
 import { getPermissionsForRole } from "../models/mongo/RolePermission";
 import { AuthRequest } from "../middleware/auth.middleware";
@@ -43,6 +43,7 @@ import {
   findEmailConflict,
   provisionCrmCustomerForUser,
 } from "../utils/provisionCustomerAccount";
+import { syncCustomersToUserEmail } from "../utils/ensureCustomerLogin";
 
 function toIsoOrNull(value: Date | string | null | undefined): string | null {
   if (!value) return null;
@@ -95,11 +96,8 @@ function buildUserPayload(user: {
   };
 }
 
-async function lookupContactPhone(userId: unknown): Promise<string> {
-  const contact = await CustomerContact.findOne({ userRef: userId })
-    .sort({ isPrimary: -1 })
-    .select("phone")
-    .lean();
+async function lookupContactPhone(userEmail: string | null | undefined): Promise<string> {
+  const contact = await findPrimaryContactForUserEmail(userEmail);
   return (contact?.phone ?? "").trim();
 }
 
@@ -110,19 +108,17 @@ async function toUserPayload(
   },
 ) {
   const own = (user.phone ?? "").trim();
-  const phone = own || (await lookupContactPhone(user._id));
+  const phone = own || (await lookupContactPhone(user.email));
   return buildUserPayload({ ...user, phone });
 }
 
 async function syncEmptyContactPhone(
-  userId: unknown,
+  userEmail: string | null | undefined,
   phone: string,
 ): Promise<void> {
   const digits = normalizePhoneDigits(phone);
   if (digits.length !== 10) return;
-  const contact = await CustomerContact.findOne({ userRef: userId }).sort({
-    isPrimary: -1,
-  });
+  const contact = await findPrimaryContactForUserEmail(userEmail);
   if (!contact) return;
   if (normalizePhoneDigits(contact.phone)) return;
   contact.phone = phone.trim();
@@ -312,7 +308,7 @@ export async function acceptLegalConsent(
     await user.save();
 
     if (user.role === "customer" && parsed.data.phone) {
-      await syncEmptyContactPhone(user._id, parsed.data.phone);
+      await syncEmptyContactPhone(user.email, parsed.data.phone);
     }
 
     const permissions = await getPermissionsForRole(user.role);
@@ -433,6 +429,7 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
       return;
     }
 
+    const previousEmail = user.email;
     if (email) {
       const emailConflict = await findEmailConflict(email.toLowerCase(), {
         excludeUserId: user._id,
@@ -440,7 +437,7 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
       if (emailConflict) {
         res.status(409).json({
           message:
-            user.role === "customer" || emailConflict.type === "contact"
+            user.role === "customer" || emailConflict.type === "customer"
               ? EMAIL_CONFLICT_SIGNUP
               : "Email already in use",
         });
@@ -463,6 +460,14 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
     }
 
     await user.save();
+
+    if (
+      user.role === "customer" &&
+      email &&
+      previousEmail !== user.email
+    ) {
+      await syncCustomersToUserEmail(previousEmail, user.email);
+    }
 
     // Always read back so usernameNumber matches rebalanced keys in DB
     const fresh = await User.findById(user._id).lean();

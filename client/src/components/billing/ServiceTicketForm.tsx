@@ -21,13 +21,16 @@ import {
   CustomerDetail,
   CustomerListItem,
   ProductItem,
+  TechnicianListItem,
   getContractsForCustomer,
   getCustomer,
   getCustomers,
   getProducts,
+  getTechnicians,
 } from "@/lib/api";
 import { COMPANY } from "@/lib/constants";
 import { formatCustomerRecordName } from "@/lib/formatName";
+import PhoneInput from "@/components/ui/PhoneInput";
 import {
   DEFAULT_PRODUCT_DISCOUNTS,
   formatDiscountSummary,
@@ -39,7 +42,6 @@ import {
   type ProductDiscounts,
 } from "@/lib/productDiscounts";
 import {
-  SERVICE_TICKET_TERMS,
   TicketFormState,
   TicketPartRow,
   TicketVariant,
@@ -395,9 +397,17 @@ function SortableLineRow({
   );
 }
 
+function technicianDisplayName(tech: {
+  first_name?: string;
+  last_name?: string;
+}): string {
+  return `${tech.first_name ?? ""} ${tech.last_name ?? ""}`.trim();
+}
+
 export default function ServiceTicketForm({
   variant,
   initial,
+  recordId,
   submitting,
   submitLabel,
   onSubmit,
@@ -405,6 +415,7 @@ export default function ServiceTicketForm({
 }: {
   variant: TicketVariant;
   initial?: TicketFormState;
+  recordId?: string;
   submitting?: boolean;
   submitLabel: string;
   onSubmit: (payload: ReturnType<typeof ticketToPayload>) => void | Promise<void>;
@@ -415,6 +426,9 @@ export default function ServiceTicketForm({
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerListItem[]>([]);
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
+  const [techQuery, setTechQuery] = useState("");
+  const [techResults, setTechResults] = useState<TechnicianListItem[]>([]);
+  const [techConflict, setTechConflict] = useState(false);
   const [productQuery, setProductQuery] = useState<Record<string, string>>({});
   const [productResults, setProductResults] = useState<ProductItem[]>([]);
   const [activePartId, setActivePartId] = useState<string | null>(null);
@@ -473,6 +487,47 @@ export default function ServiceTicketForm({
     }, 250);
     return () => clearTimeout(t);
   }, [token, customerQuery]);
+
+  useEffect(() => {
+    if (!token || techQuery.trim().length < 2) {
+      setTechResults([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      getTechnicians(token, {
+        search: techQuery.trim(),
+        date: form.date || undefined,
+        excludeWorkOrderId: recordId,
+      })
+        .then((res) => setTechResults(res.technicians))
+        .catch(() => setTechResults([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [token, techQuery, form.date, recordId]);
+
+  useEffect(() => {
+    if (!token || !form.assignedUserRef || !form.date) {
+      if (!form.assignedUserRef) setTechConflict(false);
+      return;
+    }
+    let cancelled = false;
+    getTechnicians(token, {
+      search: form.tech.trim() || undefined,
+      date: form.date,
+      excludeWorkOrderId: recordId,
+    })
+      .then((res) => {
+        if (cancelled) return;
+        const match = res.technicians.find((t) => t._id === form.assignedUserRef);
+        setTechConflict(Boolean(match && match.jobsOnDate > 0));
+      })
+      .catch(() => {
+        if (!cancelled) setTechConflict(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, form.assignedUserRef, form.date, form.tech, recordId]);
 
   useEffect(() => {
     if (!token || activePartId == null) return;
@@ -593,6 +648,17 @@ export default function ServiceTicketForm({
     if ("addresses" in c) setCustomer(c);
   }
 
+  function applyTechnician(tech: TechnicianListItem) {
+    const name = technicianDisplayName(tech);
+    patch({
+      tech: name,
+      assignedUserRef: variant === "work-order" ? tech._id : null,
+    });
+    setTechQuery("");
+    setTechResults([]);
+    setTechConflict(tech.jobsOnDate > 0);
+  }
+
   function applyAddress(addressId: string) {
     const site = customer?.addresses.find((a) => a._id === addressId);
     const equipment = site?.equipment?.[0];
@@ -602,10 +668,10 @@ export default function ServiceTicketForm({
       customerCity: site?.city ?? form.customerCity,
       customerZip: site?.zip ?? form.customerZip,
       equipmentRef: equipment?._id ?? "",
-      serialNumber: equipment?.serial ?? form.serialNumber,
-      generatorModel: equipment?.generatorModel ?? form.generatorModel,
-      exerciseDay: equipment?.exday ?? form.exerciseDay,
-      exerciseTime: equipment?.extime ?? form.exerciseTime,
+      serialNumber: equipment?.serial ?? "",
+      generatorModel: equipment?.generatorModel ?? "",
+      exerciseDay: equipment?.exday ?? "",
+      exerciseTime: equipment?.extime ?? "",
     });
   }
 
@@ -674,10 +740,17 @@ export default function ServiceTicketForm({
     await onSubmit(ticketToPayload(form));
   }
 
-  const equipmentOptions =
-    customer?.addresses.find((a) => a._id === form.addressRef)?.equipment ??
-    customer?.addresses.flatMap((a) => a.equipment) ??
-    [];
+  const selectedAddress =
+    customer?.addresses.find((a) => a._id === form.addressRef) ??
+    customer?.addresses.find((a) => a.isPrimary) ??
+    customer?.addresses[0];
+  const equipmentOptions = selectedAddress?.equipment ?? [];
+  const hasExistingEquipment = equipmentOptions.length > 0;
+  const existingEquipmentSelected = Boolean(
+    form.equipmentRef &&
+      equipmentOptions.some((unit) => unit._id === form.equipmentRef),
+  );
+  const equipmentFieldsLocked = Boolean(customer && existingEquipmentSelected);
 
   return (
     <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6">
@@ -707,13 +780,53 @@ export default function ServiceTicketForm({
               className={inputClass}
             />
           </Field>
-          <Field label="Tech">
-            <input
-              value={form.tech}
-              onChange={(e) => patch({ tech: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
+          <div className="relative">
+            <Field label="Technician">
+              <input
+                value={techQuery || form.tech}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setTechQuery(value);
+                  patch({
+                    tech: value,
+                    ...(value.trim() !== form.tech.trim()
+                      ? { assignedUserRef: null }
+                      : {}),
+                  });
+                  setTechConflict(false);
+                }}
+                placeholder="Search technicians"
+                className={inputClass}
+              />
+            </Field>
+            {techResults.length > 0 ? (
+              <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
+                {techResults.map((tech) => (
+                  <li key={tech._id}>
+                    <button
+                      type="button"
+                      onClick={() => applyTechnician(tech)}
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                    >
+                      <span className="font-medium text-brand-dark">
+                        {technicianDisplayName(tech)}
+                      </span>
+                      {tech.jobsOnDate > 0 ? (
+                        <span className="mt-0.5 block text-xs text-amber-700">
+                          Already has a job on this date
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {techConflict ? (
+              <p className="mt-1 text-xs text-amber-700">
+                This technician already has a job on this date
+              </p>
+            ) : null}
+          </div>
           {variant === "estimate" ? (
             <Field label="Status">
               <select
@@ -730,27 +843,24 @@ export default function ServiceTicketForm({
               </select>
             </Field>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="Exercise Day">
-                <input
-                  value={form.exerciseDay}
-                  onChange={(e) => patch({ exerciseDay: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="Time Set">
-                <input
-                  value={form.exerciseTime}
-                  onChange={(e) => patch({ exerciseTime: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
-            </div>
+            <Field label="Run hours">
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                value={form.runHours}
+                onChange={(e) => patch({ runHours: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
           )}
         </div>
 
-        <div className="relative mt-4">
-          <Field label="Customer">
+        <div className="mt-5">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            Customer
+          </p>
+          <div className="relative">
             <input
               value={customerQuery || form.customerName}
               onChange={(e) => {
@@ -758,180 +868,165 @@ export default function ServiceTicketForm({
                 if (form.customerName) patch({ customerName: e.target.value });
               }}
               placeholder="Search customers"
+              aria-label="Search customers"
               className={inputClass}
             />
-          </Field>
-          {customerResults.length > 0 ? (
-            <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
-              {customerResults.map((c) => (
-                <li key={c._id}>
-                  <button
-                    type="button"
-                    onClick={() => applyCustomer(c)}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                  >
-                    <span className="font-medium text-brand-dark">
-                      {formatCustomerRecordName(c)}
-                    </span>
-                    <span className="mt-0.5 block text-xs text-neutral-500">
-                      {c.address} {c.city}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-
-        {customer && customer.addresses.length > 1 ? (
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <Field label="Service address">
-              <select
-                value={form.addressRef}
-                onChange={(e) => applyAddress(e.target.value)}
-                className={inputClass}
-              >
-                {customer.addresses.map((a) => (
-                  <option key={a._id} value={a._id}>
-                    {a.label || a.address}
-                  </option>
+            {customerResults.length > 0 ? (
+              <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
+                {customerResults.map((c) => (
+                  <li key={c._id}>
+                    <button
+                      type="button"
+                      onClick={() => applyCustomer(c)}
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                    >
+                      <span className="font-medium text-brand-dark">
+                        {formatCustomerRecordName(c)}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-neutral-500">
+                        {c.address} {c.city}
+                      </span>
+                    </button>
+                  </li>
                 ))}
-              </select>
-            </Field>
-            {equipmentOptions.length > 0 ? (
-              <Field label="Equipment">
+              </ul>
+            ) : null}
+          </div>
+          {customer && customer.addresses.length > 1 ? (
+            <div className="mt-3">
+              <Field label="Service address">
                 <select
-                  value={form.equipmentRef}
-                  onChange={(e) => applyEquipment(e.target.value)}
+                  value={form.addressRef}
+                  onChange={(e) => applyAddress(e.target.value)}
                   className={inputClass}
                 >
-                  <option value="">Select equipment</option>
-                  {equipmentOptions.map((unit) => (
-                    <option key={unit._id} value={unit._id}>
-                      {unit.generatorModel || "Generator"} {unit.serial}
+                  {customer.addresses.map((a) => (
+                    <option key={a._id} value={a._id}>
+                      {a.label || a.address}
                     </option>
                   ))}
                 </select>
               </Field>
-            ) : null}
-          </div>
-        ) : null}
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Name">
-            <input
-              value={form.customerName}
-              onChange={(e) => patch({ customerName: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Address" className="lg:col-span-2">
-            <input
-              value={form.customerAddress}
-              onChange={(e) => patch({ customerAddress: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="City">
-            <input
-              value={form.customerCity}
-              onChange={(e) => patch({ customerCity: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="ZIP">
-            <input
-              value={form.customerZip}
-              onChange={(e) => patch({ customerZip: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Phone">
-            <input
-              value={form.customerPhone}
-              onChange={(e) => patch({ customerPhone: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Email">
-            <input
-              value={form.customerEmail}
-              onChange={(e) => patch({ customerEmail: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Work phone">
-            <input
-              value={form.workPhone}
-              onChange={(e) => patch({ workPhone: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Serial number">
-            <input
-              value={form.serialNumber}
-              onChange={(e) => patch({ serialNumber: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Model">
-            <input
-              value={form.generatorModel}
-              onChange={(e) => patch({ generatorModel: e.target.value })}
-              className={inputClass}
-            />
-          </Field>
-          {variant === "work-order" ? (
-            <>
-              <Field label="Paid">
-                <div className="flex h-[34px] items-center gap-4 text-sm">
-                  <label className="inline-flex items-center gap-1">
-                    <input
-                      type="radio"
-                      checked={form.paid}
-                      onChange={() => patch({ paid: true })}
-                    />
-                    Yes
-                  </label>
-                  <label className="inline-flex items-center gap-1">
-                    <input
-                      type="radio"
-                      checked={!form.paid}
-                      onChange={() => patch({ paid: false })}
-                    />
-                    No
-                  </label>
-                </div>
-              </Field>
-              <Field label="Run hours">
-                <input
-                  type="number"
-                  min={0}
-                  step="0.1"
-                  value={form.runHours}
-                  onChange={(e) => patch({ runHours: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
-            </>
-          ) : (
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="Exercise Day">
-                <input
-                  value={form.exerciseDay}
-                  onChange={(e) => patch({ exerciseDay: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="Time Set">
-                <input
-                  value={form.exerciseTime}
-                  onChange={(e) => patch({ exerciseTime: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
             </div>
-          )}
+          ) : null}
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Name">
+              <input
+                value={form.customerName}
+                onChange={(e) => patch({ customerName: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Address" className="lg:col-span-2">
+              <input
+                value={form.customerAddress}
+                onChange={(e) => patch({ customerAddress: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="City">
+              <input
+                value={form.customerCity}
+                onChange={(e) => patch({ customerCity: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="ZIP">
+              <input
+                value={form.customerZip}
+                onChange={(e) => patch({ customerZip: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Phone">
+              <PhoneInput
+                value={form.customerPhone}
+                onChange={(e) => patch({ customerPhone: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Email">
+              <input
+                value={form.customerEmail}
+                onChange={(e) => patch({ customerEmail: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Work phone">
+              <PhoneInput
+                value={form.workPhone}
+                onChange={(e) => patch({ workPhone: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            Equipment
+          </p>
+          {customer ? (
+            <div>
+              <select
+                value={existingEquipmentSelected ? form.equipmentRef : ""}
+                onChange={(e) => applyEquipment(e.target.value)}
+                aria-label="Equipment"
+                className={inputClass}
+              >
+                {equipmentOptions.map((unit) => (
+                  <option key={unit._id} value={unit._id}>
+                    {[unit.generatorModel || "Generator", unit.serial]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </option>
+                ))}
+                <option value="">
+                  {hasExistingEquipment
+                    ? "Add another equipment"
+                    : "Add new equipment"}
+                </option>
+              </select>
+              {hasExistingEquipment ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  This address already has equipment on file. Use an existing
+                  unit or add another.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Serial number">
+              <input
+                value={form.serialNumber}
+                onChange={(e) => patch({ serialNumber: e.target.value })}
+                readOnly={equipmentFieldsLocked}
+                className={`${inputClass}${equipmentFieldsLocked ? " bg-neutral-50" : ""}`}
+              />
+            </Field>
+            <Field label="Model">
+              <input
+                value={form.generatorModel}
+                onChange={(e) => patch({ generatorModel: e.target.value })}
+                readOnly={equipmentFieldsLocked}
+                className={`${inputClass}${equipmentFieldsLocked ? " bg-neutral-50" : ""}`}
+              />
+            </Field>
+            <Field label="Exercise Day">
+              <input
+                value={form.exerciseDay}
+                onChange={(e) => patch({ exerciseDay: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Time Set">
+              <input
+                value={form.exerciseTime}
+                onChange={(e) => patch({ exerciseTime: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
+          </div>
         </div>
 
         <div className="mt-5 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
@@ -1086,37 +1181,55 @@ export default function ServiceTicketForm({
           </div>
         </div>
 
-        <div className="mt-5">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Terms & conditions
-          </p>
-          <p className="text-xs leading-relaxed text-neutral-600">
-            {SERVICE_TICKET_TERMS}
-          </p>
+        <div className="mt-5 flex flex-wrap items-end justify-between gap-4 border-t border-neutral-200 pt-5">
+          {variant === "work-order" ? (
+            <div className="flex flex-wrap items-end gap-8">
+              <Field label="Paid">
+                <div className="flex h-9 items-center gap-4 text-sm">
+                  <label className="inline-flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      checked={form.paid}
+                      onChange={() => patch({ paid: true })}
+                    />
+                    Yes
+                  </label>
+                  <label className="inline-flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      checked={!form.paid}
+                      onChange={() => patch({ paid: false })}
+                    />
+                    No
+                  </label>
+                </div>
+              </Field>
+              <Field label="Completed">
+                <label className="inline-flex h-9 items-center gap-2 text-sm text-neutral-700">
+                  <input
+                    type="checkbox"
+                    checked={form.completed}
+                    onChange={(e) => patch({ completed: e.target.checked })}
+                  />
+                  Mark completed
+                </label>
+              </Field>
+            </div>
+          ) : (
+            <div />
+          )}
+          <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+            {extraActions}
+            <button
+              type="submit"
+              disabled={submitting || !form.customerId}
+              className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
+            >
+              {submitting ? "Saving…" : submitLabel}
+            </button>
+          </div>
         </div>
-
-        {variant === "work-order" ? (
-          <label className="mt-4 inline-flex items-center gap-2 text-sm text-neutral-700">
-            <input
-              type="checkbox"
-              checked={form.completed}
-              onChange={(e) => patch({ completed: e.target.checked })}
-            />
-            Mark completed
-          </label>
-        ) : null}
       </article>
-
-      <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
-        {extraActions}
-        <button
-          type="submit"
-          disabled={submitting || !form.customerId}
-          className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
-        >
-          {submitting ? "Saving…" : submitLabel}
-        </button>
-      </div>
     </form>
   );
 }

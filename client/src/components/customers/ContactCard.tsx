@@ -11,6 +11,7 @@ import {
   updateCustomerContact,
 } from "@/lib/api";
 import { formatCustomerName } from "@/lib/formatName";
+import PhoneInput from "@/components/ui/PhoneInput";
 import CustomerNotesPanel from "./CustomerNotesPanel";
 
 type ViewMode = "contact" | "notes";
@@ -356,8 +357,7 @@ function ContactCardContent({
                   onChange={(e) => setForm({ ...form, last: e.target.value })}
                   className="rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
                 />
-                <input
-                  type="tel"
+                <PhoneInput
                   placeholder="Phone"
                   value={form.phone}
                   onChange={(e) => setForm({ ...form, phone: e.target.value })}

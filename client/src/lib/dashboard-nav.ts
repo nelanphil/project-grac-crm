@@ -12,9 +12,12 @@ import {
   ShieldCheck,
   KeyRound,
   Package,
+  TicketPercent,
   Landmark,
   ClipboardList,
   FileSpreadsheet,
+  CreditCard,
+  LayoutDashboard,
   LucideIcon,
 } from "lucide-react";
 
@@ -87,6 +90,12 @@ export const NAV_SECTIONS: NavSection[] = [
             excludeRoles: ["customer"],
           },
           {
+            href: "/dashboard/discount-codes",
+            label: "Discount codes",
+            icon: TicketPercent,
+            excludeRoles: ["customer"],
+          },
+          {
             href: "/dashboard/territory",
             label: "Territory",
             icon: Map,
@@ -119,6 +128,18 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "General",
     items: [
+      {
+        href: "/dashboard",
+        label: "Dashboard",
+        icon: LayoutDashboard,
+        includeRoles: ["customer"],
+      },
+      {
+        href: "/dashboard/checkout",
+        label: "Pay",
+        icon: CreditCard,
+        includeRoles: ["customer"],
+      },
       {
         href: "/dashboard/financials",
         label: "Financials",
@@ -540,6 +561,9 @@ export function isNavItemActive(
   href: string,
   hasChildren?: boolean,
 ): boolean {
+  if (href === "/dashboard") {
+    return pathname === "/dashboard";
+  }
   if (hasChildren) {
     return pathname === href;
   }
@@ -547,6 +571,9 @@ export function isNavItemActive(
 }
 
 export function isNavChildActive(pathname: string, href: string): boolean {
+  if (href === "/dashboard") {
+    return pathname === "/dashboard";
+  }
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

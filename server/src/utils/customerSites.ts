@@ -10,6 +10,16 @@ export function normalizePhoneDigits(phone: string | null | undefined): string {
   return (phone ?? "").replace(/\D/g, "");
 }
 
+/** US 10-digit form (strips a leading country code 1). Null if not a full number. */
+export function canonicalPhoneDigits(
+  phone: string | null | undefined,
+): string | null {
+  const digits = normalizePhoneDigits(phone);
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+  if (digits.length === 10) return digits;
+  return null;
+}
+
 /** Normalized street+zip key for text-based address duplicate matching (no geocoding). */
 export function normalizeAddressKey(
   street: string | null | undefined,
@@ -75,6 +85,50 @@ export function defaultAddressLabel(city?: string, address?: string): string {
   const street = address?.trim();
   if (street) return street.slice(0, 40);
   return "Primary";
+}
+
+export async function clearOtherPrimary(
+  customerId: Types.ObjectId | string,
+  keepAddressId?: Types.ObjectId,
+): Promise<void> {
+  const filter: Record<string, unknown> = { customerRef: customerId };
+  if (keepAddressId) {
+    filter._id = { $ne: keepAddressId };
+  }
+  await CustomerAddress.updateMany(filter, { $set: { isPrimary: false } });
+}
+
+/** Apply exclusive primary on an address document. Unchecking the only address is a no-op. */
+export async function applyAddressPrimaryFlag(
+  customerId: Types.ObjectId | string,
+  address: { _id: Types.ObjectId; isPrimary: boolean },
+  requested: boolean | undefined,
+): Promise<void> {
+  if (requested === true) {
+    await clearOtherPrimary(customerId, address._id);
+    address.isPrimary = true;
+    return;
+  }
+  if (requested !== false || !address.isPrimary) return;
+
+  const others = await CustomerAddress.countDocuments({
+    customerRef: customerId,
+    _id: { $ne: address._id },
+  });
+  if (others === 0) {
+    address.isPrimary = true;
+    return;
+  }
+
+  address.isPrimary = false;
+  const next = await CustomerAddress.findOne({
+    customerRef: customerId,
+    _id: { $ne: address._id },
+  }).sort({ createdAt: 1 });
+  if (next) {
+    next.isPrimary = true;
+    await next.save();
+  }
 }
 
 /** Refresh denormalized primary address/equipment fields on the customer. */

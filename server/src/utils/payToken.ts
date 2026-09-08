@@ -20,5 +20,5 @@ export function buildPayUrl(token: string): string {
 }
 
 export function samplePayUrl(): string {
-  return buildPayUrl("sample-preview");
+  return `${env.clientUrl.replace(/\/$/, "")}/checkout/?c=sample-preview`;
 }

@@ -5,6 +5,7 @@ import {
 } from "../models/mongo/PaymentProviderAccount";
 import { getAdapter } from "../payments/registry";
 import { getPaymentProviderAccountsForWebhook } from "../services/paymentProvider.service";
+import { finalizeRedemptionsForInvoices } from "../services/discount.service";
 import {
   findInvoicesForWebhook,
   markInvoicePaid,
@@ -58,6 +59,9 @@ router.post("/:provider", async (req: Request, res: Response) => {
           providerOrderId: verified.providerOrderId,
         });
       }
+      await finalizeRedemptionsForInvoices(
+        invoices.map((invoice) => String(invoice._id)),
+      );
     } else if (verified.status === "failed") {
       for (const invoice of invoices) {
         if (invoice.status !== "paid") {

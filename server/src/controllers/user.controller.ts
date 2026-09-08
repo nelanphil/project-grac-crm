@@ -39,6 +39,7 @@ import {
   findEmailConflict,
   provisionCrmCustomerForUser,
 } from "../utils/provisionCustomerAccount";
+import { syncCustomersToUserEmail } from "../utils/ensureCustomerLogin";
 
 function generateTempPassword(): string {
   return crypto.randomBytes(12).toString("base64url");
@@ -238,7 +239,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
     });
     if (emailConflict) {
       const message =
-        role === "customer" || emailConflict.type === "contact"
+        role === "customer" || emailConflict.type === "customer"
           ? EMAIL_CONFLICT_ADMIN
           : "Email already in use";
       res.status(409).json({ message });
@@ -384,6 +385,7 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
 
     const previousRole = user.role;
     const previousTerritories = formatTerritories(user.territories);
+    const previousEmail = user.email;
 
     if (email !== undefined) {
       const emailConflict = await findEmailConflict(email.toLowerCase(), {
@@ -392,7 +394,7 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
       if (emailConflict) {
         const nextRoleForConflict = role ?? user.role;
         const message =
-          nextRoleForConflict === "customer" || emailConflict.type === "contact"
+          nextRoleForConflict === "customer" || emailConflict.type === "customer"
             ? EMAIL_CONFLICT_ADMIN
             : "Email already in use";
         res.status(409).json({ message });
@@ -459,6 +461,14 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     }
 
     await user.save();
+
+    if (
+      (nextRole === "customer" || previousRole === "customer") &&
+      email !== undefined &&
+      previousEmail !== user.email
+    ) {
+      await syncCustomersToUserEmail(previousEmail, user.email);
+    }
 
     const nextTerritories = formatTerritories(user.territories);
     const counties = [

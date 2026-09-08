@@ -13,6 +13,7 @@ import RecaptchaWidget, {
   getRecaptchaToken,
   resetRecaptchaWidget,
 } from "@/components/contact/RecaptchaWidget";
+import PhoneInput from "@/components/ui/PhoneInput";
 
 const inputClass =
   "mt-1 w-full rounded-md border border-neutral-300 px-4 py-3 text-brand-dark placeholder:text-neutral-400 focus:border-brand-orange focus:outline-none focus:ring-1 focus:ring-brand-orange";
@@ -271,10 +272,8 @@ export default function ContactForm() {
               Phone{" "}
               <span className="font-normal text-neutral-500">(optional)</span>
             </label>
-            <input
+            <PhoneInput
               id="phone"
-              type="tel"
-              autoComplete="tel"
               value={form.phone}
               onChange={(e) => updateField("phone", e.target.value)}
               className={inputClass}

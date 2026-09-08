@@ -151,7 +151,14 @@ function InvoiceDetailContent() {
             <Download className="h-4 w-4" />
             Export to PDF
           </button>
-          {canPay ? (
+          {canPay && isCustomer ? (
+            <Link
+              href={`/dashboard/checkout/?invoiceId=${invoice._id}`}
+              className="w-full rounded-md bg-brand-dark px-4 py-2 text-center text-sm font-medium text-white hover:opacity-90 sm:w-auto"
+            >
+              Pay now
+            </Link>
+          ) : canPay ? (
             <button
               type="button"
               disabled={paying}

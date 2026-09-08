@@ -26,7 +26,9 @@ import {
   rangeUtc,
 } from "../services/schedule.service";
 import { nextPrefixedNumber } from "../services/serviceTicket";
+import { syncWorkOrderInvoice } from "../services/invoice.service";
 import { addMinutes, formatLocalDate } from "../utils/scheduleTime";
+import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -76,14 +78,34 @@ export async function getWorkOrders(
       return;
     }
 
-    if (from || to || unscheduled || assignedUserId || paginate) {
-      if (!hasJobsPermission(req, "jobs:read")) {
-        res.status(403).json({ message: "Missing permission: jobs:read" });
-        return;
-      }
+    const canReadJobs = hasJobsPermission(req, "jobs:read");
+    if ((from || to || unscheduled || assignedUserId || paginate) && !canReadJobs) {
+      res.status(403).json({ message: "Missing permission: jobs:read" });
+      return;
     }
 
     const filter: Record<string, unknown> = {};
+
+    if (!canReadJobs) {
+      const refs = await resolveCustomerRefsForAuthUser(req.user?.id ?? "");
+      if (refs.length === 0) {
+        res.json([]);
+        return;
+      }
+      const customers = await Customer.find({ _id: { $in: refs } })
+        .select("_id legacyId")
+        .lean();
+      const legacyIds = customers
+        .map((c) => c.legacyId)
+        .filter((id): id is number => typeof id === "number");
+      const ownership: Record<string, unknown>[] = [
+        { customerRef: { $in: refs } },
+      ];
+      if (legacyIds.length > 0) {
+        ownership.push({ customerId: { $in: legacyIds } });
+      }
+      filter.$or = ownership;
+    }
 
     if (req.query.customerId) {
       const id = parseInt(req.query.customerId as string, 10);
@@ -162,19 +184,31 @@ export async function getWorkOrders(
     if (paginate) {
       const page = Math.max(1, parseInt(pageRaw, 10) || 1);
       const pageSize = Math.min(
-        200,
+        500,
         Math.max(1, parseInt(String(req.query.pageSize ?? "50"), 10) || 50),
       );
-      const [total, workOrders] = await Promise.all([
+      const [total, workOrders, statsTotal, paidCount] = await Promise.all([
         WorkOrder.countDocuments(filter),
         WorkOrder.find(filter)
           .sort({ date: -1, createdAt: -1 })
           .skip((page - 1) * pageSize)
           .limit(pageSize)
           .lean(),
+        WorkOrder.countDocuments({}),
+        WorkOrder.countDocuments({ paid: true }),
       ]);
       const enriched = await enrichWithAddress(workOrders);
-      res.json({ workOrders: enriched, total, page, pageSize });
+      res.json({
+        workOrders: enriched,
+        total,
+        page,
+        pageSize,
+        stats: {
+          total: statsTotal,
+          unpaid: Math.max(0, statsTotal - paidCount),
+          paid: paidCount,
+        },
+      });
       return;
     }
 
@@ -325,6 +359,7 @@ export async function createWorkOrder(
     }
 
     await workOrder.save();
+    await syncWorkOrderInvoice(workOrder);
 
     if (workOrder.estimateRef) {
       await Estimate.findByIdAndUpdate(workOrder.estimateRef, {
@@ -493,6 +528,11 @@ export async function updateWorkOrder(
 
     await applyAssignmentSideEffects(workOrder, assignee);
     await workOrder.save();
+    try {
+      await syncWorkOrderInvoice(workOrder);
+    } catch (syncErr) {
+      console.error("syncWorkOrderInvoice failed:", syncErr);
+    }
 
     const warnings: string[] = [];
     if (

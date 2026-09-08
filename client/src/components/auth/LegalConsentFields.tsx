@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import SmsConsentDisclosure from "@/components/legal/SmsConsentDisclosure";
-import { formatUsPhoneInput } from "@/lib/smsConsent";
+import PhoneInput from "@/components/ui/PhoneInput";
 
 interface LegalConsentFieldsProps {
   acceptLegal: boolean;
@@ -74,16 +74,12 @@ export default function LegalConsentFields({
           >
             Mobile number
           </label>
-          <input
+          <PhoneInput
             id={phoneId}
             name="phone"
-            type="tel"
-            autoComplete="tel"
-            inputMode="tel"
             value={phone}
-            onChange={(e) => onPhoneChange(formatUsPhoneInput(e.target.value))}
+            onChange={(e) => onPhoneChange(e.target.value)}
             required={smsOptIn}
-            placeholder="(555)555-5555"
             className="mt-1 block w-full rounded-md border border-neutral-200 px-4 py-2.5 text-brand-dark outline-none transition-colors focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
           />
           <p className="mt-1 text-xs text-neutral-500">

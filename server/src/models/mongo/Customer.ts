@@ -36,6 +36,8 @@ export interface ICustomer extends Document {
   leadRef?: Types.ObjectId | null;
   /** Soft delete — excluded from default lists when set. */
   deletedAt: Date | null;
+  /** Unguessable public checkout capability key. Generated lazily. */
+  checkoutKey?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -82,6 +84,7 @@ const customerSchema = new Schema<ICustomer>(
       index: true,
     },
     deletedAt: { type: Date, default: null, index: true },
+    checkoutKey: { type: String, default: null, unique: true, sparse: true },
   },
   { timestamps: true },
 );

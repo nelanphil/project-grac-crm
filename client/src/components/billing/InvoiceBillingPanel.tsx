@@ -148,7 +148,7 @@ export default function InvoiceBillingPanel({
 
       {payUrl && (
         <div className="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800 break-all">
-          Pay link copied: {payUrl}
+          Checkout link copied: {payUrl}
         </div>
       )}
 

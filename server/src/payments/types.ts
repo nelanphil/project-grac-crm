@@ -38,6 +38,14 @@ export type VerifiedWebhookPayment = {
   raw?: unknown;
 };
 
+export type RetrievedProviderPayment = {
+  status: "paid" | "failed" | "pending";
+  providerPaymentId?: string;
+  providerOrderId?: string;
+  invoiceIds: string[];
+  note?: string;
+};
+
 export interface PaymentProviderAdapter {
   readonly name: PaymentProviderName;
   createCheckout(input: CreateCheckoutInput): Promise<CreateCheckoutResult>;
@@ -45,4 +53,12 @@ export interface PaymentProviderAdapter {
     req: Request,
     accounts: PaymentAccountWithSecrets[],
   ): Promise<VerifiedWebhookPayment | null>;
+  retrievePayment?(
+    account: PaymentAccountWithSecrets,
+    paymentId: string,
+  ): Promise<RetrievedProviderPayment | null>;
+  retrieveOrder?(
+    account: PaymentAccountWithSecrets,
+    orderId: string,
+  ): Promise<RetrievedProviderPayment | null>;
 }

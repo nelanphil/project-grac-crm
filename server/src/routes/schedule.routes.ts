@@ -7,6 +7,7 @@ import {
 import {
   getScheduleQueue,
   getScheduleStaff,
+  getScheduleTechnicians,
   postScheduleSuggest,
   getScheduleRoute,
 } from "../controllers/schedule.controller";
@@ -21,6 +22,10 @@ router.get("/queue", requirePermission("jobs:read"), (req, res: Response) =>
 
 router.get("/staff", requirePermission("jobs:read"), (req, res: Response) =>
   getScheduleStaff(req as AuthRequest, res),
+);
+
+router.get("/technicians", (req, res: Response) =>
+  getScheduleTechnicians(req as AuthRequest, res),
 );
 
 router.post("/suggest", requirePermission("jobs:write"), (req, res: Response) =>

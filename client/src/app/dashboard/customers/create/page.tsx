@@ -14,27 +14,17 @@ import {
   validateCustomerAddress,
 } from "@/lib/api";
 import { FLORIDA_COUNTIES } from "@/lib/floridaCounties";
+import { isValidUsPhone } from "@/lib/formatPhone";
+import PhoneInput from "@/components/ui/PhoneInput";
 
 function safeReturnTo(value: string | null): string {
   if (value && value.startsWith("/dashboard")) return value;
   return "/dashboard/customers";
 }
 
-function formatPhoneInput(value: string): string {
-  const digits = value.replace(/\D/g, "").slice(0, 10);
-  if (digits.length === 0) return "";
-  if (digits.length < 4) return `(${digits}`;
-  if (digits.length < 7) return `(${digits.slice(0, 3)})${digits.slice(3)}`;
-  return `(${digits.slice(0, 3)})${digits.slice(3, 6)}-${digits.slice(6)}`;
-}
-
 function isValidEmail(email: string): boolean {
   if (!email.trim()) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-}
-
-function isValidPhone(phone: string): boolean {
-  return phone.replace(/\D/g, "").length === 10;
 }
 
 type ContactDraft = {
@@ -312,7 +302,7 @@ function CreateCustomerContent() {
     const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
     if (
       !primary ||
-      (!isValidPhone(primary.phone) && !isValidEmail(primary.email))
+      (!isValidUsPhone(primary.phone) && !isValidEmail(primary.email))
     ) {
       setError(
         "Primary contact requires a valid phone number and/or email address.",
@@ -515,16 +505,13 @@ function CreateCustomerContent() {
                   </label>
                   <label className="block text-sm font-medium text-brand-dark">
                     Phone
-                    <input
-                      type="tel"
+                    <PhoneInput
                       value={contact.phone}
                       onChange={(e) =>
                         updateContact(contact.key, {
-                          phone: formatPhoneInput(e.target.value),
+                          phone: e.target.value,
                         })
                       }
-                      maxLength={14}
-                      placeholder="(386)555-0123"
                       className={inputClass}
                     />
                   </label>

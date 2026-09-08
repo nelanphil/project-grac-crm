@@ -7,7 +7,13 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import ServiceContractsTable from "@/components/contracts/ServiceContractsTable";
 import ContractStatsCard from "@/components/contracts/ContractStatsCard";
 import ContractsCard from "@/components/control-panel/ContractsCard";
+import TablePagination from "@/components/ui/TablePagination";
 import { useAuthStore } from "@/store/useAuthStore";
+import {
+  DEFAULT_PAGE_SIZE,
+  paginationRange,
+  type PageSize,
+} from "@/lib/pagination";
 import {
   getContracts,
   getContractTemplates,
@@ -67,6 +73,8 @@ function ContractsContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ContractsView>("customer");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
   const isAdmin = user ? ADMIN_ROLES.includes(user.role) : false;
 
@@ -83,6 +91,36 @@ function ContractsContent() {
       ),
     [contracts, search, typeFilter],
   );
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, typeFilter, standingFilter]);
+
+  const { safePage, totalPages, rangeStart, rangeEnd } = paginationRange(
+    page,
+    pageSize,
+    filteredContracts.length,
+  );
+
+  const pagedContracts = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredContracts.slice(start, start + pageSize);
+  }, [filteredContracts, safePage, pageSize]);
+
+  const paginationProps = {
+    rangeStart,
+    rangeEnd,
+    total: filteredContracts.length,
+    pageSize,
+    safePage,
+    totalPages,
+    onPageSizeChange: (size: PageSize) => {
+      setPageSize(size);
+      setPage(1);
+    },
+    onPrev: () => setPage((p) => Math.max(1, p - 1)),
+    onNext: () => setPage((p) => Math.min(totalPages, p + 1)),
+  };
 
   useEffect(() => {
     if (user?.role === "customer") {
@@ -128,7 +166,7 @@ function ContractsContent() {
 
   if (!user || user.role === "customer") return null;
 
-  if (loading)
+  if (loading && contracts.length === 0 && statsContracts.length === 0)
     return (
       <div className="text-sm text-neutral-500 py-6">Loading contracts…</div>
     );
@@ -146,7 +184,15 @@ function ContractsContent() {
         <h1 className="text-2xl font-bold text-brand-dark">Contracts</h1>
       </div>
 
-      <ContractStatsCard contracts={statsContracts} loading={statsLoading} />
+      <ContractStatsCard
+        contracts={statsContracts}
+        loading={statsLoading}
+        selected={standingFilter}
+        onSelect={(filter) => {
+          setView("customer");
+          setStandingFilter(filter);
+        }}
+      />
 
       {isAdmin && (
         <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-neutral-200">
@@ -239,17 +285,39 @@ function ContractsContent() {
             </div>
           </div>
 
+          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+            <TablePagination {...paginationProps} position="top" />
+          </div>
           <ServiceContractsTable
-            contracts={filteredContracts}
+            contracts={pagedContracts}
             showCustomer
-            showAddress
             returnTo="/dashboard/contracts"
             emptyMessage={
               search.trim() || typeFilter !== "all"
                 ? "No contracts match your filters."
                 : "No contracts yet."
             }
+            onUpdated={(updated) => {
+              setContracts((prev) => {
+                const next = prev.map((c) =>
+                  c._id === updated._id ? updated : c,
+                );
+                if (
+                  standingFilter !== "all" &&
+                  updated.standing !== standingFilter
+                ) {
+                  return next.filter((c) => c._id !== updated._id);
+                }
+                return next;
+              });
+              setStatsContracts((prev) =>
+                prev.map((c) => (c._id === updated._id ? updated : c)),
+              );
+            }}
           />
+          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+            <TablePagination {...paginationProps} position="bottom" />
+          </div>
         </>
       )}
     </div>

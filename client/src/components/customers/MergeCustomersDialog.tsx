@@ -631,6 +631,12 @@ export default function MergeCustomersDialog({
                     </span>
                     <span>
                       <span className="font-medium text-brand-dark">
+                        {preview.totals.invoices ?? 0}
+                      </span>{" "}
+                      invoices
+                    </span>
+                    <span>
+                      <span className="font-medium text-brand-dark">
                         {preview.totals.contracts}
                       </span>{" "}
                       contracts

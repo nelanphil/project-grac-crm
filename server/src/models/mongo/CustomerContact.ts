@@ -12,6 +12,7 @@ export interface ICustomerContact extends Document {
   userRef?: Types.ObjectId | null;
   /** Legacy customer id this contact originated from (migration/merge). */
   legacyCustomerId?: number | null;
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -37,11 +38,14 @@ const customerContactSchema = new Schema<ICustomerContact>(
       index: true,
     },
     legacyCustomerId: { type: Number, default: null, index: true },
+    deletedAt: { type: Date, default: null, index: true },
   },
   { timestamps: true }
 );
 
 customerContactSchema.index({ customerRef: 1, isPrimary: -1 });
+
+export const activeContactFilter = { deletedAt: null } as const;
 
 export const CustomerContact = mongoose.model<ICustomerContact>(
   "CustomerContact",

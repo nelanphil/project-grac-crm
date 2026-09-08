@@ -1,33 +1,10 @@
 "use client";
 
 import AuthGuard from "@/components/auth/AuthGuard";
-import UpcomingRenewalsTable from "@/components/dashboard/UpcomingRenewalsTable";
+import CustomerHomeDashboard from "@/components/dashboard/customer/CustomerHomeDashboard";
 import StaffHomeDashboard from "@/components/dashboard/staff/StaffHomeDashboard";
-import UsernameDisplay from "@/components/ui/UsernameDisplay";
 import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
-
-const ROLE_LABELS: Record<string, string> = {
-  "super-admin": "Super Admin",
-  admin: "Administrator",
-  owner: "Owner",
-  manager: "Manager",
-  tech: "Technician",
-  agent: "Agent",
-  customer: "Customer",
-};
-
-const ROLE_COLORS: Record<string, string> = {
-  "super-admin": "bg-red-100 text-red-800",
-  admin: "bg-purple-100 text-purple-800",
-  owner: "bg-yellow-100 text-yellow-800",
-  manager: "bg-blue-100 text-blue-800",
-  tech: "bg-cyan-100 text-cyan-800",
-  agent: "bg-green-100 text-green-800",
-  customer: "bg-neutral-100 text-neutral-700",
-};
-
-const RENEWALS_ROLES = ["super-admin", "admin", "owner", "manager"];
 
 export default function DashboardPage() {
   return (
@@ -46,40 +23,5 @@ function DashboardContent() {
     return <StaffHomeDashboard />;
   }
 
-  return (
-    <div>
-      {/* Welcome card */}
-      <div className="rounded-xl bg-white border border-neutral-200 p-6 shadow-sm">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-sm text-neutral-500">Welcome back</p>
-            <h2 className="mt-1 text-2xl font-bold text-brand-dark">
-              {user.first_name} {user.last_name}
-            </h2>
-            <p className="mt-1 text-sm text-neutral-500">{user.email}</p>
-            {user.username && (
-              <p className="mt-1 text-sm text-neutral-500">
-                <UsernameDisplay
-                  username={user.username}
-                  usernameNumber={user.usernameNumber}
-                  className="text-neutral-600"
-                />
-              </p>
-            )}
-          </div>
-          <span
-            className={`rounded-full px-3 py-1 text-xs font-semibold ${ROLE_COLORS[user.role] ?? "bg-neutral-100 text-neutral-700"}`}
-          >
-            {ROLE_LABELS[user.role] ?? user.role}
-          </span>
-        </div>
-      </div>
-
-      {RENEWALS_ROLES.includes(user.role) && (
-        <div className="mt-6">
-          <UpcomingRenewalsTable />
-        </div>
-      )}
-    </div>
-  );
+  return <CustomerHomeDashboard />;
 }

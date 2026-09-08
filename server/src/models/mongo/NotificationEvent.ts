@@ -20,6 +20,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "invoice",
   "product",
   "estimate",
+  "discount_code",
 ] as const;
 
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPES)[number];

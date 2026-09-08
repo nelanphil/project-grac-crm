@@ -16,6 +16,7 @@ import {
   updateWorkOrder,
   WorkOrderListItem,
 } from "@/lib/api";
+import { isDispatcherRole } from "@/lib/schedule";
 import { ticketFromRecord } from "@/lib/service-ticket";
 
 export default function WorkOrderDetailPage() {
@@ -32,6 +33,7 @@ function WorkOrderDetailContent() {
   const router = useRouter();
   const id = useSearchParams().get("id") ?? "";
   const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
   const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
   const canDelete = useAuthStore((s) => s.hasPermission("jobs:delete"));
   const [order, setOrder] = useState<WorkOrderListItem | null>(null);
@@ -134,6 +136,7 @@ function WorkOrderDetailContent() {
         <ServiceTicketForm
           variant="work-order"
           initial={ticketFromRecord(order)}
+          recordId={order._id}
           submitting={submitting}
           submitLabel="Save work order"
           extraActions={
@@ -164,7 +167,15 @@ function WorkOrderDetailContent() {
             setSubmitting(true);
             setError(null);
             try {
-              const updated = await updateWorkOrder(token, order._id, payload);
+              const { assignedUserRef, ...rest } = payload;
+              const nextAssigned = assignedUserRef ?? null;
+              const prevAssigned = order.assignedUserRef ?? null;
+              const updated = await updateWorkOrder(token, order._id, {
+                ...rest,
+                ...(isDispatcherRole(user?.role) && nextAssigned !== prevAssigned
+                  ? { assignedUserRef: nextAssigned }
+                  : {}),
+              });
               setOrder(updated);
               setEditing(false);
             } catch (err) {

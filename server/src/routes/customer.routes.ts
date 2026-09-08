@@ -36,6 +36,7 @@ import {
   updateCustomerNote,
   deleteCustomerNote,
 } from "../controllers/customerNote.controller";
+import { getCustomerCheckoutLink } from "../controllers/checkout.controller";
 
 const router = Router();
 
@@ -135,6 +136,12 @@ router.delete(
   "/:id/contacts/:contactId",
   requirePermission("customers:write"),
   deleteCustomerContact,
+);
+
+router.get(
+  "/:id/checkout-link",
+  requirePermission("contracts:write"),
+  getCustomerCheckoutLink,
 );
 
 // Merge

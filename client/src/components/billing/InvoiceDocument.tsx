@@ -65,7 +65,7 @@ export default function InvoiceDocument({
     : [];
 
   return (
-    <article className="invoice-document rounded-xl border border-neutral-200 bg-white px-4 py-6 shadow-sm sm:px-10 sm:py-10 print:rounded-none print:border-0 print:shadow-none print:px-0 print:py-0">
+    <article className={`invoice-document rounded-xl border border-neutral-200 bg-white px-4 py-6 shadow-sm sm:px-10 sm:py-10 print:rounded-none print:border-0 print:shadow-none print:px-0 print:py-0 ${isCustomer ? "uppercase" : ""}`}>
       <header className="flex flex-col gap-6 border-b border-neutral-200 pb-6 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-8">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">
@@ -74,7 +74,7 @@ export default function InvoiceDocument({
           <p className="mt-1 text-2xl font-bold text-brand-dark break-words">
             {invoice.number}
           </p>
-          <p className="mt-1 text-sm capitalize text-neutral-500">
+          <p className={`mt-1 text-sm text-neutral-500 ${isCustomer ? "" : "capitalize"}`}>
             {invoice.sourceType.replace(/_/g, " ")}
           </p>
           <div className="mt-5 space-y-0.5 text-sm text-neutral-600">
@@ -152,7 +152,7 @@ export default function InvoiceDocument({
           <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
             Status
           </p>
-          <p className="mt-1 text-sm font-medium capitalize text-brand-dark">
+          <p className={`mt-1 text-sm font-medium text-brand-dark ${isCustomer ? "" : "capitalize"}`}>
             {invoice.status}
           </p>
         </div>
@@ -220,20 +220,55 @@ export default function InvoiceDocument({
             )}
           </tbody>
           <tfoot>
-            <tr>
-              <td className="pt-4 text-base font-semibold text-brand-dark">
-                Total due
-              </td>
-              <td className="pt-4 text-right text-base font-semibold text-brand-dark">
-                {formatMoney(invoice.amountCents)}
-              </td>
-            </tr>
+            {invoice.discountCents && invoice.discountCents > 0 ? (
+              <>
+                <tr>
+                  <td className="pt-4 text-sm text-neutral-600">Subtotal</td>
+                  <td className="pt-4 text-right text-sm text-neutral-700">
+                    {formatMoney(
+                      invoice.originalAmountCents ?? invoice.amountCents,
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="pt-2 text-sm text-neutral-600">
+                    Discount{invoice.discountCode ? ` ${invoice.discountCode}` : ""}
+                  </td>
+                  <td className="pt-2 text-right text-sm text-emerald-700">
+                    −{formatMoney(invoice.discountCents)}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="pt-3 text-base font-semibold text-brand-dark">
+                    Total due
+                  </td>
+                  <td className="pt-3 text-right text-base font-semibold text-brand-dark">
+                    {formatMoney(
+                      Math.max(
+                        (invoice.originalAmountCents ?? invoice.amountCents) -
+                          invoice.discountCents,
+                        0,
+                      ),
+                    )}
+                  </td>
+                </tr>
+              </>
+            ) : (
+              <tr>
+                <td className="pt-4 text-base font-semibold text-brand-dark">
+                  Total due
+                </td>
+                <td className="pt-4 text-right text-base font-semibold text-brand-dark">
+                  {formatMoney(invoice.amountCents)}
+                </td>
+              </tr>
+            )}
           </tfoot>
         </table>
       </div>
 
       {invoice.paymentProvider ? (
-        <p className="mt-4 text-xs text-neutral-500 capitalize">
+        <p className={`mt-4 text-xs text-neutral-500 ${isCustomer ? "" : "capitalize"}`}>
           Payment method: {invoice.paymentProvider}
         </p>
       ) : null}

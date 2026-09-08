@@ -976,6 +976,7 @@ export interface MergePreview {
     addresses: number;
     equipment: number;
     workOrders: number;
+    invoices: number;
     contracts: number;
     notes: number;
     contacts: number;
@@ -1344,6 +1345,7 @@ export type ServiceTicketPayload = {
   descPerformed?: string;
   date?: string | null;
   tech?: string;
+  assignedUserRef?: string | null;
   paid?: boolean;
   completed?: boolean;
   certify?: boolean;
@@ -1389,6 +1391,7 @@ export async function getWorkOrders(
   total: number;
   page: number;
   pageSize: number;
+  stats?: { total: number; unpaid: number; paid: number };
 }> {
   const params = new URLSearchParams();
   if (opts?.page != null) params.set("page", String(opts.page));
@@ -1406,6 +1409,7 @@ export async function getWorkOrders(
     total: number;
     page: number;
     pageSize: number;
+    stats?: { total: number; unpaid: number; paid: number };
   }>(`/work-orders?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
@@ -1534,6 +1538,37 @@ export interface ScheduleStaffMember {
   homeLocation: UserHomeLocation;
   weeklyHours: UserWeeklyHours;
   scheduleExceptions: ScheduleException[];
+}
+
+export interface TechnicianListItem {
+  _id: string;
+  first_name: string;
+  last_name: string;
+  jobsOnDate: number;
+}
+
+export async function getTechnicians(
+  token: string,
+  options?: {
+    search?: string;
+    date?: string;
+    excludeWorkOrderId?: string;
+  },
+): Promise<{ technicians: TechnicianListItem[] }> {
+  const params = new URLSearchParams();
+  if (options?.search) params.set("search", options.search);
+  if (options?.date) params.set("date", options.date);
+  if (options?.excludeWorkOrderId) {
+    params.set("excludeWorkOrderId", options.excludeWorkOrderId);
+  }
+  const qs = params.toString();
+  return authRequest<{ technicians: TechnicianListItem[] }>(
+    `/schedule/technicians${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function getScheduleStaff(
@@ -1843,6 +1878,9 @@ export interface InvoiceItem {
   templateRef: string | null;
   lineItems: InvoiceLineItem[];
   amountCents: number;
+  originalAmountCents?: number | null;
+  discountCode?: string | null;
+  discountCents?: number;
   currency: string;
   status: InvoiceStatus;
   dueDate: string | null;
@@ -1857,6 +1895,10 @@ export interface InvoiceItem {
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  /** Present on paginated GET /invoices. */
+  customerName?: string;
+  /** Present on paginated GET /invoices. */
+  contactName?: string;
   /** Present on GET /invoices/:id only. */
   customer?: InvoiceCustomerSummary | null;
   /** Present on GET /invoices/:id only. */
@@ -1879,21 +1921,34 @@ export async function getInvoices(
     customerRef?: string;
     contractRef?: string;
     workOrderRef?: string;
+    search?: string;
+    page?: number;
+    pageSize?: number;
   },
-): Promise<{ invoices: InvoiceItem[] }> {
+): Promise<{
+  invoices: InvoiceItem[];
+  total?: number;
+  page?: number;
+  pageSize?: number;
+}> {
   const qs = new URLSearchParams();
   if (params?.status) qs.set("status", params.status);
   if (params?.customerRef) qs.set("customerRef", params.customerRef);
   if (params?.contractRef) qs.set("contractRef", params.contractRef);
   if (params?.workOrderRef) qs.set("workOrderRef", params.workOrderRef);
+  if (params?.search) qs.set("search", params.search);
+  if (params?.page != null) qs.set("page", String(params.page));
+  if (params?.pageSize != null) qs.set("pageSize", String(params.pageSize));
   const q = qs.toString();
-  return authRequest<{ invoices: InvoiceItem[] }>(
-    `/invoices${q ? `?${q}` : ""}`,
-    {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
-    },
-  );
+  return authRequest<{
+    invoices: InvoiceItem[];
+    total?: number;
+    page?: number;
+    pageSize?: number;
+  }>(`/invoices${q ? `?${q}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 export async function getInvoice(
@@ -1933,15 +1988,361 @@ export async function startInvoiceCheckout(
 export async function createInvoicePayLink(
   token: string,
   id: string,
-): Promise<{ payUrl: string; expiresAt: string; invoice: InvoiceItem }> {
+): Promise<{ payUrl: string; expiresAt?: string; invoice: InvoiceItem }> {
   return authRequest<{
     payUrl: string;
-    expiresAt: string;
+    expiresAt?: string;
     invoice: InvoiceItem;
   }>(`/invoices/${id}/pay-link`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+export type CheckoutItemKind = "invoice" | "work_order";
+
+export interface CheckoutItem {
+  id: string;
+  kind: CheckoutItemKind;
+  number: string;
+  description: string;
+  amountCents: number;
+  status: string;
+  sourceType?: string;
+}
+
+export interface CheckoutCart {
+  customerLabel: string;
+  items: CheckoutItem[];
+  totalCents: number;
+}
+
+export type CheckoutConfirmStatus = "paid" | "failed" | "pending";
+
+export interface CheckoutConfirmInvoice {
+  _id: string;
+  number: string;
+  description: string;
+  amountCents: number;
+  status: string;
+  sourceType?: string;
+}
+
+export async function confirmCheckoutPayment(data: {
+  invoiceId?: string;
+  transactionId?: string;
+  orderId?: string;
+}): Promise<{
+  status: CheckoutConfirmStatus;
+  invoices: CheckoutConfirmInvoice[];
+}> {
+  return authRequest<{
+    status: CheckoutConfirmStatus;
+    invoices: CheckoutConfirmInvoice[];
+  }>("/checkout/confirm", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getCheckoutByKey(key: string): Promise<CheckoutCart> {
+  return authRequest<CheckoutCart>(`/checkout/${encodeURIComponent(key)}`, {
+    method: "GET",
+  });
+}
+
+export async function startCheckoutByKey(
+  key: string,
+  data: {
+    invoiceIds: string[];
+    workOrderIds: string[];
+    discountCode?: string;
+  },
+): Promise<{ url: string }> {
+  return authRequest<{ url: string }>(
+    `/checkout/${encodeURIComponent(key)}/session`,
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export interface CheckoutDiscountPreview {
+  code: string;
+  label: string;
+  mode: "percent" | "amount";
+  discountCents: number;
+  subtotalCents: number;
+  eligibleCents: number;
+  totalCents: number;
+}
+
+export async function previewCheckoutDiscountByKey(
+  key: string,
+  data: {
+    code: string;
+    invoiceIds: string[];
+    workOrderIds: string[];
+  },
+): Promise<CheckoutDiscountPreview> {
+  return authRequest<CheckoutDiscountPreview>(
+    `/checkout/${encodeURIComponent(key)}/discount`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        discountCode: data.code,
+        invoiceIds: data.invoiceIds,
+        workOrderIds: data.workOrderIds,
+      }),
+    },
+  );
+}
+
+export async function getMyCheckout(token: string): Promise<CheckoutCart> {
+  return authRequest<CheckoutCart>("/checkout/me", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function startMyCheckoutSession(
+  token: string,
+  data: {
+    invoiceIds: string[];
+    workOrderIds: string[];
+    discountCode?: string;
+  },
+): Promise<{ url: string }> {
+  return authRequest<{ url: string }>("/checkout/me/session", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function previewMyCheckoutDiscount(
+  token: string,
+  data: {
+    code: string;
+    invoiceIds: string[];
+    workOrderIds: string[];
+  },
+): Promise<CheckoutDiscountPreview> {
+  return authRequest<CheckoutDiscountPreview>("/checkout/me/discount", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      discountCode: data.code,
+      invoiceIds: data.invoiceIds,
+      workOrderIds: data.workOrderIds,
+    }),
+  });
+}
+
+export type PortalContractStanding = "active" | "due_soon" | "expired";
+
+export interface PortalContract {
+  _id: string;
+  templateLabel: string;
+  contractType: string | null;
+  standing: PortalContractStanding;
+  inGoodStanding: boolean;
+  renewalDueDate: string | null;
+  durationMonths: number;
+  address: {
+    label: string;
+    address: string;
+    city: string;
+    state: string;
+    zip: string;
+  } | null;
+}
+
+export interface PortalAppointment {
+  _id: string;
+  number: string;
+  descPerform: string;
+  scheduledStart: string | null;
+  scheduledEnd: string | null;
+  date: string | null;
+  tech: string;
+  addressLabel: string;
+  completed: boolean;
+  canceled: boolean;
+}
+
+export interface PortalInvoice {
+  _id: string;
+  number: string;
+  status: InvoiceStatus;
+  amountCents: number;
+  issuedAt: string;
+  paidAt: string | null;
+}
+
+export interface PortalHome {
+  contracts: PortalContract[];
+  appointments: {
+    upcoming: PortalAppointment[];
+    recent: PortalAppointment[];
+  };
+  balance: CheckoutCart;
+  invoices: PortalInvoice[];
+  customers: PortalCustomer[];
+}
+
+export interface PortalAddress {
+  _id: string;
+  label: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  isPrimary: boolean;
+}
+
+export interface PortalContact {
+  _id: string;
+  first: string;
+  last: string;
+  phone: string;
+  email: string;
+  label: string;
+  isPrimary: boolean;
+}
+
+export interface PortalCustomer {
+  _id: string;
+  accountName: string;
+  addresses: PortalAddress[];
+  contacts: PortalContact[];
+}
+
+export async function getPortalHome(token: string): Promise<PortalHome> {
+  return authRequest<PortalHome>("/portal/home", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function updatePortalAddress(
+  token: string,
+  addressId: string,
+  data: {
+    label?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    isPrimary?: boolean;
+  },
+): Promise<{ address: PortalAddress }> {
+  return authRequest<{ address: PortalAddress }>(
+    `/portal/addresses/${addressId}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function updatePortalContact(
+  token: string,
+  contactId: string,
+  data: {
+    first?: string;
+    last?: string;
+    phone?: string;
+    email?: string;
+    label?: string;
+    isPrimary?: boolean;
+  },
+): Promise<{ contact: PortalContact }> {
+  return authRequest<{ contact: PortalContact }>(
+    `/portal/contacts/${contactId}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deletePortalAddress(
+  token: string,
+  addressId: string,
+): Promise<void> {
+  await authRequest<void>(`/portal/addresses/${addressId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createPortalAddress(
+  token: string,
+  data: {
+    label?: string;
+    address: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    isPrimary?: boolean;
+  },
+): Promise<{ address: PortalAddress; customerId: string }> {
+  return authRequest<{ address: PortalAddress; customerId: string }>(
+    "/portal/addresses",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deletePortalContact(
+  token: string,
+  contactId: string,
+): Promise<void> {
+  await authRequest<void>(`/portal/contacts/${contactId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createPortalContact(
+  token: string,
+  data: {
+    first: string;
+    last?: string;
+    phone?: string;
+    email?: string;
+    label?: string;
+    isPrimary?: boolean;
+  },
+): Promise<{ contact: PortalContact; customerId: string }> {
+  return authRequest<{ contact: PortalContact; customerId: string }>(
+    "/portal/contacts",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function getCustomerCheckoutLink(
+  token: string,
+  customerId: string,
+): Promise<{ checkoutUrl: string }> {
+  return authRequest<{ checkoutUrl: string }>(
+    `/customers/${customerId}/checkout-link`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function getInvoiceByPayToken(
@@ -2054,6 +2455,95 @@ export async function deleteProduct(token: string, id: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Discount codes
+// ---------------------------------------------------------------------------
+
+export type DiscountMode = "percent" | "amount";
+export type DiscountAppliesTo = "work_order" | "contract";
+
+export interface DiscountCodeItem {
+  _id: string;
+  code: string;
+  label: string;
+  mode: DiscountMode;
+  value: number;
+  active: boolean;
+  expiresAt: string | null;
+  maxRedemptions: number | null;
+  redemptionCount: number;
+  maxRedemptionsPerCustomer: number | null;
+  minSubtotalCents: number | null;
+  appliesTo: DiscountAppliesTo[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DiscountCodeWritePayload = {
+  code: string;
+  label?: string;
+  mode: DiscountMode;
+  value: number;
+  active?: boolean;
+  expiresAt?: string | null;
+  maxRedemptions?: number | null;
+  maxRedemptionsPerCustomer?: number | null;
+  minSubtotalCents?: number | null;
+  appliesTo?: DiscountAppliesTo[];
+};
+
+export async function getDiscountCodes(
+  token: string,
+  opts?: { search?: string },
+): Promise<{ discountCodes: DiscountCodeItem[] }> {
+  const params = new URLSearchParams();
+  if (opts?.search) params.set("search", opts.search);
+  const qs = params.toString();
+  return authRequest<{ discountCodes: DiscountCodeItem[] }>(
+    `/discount-codes${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function createDiscountCode(
+  token: string,
+  data: DiscountCodeWritePayload,
+): Promise<{ discountCode: DiscountCodeItem }> {
+  return authRequest<{ discountCode: DiscountCodeItem }>("/discount-codes", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateDiscountCode(
+  token: string,
+  id: string,
+  data: Partial<DiscountCodeWritePayload>,
+): Promise<{ discountCode: DiscountCodeItem }> {
+  return authRequest<{ discountCode: DiscountCodeItem }>(
+    `/discount-codes/${id}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deleteDiscountCode(
+  token: string,
+  id: string,
+): Promise<void> {
+  await authRequest<void>(`/discount-codes/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Manufacturers
 // ---------------------------------------------------------------------------
 
@@ -2136,6 +2626,8 @@ export interface EstimateItem {
   updatedAt: string;
 }
 
+export type EstimateStatusGroup = "active" | "awarded" | "lost";
+
 export async function getEstimates(
   token: string,
   opts?: {
@@ -2143,6 +2635,7 @@ export async function getEstimates(
     pageSize?: number;
     search?: string;
     status?: EstimateStatus;
+    statusGroup?: EstimateStatusGroup;
     customerId?: number;
   },
 ): Promise<{
@@ -2150,18 +2643,21 @@ export async function getEstimates(
   total: number;
   page: number;
   pageSize: number;
+  stats?: { total: number; active: number; awarded: number; lost: number };
 }> {
   const params = new URLSearchParams();
   if (opts?.page != null) params.set("page", String(opts.page));
   if (opts?.pageSize != null) params.set("pageSize", String(opts.pageSize));
   if (opts?.search) params.set("search", opts.search);
   if (opts?.status) params.set("status", opts.status);
+  if (opts?.statusGroup) params.set("statusGroup", opts.statusGroup);
   if (opts?.customerId != null) params.set("customerId", String(opts.customerId));
   return authRequest<{
     estimates: EstimateItem[];
     total: number;
     page: number;
     pageSize: number;
+    stats?: { total: number; active: number; awarded: number; lost: number };
   }>(`/estimates?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
@@ -3644,7 +4140,8 @@ export type NotificationEntityType =
   | "payment_provider_account"
   | "invoice"
   | "product"
-  | "estimate";
+  | "estimate"
+  | "discount_code";
 
 export type NotificationAction =
   | "created"

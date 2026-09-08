@@ -1,8 +1,9 @@
 import { randomInt } from "crypto";
 import { Types } from "mongoose";
 import { Contract, IContract } from "../models/mongo/Contract";
+import { Customer } from "../models/mongo/Customer";
 import { Invoice, IInvoice } from "../models/mongo/Invoice";
-import { WorkOrder } from "../models/mongo/WorkOrder";
+import { WorkOrder, IWorkOrder } from "../models/mongo/WorkOrder";
 import {
   computeRenewalDueDateAfterRenewal,
   parseDateOnly,
@@ -189,7 +190,8 @@ export async function findInvoicesForWebhook(params: {
   const ids = [
     ...new Set(
       [...(params.invoiceIds ?? []), params.invoiceId].filter(
-        (id): id is string => Boolean(id) && Types.ObjectId.isValid(id),
+        (id): id is string =>
+          typeof id === "string" && Types.ObjectId.isValid(id),
       ),
     ),
   ];
@@ -231,6 +233,354 @@ export async function findInvoicesForWebhook(params: {
 
 export function dollarsToCents(amount: number): number {
   return Math.round(amount * 100);
+}
+
+export class InvoiceAmountError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvoiceAmountError";
+  }
+}
+
+export type WorkOrderInvoiceSource = {
+  _id: Types.ObjectId;
+  customerId: number;
+  customerRef?: Types.ObjectId | null;
+  parts?: IWorkOrder["parts"];
+  totalLabor?: number;
+  miscExp?: number;
+  shipping?: number;
+  total?: number;
+  descPerform?: string;
+  number?: string;
+  paid?: boolean;
+  date?: Date | null;
+  updatedAt?: Date;
+};
+
+export async function resolveCustomerRefForWorkOrder(
+  wo: WorkOrderInvoiceSource,
+): Promise<Types.ObjectId | undefined> {
+  if (wo.customerRef) return wo.customerRef;
+  if (typeof wo.customerId !== "number") return undefined;
+  const customer = await Customer.findOne({ legacyId: wo.customerId })
+    .select("_id")
+    .lean();
+  return customer?._id as Types.ObjectId | undefined;
+}
+
+async function persistResolvedCustomerRef(
+  wo: WorkOrderInvoiceSource,
+  customerRef: Types.ObjectId,
+): Promise<void> {
+  wo.customerRef = customerRef;
+  await WorkOrder.updateOne({ _id: wo._id }, { $set: { customerRef } });
+}
+
+function invoiceLineItemsForWorkOrder(
+  wo: WorkOrderInvoiceSource,
+  amountCents: number,
+  description?: string,
+): { description: string; amountCents: number }[] {
+  const builtItems = workOrderInvoiceLineItems(wo);
+  const lineItems =
+    builtItems.length > 0
+      ? builtItems
+      : [
+          {
+            description:
+              description ||
+              `Work order${wo.descPerform ? `: ${wo.descPerform}` : ""}`,
+            amountCents,
+          },
+        ];
+  if (description && lineItems.length === 1) {
+    lineItems[0].description = description;
+  }
+  return lineItems;
+}
+
+function lineItemsChanged(
+  current: Array<{ description?: string; amountCents?: number }>,
+  next: Array<{ description: string; amountCents: number }>,
+): boolean {
+  if (current.length !== next.length) return true;
+  return current.some(
+    (item, i) =>
+      (item.description ?? "") !== next[i].description ||
+      (item.amountCents ?? 0) !== next[i].amountCents,
+  );
+}
+
+export function workOrderInvoiceLineItems(wo: {
+  parts?: Array<{
+    partNumber?: string;
+    description?: string;
+    quantity?: number;
+    amount?: number;
+    lineType?: string;
+    kind?: string;
+  }>;
+  totalLabor?: number;
+  miscExp?: number;
+  shipping?: number;
+  total?: number;
+  descPerform?: string;
+  number?: string;
+}): { description: string; amountCents: number }[] {
+  const items: { description: string; amountCents: number }[] = [];
+  const parts = wo.parts ?? [];
+  let hasLaborProductLines = false;
+  for (const part of parts) {
+    if (part.lineType === "note") continue;
+    if (part.kind === "labor") hasLaborProductLines = true;
+    const cents = dollarsToCents(part.amount || 0);
+    if (cents <= 0) continue;
+    const qty = part.quantity && part.quantity !== 1 ? `${part.quantity} × ` : "";
+    const label =
+      part.description?.trim() ||
+      part.partNumber?.trim() ||
+      (part.kind === "labor" ? "Labor" : "Part");
+    items.push({
+      description: `${qty}${label}${part.partNumber && part.description ? ` (${part.partNumber})` : ""}`,
+      amountCents: cents,
+    });
+  }
+  const laborCents = dollarsToCents(wo.totalLabor || 0);
+  if (!hasLaborProductLines && laborCents > 0) {
+    items.push({ description: "Labor", amountCents: laborCents });
+  }
+  const miscCents = dollarsToCents(wo.miscExp || 0);
+  if (miscCents > 0) {
+    items.push({ description: "Miscellaneous", amountCents: miscCents });
+  }
+  const shippingCents = dollarsToCents(wo.shipping || 0);
+  if (shippingCents > 0) {
+    items.push({ description: "Shipping", amountCents: shippingCents });
+  }
+  if (items.length > 0) return items;
+  const lump = dollarsToCents(wo.total || 0);
+  if (lump > 0) {
+    return [
+      {
+        description:
+          `Work order${wo.number ? ` ${wo.number}` : ""}${wo.descPerform ? `: ${wo.descPerform}` : ""}`.trim(),
+        amountCents: lump,
+      },
+    ];
+  }
+  return [];
+}
+
+const OPEN_INVOICE_STATUSES = ["open", "draft"] as const;
+
+export async function findOpenInvoiceForWorkOrder(
+  workOrderId: Types.ObjectId | string,
+): Promise<IInvoice | null> {
+  return Invoice.findOne({
+    workOrderRef: workOrderId,
+    status: { $in: OPEN_INVOICE_STATUSES },
+  });
+}
+
+export async function ensureOpenInvoiceForWorkOrder(
+  wo: WorkOrderInvoiceSource,
+  options?: {
+    amountCents?: number;
+    description?: string;
+    actor?: {
+      actorType?: "user" | "system";
+      actorUserId?: string | null;
+      actorName?: string | null;
+    };
+  },
+): Promise<{ invoice: IInvoice; created: boolean }> {
+  const customerRef = await resolveCustomerRefForWorkOrder(wo);
+  if (customerRef) await persistResolvedCustomerRef(wo, customerRef);
+
+  const existing = await findOpenInvoiceForWorkOrder(wo._id);
+  if (existing) {
+    if (customerRef && !existing.customerRef) {
+      existing.customerRef = customerRef;
+      await existing.save();
+    }
+    return { invoice: existing, created: false };
+  }
+
+  const amountCents =
+    options?.amountCents != null
+      ? options.amountCents
+      : dollarsToCents(wo.total || 0);
+  if (amountCents <= 0) {
+    throw new InvoiceAmountError(
+      "Work order total must be greater than zero to invoice",
+    );
+  }
+  if (!customerRef) {
+    throw new Error("Work order has no resolvable customer for invoicing");
+  }
+
+  const lineItems = invoiceLineItemsForWorkOrder(
+    wo,
+    amountCents,
+    options?.description,
+  );
+
+  const issuedAt = new Date();
+  const invoice = await Invoice.create({
+    number: await nextInvoiceNumber(issuedAt),
+    customerId: wo.customerId,
+    customerRef,
+    sourceType: "work_order",
+    workOrderRef: wo._id,
+    lineItems,
+    amountCents,
+    currency: "USD",
+    status: "open",
+    dueDate: null,
+    issuedAt,
+    metadata: {},
+  });
+
+  logNotificationAsync({
+    entityType: "invoice",
+    action: "created",
+    entityId: String(invoice._id),
+    customerRef,
+    summary: `Invoice ${invoice.number} created`,
+    actorType: options?.actor?.actorType ?? "system",
+    actorUserId: options?.actor?.actorUserId ?? null,
+    actorName: options?.actor?.actorName,
+  });
+
+  return { invoice, created: true };
+}
+
+export async function createPaidInvoiceForWorkOrder(
+  wo: WorkOrderInvoiceSource,
+  options?: { backfilled?: boolean },
+): Promise<IInvoice> {
+  const customerRef = await resolveCustomerRefForWorkOrder(wo);
+  if (customerRef) await persistResolvedCustomerRef(wo, customerRef);
+  if (!customerRef) {
+    throw new Error("Work order has no resolvable customer for invoicing");
+  }
+
+  const amountCents = dollarsToCents(wo.total || 0);
+  if (amountCents <= 0) {
+    throw new InvoiceAmountError(
+      "Work order total must be greater than zero to invoice",
+    );
+  }
+
+  const lineItems = invoiceLineItemsForWorkOrder(wo, amountCents);
+  const issuedAt =
+    wo.date instanceof Date
+      ? wo.date
+      : wo.updatedAt instanceof Date
+        ? wo.updatedAt
+        : new Date();
+  const invoice = await Invoice.create({
+    number: await nextInvoiceNumber(issuedAt),
+    customerId: wo.customerId,
+    customerRef,
+    sourceType: "work_order",
+    workOrderRef: wo._id,
+    lineItems,
+    amountCents,
+    currency: "USD",
+    status: "paid",
+    dueDate: null,
+    issuedAt,
+    paidAt: issuedAt,
+    metadata: options?.backfilled ? { backfilled: true } : {},
+  });
+
+  logNotificationAsync({
+    entityType: "invoice",
+    action: "created",
+    entityId: String(invoice._id),
+    customerRef,
+    summary: `Invoice ${invoice.number} created`,
+    actorType: "system",
+    actorName: options?.backfilled ? "Backfill" : "System",
+    metadata: {
+      sourceType: "work_order",
+      amountCents,
+      backfilled: Boolean(options?.backfilled),
+    },
+  });
+
+  return invoice;
+}
+
+export type SyncWorkOrderInvoiceResult = {
+  action: "created" | "updated" | "paid" | "voided" | "skipped";
+  invoice?: IInvoice;
+};
+
+export async function syncWorkOrderInvoice(
+  wo: WorkOrderInvoiceSource,
+  options?: { backfilled?: boolean },
+): Promise<SyncWorkOrderInvoiceResult> {
+  const amountCents = dollarsToCents(wo.total || 0);
+  const open = await findOpenInvoiceForWorkOrder(wo._id);
+
+  if (!wo.paid && amountCents <= 0) {
+    if (open) {
+      open.status = "void";
+      await open.save();
+      return { action: "voided", invoice: open };
+    }
+    return { action: "skipped" };
+  }
+
+  if (amountCents <= 0) {
+    return { action: "skipped" };
+  }
+
+  if (wo.paid) {
+    if (open) {
+      await markInvoicePaid({ invoice: open });
+      return { action: "paid", invoice: open };
+    }
+    const existing = await Invoice.findOne({
+      workOrderRef: wo._id,
+      status: { $ne: "void" },
+    });
+    if (existing) return { action: "skipped", invoice: existing };
+    try {
+      const invoice = await createPaidInvoiceForWorkOrder(wo, {
+        backfilled: options?.backfilled,
+      });
+      return { action: "created", invoice };
+    } catch (err) {
+      if (err instanceof InvoiceAmountError) return { action: "skipped" };
+      throw err;
+    }
+  }
+
+  try {
+    const { invoice, created } = await ensureOpenInvoiceForWorkOrder(wo);
+    if (created) return { action: "created", invoice };
+
+    const lineItems = invoiceLineItemsForWorkOrder(wo, amountCents);
+    const customerRef = await resolveCustomerRefForWorkOrder(wo);
+    const needsCustomer = Boolean(customerRef && !invoice.customerRef);
+    const needsAmount = invoice.amountCents !== amountCents;
+    const needsLines = lineItemsChanged(invoice.lineItems ?? [], lineItems);
+    if (needsCustomer || needsAmount || needsLines) {
+      if (customerRef) invoice.customerRef = customerRef;
+      invoice.amountCents = amountCents;
+      invoice.lineItems = lineItems;
+      await invoice.save();
+      return { action: "updated", invoice };
+    }
+    return { action: "skipped", invoice };
+  } catch (err) {
+    if (err instanceof InvoiceAmountError) return { action: "skipped" };
+    throw err;
+  }
 }
 
 /** GMOF + MMDDYY + 5-digit suffix, e.g. GMOF08282684721 */

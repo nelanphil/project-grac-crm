@@ -8,6 +8,7 @@ import {
   notificationEntityLabel,
   notificationHref,
 } from "@/lib/notification-utils";
+import { useAuthStore } from "@/store/useAuthStore";
 import { useNotificationsStore } from "@/store/useNotificationsStore";
 
 interface Props {
@@ -22,9 +23,11 @@ export default function NotificationListItem({
   onNavigate,
 }: Props) {
   const router = useRouter();
+  const role = useAuthStore((s) => s.user?.role);
   const storeMarkRead = useNotificationsStore((s) => s.markRead);
   const setOpen = useNotificationsStore((s) => s.setOpen);
   const markRead = onMarkRead ?? storeMarkRead;
+  const actorName = item.actorName.trim();
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -50,7 +53,7 @@ export default function NotificationListItem({
 
   function handleClick() {
     if (!item.read) markRead(item.id);
-    const href = notificationHref(item);
+    const href = notificationHref(item, role);
     if (onNavigate) onNavigate();
     else setOpen(false);
     if (href) router.push(href);
@@ -86,8 +89,12 @@ export default function NotificationListItem({
           {notificationEntityLabel(item.entityType)}
         </span>
         <span className="capitalize">{item.action}</span>
-        <span aria-hidden>·</span>
-        <span>{item.actorName}</span>
+        {actorName ? (
+          <>
+            <span aria-hidden>·</span>
+            <span>{actorName}</span>
+          </>
+        ) : null}
         <span aria-hidden>·</span>
         <time dateTime={item.createdAt}>
           {formatNotificationTime(item.createdAt)}
