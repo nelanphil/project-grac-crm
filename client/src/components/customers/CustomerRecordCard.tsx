@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ScrollText } from "lucide-react";
 import ContactCard from "@/components/customers/ContactCard";
@@ -126,11 +126,14 @@ export default function CustomerRecordCard({
     [contacts.length, addresses.length, contracts.length],
   );
 
-  if (!visited.has(activeTab)) {
-    const next = new Set(visited);
-    next.add(activeTab);
-    setVisited(next);
-  }
+  useEffect(() => {
+    setVisited((prev) => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
 
   function setTab(id: RecordTab) {
     const params = new URLSearchParams(searchParams.toString());

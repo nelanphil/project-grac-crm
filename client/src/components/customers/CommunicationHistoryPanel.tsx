@@ -60,7 +60,6 @@ export default function CommunicationHistoryPanel({
   const [contactId, setContactId] = useState("");
   const [accountId, setAccountId] = useState("");
   const [page, setPage] = useState(1);
-  const [channelForPaging, setChannelForPaging] = useState(channel);
   const [accounts, setAccounts] = useState<TwilioAccountItem[]>([]);
   const [emailAccounts, setEmailAccounts] = useState<EmailSendAccountItem[]>(
     [],
@@ -72,11 +71,10 @@ export default function CommunicationHistoryPanel({
   const [error, setError] = useState<string | null>(null);
   const [callingContactId, setCallingContactId] = useState<string | null>(null);
 
-  if (channel !== channelForPaging) {
-    setChannelForPaging(channel);
+  useEffect(() => {
     setAccountId("");
     setPage(1);
-  }
+  }, [channel]);
 
   useEffect(() => {
     if (!isAdmin) return;
