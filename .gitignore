@@ -33,3 +33,9 @@ xcuserdata/
 
 # Testing
 coverage/
+
+# Local phpMyAdmin dumps (PII; used by sync-current-dump.ts)
+server/src/current/
+
+# Accidental local Python cache
+6a6a602ae96f5cc9b9f1920e/
