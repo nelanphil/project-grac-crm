@@ -1,5 +1,6 @@
 "use client";
 
+import { DashboardHistoryTracker } from "@/components/dashboard/DashboardBackLink";
 import StaffIconSidebar from "./StaffIconSidebar";
 import StaffTopBar from "./StaffTopBar";
 
@@ -10,6 +11,7 @@ export default function StaffDashboardShell({
 }) {
   return (
     <div className="staff-dashboard flex w-full min-h-[calc(100vh-0px)] max-w-full overflow-x-clip bg-[var(--staff-canvas)] print:bg-white print:min-h-0">
+      <DashboardHistoryTracker />
       <div className="hidden md:block print:hidden">
         <StaffIconSidebar />
       </div>

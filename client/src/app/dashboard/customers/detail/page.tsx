@@ -4,27 +4,20 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  ArrowLeft,
   Check,
   ClipboardList,
   GitMerge,
   Loader2,
   Pencil,
   Plus,
-  ScrollText,
   Trash2,
   X,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
-import ContactCard from "@/components/customers/ContactCard";
-import CommunicationHistoryPanel from "@/components/customers/CommunicationHistoryPanel";
-import CustomerThreadsPanel from "@/components/customers/CustomerThreadsPanel";
-import CustomerAddressesPanel, {
-  addressesSectionTitle,
-  formatAddressLabel,
-} from "@/components/customers/CustomerAddressesPanel";
+import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
+import { formatAddressLabel } from "@/components/customers/CustomerAddressesPanel";
+import CustomerRecordCard from "@/components/customers/CustomerRecordCard";
 import MergeCustomersDialog from "@/components/customers/MergeCustomersDialog";
-import ServiceContractsTable from "@/components/contracts/ServiceContractsTable";
 import MobileSectionNav from "@/components/ui/MobileSectionNav";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
@@ -33,10 +26,9 @@ import {
   getCustomer,
   getWorkOrdersForCustomer,
   getContractsForCustomer,
-  createInvoice,
-  createInvoicePayLink,
   getCustomerCheckoutLink,
   updateCustomer,
+  updateWorkOrder,
   promoteCustomer,
   softDeleteCustomer,
   CustomerDetail,
@@ -58,82 +50,45 @@ function formatDate(date: string | null): string {
   return new Date(date).toLocaleDateString();
 }
 
-function WorkOrderInvoiceButton({
-  token,
-  workOrderId,
+function StatusBadge({
+  label,
+  active,
+  onClick,
+  disabled,
 }: {
-  token: string;
-  workOrderId: string;
+  label: string;
+  active: boolean;
+  onClick?: () => void;
+  disabled?: boolean;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const className = `inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+    active
+      ? "bg-green-50 text-green-700 ring-1 ring-inset ring-green-600/20"
+      : "bg-neutral-100 text-neutral-500 ring-1 ring-inset ring-neutral-300"
+  } ${
+    onClick
+      ? "cursor-pointer hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+      : ""
+  }`;
 
-  async function handleClick() {
-    setBusy(true);
-    setMessage(null);
-    try {
-      let invoiceId: string;
-      try {
-        const { invoice } = await createInvoice(token, {
-          sourceType: "work_order",
-          workOrderRef: workOrderId,
-        });
-        invoiceId = invoice._id;
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 409) {
-          const { getInvoices } = await import("@/lib/api");
-          const { invoices } = await getInvoices(token, {
-            workOrderRef: workOrderId,
-            status: "open",
-          });
-          if (!invoices[0]) throw err;
-          invoiceId = invoices[0]._id;
-        } else {
-          throw err;
-        }
-      }
-      const { payUrl } = await createInvoicePayLink(token, invoiceId);
-      await navigator.clipboard?.writeText(payUrl);
-      setMessage("Pay link copied");
-    } catch (err) {
-      setMessage(
-        err instanceof ApiError ? err.message : "Failed to create invoice",
-      );
-    } finally {
-      setBusy(false);
-    }
+  if (!onClick) {
+    return <span className={className}>{label}</span>;
   }
 
   return (
-    <div className="text-right">
-      <button
-        type="button"
-        disabled={busy}
-        onClick={handleClick}
-        className="rounded-md border border-neutral-300 px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
-      >
-        {busy ? "…" : "Invoice & link"}
-      </button>
-      {message ? (
-        <div className="mt-1 text-[10px] text-neutral-500 max-w-[12rem] break-words">
-          {message}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function StatusBadge({ label, active }: { label: string; active: boolean }) {
-  return (
-    <span
-      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-        active
-          ? "bg-green-50 text-green-700 ring-1 ring-inset ring-green-600/20"
-          : "bg-neutral-100 text-neutral-500 ring-1 ring-inset ring-neutral-300"
-      }`}
+    <button
+      type="button"
+      disabled={disabled}
+      aria-pressed={active}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+      className={className}
     >
       {label}
-    </span>
+    </button>
   );
 }
 
@@ -173,6 +128,8 @@ function CustomerDetailContent() {
   );
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [statusSaving, setStatusSaving] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user?.role === "customer") {
@@ -227,6 +184,76 @@ function CustomerDetailContent() {
     );
   }, [contracts, addressFilter]);
 
+  async function toggleWorkOrderStatus(
+    order: WorkOrderListItem,
+    field: "paid" | "completed",
+  ) {
+    if (!token || !canWriteJobs) return;
+    const key = `${order._id}:${field}`;
+    if (statusSaving === key) return;
+
+    const previous = order[field];
+    const next = !previous;
+    setStatusError(null);
+    setStatusSaving(key);
+    setWorkOrders((prev) =>
+      prev.map((wo) => (wo._id === order._id ? { ...wo, [field]: next } : wo)),
+    );
+
+    try {
+      const updated = await updateWorkOrder(token, order._id, {
+        [field]: next,
+      });
+      setWorkOrders((prev) =>
+        prev.map((wo) =>
+          wo._id === order._id
+            ? { ...wo, paid: updated.paid, completed: updated.completed }
+            : wo,
+        ),
+      );
+    } catch (err) {
+      setWorkOrders((prev) =>
+        prev.map((wo) =>
+          wo._id === order._id ? { ...wo, [field]: previous } : wo,
+        ),
+      );
+      setStatusError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to update work order status.",
+      );
+    } finally {
+      setStatusSaving(null);
+    }
+  }
+
+  function renderWorkOrderStatus(order: WorkOrderListItem) {
+    return (
+      <div className="flex gap-2">
+        <StatusBadge
+          label="Paid"
+          active={order.paid}
+          disabled={statusSaving === `${order._id}:paid`}
+          onClick={
+            canWriteJobs
+              ? () => void toggleWorkOrderStatus(order, "paid")
+              : undefined
+          }
+        />
+        <StatusBadge
+          label="Completed"
+          active={order.completed}
+          disabled={statusSaving === `${order._id}:completed`}
+          onClick={
+            canWriteJobs
+              ? () => void toggleWorkOrderStatus(order, "completed")
+              : undefined
+          }
+        />
+      </div>
+    );
+  }
+
   async function handleSoftDelete() {
     if (!token || !customer) return;
     const name = formatCustomerRecordName(customer) || "this customer";
@@ -262,13 +289,7 @@ function CustomerDetailContent() {
   if (error || !customer) {
     return (
       <div className="space-y-4">
-        <Link
-          href="/dashboard/customers"
-          className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Customers
-        </Link>
+        <DashboardBackLink fallbackHref="/dashboard/customers" />
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error ?? "Customer not found."}
         </div>
@@ -277,18 +298,8 @@ function CustomerDetailContent() {
   }
 
   const addresses = customer.addresses ?? [];
-  const addressTitle = addressesSectionTitle();
-  const isAdmin = user.role === "admin";
   const sectionLinks = [
-    { id: "customer-overview", label: "Overview" },
-    { id: "customer-addresses", label: "Addresses" },
-    ...(isAdmin
-      ? [
-          { id: "customer-threads", label: "Threads" },
-          { id: "customer-history", label: "History" },
-        ]
-      : []),
-    { id: "customer-contracts", label: "Contracts" },
+    { id: "customer-record", label: "Details" },
     { id: "customer-work-orders", label: "Work orders" },
   ];
 
@@ -296,13 +307,7 @@ function CustomerDetailContent() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
-          <Link
-            href="/dashboard/customers"
-            className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Customers
-          </Link>
+          <DashboardBackLink fallbackHref="/dashboard/customers" />
           <h1 className="mt-4 text-xl font-bold text-brand-dark sm:text-2xl break-words">
             {editingName ? (
               <span className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
@@ -531,56 +536,22 @@ function CustomerDetailContent() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <section id="customer-overview" className="scroll-mt-28 lg:scroll-mt-6">
-          <ContactCard
-            customer={customer}
-            token={token!}
-            userId={user.id}
-            canWrite={canWrite}
-            onCustomerChange={setCustomer}
-          />
-        </section>
-        <section
-          id="customer-addresses"
-          className="scroll-mt-28 space-y-3 lg:col-span-2 lg:scroll-mt-6"
-        >
-          <h2 className="text-lg font-semibold text-brand-dark">
-            {addressTitle}
-            {addresses.length > 0 ? ` (${addresses.length})` : ""}
-            {addresses.some((a) => a.equipment.length > 0)
-              ? " & equipment"
-              : ""}
-          </h2>
-          <CustomerAddressesPanel
-            customerId={customer._id}
-            token={token!}
-            addresses={addresses}
-            canWrite={canWrite}
-            onAddressesChange={(next) =>
-              setCustomer((prev) =>
-                prev ? { ...prev, addresses: next } : prev,
-              )
-            }
-          />
-        </section>
-      </div>
-
-      <section id="customer-threads" className="scroll-mt-28 lg:scroll-mt-6">
-        <CustomerThreadsPanel
-          customerId={customer._id}
-          contacts={customer.contacts ?? []}
-          token={token!}
-        />
-      </section>
-
-      <section id="customer-history" className="scroll-mt-28 lg:scroll-mt-6">
-        <CommunicationHistoryPanel
-          customerId={customer._id}
-          contacts={customer.contacts ?? []}
-          token={token!}
-        />
-      </section>
+      <CustomerRecordCard
+        customer={customer}
+        token={token!}
+        userId={user.id}
+        canWrite={canWrite}
+        onCustomerChange={(next) => setCustomer(next)}
+        contracts={contracts}
+        filteredContracts={filteredContracts}
+        addressFilter={addressFilter}
+        onAddressFilterChange={setAddressFilter}
+        onContractUpdated={(updated) =>
+          setContracts((prev) =>
+            prev.map((c) => (c._id === updated._id ? updated : c)),
+          )
+        }
+      />
 
       {addresses.length > 1 ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
@@ -607,35 +578,6 @@ function CustomerDetailContent() {
       ) : null}
 
       <section
-        id="customer-contracts"
-        className="scroll-mt-28 space-y-4 lg:scroll-mt-6"
-      >
-        <h2 className="text-lg font-semibold text-brand-dark">
-          Contracts ({filteredContracts.length})
-        </h2>
-
-        {filteredContracts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-12 text-center shadow-sm">
-            <ScrollText className="mb-4 h-10 w-10 text-neutral-300" />
-            <p className="text-sm font-medium text-neutral-500">No contracts</p>
-            <p className="mt-1 text-xs text-neutral-400">
-              Contracts for this customer will appear here.
-            </p>
-          </div>
-        ) : (
-          <ServiceContractsTable
-            contracts={filteredContracts}
-            returnTo={`/dashboard/customers/detail?id=${id}`}
-            onUpdated={(updated) =>
-              setContracts((prev) =>
-                prev.map((c) => (c._id === updated._id ? updated : c)),
-              )
-            }
-          />
-        )}
-      </section>
-
-      <section
         id="customer-work-orders"
         className="scroll-mt-28 space-y-4 lg:scroll-mt-6"
       >
@@ -653,6 +595,12 @@ function CustomerDetailContent() {
             </Link>
           ) : null}
         </div>
+
+        {statusError ? (
+          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {statusError}
+          </div>
+        ) : null}
 
         {filteredWorkOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-16 text-center shadow-sm">
@@ -686,12 +634,7 @@ function CustomerDetailContent() {
                 onClick={() =>
                   router.push(`/dashboard/work-orders/detail?id=${order._id}`)
                 }
-                badges={
-                  <>
-                    <StatusBadge label="Paid" active={order.paid} />
-                    <StatusBadge label="Completed" active={order.completed} />
-                  </>
-                }
+                badges={renderWorkOrderStatus(order)}
                 fields={
                   <>
                     <DataField
@@ -705,14 +648,6 @@ function CustomerDetailContent() {
                       value={formatCurrency(order.total)}
                     />
                   </>
-                }
-                actions={
-                  !order.paid && order.total > 0 && token ? (
-                    <WorkOrderInvoiceButton
-                      token={token}
-                      workOrderId={order._id}
-                    />
-                  ) : null
                 }
               />
             ))}
@@ -741,9 +676,6 @@ function CustomerDetailContent() {
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                           Status
-                        </th>
-                        <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                          Billing
                         </th>
                       </tr>
                     </thead>
@@ -775,29 +707,11 @@ function CustomerDetailContent() {
                           <td className="whitespace-nowrap px-6 py-4 text-neutral-600">
                             {formatCurrency(order.total)}
                           </td>
-                          <td className="whitespace-nowrap px-6 py-4">
-                            <div className="flex gap-2">
-                              <StatusBadge label="Paid" active={order.paid} />
-                              <StatusBadge
-                                label="Completed"
-                                active={order.completed}
-                              />
-                            </div>
-                          </td>
                           <td
-                            className="whitespace-nowrap px-6 py-4 text-right"
+                            className="whitespace-nowrap px-6 py-4"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            {!order.paid && order.total > 0 && token ? (
-                              <WorkOrderInvoiceButton
-                                token={token}
-                                workOrderId={order._id}
-                              />
-                            ) : (
-                              <span className="text-xs text-neutral-400">
-                                —
-                              </span>
-                            )}
+                            {renderWorkOrderStatus(order)}
                           </td>
                         </tr>
                       ))}

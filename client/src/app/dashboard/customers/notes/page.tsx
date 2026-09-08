@@ -1,10 +1,9 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import CustomerNotesPanel from "@/components/customers/CustomerNotesPanel";
 import { useAuthStore } from "@/store/useAuthStore";
 import { formatCustomerRecordName } from "@/lib/formatName";
@@ -55,13 +54,10 @@ function CustomerNotesContent() {
   if (error || !customer) {
     return (
       <div className="space-y-4">
-        <Link
-          href={`/dashboard/customers/detail?id=${id}`}
-          className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Customer
-        </Link>
+        <DashboardBackLink
+          fallbackHref={`/dashboard/customers/detail?id=${id}`}
+          fallbackLabel="Back to customer"
+        />
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error ?? "Customer not found."}
         </div>
@@ -72,13 +68,10 @@ function CustomerNotesContent() {
   return (
     <div className="space-y-6">
       <div>
-        <Link
-          href={`/dashboard/customers/detail?id=${customer._id}`}
-          className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to {formatCustomerRecordName(customer) || "Customer"}
-        </Link>
+        <DashboardBackLink
+          fallbackHref={`/dashboard/customers/detail?id=${customer._id}`}
+          fallbackLabel={`Back to ${formatCustomerRecordName(customer) || "customer"}`}
+        />
         <h1 className="mt-4 text-2xl font-bold text-brand-dark">
           Customer Notes
         </h1>

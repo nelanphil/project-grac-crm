@@ -181,7 +181,7 @@ function isStaff(role?: string): boolean {
 
 export { mintPayToken } from "../utils/payToken";
 
-const INVOICE_PAGE_SIZES = [50, 150, 250, 500];
+const INVOICE_PAGE_SIZES = [5, 50, 150, 250, 500];
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -500,6 +500,12 @@ export async function createInvoice(
       const wo = await WorkOrder.findById(data.workOrderRef);
       if (!wo) {
         res.status(404).json({ message: "Work order not found" });
+        return;
+      }
+      if (wo.paid && !data.allowPaidBypass) {
+        res.status(409).json({
+          message: "Work order is already paid",
+        });
         return;
       }
       try {

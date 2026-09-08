@@ -3,8 +3,9 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, Download } from "lucide-react";
+import { Download } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import InvoiceDocument from "@/components/billing/InvoiceDocument";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
@@ -76,13 +77,11 @@ function InvoiceDetailContent() {
   if (!id) {
     return (
       <div className="space-y-4">
-        <Link
-          href="/dashboard/orders"
+        <DashboardBackLink
+          fallbackHref="/dashboard/orders"
+          fallbackLabel="Back to invoices"
           className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors print:hidden"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to invoices
-        </Link>
+        />
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           Missing invoice id.
         </div>
@@ -99,13 +98,11 @@ function InvoiceDetailContent() {
   if (error && !invoice) {
     return (
       <div className="space-y-4">
-        <Link
-          href="/dashboard/orders"
+        <DashboardBackLink
+          fallbackHref="/dashboard/orders"
+          fallbackLabel="Back to invoices"
           className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors print:hidden"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to invoices
-        </Link>
+        />
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
@@ -116,13 +113,11 @@ function InvoiceDetailContent() {
   if (!invoice) {
     return (
       <div className="space-y-4">
-        <Link
-          href="/dashboard/orders"
+        <DashboardBackLink
+          fallbackHref="/dashboard/orders"
+          fallbackLabel="Back to invoices"
           className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors print:hidden"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to invoices
-        </Link>
+        />
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           Invoice not found.
         </div>
@@ -135,13 +130,10 @@ function InvoiceDetailContent() {
   return (
     <div className="mx-auto max-w-3xl space-y-4 print:max-w-none print:space-y-0">
       <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <Link
-          href="/dashboard/orders"
-          className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to invoices
-        </Link>
+        <DashboardBackLink
+          fallbackHref="/dashboard/orders"
+          fallbackLabel="Back to invoices"
+        />
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
           <button
             type="button"

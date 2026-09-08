@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { COMPANY } from "@/lib/constants";
 import {
   formatDiscountSummary,
@@ -65,8 +66,10 @@ export type ServiceTicketView = {
 
 export default function ServiceTicketDocument({
   ticket,
+  invoiceAction,
 }: {
   ticket: ServiceTicketView;
+  invoiceAction?: ReactNode;
 }) {
   const isEstimate = ticket.variant === "estimate";
   return (
@@ -231,6 +234,9 @@ export default function ServiceTicketDocument({
               <span>Total</span>
               <span>{formatMoney(ticket.total)}</span>
             </p>
+            {!isEstimate && invoiceAction ? (
+              <div className="pt-2 print:hidden">{invoiceAction}</div>
+            ) : null}
           </div>
         </div>
       </div>

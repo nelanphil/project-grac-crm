@@ -3,8 +3,11 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Download, Pencil } from "lucide-react";
+import { Download, Pencil } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import DashboardBackLink, {
+  dashboardBackLinkMutedClass,
+} from "@/components/dashboard/DashboardBackLink";
 import ServiceTicketDocument from "@/components/billing/ServiceTicketDocument";
 import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -66,13 +69,11 @@ function EstimateDetailContent() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <Link
-          href="/dashboard/estimates"
-          className="inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-brand-dark"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to estimates
-        </Link>
+        <DashboardBackLink
+          fallbackHref="/dashboard/estimates"
+          fallbackLabel="Back to estimates"
+          className={dashboardBackLinkMutedClass}
+        />
         <div className="flex flex-wrap gap-2">
           {estimate.workOrderRef ? (
             <Link

@@ -8,6 +8,7 @@ export const createInvoiceSchema = z.object({
   amountCents: z.number().int().positive().optional(),
   description: z.string().trim().max(500).optional(),
   dueDate: z.string().trim().optional(),
+  allowPaidBypass: z.boolean().optional(),
 });
 
 export type CreateInvoiceInput = z.infer<typeof createInvoiceSchema>;

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import {
   ApiError,
+  CommunicationChannel,
   CustomerContact,
   MessageThreadItem,
   getMessagingThreads,
@@ -18,12 +19,16 @@ type CustomerThreadsPanelProps = {
   customerId: string;
   contacts: CustomerContact[];
   token: string;
+  embedded?: boolean;
+  channelFilter?: CommunicationChannel | "all" | "email";
 };
 
 export default function CustomerThreadsPanel({
   customerId,
   contacts,
   token,
+  embedded = false,
+  channelFilter = "all",
 }: CustomerThreadsPanelProps) {
   const isAdmin = useAuthStore((s) =>
     s.hasRole("admin", "super-admin", "owner"),
@@ -74,8 +79,14 @@ export default function CustomerThreadsPanel({
   }, [contacts]);
 
   const threadsByContact = useMemo(() => {
+    const visible =
+      channelFilter === "all"
+        ? threads
+        : channelFilter === "email"
+          ? []
+          : threads.filter((t) => t.lastMessageChannel === channelFilter);
     const map = new Map<string, MessageThreadItem[]>();
-    for (const t of threads) {
+    for (const t of visible) {
       const key = t.contactRef ?? "unknown";
       const list = map.get(key) ?? [];
       list.push(t);
@@ -91,15 +102,27 @@ export default function CustomerThreadsPanel({
       });
     }
     return map;
-  }, [threads]);
+  }, [threads, channelFilter]);
 
   if (!isAdmin) return null;
 
-  return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 text-lg font-semibold text-brand-dark">
+  const hasThreads = threadsByContact.size > 0;
+  const emptyMessage =
+    channelFilter === "all"
+      ? "No message threads started with this customer yet."
+      : "No message threads for this channel.";
+
+  const content = (
+    <>
+      <h3
+        className={
+          embedded
+            ? "mb-3 text-sm font-semibold text-brand-dark"
+            : "mb-3 text-lg font-semibold text-brand-dark"
+        }
+      >
         Message threads
-      </h2>
+      </h3>
 
       {error ? (
         <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -112,10 +135,8 @@ export default function CustomerThreadsPanel({
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading threads…
         </div>
-      ) : threads.length === 0 ? (
-        <p className="py-6 text-sm text-neutral-500">
-          No message threads started with this customer yet.
-        </p>
+      ) : !hasThreads ? (
+        <p className="py-6 text-sm text-neutral-500">{emptyMessage}</p>
       ) : (
         <div className="space-y-4">
           {[...threadsByContact.entries()].map(([contactId, contactThreads]) => (
@@ -170,6 +191,14 @@ export default function CustomerThreadsPanel({
           ))}
         </div>
       )}
+    </>
+  );
+
+  if (embedded) return <div>{content}</div>;
+
+  return (
+    <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+      {content}
     </section>
   );
 }

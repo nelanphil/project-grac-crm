@@ -1912,6 +1912,7 @@ export interface CreateInvoiceInput {
   amountCents?: number;
   description?: string;
   dueDate?: string;
+  allowPaidBypass?: boolean;
 }
 
 export async function getInvoices(

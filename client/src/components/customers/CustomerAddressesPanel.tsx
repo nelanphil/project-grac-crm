@@ -311,7 +311,7 @@ export default function CustomerAddressesPanel({
             {error}
           </div>
         ) : null}
-        <div className="rounded-xl border border-dashed border-neutral-300 bg-white py-10 text-center shadow-sm">
+        <div className="rounded-lg border border-dashed border-neutral-300 py-10 text-center">
           <MapPin className="mx-auto mb-3 h-8 w-8 text-neutral-300" />
           <p className="text-sm font-medium text-neutral-500">
             No addresses yet
@@ -345,7 +345,7 @@ export default function CustomerAddressesPanel({
       {addresses.map((addr) => (
         <div
           key={addr._id}
-          className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm"
+          className="rounded-lg border border-neutral-200 p-4"
         >
           <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
             <div>
@@ -557,7 +557,7 @@ export default function CustomerAddressesPanel({
           onCancel={cancelAddressForm}
           onSubmit={handleAddAddress}
           submitLabel="Save address"
-          className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm"
+          className="rounded-lg border border-neutral-200 p-4"
         />
       ) : canWrite && !editingId ? (
         <button

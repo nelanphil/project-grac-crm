@@ -3,11 +3,15 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Download, Pencil } from "lucide-react";
+import { Download, Pencil } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import DashboardBackLink, {
+  dashboardBackLinkMutedClass,
+} from "@/components/dashboard/DashboardBackLink";
 import ServiceTicketDocument from "@/components/billing/ServiceTicketDocument";
 import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
-import InvoiceBillingPanel from "@/components/billing/InvoiceBillingPanel";
+import CustomerBillToCard from "@/components/billing/CustomerBillToCard";
+import InvoiceWorkOrderButton from "@/components/billing/InvoiceWorkOrderButton";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -41,6 +45,7 @@ function WorkOrderDetailContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [invoiceRefresh, setInvoiceRefresh] = useState(0);
 
   useEffect(() => {
     if (!token || !id) {
@@ -56,12 +61,16 @@ function WorkOrderDetailContent() {
       .finally(() => setLoading(false));
   }, [token, id]);
 
+  const backLink = (
+    <DashboardBackLink
+      fallbackHref="/dashboard/work-orders"
+      fallbackLabel="Back to work orders"
+      className={dashboardBackLinkMutedClass}
+    />
+  );
+
   if (!id) {
-    return (
-      <Link href="/dashboard/work-orders" className="text-sm text-neutral-600">
-        Back to work orders
-      </Link>
-    );
+    return backLink;
   }
 
   if (loading) {
@@ -70,9 +79,7 @@ function WorkOrderDetailContent() {
   if (!order) {
     return (
       <div className="space-y-3">
-        <Link href="/dashboard/work-orders" className="text-sm text-neutral-600">
-          Back to work orders
-        </Link>
+        {backLink}
         <p className="text-sm text-red-700">{error || "Work order not found."}</p>
       </div>
     );
@@ -83,13 +90,7 @@ function WorkOrderDetailContent() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <Link
-          href="/dashboard/work-orders"
-          className="inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-brand-dark"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to work orders
-        </Link>
+        {backLink}
         <div className="flex flex-wrap gap-2">
           {order.customerRef ? (
             <Link
@@ -130,6 +131,23 @@ function WorkOrderDetailContent() {
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 print:hidden">
           {error}
         </div>
+      ) : null}
+
+      {token ? (
+        <CustomerBillToCard
+          token={token}
+          workOrderRef={order._id}
+          refreshKey={invoiceRefresh}
+          customer={{
+            name: order.customerName ?? "",
+            address: order.customerAddress,
+            city: order.customerCity,
+            zip: order.customerZip,
+            phone: order.customerPhone,
+            email: order.customerEmail,
+            customerRef: order.customerRef,
+          }}
+        />
       ) : null}
 
       {editing ? (
@@ -221,19 +239,18 @@ function WorkOrderDetailContent() {
             signedByName: order.signedByName,
             contractDiscount: order.contractDiscount,
           }}
+          invoiceAction={
+            token ? (
+              <InvoiceWorkOrderButton
+                token={token}
+                workOrderRef={order._id}
+                sourcePaid={order.paid}
+                onCreated={() => setInvoiceRefresh((n) => n + 1)}
+              />
+            ) : null
+          }
         />
       )}
-
-      {token && !editing ? (
-        <div className="print:hidden">
-          <InvoiceBillingPanel
-            token={token}
-            sourceType="work_order"
-            workOrderRef={order._id}
-            title="Invoice this work order"
-          />
-        </div>
-      ) : null}
     </div>
   );
 }

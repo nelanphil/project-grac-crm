@@ -22,6 +22,8 @@ import { useAuthStore } from "@/store/useAuthStore";
 
 type ChannelFilter = "all" | CommunicationChannel | "email";
 
+export type { ChannelFilter };
+
 function truncateSid(sid: string): string {
   if (sid.length <= 10) return sid;
   return `${sid.slice(0, 4)}…${sid.slice(-4)}`;
@@ -37,21 +39,28 @@ type CommunicationHistoryPanelProps = {
   customerId: string;
   contacts: CustomerContact[];
   token: string;
+  embedded?: boolean;
+  channel?: ChannelFilter;
 };
 
 export default function CommunicationHistoryPanel({
   customerId,
   contacts,
   token,
+  embedded = false,
+  channel: channelProp,
 }: CommunicationHistoryPanelProps) {
   const canWrite = useAuthStore((s) => s.hasPermission("messages:write"));
   const isAdmin = useAuthStore((s) =>
     s.hasRole("admin", "super-admin", "owner"),
   );
 
-  const [channel, setChannel] = useState<ChannelFilter>("all");
+  const [channelState, setChannelState] = useState<ChannelFilter>("all");
+  const channel = channelProp ?? channelState;
   const [contactId, setContactId] = useState("");
   const [accountId, setAccountId] = useState("");
+  const [page, setPage] = useState(1);
+  const [channelForPaging, setChannelForPaging] = useState(channel);
   const [accounts, setAccounts] = useState<TwilioAccountItem[]>([]);
   const [emailAccounts, setEmailAccounts] = useState<EmailSendAccountItem[]>(
     [],
@@ -59,10 +68,15 @@ export default function CommunicationHistoryPanel({
   const [rows, setRows] = useState<TwilioCommunicationItem[]>([]);
   const [emailRows, setEmailRows] = useState<EmailCommunicationItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [callingContactId, setCallingContactId] = useState<string | null>(null);
+
+  if (channel !== channelForPaging) {
+    setChannelForPaging(channel);
+    setAccountId("");
+    setPage(1);
+  }
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -184,33 +198,37 @@ export default function CommunicationHistoryPanel({
 
   const totalPages = Math.max(1, Math.ceil(total / 25));
 
-  return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold text-brand-dark">
-          Communication history
-        </h2>
-        <div className="flex flex-wrap gap-2">
-          {(["all", "sms", "mms", "voice", "email"] as const).map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => {
-                setChannel(c);
-                setAccountId("");
-                setPage(1);
-              }}
-              className={`rounded-md px-2 py-1 text-xs font-medium capitalize ${
-                channel === c
-                  ? "bg-orange-50 text-brand-orange"
-                  : "text-neutral-600 hover:bg-neutral-50"
-              }`}
-            >
-              {c}
-            </button>
-          ))}
+  const content = (
+    <>
+      {embedded ? (
+        <h3 className="mb-3 text-sm font-semibold text-brand-dark">History</h3>
+      ) : (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-brand-dark">
+            Communication history
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {(["all", "sms", "mms", "voice", "email"] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => {
+                  setChannelState(c);
+                  setAccountId("");
+                  setPage(1);
+                }}
+                className={`rounded-md px-2 py-1 text-xs font-medium capitalize ${
+                  channel === c
+                    ? "bg-orange-50 text-brand-orange"
+                    : "text-neutral-600 hover:bg-neutral-50"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="mb-3 flex flex-wrap gap-2">
         <select
@@ -432,6 +450,14 @@ export default function CommunicationHistoryPanel({
           </div>
         </div>
       ) : null}
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+      {content}
     </section>
   );
 }

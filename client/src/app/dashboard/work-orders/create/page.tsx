@@ -1,10 +1,11 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import DashboardBackLink, {
+  dashboardBackLinkMutedClass,
+} from "@/components/dashboard/DashboardBackLink";
 import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
@@ -89,13 +90,14 @@ function CreateWorkOrderContent() {
 
   return (
     <div className="space-y-4">
-      <Link
-        href="/dashboard/work-orders"
-        className="inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-brand-dark"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back to work orders
-      </Link>
+      <DashboardBackLink
+        fallbackHref={
+          customerId
+            ? `/dashboard/customers/detail?id=${customerId}`
+            : "/dashboard/work-orders"
+        }
+        className={dashboardBackLinkMutedClass}
+      />
       <h1 className="text-2xl font-bold text-brand-dark">New work order</h1>
       {error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -116,7 +118,7 @@ function CreateWorkOrderContent() {
               ...payload,
               estimateRef: estimateId,
             });
-            router.push(`/dashboard/work-orders/detail?id=${created._id}`);
+            router.replace(`/dashboard/work-orders/detail?id=${created._id}`);
           } catch (err) {
             setError(
               err instanceof ApiError ? err.message : "Failed to create work order.",

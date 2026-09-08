@@ -3,8 +3,9 @@
 import { FormEvent, Suspense, useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -382,13 +383,7 @@ function CreateCustomerContent() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <Link
-          href={returnTo}
-          className="inline-flex items-center gap-1.5 text-sm text-neutral-500 transition-colors hover:text-brand-orange"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Customers
-        </Link>
+        <DashboardBackLink fallbackHref={returnTo} />
         <h1 className="mt-4 text-2xl font-bold text-brand-dark">
           Add Customer
         </h1>

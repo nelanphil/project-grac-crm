@@ -11,6 +11,8 @@ import {
   startInvoiceCheckout,
 } from "@/lib/api";
 
+const WORK_ORDER_ALREADY_PAID = "Work order is already paid";
+
 function formatMoney(cents: number): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -24,6 +26,8 @@ type Props = {
   contractRef?: string;
   workOrderRef?: string;
   title?: string;
+  sourcePaid?: boolean;
+  onInvoiceCreated?: () => void;
 };
 
 export default function InvoiceBillingPanel({
@@ -32,12 +36,15 @@ export default function InvoiceBillingPanel({
   contractRef,
   workOrderRef,
   title = "Billing",
+  sourcePaid = false,
+  onInvoiceCreated,
 }: Props) {
   const [invoices, setInvoices] = useState<InvoiceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [payUrl, setPayUrl] = useState<string | null>(null);
+  const [confirmPaid, setConfirmPaid] = useState(false);
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -60,7 +67,7 @@ export default function InvoiceBillingPanel({
     reload();
   }, [reload]);
 
-  async function handleCreate() {
+  async function createWorkOrderInvoice(allowPaidBypass?: boolean) {
     setBusy(true);
     setError(null);
     setPayUrl(null);
@@ -69,9 +76,21 @@ export default function InvoiceBillingPanel({
         sourceType,
         contractRef,
         workOrderRef,
+        allowPaidBypass,
       });
-      setInvoices((prev) => [invoice, ...prev]);
+      setConfirmPaid(false);
+      setInvoices((prev) => [invoice, ...prev.filter((row) => row._id !== invoice._id)]);
+      onInvoiceCreated?.();
     } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.message === WORK_ORDER_ALREADY_PAID
+      ) {
+        setConfirmPaid(true);
+        setBusy(false);
+        return;
+      }
       if (err instanceof ApiError && err.status === 409) {
         reload();
       }
@@ -81,6 +100,18 @@ export default function InvoiceBillingPanel({
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleCreate() {
+    if (sourceType === "work_order" && sourcePaid && !confirmPaid) {
+      setConfirmPaid(true);
+      setError(null);
+      setPayUrl(null);
+      return;
+    }
+    void createWorkOrderInvoice(
+      sourceType === "work_order" && sourcePaid ? true : undefined,
+    );
   }
 
   async function handlePayLink(id: string) {
@@ -139,6 +170,33 @@ export default function InvoiceBillingPanel({
           {createLabel}
         </button>
       </div>
+
+      {confirmPaid ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p>
+            This work order is already paid. Creating another invoice is optional
+            and will not collect a second payment automatically.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void createWorkOrderInvoice(true)}
+              className="rounded-md bg-brand-dark px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
+            >
+              Create invoice anyway
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirmPaid(false)}
+              className="rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">

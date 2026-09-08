@@ -3,8 +3,8 @@
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   getContract,
@@ -276,13 +276,7 @@ function EditContractContent() {
   if (error || !contract) {
     return (
       <div className="space-y-4">
-        <Link
-          href={returnTo}
-          className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Link>
+        <DashboardBackLink fallbackHref={returnTo} />
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error ?? "Contract not found."}
         </div>
@@ -298,13 +292,7 @@ function EditContractContent() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <Link
-          href={returnTo}
-          className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-brand-orange transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Link>
+        <DashboardBackLink fallbackHref={returnTo} />
         <h1 className="mt-4 text-2xl font-bold text-brand-dark">
           Edit Service Contract
         </h1>
