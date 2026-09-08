@@ -1284,6 +1284,11 @@ export interface WorkOrderAssignee {
   last_name: string;
 }
 
+export interface WorkOrderTypeSummary {
+  _id: string;
+  label: string;
+}
+
 export interface WorkOrderListItem {
   _id: string;
   legacyId?: number;
@@ -1325,6 +1330,8 @@ export interface WorkOrderListItem {
   contractDiscount?: TicketContractDiscount | null;
   address?: CustomerAddressSummary | null;
   assignedUserRef?: string | null;
+  workOrderTypeRef?: string | null;
+  workOrderType?: WorkOrderTypeSummary | null;
   scheduledStart?: string | null;
   scheduledEnd?: string | null;
   estimatedMinutes?: number;
@@ -1346,6 +1353,7 @@ export type ServiceTicketPayload = {
   date?: string | null;
   tech?: string;
   assignedUserRef?: string | null;
+  workOrderTypeRef?: string | null;
   paid?: boolean;
   completed?: boolean;
   certify?: boolean;
@@ -4111,6 +4119,82 @@ export async function deleteContractTemplate(
 ): Promise<{ template: ContractTemplateItem; message: string }> {
   return authRequest<{ template: ContractTemplateItem; message: string }>(
     `/contract-templates/${id}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Work order types (Control Panel catalog)
+// ---------------------------------------------------------------------------
+
+export interface WorkOrderTypeTechnician {
+  _id: string;
+  first_name: string;
+  last_name: string;
+}
+
+export interface WorkOrderTypeItem {
+  _id: string;
+  label: string;
+  slug: string;
+  qualifiedUserRefs: string[];
+  qualifiedUsers: WorkOrderTypeTechnician[];
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkOrderTypeInput {
+  label: string;
+  qualifiedUserRefs?: string[];
+}
+
+export async function getWorkOrderTypes(
+  token: string,
+  options?: { includeDeleted?: boolean },
+): Promise<{ types: WorkOrderTypeItem[] }> {
+  const params = options?.includeDeleted ? "?includeDeleted=1" : "";
+  return authRequest<{ types: WorkOrderTypeItem[] }>(
+    `/work-order-types${params}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function createWorkOrderType(
+  token: string,
+  data: WorkOrderTypeInput,
+): Promise<{ type: WorkOrderTypeItem }> {
+  return authRequest<{ type: WorkOrderTypeItem }>("/work-order-types", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateWorkOrderType(
+  token: string,
+  id: string,
+  data: Partial<WorkOrderTypeInput>,
+): Promise<{ type: WorkOrderTypeItem }> {
+  return authRequest<{ type: WorkOrderTypeItem }>(`/work-order-types/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteWorkOrderType(
+  token: string,
+  id: string,
+): Promise<{ type: WorkOrderTypeItem; message: string }> {
+  return authRequest<{ type: WorkOrderTypeItem; message: string }>(
+    `/work-order-types/${id}`,
     {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },

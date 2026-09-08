@@ -27,6 +27,8 @@ import {
   getCustomers,
   getProducts,
   getTechnicians,
+  getWorkOrderTypes,
+  WorkOrderTypeItem,
 } from "@/lib/api";
 import { COMPANY } from "@/lib/constants";
 import { formatCustomerRecordName } from "@/lib/formatName";
@@ -429,6 +431,7 @@ export default function ServiceTicketForm({
   const [techQuery, setTechQuery] = useState("");
   const [techResults, setTechResults] = useState<TechnicianListItem[]>([]);
   const [techConflict, setTechConflict] = useState(false);
+  const [workOrderTypes, setWorkOrderTypes] = useState<WorkOrderTypeItem[]>([]);
   const [productQuery, setProductQuery] = useState<Record<string, string>>({});
   const [productResults, setProductResults] = useState<ProductItem[]>([]);
   const [activePartId, setActivePartId] = useState<string | null>(null);
@@ -487,6 +490,13 @@ export default function ServiceTicketForm({
     }, 250);
     return () => clearTimeout(t);
   }, [token, customerQuery]);
+
+  useEffect(() => {
+    if (!token || variant !== "work-order") return;
+    getWorkOrderTypes(token)
+      .then(({ types }) => setWorkOrderTypes(types))
+      .catch(() => setWorkOrderTypes([]));
+  }, [token, variant]);
 
   useEffect(() => {
     if (!token || techQuery.trim().length < 2) {
@@ -768,7 +778,7 @@ export default function ServiceTicketForm({
           </p>
         </header>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Field label={variant === "estimate" ? "Estimate No" : "Work Order No"}>
             <input value={form.number || "Assigned on save"} disabled className={inputClass} />
           </Field>
@@ -780,6 +790,35 @@ export default function ServiceTicketForm({
               className={inputClass}
             />
           </Field>
+          {variant === "work-order" ? (
+            <Field label="Type">
+              <select
+                value={form.workOrderTypeRef ?? ""}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const selected = workOrderTypes.find((type) => type._id === value);
+                  patch({
+                    workOrderTypeRef: value || null,
+                    workOrderTypeLabel: selected?.label ?? "",
+                  });
+                }}
+                className={inputClass}
+              >
+                <option value="">None</option>
+                {workOrderTypes.map((type) => (
+                  <option key={type._id} value={type._id}>
+                    {type.label}
+                  </option>
+                ))}
+                {form.workOrderTypeRef &&
+                !workOrderTypes.some((type) => type._id === form.workOrderTypeRef) ? (
+                  <option value={form.workOrderTypeRef}>
+                    {form.workOrderTypeLabel || "Current type"}
+                  </option>
+                ) : null}
+              </select>
+            </Field>
+          ) : null}
           <div className="relative">
             <Field label="Technician">
               <input

@@ -8,16 +8,18 @@ import EmailAccountsCard from "@/components/control-panel/EmailAccountsCard";
 import GoogleCredentialsCard from "@/components/control-panel/GoogleCredentialsCard";
 import RecaptchaCredentialsCard from "@/components/control-panel/RecaptchaCredentialsCard";
 import PaymentProvidersCard from "@/components/control-panel/PaymentProvidersCard";
+import WorkOrderTypesCard from "@/components/control-panel/WorkOrderTypesCard";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const ADMIN_ROLES = ["admin", "super-admin", "owner"];
 
-type TabId = "payments" | "communications" | "api-services";
+type TabId = "payments" | "communications" | "api-services" | "work-orders";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "payments", label: "Payments" },
   { id: "communications", label: "Communications" },
   { id: "api-services", label: "API Services" },
+  { id: "work-orders", label: "Work Orders" },
 ];
 
 function parseTab(value: string | null, forcePayments: boolean): TabId {
@@ -25,7 +27,8 @@ function parseTab(value: string | null, forcePayments: boolean): TabId {
   if (
     value === "payments" ||
     value === "communications" ||
-    value === "api-services"
+    value === "api-services" ||
+    value === "work-orders"
   ) {
     return value;
   }
@@ -138,6 +141,8 @@ function ControlPanelContent() {
           <RecaptchaCredentialsCard />
         </div>
       )}
+
+      {activeTab === "work-orders" && <WorkOrderTypesCard />}
     </div>
   );
 }

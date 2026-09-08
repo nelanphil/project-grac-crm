@@ -55,7 +55,13 @@ export default function SuggestAssigneeModal({
           Suggested technicians
         </h3>
         <p className="mt-1 text-sm text-neutral-500">
-          {job.customerName} · {formatAddressLine(job.address)}
+          {[
+            job.customerName,
+            formatAddressLine(job.address),
+            job.workOrderType?.label,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </p>
         <ul className="mt-4 space-y-2">
           {suggestions.map((s) => (

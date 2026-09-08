@@ -32,6 +32,8 @@ export interface TicketFormState {
   date: string;
   tech: string;
   assignedUserRef: string | null;
+  workOrderTypeRef: string | null;
+  workOrderTypeLabel: string;
   customerRef: string;
   customerId: number | null;
   addressRef: string;
@@ -108,6 +110,8 @@ export function emptyTicketForm(): TicketFormState {
     date: new Date().toISOString().slice(0, 10),
     tech: "",
     assignedUserRef: null,
+    workOrderTypeRef: null,
+    workOrderTypeLabel: "",
     customerRef: "",
     customerId: null,
     addressRef: "",
@@ -215,6 +219,7 @@ export function ticketToPayload(form: TicketFormState) {
     date: form.date || null,
     tech: form.tech,
     assignedUserRef: form.assignedUserRef || null,
+    workOrderTypeRef: form.workOrderTypeRef || null,
     paid: form.paid,
     completed: form.completed,
     runHours: parseMoney(form.runHours),
@@ -283,6 +288,8 @@ export function ticketFromRecord(record: {
   date?: string | null;
   tech?: string | null;
   assignedUserRef?: string | null;
+  workOrderTypeRef?: string | null;
+  workOrderType?: { _id: string; label: string } | null;
   customerId?: number | null;
   customerRef?: string | null;
   addressRef?: string | null;
@@ -344,6 +351,9 @@ export function ticketFromRecord(record: {
     date: record.date ? String(record.date).slice(0, 10) : base.date,
     tech: record.tech ?? "",
     assignedUserRef: record.assignedUserRef ?? null,
+    workOrderTypeRef:
+      record.workOrderTypeRef ?? record.workOrderType?._id ?? null,
+    workOrderTypeLabel: record.workOrderType?.label ?? "",
     customerRef: record.customerRef ?? "",
     customerId: record.customerId ?? null,
     addressRef: record.addressRef ?? "",

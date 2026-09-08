@@ -20,6 +20,7 @@ export const createWorkOrderSchema = z
     date: z.union([z.string(), z.null()]).optional(),
     tech: z.string().optional(),
     assignedUserRef: objectIdOrNull,
+    workOrderTypeRef: objectIdOrNull,
     scheduledStart: z.union([z.string(), z.null()]).optional(),
     estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
     paid: z.boolean().optional(),
@@ -35,6 +36,7 @@ export const createWorkOrderSchema = z
 export const updateWorkOrderSchema = z
   .object({
     assignedUserRef: objectIdOrNull,
+    workOrderTypeRef: objectIdOrNull,
     scheduledStart: z.union([z.string(), z.null()]).optional(),
     estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
     descPerform: z.string().optional(),

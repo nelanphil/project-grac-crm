@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { User, activeUserFilter, IUser } from "../models/mongo/User";
 import { WorkOrder } from "../models/mongo/WorkOrder";
+import { WorkOrderType } from "../models/mongo/WorkOrderType";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { customerDisplayName } from "./notification.service";
@@ -177,6 +178,8 @@ export type EnrichedWorkOrder = Record<string, unknown> & {
   customerName: string | null;
   customerRef: string | null;
   assignee: AssigneeSummary | null;
+  workOrderTypeRef: string | null;
+  workOrderType: { _id: string; label: string } | null;
 };
 
 export async function enrichScheduleWorkOrders(
@@ -203,8 +206,15 @@ export async function enrichScheduleWorkOrders(
         .filter(Boolean) as string[],
     ),
   ];
+  const typeIds = [
+    ...new Set(
+      workOrders
+        .map((wo) => wo.workOrderTypeRef?.toString())
+        .filter(Boolean) as string[],
+    ),
+  ];
 
-  const [addresses, customers, users] = await Promise.all([
+  const [addresses, customers, users, types] = await Promise.all([
     addressIds.length
       ? CustomerAddress.find({ _id: { $in: addressIds } })
           .select("_id label address city state zip isPrimary lat lng")
@@ -218,6 +228,11 @@ export async function enrichScheduleWorkOrders(
     userIds.length
       ? User.find({ _id: { $in: userIds } })
           .select("_id first_name last_name")
+          .lean()
+      : [],
+    typeIds.length
+      ? WorkOrderType.find({ _id: { $in: typeIds } })
+          .select("_id label")
           .lean()
       : [],
   ]);
@@ -251,10 +266,18 @@ export async function enrichScheduleWorkOrders(
       },
     ]),
   );
+  const typeById = new Map(
+    types.map((t) => [
+      t._id.toString(),
+      { _id: t._id.toString(), label: t.label },
+    ]),
+  );
 
   return workOrders.map((wo) => ({
     ...wo,
     customerRef: wo.customerRef?.toString() ?? null,
+    workOrderTypeRef: wo.workOrderTypeRef?.toString() ?? null,
+    workOrderType: typeById.get(wo.workOrderTypeRef?.toString() ?? "") ?? null,
     address: addressById.get(wo.addressRef?.toString() ?? "") ?? null,
     customerName: customerById.get(wo.customerRef?.toString() ?? "") ?? null,
     assignee: userById.get(wo.assignedUserRef?.toString() ?? "") ?? null,
@@ -478,7 +501,24 @@ export async function suggestAssignees(opts: {
     }
   }
 
-  const staff = await listSchedulableStaff();
+  let staff = await listSchedulableStaff();
+  const typeId = workOrder.workOrderTypeRef?.toString();
+  if (typeId) {
+    const type = await WorkOrderType.findById(typeId)
+      .select("qualifiedUserRefs")
+      .lean();
+    const qualifiedIds = (type?.qualifiedUserRefs ?? []).map((id) =>
+      id.toString(),
+    );
+    if (qualifiedIds.length > 0) {
+      const matched = staff.filter((user) =>
+        qualifiedIds.includes(String(user._id)),
+      );
+      if (matched.length > 0) {
+        staff = matched;
+      }
+    }
+  }
   const dayStart = localDateToUtc(opts.date, "00:00");
   const dayEnd = localDateToUtc(opts.date, "23:59");
 

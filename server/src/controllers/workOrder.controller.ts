@@ -2,6 +2,7 @@ import { Response } from "express";
 import mongoose from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { WorkOrder } from "../models/mongo/WorkOrder";
+import { WorkOrderType } from "../models/mongo/WorkOrderType";
 import { Estimate } from "../models/mongo/Estimate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
@@ -40,6 +41,30 @@ async function enrichWithAddress(
 
 function hasJobsPermission(req: AuthRequest, permission: string): boolean {
   return Boolean(req.user?.permissions.includes(permission));
+}
+
+async function resolveWorkOrderTypeRef(
+  value: string | null | undefined,
+): Promise<
+  | { ok: true; skip: true }
+  | { ok: true; skip: false; ref: mongoose.Types.ObjectId | null }
+  | { ok: false; message: string }
+> {
+  if (value === undefined) return { ok: true, skip: true };
+  if (value === null || value === "") {
+    return { ok: true, skip: false, ref: null };
+  }
+  if (!mongoose.Types.ObjectId.isValid(value)) {
+    return { ok: false, message: "Invalid workOrderTypeRef" };
+  }
+  const type = await WorkOrderType.findOne({
+    _id: value,
+    deletedAt: null,
+  }).select("_id");
+  if (!type) {
+    return { ok: false, message: "Work order type not found" };
+  }
+  return { ok: true, skip: false, ref: type._id };
 }
 
 // GET /work-orders?customerId=&addressId=&from=&to=&assignedUserId=&unscheduled=
@@ -341,6 +366,15 @@ export async function createWorkOrder(
       customer,
     );
 
+    const typeRef = await resolveWorkOrderTypeRef(data.workOrderTypeRef);
+    if (!typeRef.ok) {
+      res.status(400).json({ message: typeRef.message });
+      return;
+    }
+    if (!typeRef.skip) {
+      workOrder.workOrderTypeRef = typeRef.ref;
+    }
+
     if (data.assignedUserRef) {
       if (!mongoose.Types.ObjectId.isValid(data.assignedUserRef)) {
         res.status(400).json({ message: "Invalid assignedUserRef" });
@@ -437,6 +471,7 @@ export async function updateWorkOrder(
 
     const rest = { ...parsed.data };
     delete rest.assignedUserRef;
+    delete rest.workOrderTypeRef;
     delete rest.scheduledStart;
     delete rest.estimatedMinutes;
 
@@ -455,6 +490,15 @@ export async function updateWorkOrder(
           (workOrder as unknown as Record<string, unknown>)[key] = value;
         }
       }
+    }
+
+    const typeRef = await resolveWorkOrderTypeRef(parsed.data.workOrderTypeRef);
+    if (!typeRef.ok) {
+      res.status(400).json({ message: typeRef.message });
+      return;
+    }
+    if (!typeRef.skip) {
+      workOrder.workOrderTypeRef = typeRef.ref;
     }
 
     if (parsed.data.estimatedMinutes !== undefined) {
