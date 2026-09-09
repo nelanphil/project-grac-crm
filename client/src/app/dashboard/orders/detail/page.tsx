@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Download } from "lucide-react";
+import { Download, Mail } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import InvoiceDocument from "@/components/billing/InvoiceDocument";
@@ -34,7 +34,9 @@ function InvoiceDetailContent() {
   const id = searchParams.get("id") ?? "";
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
+  const hasRole = useAuthStore((s) => s.hasRole);
   const isCustomer = user?.role === "customer";
+  const canEmail = hasRole("admin", "super-admin", "owner");
 
   const [invoice, setInvoice] = useState<InvoiceItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -143,13 +145,33 @@ function InvoiceDetailContent() {
             <Download className="h-4 w-4" />
             Export to PDF
           </button>
-          {canPay && isCustomer ? (
+          {isCustomer && canPay ? (
             <Link
               href={`/dashboard/checkout/?invoiceId=${invoice._id}`}
               className="w-full rounded-md bg-brand-dark px-4 py-2 text-center text-sm font-medium text-white hover:opacity-90 sm:w-auto"
             >
               Pay now
             </Link>
+          ) : canEmail ? (
+            invoice.customerRef ? (
+              <Link
+                href={`/dashboard/messaging?tab=email&invoiceId=${invoice._id}`}
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 sm:w-auto"
+              >
+                <Mail className="h-4 w-4" />
+                Email
+              </Link>
+            ) : (
+              <button
+                type="button"
+                disabled
+                title="This invoice has no customer to email."
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white opacity-60 sm:w-auto"
+              >
+                <Mail className="h-4 w-4" />
+                Email
+              </button>
+            )
           ) : canPay ? (
             <button
               type="button"

@@ -14,6 +14,7 @@ import {
   paginationRange,
   type PageSize,
 } from "@/lib/pagination";
+import { invoiceCustomerLabel } from "@/lib/formatName";
 import { FileText, Search } from "lucide-react";
 
 function formatMoney(cents: number): string {
@@ -21,15 +22,6 @@ function formatMoney(cents: number): string {
     style: "currency",
     currency: "USD",
   }).format(cents / 100);
-}
-
-function invoiceCustomerLabel(invoice: InvoiceItem): string {
-  const customer = invoice.customerName?.trim();
-  const contact = invoice.contactName?.trim();
-  if (customer && contact && contact.toLowerCase() !== customer.toLowerCase()) {
-    return `${customer} · ${contact}`;
-  }
-  return customer || contact || "—";
 }
 
 export default function OrdersPage() {

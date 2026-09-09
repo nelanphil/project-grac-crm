@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowRight,
@@ -14,10 +15,15 @@ import {
   getInvoices,
   getMessagingThreads,
   InvoiceItem,
+  markInvoicePaid,
   MessageThreadItem,
+  reopenInvoice,
 } from "@/lib/api";
 import { formatDateOnly, parseDateOnly } from "@/lib/contractDates";
-import { formatCustomerRecordName } from "@/lib/formatName";
+import {
+  formatCustomerRecordName,
+  invoiceCustomerLabel,
+} from "@/lib/formatName";
 import { useAuthStore } from "@/store/useAuthStore";
 import UpcomingRenewalsTable from "@/components/dashboard/UpcomingRenewalsTable";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
@@ -73,6 +79,97 @@ function standingRowDate(invoice: InvoiceItem, bucket: StandingBucket): string {
     return formatDateOnly(invoice.dueDate ?? invoice.issuedAt);
   }
   return formatDateOnly(invoice.issuedAt);
+}
+
+function invoiceDetailHref(id: string): string {
+  return `/dashboard/orders/detail?id=${id}`;
+}
+
+function canToggleInvoiceStatus(invoice: InvoiceItem): boolean {
+  return invoice.status === "open" || invoice.status === "paid";
+}
+
+function StatusPill({
+  invoice,
+  disabled,
+  onClick,
+}: {
+  invoice: InvoiceItem;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  const paid = invoice.status === "paid";
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      onKeyDown={(event) => event.stopPropagation()}
+      className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize transition ${
+        paid
+          ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-100"
+          : "bg-sky-50 text-sky-800 ring-1 ring-sky-200 hover:bg-sky-100"
+      } disabled:cursor-not-allowed disabled:opacity-60`}
+    >
+      {invoice.status}
+    </button>
+  );
+}
+
+function StatusChangeWarning({
+  invoice,
+  busy,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  invoice: InvoiceItem;
+  busy: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const markingPaid = invoice.status !== "paid";
+  return (
+    <div
+      className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <p>
+        {markingPaid
+          ? "If you proceed, this invoice will be marked as paid."
+          : "If you proceed, this invoice will be marked as unpaid."}
+        {!markingPaid && invoice.sourceType === "contract_renewal"
+          ? " A recorded renewal is not undone."
+          : null}
+      </p>
+      {error ? (
+        <p className="mt-2 text-sm text-red-700">{error}</p>
+      ) : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onConfirm}
+          className="rounded-md bg-brand-dark px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
+        >
+          Confirm
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onCancel}
+          className="rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
 }
 
 type KpiTone = "danger" | "info" | "success" | "warning" | "neutral";
@@ -175,8 +272,12 @@ function QueueCard({
 }
 
 export default function StaffHomeDashboard() {
+  const router = useRouter();
   const token = useAuthStore((s) => s.token);
   const canReadMessages = useAuthStore((s) => s.hasPermission("messages:read"));
+  const canWriteInvoices = useAuthStore((s) =>
+    s.hasPermission("contracts:write"),
+  );
   const showRenewalsTable = useAuthStore((s) =>
     s.hasRole("super-admin", "admin", "owner", "manager"),
   );
@@ -187,6 +288,9 @@ export default function StaffHomeDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [expandedStanding, setExpandedStanding] =
     useState<StandingBucket | null>(null);
+  const [pendingStatusId, setPendingStatusId] = useState<string | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -298,6 +402,55 @@ export default function StaffHomeDashboard() {
 
   function toggleStanding(bucket: StandingBucket) {
     setExpandedStanding((current) => (current === bucket ? null : bucket));
+    setPendingStatusId(null);
+    setStatusError(null);
+  }
+
+  function openInvoiceDetail(id: string) {
+    router.push(invoiceDetailHref(id));
+  }
+
+  function beginStatusChange(invoice: InvoiceItem) {
+    if (!canWriteInvoices || !canToggleInvoiceStatus(invoice)) return;
+    setStatusError(null);
+    setPendingStatusId((current) =>
+      current === invoice._id ? null : invoice._id,
+    );
+  }
+
+  function applyInvoiceUpdate(current: InvoiceItem, updated: InvoiceItem) {
+    return {
+      ...current,
+      ...updated,
+      customerName: current.customerName,
+      contactName: current.contactName,
+    };
+  }
+
+  async function confirmStatusChange(invoice: InvoiceItem) {
+    if (!token) return;
+    setStatusBusyId(invoice._id);
+    setStatusError(null);
+    try {
+      const { invoice: updated } =
+        invoice.status === "paid"
+          ? await reopenInvoice(token, invoice._id)
+          : await markInvoicePaid(token, invoice._id);
+      setInvoices((list) =>
+        list.map((item) =>
+          item._id === updated._id ? applyInvoiceUpdate(item, updated) : item,
+        ),
+      );
+      setPendingStatusId(null);
+    } catch (err) {
+      setStatusError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to update invoice status.",
+      );
+    } finally {
+      setStatusBusyId(null);
+    }
   }
 
   const openInvoices = useMemo(() => {
@@ -399,38 +552,62 @@ export default function StaffHomeDashboard() {
                   No invoices in this category.
                 </p>
               }
-              mobile={expandedStandingInvoices.map((invoice) => (
-                <MobileDataCard
-                  key={invoice._id}
-                  title={invoice.number}
-                  subtitle={`Customer #${invoice.customerId}`}
-                  badges={
-                    <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium capitalize text-neutral-600">
-                      {invoice.status}
-                    </span>
-                  }
-                  fields={
-                    <>
-                      <DataField
-                        label="Date"
-                        value={standingRowDate(invoice, expandedStanding)}
-                      />
-                      <DataField
-                        label="Amount"
-                        value={formatMoney(invoice.amountCents)}
-                      />
-                    </>
-                  }
-                  actions={
-                    <Link
-                      href={`/dashboard/orders/detail?id=${invoice._id}`}
-                      className="text-xs font-semibold text-brand-orange hover:underline"
-                    >
-                      View
-                    </Link>
-                  }
-                />
-              ))}
+              mobile={expandedStandingInvoices.map((invoice) => {
+                const showToggle =
+                  canWriteInvoices && canToggleInvoiceStatus(invoice);
+                const pending = pendingStatusId === invoice._id;
+                return (
+                  <MobileDataCard
+                    key={invoice._id}
+                    title={invoice.number}
+                    subtitle={invoiceCustomerLabel(invoice)}
+                    badges={
+                      showToggle ? undefined : (
+                        <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium capitalize text-neutral-600">
+                          {invoice.status}
+                        </span>
+                      )
+                    }
+                    fields={
+                      <>
+                        <DataField
+                          label="Date"
+                          value={standingRowDate(invoice, expandedStanding)}
+                        />
+                        <DataField
+                          label="Amount"
+                          value={formatMoney(invoice.amountCents)}
+                        />
+                      </>
+                    }
+                    actions={
+                      showToggle ? (
+                        <StatusPill
+                          invoice={invoice}
+                          disabled={statusBusyId === invoice._id}
+                          onClick={() => beginStatusChange(invoice)}
+                        />
+                      ) : undefined
+                    }
+                    onClick={() => openInvoiceDetail(invoice._id)}
+                  >
+                    {pending ? (
+                      <div className="mt-3">
+                        <StatusChangeWarning
+                          invoice={invoice}
+                          busy={statusBusyId === invoice._id}
+                          error={statusError}
+                          onConfirm={() => void confirmStatusChange(invoice)}
+                          onCancel={() => {
+                            setPendingStatusId(null);
+                            setStatusError(null);
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                  </MobileDataCard>
+                );
+              })}
               desktop={
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-[var(--staff-border)] text-sm">
@@ -451,40 +628,73 @@ export default function StaffHomeDashboard() {
                         <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
                           Status
                         </th>
-                        <th className="px-4 py-3" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--staff-border)]">
-                      {expandedStandingInvoices.map((invoice) => (
-                        <tr
-                          key={invoice._id}
-                          className="transition hover:bg-[var(--staff-cream)]/50"
-                        >
-                          <td className="px-4 py-3 font-medium text-[var(--staff-ink)]">
-                            {invoice.number}
-                          </td>
-                          <td className="px-4 py-3 text-[var(--staff-muted)]">
-                            #{invoice.customerId}
-                          </td>
-                          <td className="px-4 py-3 text-[var(--staff-muted)]">
-                            {standingRowDate(invoice, expandedStanding)}
-                          </td>
-                          <td className="px-4 py-3 font-semibold text-[var(--staff-ink)]">
-                            {formatMoney(invoice.amountCents)}
-                          </td>
-                          <td className="px-4 py-3 capitalize text-[var(--staff-muted)]">
-                            {invoice.status}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <Link
-                              href={`/dashboard/orders/detail?id=${invoice._id}`}
-                              className="text-xs font-semibold text-brand-orange hover:underline"
+                      {expandedStandingInvoices.map((invoice) => {
+                        const showToggle =
+                          canWriteInvoices && canToggleInvoiceStatus(invoice);
+                        const pending = pendingStatusId === invoice._id;
+                        return (
+                          <Fragment key={invoice._id}>
+                            <tr
+                              role="link"
+                              tabIndex={0}
+                              onClick={() => openInvoiceDetail(invoice._id)}
+                              onKeyDown={(event) => {
+                                if (event.target !== event.currentTarget) return;
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  openInvoiceDetail(invoice._id);
+                                }
+                              }}
+                              className="cursor-pointer transition hover:bg-[var(--staff-cream)]/50 focus-visible:bg-[var(--staff-cream)]/50 focus-visible:outline-none"
                             >
-                              View
-                            </Link>
-                          </td>
-                        </tr>
-                      ))}
+                              <td className="px-4 py-3 font-medium text-[var(--staff-ink)]">
+                                {invoice.number}
+                              </td>
+                              <td className="px-4 py-3 text-[var(--staff-muted)]">
+                                {invoiceCustomerLabel(invoice)}
+                              </td>
+                              <td className="px-4 py-3 text-[var(--staff-muted)]">
+                                {standingRowDate(invoice, expandedStanding)}
+                              </td>
+                              <td className="px-4 py-3 font-semibold text-[var(--staff-ink)]">
+                                {formatMoney(invoice.amountCents)}
+                              </td>
+                              <td className="px-4 py-3 capitalize text-[var(--staff-muted)]">
+                                {showToggle ? (
+                                  <StatusPill
+                                    invoice={invoice}
+                                    disabled={statusBusyId === invoice._id}
+                                    onClick={() => beginStatusChange(invoice)}
+                                  />
+                                ) : (
+                                  invoice.status
+                                )}
+                              </td>
+                            </tr>
+                            {pending ? (
+                              <tr>
+                                <td colSpan={5} className="px-4 pb-3">
+                                  <StatusChangeWarning
+                                    invoice={invoice}
+                                    busy={statusBusyId === invoice._id}
+                                    error={statusError}
+                                    onConfirm={() =>
+                                      void confirmStatusChange(invoice)
+                                    }
+                                    onCancel={() => {
+                                      setPendingStatusId(null);
+                                      setStatusError(null);
+                                    }}
+                                  />
+                                </td>
+                              </tr>
+                            ) : null}
+                          </Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -513,7 +723,7 @@ export default function StaffHomeDashboard() {
                     {invoice.number}
                   </p>
                   <p className="truncate text-xs text-[var(--staff-muted)]">
-                    Customer #{invoice.customerId} ·{" "}
+                    {invoiceCustomerLabel(invoice)} ·{" "}
                     {formatDateOnly(invoice.paidAt ?? invoice.updatedAt)}
                   </p>
                 </div>
@@ -549,7 +759,7 @@ export default function StaffHomeDashboard() {
                       {invoice.number}
                     </p>
                     <p className="truncate text-xs text-[var(--staff-muted)]">
-                      Customer #{invoice.customerId}
+                      {invoiceCustomerLabel(invoice)}
                       {pastDue ? " · Past due" : ` · ${invoice.status}`}
                     </p>
                   </div>

@@ -25,6 +25,19 @@ export function formatCustomerRecordName(customer: {
   return formatCustomerName(customer.first, customer.last);
 }
 
+/** Account name, plus contact when it differs. Falls back to an em dash. */
+export function invoiceCustomerLabel(invoice: {
+  customerName?: string;
+  contactName?: string;
+}): string {
+  const customer = invoice.customerName?.trim();
+  const contact = invoice.contactName?.trim();
+  if (customer && contact && contact.toLowerCase() !== customer.toLowerCase()) {
+    return `${customer} · ${contact}`;
+  }
+  return customer || contact || "—";
+}
+
 /** Normalizes state for display; defaults empty values to FL. */
 export function formatCustomerState(state: string | null | undefined): string {
   const normalized = state?.trim().toUpperCase() ?? "";

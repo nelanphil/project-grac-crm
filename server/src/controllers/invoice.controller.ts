@@ -15,6 +15,7 @@ import {
   InvoiceAmountError,
   markInvoicePaid,
   nextInvoiceNumber,
+  reopenInvoice,
 } from "../services/invoice.service";
 import {
   actorFromRequest,
@@ -321,7 +322,19 @@ export async function getInvoices(
         .sort({ createdAt: -1 })
         .limit(200)
         .lean();
-      res.json({ invoices: invoices.map(toPublicInvoice) });
+      const names = await invoiceListNames(invoices);
+      res.json({
+        invoices: invoices.map((invoice) => {
+          const extra = invoice.customerRef
+            ? names.get(String(invoice.customerRef))
+            : undefined;
+          return {
+            ...toPublicInvoice(invoice),
+            customerName: extra?.customerName ?? "",
+            contactName: extra?.contactName ?? "",
+          };
+        }),
+      });
       return;
     }
 
@@ -563,6 +576,84 @@ export async function createInvoice(
   } catch (err) {
     console.error("[invoices] create failed", err);
     res.status(500).json({ message: "Failed to create invoice" });
+  }
+}
+
+export async function markInvoicePaidByStaff(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const id = String(req.params.id ?? "");
+    if (!Types.ObjectId.isValid(id)) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+
+    const invoice = await Invoice.findById(id);
+    if (!invoice) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+
+    if (invoice.status === "paid") {
+      res.status(409).json({
+        message: "Invoice is already paid",
+        invoice: toPublicInvoice(invoice),
+      });
+      return;
+    }
+
+    if (invoice.status !== "open" && invoice.status !== "failed") {
+      res.status(409).json({
+        message: "Invoice cannot be marked paid",
+        invoice: toPublicInvoice(invoice),
+      });
+      return;
+    }
+
+    const updated = await markInvoicePaid({
+      invoice,
+      actor: actorFromRequest(req.user),
+    });
+    res.json({ invoice: toPublicInvoice(updated) });
+  } catch {
+    res.status(500).json({ message: "Failed to mark invoice paid" });
+  }
+}
+
+export async function reopenInvoiceByStaff(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const id = String(req.params.id ?? "");
+    if (!Types.ObjectId.isValid(id)) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+
+    const invoice = await Invoice.findById(id);
+    if (!invoice) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+
+    if (invoice.status !== "paid") {
+      res.status(409).json({
+        message: "Invoice is not paid",
+        invoice: toPublicInvoice(invoice),
+      });
+      return;
+    }
+
+    const updated = await reopenInvoice({
+      invoice,
+      actor: actorFromRequest(req.user),
+    });
+    res.json({ invoice: toPublicInvoice(updated) });
+  } catch {
+    res.status(500).json({ message: "Failed to reopen invoice" });
   }
 }
 

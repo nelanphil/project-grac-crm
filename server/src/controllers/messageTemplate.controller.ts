@@ -55,7 +55,7 @@ function applyTypeFields(
   templateType: MessageTemplateType,
   body: string,
   subject: string,
-  emailChrome?: EmailChrome,
+  emailChrome?: Partial<EmailChrome> | null,
 ): {
   body: string;
   subject: string;

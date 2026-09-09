@@ -5,10 +5,12 @@ export const SMS_BODY_MAX = 1600;
 export const EMAIL_BODY_MAX = 25_000;
 export const EMAIL_SUBJECT_MAX = 200;
 export const EMAIL_CHROME_HTML_MAX = 10_000;
+export const UNSUBSCRIBE_NOTE_MAX = 400;
 
 export const emailChromeSchema = z.object({
   headerHtml: z.string().max(EMAIL_CHROME_HTML_MAX),
   footerHtml: z.string().max(EMAIL_CHROME_HTML_MAX),
+  unsubscribeNote: z.string().max(UNSUBSCRIBE_NOTE_MAX).optional(),
 });
 
 function refineBodyMax(

@@ -10,6 +10,7 @@ import {
   resetPassword,
   checkUsername,
   acceptLegalConsent,
+  updateMyNotifications,
 } from "../controllers/auth.controller";
 import { authenticate, AuthRequest } from "../middleware/auth.middleware";
 
@@ -30,6 +31,9 @@ router.patch("/me/nav-order", authenticate, (req, res: Response) =>
 );
 router.patch("/me/password", authenticate, (req, res: Response) =>
   updatePassword(req as AuthRequest, res),
+);
+router.patch("/me/notifications", authenticate, (req, res: Response) =>
+  updateMyNotifications(req as AuthRequest, res),
 );
 router.post("/legal-consent", authenticate, (req, res: Response) =>
   acceptLegalConsent(req as AuthRequest, res),

@@ -199,6 +199,27 @@ export function formatPrettyDate(localDate: string): string {
   });
 }
 
+export function formatPrettyDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${d.toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: SCHEDULE_TIMEZONE,
+  })} ET`;
+}
+
+export const MIN_EMAIL_SCHEDULE_LEAD_MS = 60_000;
+
+export function isEmailScheduleTimeValid(iso: string): boolean {
+  const t = new Date(iso).getTime();
+  return !Number.isNaN(t) && t >= Date.now() + MIN_EMAIL_SCHEDULE_LEAD_MS;
+}
+
 export const DISPATCHER_ROLES = ["super-admin", "admin", "owner"];
 
 export function isDispatcherRole(role: string | null | undefined): boolean {

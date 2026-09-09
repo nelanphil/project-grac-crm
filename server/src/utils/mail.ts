@@ -9,6 +9,7 @@ export {
   getSmtpConfigForRole,
   buildPasswordResetUrl,
   buildLoginUrl,
+  buildUnsubscribeUrl,
   type SendMailOptions,
 } from "../services/email.service";
 

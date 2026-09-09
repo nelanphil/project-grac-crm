@@ -1,50 +1,134 @@
 "use client";
 
-import { useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { useAuthStore } from "@/store/useAuthStore";
+import { ApiError, authGetMe, updateMyNotifications } from "@/lib/api";
 
 interface NotificationPref {
-  id: string;
+  id: "generalNotifications" | "billingAlerts" | "smsOptIn";
   label: string;
   description: string;
 }
 
 const PREFS: NotificationPref[] = [
-  { id: "email_alerts", label: "Email Alerts", description: "Receive notifications via email for new leads and account activity." },
-  { id: "sms_alerts", label: "SMS Alerts", description: "Receive text message alerts for urgent updates." },
+  {
+    id: "generalNotifications",
+    label: "General notifications",
+    description:
+      "Service reminders, account updates, and other non-billing email.",
+  },
+  {
+    id: "billingAlerts",
+    label: "Billing alerts",
+    description: "Invoices, receipts, and payment reminders.",
+  },
+  {
+    id: "smsOptIn",
+    label: "SMS Alerts",
+    description: "Receive text message alerts for urgent updates.",
+  },
 ];
 
 export default function NotificationsTab() {
-  const [prefs, setPrefs] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(PREFS.map((p) => [p.id, false]))
-  );
+  const { user, token, login } = useAuthStore();
+  const [prefs, setPrefs] = useState({
+    generalNotifications: user?.generalNotifications ?? true,
+    billingAlerts: user?.billingAlerts ?? true,
+    smsOptIn: Boolean(user?.smsOptIn),
+  });
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function toggle(id: string) {
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    authGetMe(token)
+      .then(({ user: fresh }) => {
+        if (cancelled) return;
+        login(token, fresh);
+        setPrefs({
+          generalNotifications: fresh.generalNotifications ?? true,
+          billingAlerts: fresh.billingAlerts ?? true,
+          smsOptIn: Boolean(fresh.smsOptIn),
+        });
+      })
+      .catch(() => {
+        if (cancelled || !user) return;
+        setPrefs({
+          generalNotifications: user.generalNotifications ?? true,
+          billingAlerts: user.billingAlerts ?? true,
+          smsOptIn: Boolean(user.smsOptIn),
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Load once when the tab mounts with a token.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  function toggle(id: NotificationPref["id"]) {
     setSaved(false);
+    setError(null);
     setPrefs((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
-  function handleSave() {
-    // Persisted locally for now — backend integration can be added later
-    setSaved(true);
+  async function handleSave(e: FormEvent) {
+    e.preventDefault();
+    if (!token) return;
+    setSaving(true);
+    setSaved(false);
+    setError(null);
+    try {
+      const { user: updated } = await updateMyNotifications(token, prefs);
+      login(token, updated);
+      setPrefs({
+        generalNotifications: updated.generalNotifications ?? true,
+        billingAlerts: updated.billingAlerts ?? true,
+        smsOptIn: Boolean(updated.smsOptIn),
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not save preferences.",
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm">
-      <h2 className="text-lg font-semibold text-brand-dark mb-6">Notifications</h2>
+    <form
+      onSubmit={handleSave}
+      className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm"
+    >
+      <h2 className="mb-6 text-lg font-semibold text-brand-dark">
+        Notifications
+      </h2>
 
       {saved && (
-        <div className="mb-4 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
+        <div className="mb-4 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
           Preferences saved.
+        </div>
+      )}
+      {error && (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
         </div>
       )}
 
       <ul className="divide-y divide-neutral-100">
         {PREFS.map((pref) => (
-          <li key={pref.id} className="flex items-center justify-between gap-4 py-4">
+          <li
+            key={pref.id}
+            className="flex items-center justify-between gap-4 py-4"
+          >
             <div>
               <p className="text-sm font-medium text-brand-dark">{pref.label}</p>
-              <p className="text-xs text-neutral-500 mt-0.5">{pref.description}</p>
+              <p className="mt-0.5 text-xs text-neutral-500">
+                {pref.description}
+              </p>
             </div>
             <button
               type="button"
@@ -66,10 +150,14 @@ export default function NotificationsTab() {
       </ul>
 
       <div className="mt-6 flex justify-end">
-        <button onClick={handleSave} className="btn-primary px-6 py-2.5 text-sm">
-          Save Preferences
+        <button
+          type="submit"
+          disabled={saving}
+          className="btn-primary px-6 py-2.5 text-sm disabled:opacity-60"
+        >
+          {saving ? "Saving…" : "Save Preferences"}
         </button>
       </div>
-    </div>
+    </form>
   );
 }

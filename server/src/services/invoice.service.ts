@@ -99,12 +99,19 @@ export async function applyContractRenewal(
   return contract;
 }
 
+type InvoiceActor = {
+  actorType?: "user" | "system";
+  actorUserId?: string | null;
+  actorName?: string | null;
+};
+
 export async function markInvoicePaid(params: {
   invoice: IInvoice;
   providerPaymentId?: string | null;
   providerOrderId?: string | null;
+  actor?: InvoiceActor;
 }): Promise<IInvoice> {
-  const { invoice, providerPaymentId, providerOrderId } = params;
+  const { invoice, providerPaymentId, providerOrderId, actor } = params;
 
   if (invoice.status === "paid") {
     return invoice;
@@ -122,8 +129,9 @@ export async function markInvoicePaid(params: {
     entityId: String(invoice._id),
     customerRef: invoice.customerRef ?? null,
     summary: `Invoice ${invoice.number} paid`,
-    actorType: "system",
-    actorName: "System",
+    actorType: actor?.actorType ?? "system",
+    actorUserId: actor?.actorUserId ?? null,
+    actorName: actor?.actorName ?? (actor?.actorUserId ? undefined : "System"),
     metadata: {
       sourceType: invoice.sourceType,
       amountCents: invoice.amountCents,
@@ -164,6 +172,44 @@ export async function markInvoicePaid(params: {
   if (invoice.sourceType === "work_order" && invoice.workOrderRef) {
     await WorkOrder.findByIdAndUpdate(invoice.workOrderRef, {
       $set: { paid: true },
+    });
+  }
+
+  return invoice;
+}
+
+export async function reopenInvoice(params: {
+  invoice: IInvoice;
+  actor?: InvoiceActor;
+}): Promise<IInvoice> {
+  const { invoice, actor } = params;
+
+  if (invoice.status !== "paid") {
+    return invoice;
+  }
+
+  invoice.status = "open";
+  invoice.paidAt = null;
+  await invoice.save();
+
+  logNotificationAsync({
+    entityType: "invoice",
+    action: "updated",
+    entityId: String(invoice._id),
+    customerRef: invoice.customerRef ?? null,
+    summary: `Invoice ${invoice.number} reopened`,
+    actorType: actor?.actorType ?? "system",
+    actorUserId: actor?.actorUserId ?? null,
+    actorName: actor?.actorName ?? (actor?.actorUserId ? undefined : "System"),
+    metadata: {
+      sourceType: invoice.sourceType,
+      amountCents: invoice.amountCents,
+    },
+  });
+
+  if (invoice.sourceType === "work_order" && invoice.workOrderRef) {
+    await WorkOrder.findByIdAndUpdate(invoice.workOrderRef, {
+      $set: { paid: false },
     });
   }
 

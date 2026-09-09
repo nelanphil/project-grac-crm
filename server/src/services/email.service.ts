@@ -14,6 +14,7 @@ export interface SendMailOptions {
   html?: string;
   replyTo?: string;
   fromName?: string;
+  headers?: Record<string, string>;
 }
 
 export interface SendMailResult {
@@ -155,6 +156,7 @@ async function sendWithConfig(
     subject: options.subject,
     text: options.text,
     html: options.html,
+    headers: options.headers,
   });
 
   return {
@@ -222,3 +224,9 @@ export function buildLoginUrl(): string {
   const base = env.clientUrl.replace(/\/$/, "");
   return `${base}/auth/login`;
 }
+
+export {
+  buildUnsubscribeUrl,
+  buildUnsubscribeOneClickUrl,
+  listUnsubscribeHeaders,
+} from "../utils/unsubscribeToken";

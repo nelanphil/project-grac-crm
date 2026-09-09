@@ -3,9 +3,9 @@ import { env } from "./env";
 
 let isConnected = false;
 
-export async function connectMongoDB(): Promise<void> {
+export async function connectMongoDB(uri = env.mongodbUri): Promise<void> {
   try {
-    await mongoose.connect(env.mongodbUri, {
+    await mongoose.connect(uri, {
       serverSelectionTimeoutMS: 10000,
     });
     isConnected = true;

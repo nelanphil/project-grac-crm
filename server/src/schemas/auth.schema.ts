@@ -112,6 +112,23 @@ export const navOrderSchema = z.object({
   children: z.record(z.string().max(200), navOrderHrefList).default({}),
 });
 
+export const updateNotificationsSchema = z
+  .object({
+    generalNotifications: z.boolean().optional(),
+    billingAlerts: z.boolean().optional(),
+    smsOptIn: z.boolean().optional(),
+  })
+  .refine(
+    (data) =>
+      data.generalNotifications !== undefined ||
+      data.billingAlerts !== undefined ||
+      data.smsOptIn !== undefined,
+    {
+      message: "At least one preference is required",
+      path: ["generalNotifications"],
+    },
+  );
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LegalConsentInput = z.infer<typeof legalConsentSchema>;
@@ -119,3 +136,4 @@ export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export type UpdatePasswordInput = z.infer<typeof updatePasswordSchema>;
 export type UpdateRoleInput = z.infer<typeof updateRoleSchema>;
 export type NavOrderInput = z.infer<typeof navOrderSchema>;
+export type UpdateNotificationsInput = z.infer<typeof updateNotificationsSchema>;

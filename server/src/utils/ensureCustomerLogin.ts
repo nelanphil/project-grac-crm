@@ -8,6 +8,7 @@ import {
   accountEmailRegex,
   normalizeAccountEmail,
 } from "./provisionCustomerAccount";
+import { renameEmailPreferences } from "./emailPreferences";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -83,6 +84,7 @@ export async function ensureCustomerLoginForPrimaryEmail(
       previous.last_name = last_name;
       try {
         await previous.save();
+        await renameEmailPreferences(previousEmail, email);
         return { status: "renamed", userId: previous._id as Types.ObjectId };
       } catch (err) {
         if (!isDuplicateKeyError(err)) throw err;

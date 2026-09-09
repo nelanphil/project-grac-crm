@@ -3,32 +3,41 @@ import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { EmailAccount } from "../models/mongo/EmailAccount";
 import { EmailCommunication } from "../models/mongo/EmailCommunication";
-import { MessageTemplate } from "../models/mongo/MessageTemplate";
+import {
+  ScheduledEmailSend,
+  ScheduledEmailStatus,
+} from "../models/mongo/ScheduledEmailSend";
 import {
   emailMessagePreviewSchema,
+  emailMessageRescheduleSchema,
+  emailMessageScheduleSchema,
   emailMessageSendSchema,
   emailPaymentLinkAvailabilitySchema,
+  SCHEDULED_EMAIL_STATUS_FILTERS,
 } from "../schemas/emailMessage.schema";
-import { sendWithEmailAccount } from "../services/email.service";
+import {
+  dispatchStaffEmailBatch,
+  loadActiveEmailAccount,
+  resolveEmailContent,
+  StaffEmailBatchError,
+} from "../services/emailMessage.service";
 import {
   DEFAULT_EMAIL_CHROME,
-  EmailChrome,
   mergeEmailChrome,
   renderEmailChrome,
 } from "../utils/emailChrome";
 import { buildStaffOutboundEmail } from "../utils/emailTemplates";
+import { buildUnsubscribeUrl } from "../utils/unsubscribeToken";
 import {
   renderMessageTemplate,
   templateUsesPaymentLink,
 } from "../utils/messageTemplate";
 import {
   buildTemplateContextForContact,
-  contactHasValidEmail,
   sampleTemplateContext,
 } from "../utils/messagingContext";
 import { samplePayUrl } from "../utils/payToken";
 import {
-  createPaymentLinkCache,
   customerHasPayableInvoice,
   payableInvoiceCustomerIds,
 } from "../utils/paymentLinkForCustomer";
@@ -37,47 +46,13 @@ import {
   parseRenewalScope,
   searchHubContacts,
 } from "../utils/messagingContacts";
+import {
+  parseFutureScheduledAt,
+  ScheduledAtError,
+} from "../utils/scheduledEmail";
 
 const PAGE_SIZES = new Set([25, 50, 100, 150, 200, 250]);
-const SEND_CONCURRENCY = 5;
 const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
-
-function createStartPacer(perSecond: number): () => Promise<void> {
-  const intervalMs = 1000 / Math.max(1, perSecond);
-  let nextAllowed = 0;
-  return async function pace() {
-    const now = Date.now();
-    const wait = Math.max(0, nextAllowed - now);
-    nextAllowed = Math.max(now, nextAllowed) + intervalMs;
-    if (wait > 0) {
-      await new Promise((resolve) => setTimeout(resolve, wait));
-    }
-  };
-}
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-
-  async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
-      const i = nextIndex;
-      nextIndex += 1;
-      results[i] = await fn(items[i]);
-    }
-  }
-
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    () => worker(),
-  );
-  await Promise.all(workers);
-  return results;
-}
 
 function toPublicEmailAccount(account: {
   _id: unknown;
@@ -132,6 +107,48 @@ function toPublicEmailCommunication(
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
+}
+
+function toPublicScheduledEmail(
+  doc: object,
+  accountFriendlyName?: string,
+) {
+  const record = doc as Record<string, unknown>;
+  const contactIds = Array.isArray(record.contactIds)
+    ? (record.contactIds as unknown[]).map(String)
+    : [];
+  return {
+    _id: String(record._id),
+    contactIds,
+    recipientCount: contactIds.length,
+    subject: record.subject ?? "",
+    fromName: record.fromName ?? "",
+    replyTo: record.replyTo ?? null,
+    emailAccountRef: record.emailAccountRef
+      ? String(record.emailAccountRef)
+      : null,
+    accountFriendlyName: accountFriendlyName ?? null,
+    emailsPerSecond: record.emailsPerSecond ?? 2,
+    includePaymentLink: Boolean(record.includePaymentLink),
+    scheduledAt: record.scheduledAt,
+    status: record.status,
+    summary: record.summary ?? null,
+    errorMessage: record.errorMessage ?? null,
+    cancelledAt: record.cancelledAt ?? null,
+    createdByUserRef: record.createdByUserRef
+      ? String(record.createdByUserRef)
+      : null,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function staffEmailErrorResponse(err: unknown, res: Response): boolean {
+  if (err instanceof StaffEmailBatchError || err instanceof ScheduledAtError) {
+    res.status(err.status).json({ message: err.message });
+    return true;
+  }
+  return false;
 }
 
 // GET /email-messages/accounts
@@ -271,11 +288,13 @@ export async function previewEmailMessage(
     const renderedChrome = renderEmailChrome(chrome, (value) =>
       renderMessageTemplate(value, context),
     );
+    const previewEmail = (context.email || "jordan.lee@example.com").trim();
     const wrapped = buildStaffOutboundEmail({
       subject: renderedSubject,
       bodyText: renderedBody,
       paymentUrl,
       chrome: renderedChrome,
+      unsubscribeUrl: buildUnsubscribeUrl(previewEmail, "general"),
     });
 
     res.json({
@@ -307,219 +326,222 @@ export async function sendEmailMessages(
     }
 
     const data = parsed.data;
-    let subjectTemplate = data.subject?.trim() ?? "";
-    let bodyTemplate = data.body?.trim() ?? "";
-    let chrome: EmailChrome | undefined = data.emailChrome;
+    const content = await resolveEmailContent(data);
+    const result = await dispatchStaffEmailBatch({
+      contactIds: data.contactIds,
+      subject: content.subject,
+      body: content.body,
+      emailChrome: content.chrome,
+      templateId: content.templateRef ? String(content.templateRef) : null,
+      emailAccountId: data.emailAccountId,
+      fromName: data.fromName,
+      replyTo: data.replyTo,
+      emailsPerSecond: data.emailsPerSecond,
+      renewalYear: data.renewalYear,
+      renewalMonth: data.renewalMonth,
+      includePaymentLink: data.includePaymentLink,
+      createdByUserId: req.user?.id ?? null,
+    });
+    res.json(result);
+  } catch (err) {
+    if (staffEmailErrorResponse(err, res)) return;
+    console.error("POST /email-messages/send error:", err);
+    res.status(500).json({ message: "Failed to send emails" });
+  }
+}
 
-    if (data.templateId) {
-      if (!Types.ObjectId.isValid(data.templateId)) {
-        res.status(400).json({ message: "Invalid templateId" });
-        return;
-      }
-      const template = await MessageTemplate.findById(data.templateId);
-      if (!template || template.deletedAt) {
-        res.status(404).json({ message: "Message template not found" });
-        return;
-      }
-      if (template.templateType !== "email") {
-        res.status(400).json({
-          message: "Cannot send an SMS template as email",
-        });
-        return;
-      }
-      if (!subjectTemplate) subjectTemplate = template.subject ?? "";
-      if (!bodyTemplate) bodyTemplate = template.body ?? "";
-      if (!chrome) chrome = template.emailChrome ?? undefined;
-    }
-
-    if (!subjectTemplate.trim() || !bodyTemplate.trim()) {
-      res.status(400).json({ message: "Email subject and body are required" });
-      return;
-    }
-
-    const sendChrome = mergeEmailChrome(chrome ?? DEFAULT_EMAIL_CHROME);
-
-    if (!Types.ObjectId.isValid(data.emailAccountId)) {
-      res.status(400).json({ message: "Invalid emailAccountId" });
-      return;
-    }
-
-    const account = await EmailAccount.findById(data.emailAccountId);
-    if (!account || !account.isActive) {
+// POST /email-messages/schedule
+export async function scheduleEmailMessages(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const parsed = emailMessageScheduleSchema.safeParse(req.body);
+    if (!parsed.success) {
       res.status(400).json({
-        message: "Email account not found or inactive",
+        message: "Validation failed",
+        errors: parsed.error.flatten().fieldErrors,
       });
       return;
     }
 
-    const scope =
-      data.renewalYear !== undefined && data.renewalMonth !== undefined
-        ? { year: data.renewalYear, month: data.renewalMonth }
-        : undefined;
-
+    const data = parsed.data;
+    const scheduledAt = parseFutureScheduledAt(data.scheduledAt);
+    const content = await resolveEmailContent(data);
+    const account = await loadActiveEmailAccount(data.emailAccountId);
     const uniqueContactIds = [...new Set(data.contactIds)];
-    const templateRef = data.templateId
-      ? new Types.ObjectId(data.templateId)
-      : null;
     const userId = req.user?.id
       ? new Types.ObjectId(req.user.id)
       : null;
-    const wantsPayLink =
-      data.includePaymentLink === true ||
-      templateUsesPaymentLink(
-        subjectTemplate,
-        bodyTemplate,
-        sendChrome.headerHtml,
-        sendChrome.footerHtml,
-      );
-    const paymentLinkForCustomer = wantsPayLink
-      ? createPaymentLinkCache(scope)
-      : null;
 
-    const sendFromName = data.fromName?.trim() || account.fromName;
-    const replyTo = data.replyTo;
-    const emailsPerSecond = data.emailsPerSecond ?? 2;
-    const paceStart = createStartPacer(emailsPerSecond);
+    const row = await ScheduledEmailSend.create({
+      contactIds: uniqueContactIds,
+      subject: content.subject,
+      body: content.body,
+      emailChrome: content.chrome,
+      templateRef: content.templateRef,
+      emailAccountRef: account._id,
+      fromName: data.fromName?.trim() || account.fromName,
+      replyTo: data.replyTo ?? null,
+      emailsPerSecond: data.emailsPerSecond ?? 2,
+      renewalYear: data.renewalYear ?? null,
+      renewalMonth: data.renewalMonth ?? null,
+      includePaymentLink: data.includePaymentLink === true,
+      scheduledAt,
+      status: "scheduled",
+      createdByUserRef: userId,
+    });
 
-    const results = await mapWithConcurrency(
-      uniqueContactIds,
-      Math.min(SEND_CONCURRENCY, emailsPerSecond),
-      async (contactId) => {
-        await paceStart();
-        if (!Types.ObjectId.isValid(contactId)) {
-          return {
-            contactId,
-            status: "failed" as const,
-            error: "Invalid contact id",
-          };
-        }
-
-        const built = await buildTemplateContextForContact(contactId, scope);
-        if (!built) {
-          return {
-            contactId,
-            status: "failed" as const,
-            error: "Contact not found",
-          };
-        }
-
-        const toEmail = (built.contact.email ?? "").trim().toLowerCase();
-        if (!contactHasValidEmail(toEmail)) {
-          return {
-            contactId,
-            status: "failed" as const,
-            error: "Contact has no valid email",
-          };
-        }
-
-        let context = built.context;
-        let paymentUrl: string | undefined;
-        if (wantsPayLink && paymentLinkForCustomer) {
-          const minted = await paymentLinkForCustomer(
-            built.contact.customerRef,
-          );
-          if (minted) {
-            paymentUrl = minted.payUrl;
-            context = { ...context, payment_link: paymentUrl };
-          }
-        }
-
-        const renderedSubject = renderMessageTemplate(
-          subjectTemplate,
-          context,
-        );
-        const renderedBody = renderMessageTemplate(bodyTemplate, context);
-        const renderedChrome = renderEmailChrome(sendChrome, (value) =>
-          renderMessageTemplate(value, context),
-        );
-        const wrapped = buildStaffOutboundEmail({
-          subject: renderedSubject,
-          bodyText: renderedBody,
-          paymentUrl,
-          chrome: renderedChrome,
-        });
-
-        const contactRef = new Types.ObjectId(built.contact._id);
-        const customerRef = built.customer
-          ? new Types.ObjectId(built.customer._id)
-          : null;
-
-        try {
-          const sent = await sendWithEmailAccount(account, {
-            to: toEmail,
-            subject: wrapped.subject,
-            text: wrapped.text,
-            html: wrapped.html,
-            fromName: sendFromName,
-            replyTo,
-          });
-
-          const row = await EmailCommunication.create({
-            emailAccountRef: account._id,
-            fromName: sendFromName,
-            fromEmail: account.fromEmail,
-            toEmail,
-            subject: wrapped.subject,
-            body: renderedBody,
-            html: wrapped.html,
-            status: "sent",
-            providerMessageId: sent.messageId ?? null,
-            errorMessage: null,
-            customerRef,
-            contactRef,
-            templateRef,
-            createdByUserRef: userId,
-          });
-
-          return {
-            contactId,
-            status: "sent" as const,
-            emailId: String(row._id),
-          };
-        } catch (err) {
-          const errorMessage =
-            err instanceof Error ? err.message : "Failed to send email";
-
-          const row = await EmailCommunication.create({
-            emailAccountRef: account._id,
-            fromName: sendFromName,
-            fromEmail: account.fromEmail,
-            toEmail,
-            subject: wrapped.subject,
-            body: renderedBody,
-            html: wrapped.html,
-            status: "failed",
-            providerMessageId: null,
-            errorMessage,
-            customerRef,
-            contactRef,
-            templateRef,
-            createdByUserRef: userId,
-          });
-
-          return {
-            contactId,
-            status: "failed" as const,
-            emailId: String(row._id),
-            error: errorMessage,
-          };
-        }
-      },
-    );
-
-    const sent = results.filter((r) => r.status === "sent").length;
-    const failed = results.length - sent;
-
-    res.json({
-      results,
-      summary: { total: results.length, sent, failed },
-      fromName: sendFromName,
-      fromEmail: account.fromEmail,
-      emailAccountId: String(account._id),
+    res.status(201).json({
+      scheduled: toPublicScheduledEmail(
+        row.toObject(),
+        account.friendlyName,
+      ),
     });
   } catch (err) {
-    console.error("POST /email-messages/send error:", err);
-    res.status(500).json({ message: "Failed to send emails" });
+    if (staffEmailErrorResponse(err, res)) return;
+    console.error("POST /email-messages/schedule error:", err);
+    res.status(500).json({ message: "Failed to schedule emails" });
+  }
+}
+
+// GET /email-messages/scheduled
+export async function listScheduledEmailMessages(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "25"), 10) || 25;
+    const pageSize = PAGE_SIZES.has(pageSizeRaw) ? pageSizeRaw : 25;
+
+    const statusRaw = String(req.query.status ?? "scheduled");
+    const filter: Record<string, unknown> = {};
+    if (statusRaw !== "all") {
+      if (
+        !SCHEDULED_EMAIL_STATUS_FILTERS.includes(
+          statusRaw as (typeof SCHEDULED_EMAIL_STATUS_FILTERS)[number],
+        )
+      ) {
+        res.status(400).json({ message: "Invalid status filter" });
+        return;
+      }
+      filter.status = statusRaw as ScheduledEmailStatus;
+    }
+
+    const [total, rows] = await Promise.all([
+      ScheduledEmailSend.countDocuments(filter),
+      ScheduledEmailSend.find(filter)
+        .sort({ scheduledAt: 1, createdAt: -1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize)
+        .lean(),
+    ]);
+
+    const names = await accountNameMap(
+      rows.map((r) => String(r.emailAccountRef)),
+    );
+
+    res.json({
+      scheduled: rows.map((r) =>
+        toPublicScheduledEmail(r, names.get(String(r.emailAccountRef))),
+      ),
+      total,
+      page,
+      pageSize,
+    });
+  } catch (err) {
+    console.error("GET /email-messages/scheduled error:", err);
+    res.status(500).json({ message: "Failed to list scheduled emails" });
+  }
+}
+
+// PATCH /email-messages/scheduled/:id
+export async function rescheduleEmailMessages(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!Types.ObjectId.isValid(String(req.params.id))) {
+      res.status(400).json({ message: "Invalid scheduled email id" });
+      return;
+    }
+    const parsed = emailMessageRescheduleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: "Validation failed",
+        errors: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const scheduledAt = parseFutureScheduledAt(parsed.data.scheduledAt);
+    const row = await ScheduledEmailSend.findById(req.params.id);
+    if (!row) {
+      res.status(404).json({ message: "Scheduled email not found" });
+      return;
+    }
+    if (row.status !== "scheduled") {
+      res.status(400).json({
+        message: "Only upcoming scheduled emails can be rescheduled",
+      });
+      return;
+    }
+
+    row.scheduledAt = scheduledAt;
+    await row.save();
+
+    const names = await accountNameMap([String(row.emailAccountRef)]);
+    res.json({
+      scheduled: toPublicScheduledEmail(
+        row.toObject(),
+        names.get(String(row.emailAccountRef)),
+      ),
+    });
+  } catch (err) {
+    if (staffEmailErrorResponse(err, res)) return;
+    console.error("PATCH /email-messages/scheduled/:id error:", err);
+    res.status(500).json({ message: "Failed to reschedule email" });
+  }
+}
+
+// POST /email-messages/scheduled/:id/cancel
+export async function cancelScheduledEmailMessages(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!Types.ObjectId.isValid(String(req.params.id))) {
+      res.status(400).json({ message: "Invalid scheduled email id" });
+      return;
+    }
+
+    const row = await ScheduledEmailSend.findById(req.params.id);
+    if (!row) {
+      res.status(404).json({ message: "Scheduled email not found" });
+      return;
+    }
+    if (row.status !== "scheduled") {
+      res.status(400).json({
+        message: "Only upcoming scheduled emails can be cancelled",
+      });
+      return;
+    }
+
+    row.status = "cancelled";
+    row.cancelledAt = new Date();
+    await row.save();
+
+    const names = await accountNameMap([String(row.emailAccountRef)]);
+    res.json({
+      scheduled: toPublicScheduledEmail(
+        row.toObject(),
+        names.get(String(row.emailAccountRef)),
+      ),
+    });
+  } catch (err) {
+    console.error("POST /email-messages/scheduled/:id/cancel error:", err);
+    res.status(500).json({ message: "Failed to cancel scheduled email" });
   }
 }
 

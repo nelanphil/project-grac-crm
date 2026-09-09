@@ -4,18 +4,18 @@ import { RefObject, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  CalendarClock,
   Check,
   CheckSquare,
   Loader2,
-  Mail,
   Square,
 } from "lucide-react";
 import {
   EmailSendAccountItem,
-  EmailSendResponse,
   MergeFieldItem,
   MessageTemplateItem,
   MessagingContactItem,
+  ScheduledEmailItem,
 } from "@/lib/api";
 import {
   formatCustomerName,
@@ -25,6 +25,11 @@ import {
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { EmailChrome, isEmailBodyEmpty } from "@/lib/emailChrome";
+import {
+  formatPrettyDateTime,
+  isEmailScheduleTimeValid,
+  localDateTimeToIso,
+} from "@/lib/schedule";
 import { EmailBodyEditorHandle } from "./EmailBodyEditor";
 import EmailPreview from "./EmailPreview";
 import EmailTemplateWorkspace from "./EmailTemplateWorkspace";
@@ -48,7 +53,8 @@ const STEPS = [
   { key: "recipients", label: "Recipients" },
   { key: "message", label: "Message" },
   { key: "account", label: "Configuration" },
-  { key: "review", label: "Review & send" },
+  { key: "review", label: "Review" },
+  { key: "schedule", label: "Schedule & Send" },
 ] as const;
 
 function formatRenewalDate(iso: string | null): string {
@@ -127,8 +133,12 @@ type EmailCreatePanelProps = {
   confirmOpen: boolean;
   onOpenConfirm: () => void;
   onCloseConfirm: () => void;
-  onConfirmSend: () => void;
+  onConfirmSchedule: () => void;
   onCancelFlow: () => void;
+  scheduleDate: string;
+  scheduleTime: string;
+  onScheduleDateChange: (value: string) => void;
+  onScheduleTimeChange: (value: string) => void;
 
   previewSubject: string;
   previewHtml: string;
@@ -137,8 +147,9 @@ type EmailCreatePanelProps = {
   previewSample: boolean;
 
   error: string | null;
-  sendResult: EmailSendResponse | null;
-  onDismissSendResult: () => void;
+  scheduleResult: ScheduledEmailItem | null;
+  onDismissScheduleResult: () => void;
+  onViewScheduled: () => void;
 
   showPaymentLinkColumn?: boolean;
   includePaymentLink?: boolean;
@@ -217,16 +228,21 @@ export default function EmailCreatePanel({
   confirmOpen,
   onOpenConfirm,
   onCloseConfirm,
-  onConfirmSend,
+  onConfirmSchedule,
   onCancelFlow,
+  scheduleDate,
+  scheduleTime,
+  onScheduleDateChange,
+  onScheduleTimeChange,
   previewSubject,
   previewHtml,
   previewFromLabel,
   previewToLabel,
   previewSample,
   error,
-  sendResult,
-  onDismissSendResult,
+  scheduleResult,
+  onDismissScheduleResult,
+  onViewScheduled,
   showPaymentLinkColumn = false,
   includePaymentLink = false,
   onIncludePaymentLinkChange,
@@ -240,6 +256,13 @@ export default function EmailCreatePanel({
 
   const step = STEPS[stepIndex].key;
   const selectedAccount = accounts.find((a) => a._id === accountId);
+  const scheduleIso =
+    scheduleDate && scheduleTime
+      ? localDateTimeToIso(scheduleDate, scheduleTime)
+      : null;
+  const scheduleValid = scheduleIso
+    ? isEmailScheduleTimeValid(scheduleIso)
+    : false;
 
   const nextDisabled =
     (step === "recipients" && selectedIds.size === 0) ||
@@ -270,30 +293,32 @@ export default function EmailCreatePanel({
         </div>
       ) : null}
 
-      {sendResult ? (
+      {scheduleResult ? (
         <div className="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm">
           <p className="font-medium text-brand-dark">
-            Send complete — {sendResult.summary.sent} sent,{" "}
-            {sendResult.summary.failed} failed
+            Scheduled for {formatPrettyDateTime(scheduleResult.scheduledAt)} —{" "}
+            {scheduleResult.recipientCount} recipient
+            {scheduleResult.recipientCount === 1 ? "" : "s"}
           </p>
-          {sendResult.summary.failed > 0 ? (
-            <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-neutral-600">
-              {sendResult.results
-                .filter((r) => r.status === "failed")
-                .map((r) => (
-                  <li key={r.contactId}>
-                    {r.contactId}: {r.error || "Failed"}
-                  </li>
-                ))}
-            </ul>
-          ) : null}
-          <button
-            type="button"
-            className="mt-2 text-xs font-medium text-brand-orange hover:underline"
-            onClick={onDismissSendResult}
-          >
-            Dismiss
-          </button>
+          <p className="mt-1 text-xs text-neutral-500">
+            {scheduleResult.subject || "Untitled"}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-3">
+            <button
+              type="button"
+              className="text-xs font-medium text-brand-orange hover:underline"
+              onClick={onViewScheduled}
+            >
+              View scheduled emails
+            </button>
+            <button
+              type="button"
+              className="text-xs font-medium text-neutral-500 hover:underline"
+              onClick={onDismissScheduleResult}
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -792,27 +817,15 @@ export default function EmailCreatePanel({
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <button
                     type="button"
-                    disabled={
-                      sending ||
-                      selectedIds.size === 0 ||
-                      !accountId ||
-                      !subject.trim() ||
-                      isEmailBodyEmpty(body)
-                    }
-                    onClick={onOpenConfirm}
-                    className="btn-primary inline-flex flex-1 items-center justify-center gap-1.5 disabled:opacity-60"
-                  >
-                    <Mail className="h-4 w-4" />
-                    Send to {selectedIds.size}
-                  </button>
-                  <button
-                    type="button"
                     onClick={onCancelFlow}
                     className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
                   >
                     Cancel
                   </button>
                 </div>
+                <p className="mt-3 text-xs text-neutral-500">
+                  Next: choose when to send.
+                </p>
               </div>
 
               <div className="border-t border-neutral-100 pt-6 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-6">
@@ -954,6 +967,123 @@ export default function EmailCreatePanel({
         </div>
       ) : null}
 
+      {step === "schedule" ? (
+        <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold text-brand-dark">
+            Schedule & Send
+          </h2>
+          <p className="mb-4 text-sm text-neutral-600">
+            Choose a date and time in Eastern Time. This email will send
+            automatically then — there is no send-now option in the wizard.
+          </p>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-sm">
+                  <span className="mb-1 block text-xs font-medium text-neutral-500">
+                    Date
+                  </span>
+                  <input
+                    type="date"
+                    value={scheduleDate}
+                    onChange={(e) => onScheduleDateChange(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="mb-1 block text-xs font-medium text-neutral-500">
+                    Time (Eastern)
+                  </span>
+                  <input
+                    type="time"
+                    value={scheduleTime}
+                    onChange={(e) => onScheduleTimeChange(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+                  />
+                </label>
+              </div>
+              {scheduleDate && scheduleTime && !scheduleValid ? (
+                <p className="text-xs text-red-600">
+                  Choose a time at least 1 minute in the future.
+                </p>
+              ) : null}
+              <dl className="space-y-2 text-sm">
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                  <dt className="text-neutral-500">Recipients</dt>
+                  <dd className="font-medium text-brand-dark">
+                    {selectedIds.size} selected
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                  <dt className="text-neutral-500">From</dt>
+                  <dd className="text-right font-medium text-brand-dark">
+                    {selectedAccount
+                      ? `${fromNickname.trim() || selectedAccount.fromName} <${selectedAccount.fromEmail}>`
+                      : "—"}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                  <dt className="text-neutral-500">Subject</dt>
+                  <dd className="max-w-[60%] truncate text-right font-medium text-brand-dark">
+                    {previewSubject || subject || "—"}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                  <dt className="text-neutral-500">Sends at</dt>
+                  <dd className="text-right font-medium text-brand-dark">
+                    {scheduleValid && scheduleIso
+                      ? formatPrettyDateTime(scheduleIso)
+                      : "—"}
+                  </dd>
+                </div>
+              </dl>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  type="button"
+                  disabled={
+                    sending ||
+                    !scheduleValid ||
+                    selectedIds.size === 0 ||
+                    !accountId ||
+                    !subject.trim() ||
+                    isEmailBodyEmpty(body)
+                  }
+                  onClick={onOpenConfirm}
+                  className="btn-primary inline-flex flex-1 items-center justify-center gap-1.5 disabled:opacity-60"
+                >
+                  <CalendarClock className="h-4 w-4" />
+                  Schedule send
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancelFlow}
+                  className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div className="border-t border-neutral-100 pt-6 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-6">
+              <h3 className="text-sm font-semibold text-brand-dark">
+                Email preview
+              </h3>
+              <p className="mb-4 mt-1 text-xs text-neutral-500">
+                Same preview as Review. Recipients, merge fields, and payment
+                links are resolved when the email actually sends.
+              </p>
+              <EmailPreview
+                fromLabel={previewFromLabel}
+                toLabel={previewToLabel}
+                subject={previewSubject}
+                html={previewHtml}
+                isSample={previewSample}
+                fullWidth
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between">
         <button
           type="button"
@@ -963,7 +1093,7 @@ export default function EmailCreatePanel({
         >
           Back
         </button>
-        {step !== "review" ? (
+        {step !== "schedule" ? (
           <button
             type="button"
             onClick={goNext}
@@ -980,23 +1110,26 @@ export default function EmailCreatePanel({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
             <h3 className="text-lg font-semibold text-brand-dark">
-              Confirm bulk send
+              Confirm scheduled send
             </h3>
             <p className="mt-2 text-sm text-neutral-600">
-              Send this email to <strong>{selectedIds.size}</strong> recipient
-              {selectedIds.size === 1 ? "" : "s"} from{" "}
+              Schedule this email to <strong>{selectedIds.size}</strong>{" "}
+              recipient{selectedIds.size === 1 ? "" : "s"} from{" "}
               <strong>
                 {selectedAccount
                   ? `${fromNickname.trim() || selectedAccount.fromName} <${selectedAccount.fromEmail}>`
                   : "the selected account"}
               </strong>
+              {scheduleValid && scheduleIso ? (
+                <>
+                  {" "}
+                  at <strong>{formatPrettyDateTime(scheduleIso)}</strong>
+                </>
+              ) : null}
               ?
             </p>
             <p className="mt-2 text-xs font-medium text-neutral-500">
               {previewSubject || subject}
-            </p>
-            <p className="mt-2 max-h-40 overflow-auto rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600 whitespace-pre-wrap">
-              {body}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -1010,15 +1143,15 @@ export default function EmailCreatePanel({
               <button
                 type="button"
                 className="btn-primary inline-flex items-center gap-1.5 disabled:opacity-60"
-                onClick={onConfirmSend}
-                disabled={sending}
+                onClick={onConfirmSchedule}
+                disabled={sending || !scheduleValid}
               >
                 {sending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Mail className="h-4 w-4" />
+                  <CalendarClock className="h-4 w-4" />
                 )}
-                Send now
+                Schedule send
               </button>
             </div>
           </div>

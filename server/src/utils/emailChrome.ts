@@ -3,6 +3,8 @@ import sanitizeHtml from "sanitize-html";
 export type EmailChrome = {
   headerHtml: string;
   footerHtml: string;
+  /** Caption under the always-on Unsubscribe button. Empty omits the line. */
+  unsubscribeNote: string;
 };
 
 /** Stored on templates created before free-HTML chrome. */
@@ -25,6 +27,9 @@ export type LegacyEmailChrome = {
 };
 
 export const EMAIL_CHROME_HTML_MAX = 10_000;
+export const UNSUBSCRIBE_NOTE_MAX = 400;
+export const DEFAULT_UNSUBSCRIBE_NOTE =
+  "Manage email preferences. You can turn billing alerts or general notifications on or off.";
 
 const COMPANY = {
   name: "Generator Maintenance of Florida",
@@ -58,7 +63,13 @@ export const DEFAULT_FOOTER_HTML = `<div style="background-color:#231f20;border-
 export const DEFAULT_EMAIL_CHROME: EmailChrome = {
   headerHtml: DEFAULT_HEADER_HTML,
   footerHtml: DEFAULT_FOOTER_HTML,
+  unsubscribeNote: DEFAULT_UNSUBSCRIBE_NOTE,
 };
+
+function mergeUnsubscribeNote(input: unknown): string {
+  if (typeof input !== "string") return DEFAULT_UNSUBSCRIBE_NOTE;
+  return input.slice(0, UNSUBSCRIBE_NOTE_MAX);
+}
 
 function headerFieldsToHtml(header: NonNullable<LegacyEmailChrome["header"]>): string {
   const companyName = header.companyName?.trim() || COMPANY.name;
@@ -114,6 +125,7 @@ export function mergeEmailChrome(
       footerHtml: input.footer
         ? footerFieldsToHtml(input.footer)
         : DEFAULT_FOOTER_HTML,
+      unsubscribeNote: DEFAULT_UNSUBSCRIBE_NOTE,
     };
   }
 
@@ -125,7 +137,11 @@ export function mergeEmailChrome(
     typeof input.footerHtml === "string" && input.footerHtml.trim()
       ? input.footerHtml
       : DEFAULT_FOOTER_HTML;
-  return { headerHtml, footerHtml };
+  return {
+    headerHtml,
+    footerHtml,
+    unsubscribeNote: mergeUnsubscribeNote(input.unsubscribeNote),
+  };
 }
 
 function imgAttr(tag: string, name: string): string {
@@ -356,6 +372,9 @@ export function sanitizeEmailChrome(chrome: EmailChrome): EmailChrome {
   return {
     headerHtml: sanitizeEmailChromeHtml(chrome.headerHtml),
     footerHtml: sanitizeEmailChromeHtml(chrome.footerHtml),
+    unsubscribeNote: chrome.unsubscribeNote
+      .replace(/<[^>]+>/g, "")
+      .slice(0, UNSUBSCRIBE_NOTE_MAX),
   };
 }
 
@@ -366,5 +385,6 @@ export function renderEmailChrome(
   return {
     headerHtml: render(chrome.headerHtml),
     footerHtml: render(chrome.footerHtml),
+    unsubscribeNote: render(chrome.unsubscribeNote).slice(0, UNSUBSCRIBE_NOTE_MAX),
   };
 }

@@ -8,6 +8,8 @@ import {
   createInvoicePayLink,
   getInvoiceById,
   getInvoices,
+  markInvoicePaidByStaff,
+  reopenInvoiceByStaff,
   startInvoiceCheckout,
 } from "../controllers/invoice.controller";
 
@@ -24,6 +26,16 @@ router.post(
   "/:id/pay-link",
   requirePermission("contracts:write"),
   createInvoicePayLink,
+);
+router.post(
+  "/:id/mark-paid",
+  requirePermission("contracts:write"),
+  markInvoicePaidByStaff,
+);
+router.post(
+  "/:id/reopen",
+  requirePermission("contracts:write"),
+  reopenInvoiceByStaff,
 );
 
 export default router;

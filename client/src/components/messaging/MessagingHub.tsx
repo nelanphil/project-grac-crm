@@ -5,17 +5,19 @@ import { useSearchParams } from "next/navigation";
 import {
   ApiError,
   EmailSendAccountItem,
-  EmailSendResponse,
   MergeFieldItem,
   MessageTemplateItem,
   MessageTemplateType,
   MessagingContactItem,
   MessagingSendResponse,
+  ScheduledEmailItem,
   TwilioAccountItem,
   createMessageTemplate,
   deleteMessageTemplate,
+  getCustomerContacts,
   getEmailPaymentLinkAvailability,
   getEmailSendAccounts,
+  getInvoice,
   getMessageTemplates,
   getMessagingMergeFields,
   getTwilioAccounts,
@@ -23,20 +25,33 @@ import {
   previewMessagingMessage,
   searchEmailContacts,
   searchMessagingContacts,
-  sendEmailMessages,
+  scheduleEmailMessages,
   sendMessagingMessages,
   updateMessageTemplate,
 } from "@/lib/api";
+import {
+  invoiceEmailBodyHtml,
+  invoiceEmailSubject,
+  isInvoicePayable,
+  messagingContactFromInvoice,
+  pickInvoiceEmailContact,
+} from "@/lib/invoiceEmailHtml";
 import {
   DEFAULT_EMAIL_CHROME,
   isEmailBodyEmpty,
   mergeEmailChrome,
 } from "@/lib/emailChrome";
 import { formatCustomerName } from "@/lib/formatName";
+import {
+  formatLocalDate,
+  isEmailScheduleTimeValid,
+  localDateTimeToIso,
+} from "@/lib/schedule";
 import { useAuthStore } from "@/store/useAuthStore";
 import CreatePanel from "./CreatePanel";
 import EmailCreatePanel from "./EmailCreatePanel";
 import { EmailBodyEditorHandle } from "./EmailBodyEditor";
+import ScheduledEmailsPanel from "./ScheduledEmailsPanel";
 import SentEmailsPanel from "./SentEmailsPanel";
 import TemplatesPanel from "./TemplatesPanel";
 import ThreadsPanel from "./ThreadsPanel";
@@ -53,7 +68,8 @@ type MessagingTab =
   | "create"
   | "email"
   | "threads"
-  | "sent-emails";
+  | "sent-emails"
+  | "scheduled-emails";
 
 function templateTypeOf(template: MessageTemplateItem): MessageTemplateType {
   return template.templateType === "email" ? "email" : "sms";
@@ -63,13 +79,15 @@ export default function MessagingHub() {
   const token = useAuthStore((s) => s.token);
   const searchParams = useSearchParams();
   const initialContactId = searchParams.get("contactId");
+  const initialInvoiceId = searchParams.get("invoiceId");
   const initialTab = searchParams.get("tab");
 
   const [activeTab, setActiveTab] = useState<MessagingTab>(
     initialTab === "threads" ||
       initialTab === "create" ||
       initialTab === "email" ||
-      initialTab === "sent-emails"
+      initialTab === "sent-emails" ||
+      initialTab === "scheduled-emails"
       ? initialTab
       : "templates",
   );
@@ -131,7 +149,9 @@ export default function MessagingHub() {
 
   const [emailSearch, setEmailSearch] = useState("");
   const [emailDebouncedSearch, setEmailDebouncedSearch] = useState("");
-  const [emailUseRenewalsFilter, setEmailUseRenewalsFilter] = useState(true);
+  const [emailUseRenewalsFilter, setEmailUseRenewalsFilter] = useState(
+    () => !initialInvoiceId,
+  );
   const [emailViewYear, setEmailViewYear] = useState(now.getFullYear());
   const [emailViewMonth, setEmailViewMonth] = useState(now.getMonth());
   const [emailContacts, setEmailContacts] = useState<MessagingContactItem[]>(
@@ -171,6 +191,10 @@ export default function MessagingHub() {
   const [emailFromNickname, setEmailFromNickname] = useState("");
   const [emailReplyTo, setEmailReplyTo] = useState("");
   const [emailEmailsPerSecond, setEmailEmailsPerSecond] = useState(2);
+  const [emailScheduleDate, setEmailScheduleDate] = useState(() =>
+    formatLocalDate(new Date()),
+  );
+  const [emailScheduleTime, setEmailScheduleTime] = useState("");
 
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [loadingContacts, setLoadingContacts] = useState(false);
@@ -184,8 +208,8 @@ export default function MessagingHub() {
   const [sendResult, setSendResult] = useState<MessagingSendResponse | null>(
     null,
   );
-  const [emailSendResult, setEmailSendResult] =
-    useState<EmailSendResponse | null>(null);
+  const [emailScheduleResult, setEmailScheduleResult] =
+    useState<ScheduledEmailItem | null>(null);
 
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const emailBodyRef = useRef<EmailBodyEditorHandle>(null);
@@ -251,10 +275,57 @@ export default function MessagingHub() {
     activeTab === "email" ||
     (activeTab === "templates" && templateEditorType === "email");
   const emailHasPaymentLinkToken = /\{\{\s*payment_link\s*\}\}/.test(
-    `${emailSubject}\n${emailBody}\n${emailChrome.headerHtml}\n${emailChrome.footerHtml}`,
+    `${emailSubject}\n${emailBody}\n${emailChrome.headerHtml}\n${emailChrome.footerHtml}\n${emailChrome.unsubscribeNote}`,
   );
   const emailUsesPaymentLink =
     includePaymentLink || emailHasPaymentLinkToken;
+
+  useEffect(() => {
+    if (!token || !initialInvoiceId) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const { invoice } = await getInvoice(token, initialInvoiceId);
+        if (cancelled) return;
+        if (!invoice.customerRef) {
+          setError("This invoice has no customer to email.");
+          return;
+        }
+
+        const { contacts } = await getCustomerContacts(
+          token,
+          invoice.customerRef,
+        );
+        if (cancelled) return;
+
+        const contact = pickInvoiceEmailContact(contacts, initialContactId);
+        if (!contact) {
+          setError("This customer has no contact with a valid email address.");
+          return;
+        }
+
+        const selected = messagingContactFromInvoice(contact, invoice);
+        setEmailSelectedIds(new Set([contact._id]));
+        setEmailSelectedContactsById({ [contact._id]: selected });
+        setEmailUseRenewalsFilter(false);
+        setEmailSubject(invoiceEmailSubject(invoice));
+        setEmailBody(invoiceEmailBodyHtml(invoice));
+        setIncludePaymentLink(isInvoicePayable(invoice));
+      } catch (err) {
+        if (cancelled) return;
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Failed to load invoice for email.",
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, initialInvoiceId, initialContactId]);
 
   useEffect(() => {
     if (emailHasPaymentLinkToken) setIncludePaymentLink(true);
@@ -568,7 +639,9 @@ export default function MessagingHub() {
           setEmailPreviewHtml(res.html);
           setEmailPreviewSample(res.sample);
           if (previewContactId) {
-            const c = emailContacts.find((x) => x._id === previewContactId);
+            const c =
+              emailSelectedContactsById[previewContactId] ??
+              emailContacts.find((x) => x._id === previewContactId);
             setEmailPreviewTo(
               c?.email || "jordan.lee@example.com",
             );
@@ -596,6 +669,7 @@ export default function MessagingHub() {
     emailBody,
     emailChrome,
     emailSelectedIds,
+    emailSelectedContactsById,
     emailContacts,
     emailUseRenewalsFilter,
     emailViewYear,
@@ -819,8 +893,10 @@ export default function MessagingHub() {
     setEmailFromNickname(selectedEmailAccount?.fromName ?? "");
     setEmailReplyTo("");
     setEmailEmailsPerSecond(2);
+    setEmailScheduleDate(formatLocalDate(new Date()));
+    setEmailScheduleTime("");
     setError(null);
-    setEmailSendResult(null);
+    setEmailScheduleResult(null);
     setEmailResetSignal((n) => n + 1);
   }
 
@@ -944,7 +1020,7 @@ export default function MessagingHub() {
     }
   }
 
-  async function handleEmailSend() {
+  async function handleEmailSchedule() {
     if (!token) return;
     if (emailSelectedIds.size === 0) {
       setError("Select at least one contact.");
@@ -958,12 +1034,24 @@ export default function MessagingHub() {
       setError("Select an email account to send from.");
       return;
     }
+    if (!emailScheduleDate || !emailScheduleTime) {
+      setError("Choose a date and time to schedule this email.");
+      return;
+    }
+    const scheduledAt = localDateTimeToIso(
+      emailScheduleDate,
+      emailScheduleTime,
+    );
+    if (!isEmailScheduleTimeValid(scheduledAt)) {
+      setError("Scheduled time must be at least 1 minute in the future.");
+      return;
+    }
 
     setEmailSending(true);
     setError(null);
-    setEmailSendResult(null);
+    setEmailScheduleResult(null);
     try {
-      const result = await sendEmailMessages(token, {
+      const result = await scheduleEmailMessages(token, {
         contactIds: [...emailSelectedIds],
         subject: emailSubject,
         body: emailBody,
@@ -976,12 +1064,13 @@ export default function MessagingHub() {
         renewalYear: emailUseRenewalsFilter ? emailViewYear : undefined,
         renewalMonth: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
         includePaymentLink,
+        scheduledAt,
       });
-      setEmailSendResult(result);
+      setEmailScheduleResult(result.scheduled);
       setEmailConfirmOpen(false);
     } catch (err) {
       setError(
-        err instanceof ApiError ? err.message : "Failed to send emails.",
+        err instanceof ApiError ? err.message : "Failed to schedule emails.",
       );
     } finally {
       setEmailSending(false);
@@ -999,6 +1088,7 @@ export default function MessagingHub() {
             ["threads", "Threads"],
             ["create", "Message Wizard"],
             ["email", "Email Wizard"],
+            ["scheduled-emails", "Scheduled Emails"],
             ["sent-emails", "Sent Emails"],
           ] as const
         ).map(([value, label]) => (
@@ -1295,8 +1385,12 @@ export default function MessagingHub() {
           confirmOpen={emailConfirmOpen}
           onOpenConfirm={() => setEmailConfirmOpen(true)}
           onCloseConfirm={() => setEmailConfirmOpen(false)}
-          onConfirmSend={handleEmailSend}
+          onConfirmSchedule={handleEmailSchedule}
           onCancelFlow={resetEmailCreateFlow}
+          scheduleDate={emailScheduleDate}
+          scheduleTime={emailScheduleTime}
+          onScheduleDateChange={setEmailScheduleDate}
+          onScheduleTimeChange={setEmailScheduleTime}
           previewSubject={emailPreviewSubject}
           previewHtml={emailPreviewHtml}
           previewFromLabel={emailFromLabel}
@@ -1306,9 +1400,15 @@ export default function MessagingHub() {
           includePaymentLink={includePaymentLink}
           onIncludePaymentLinkChange={setIncludePaymentLink}
           error={error}
-          sendResult={emailSendResult}
-          onDismissSendResult={() => setEmailSendResult(null)}
+          scheduleResult={emailScheduleResult}
+          onDismissScheduleResult={() => setEmailScheduleResult(null)}
+          onViewScheduled={() => {
+            setEmailScheduleResult(null);
+            setActiveTab("scheduled-emails");
+          }}
         />
+      ) : activeTab === "scheduled-emails" ? (
+        <ScheduledEmailsPanel token={token} />
       ) : activeTab === "sent-emails" ? (
         <SentEmailsPanel token={token} />
       ) : (

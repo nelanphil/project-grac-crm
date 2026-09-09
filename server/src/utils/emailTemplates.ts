@@ -53,6 +53,8 @@ export interface BrandedEmailContent {
   hideNoReplyNote?: boolean;
   /** Per-template header/footer chrome. Falls back to the general GMF brand. */
   chrome?: EmailChrome;
+  /** Always-on unsubscribe button for staff outbound mail. */
+  unsubscribe?: { label: string; url: string; note?: string };
 }
 
 /**
@@ -98,6 +100,26 @@ export function renderBrandedEmail(content: BrandedEmailContent): string {
               <div style="margin-top:12px;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#888888;">
                 This is an automated message from GRAC CRM. Please do not reply directly to this email.
               </div>`;
+
+  const unsubscribeNote = content.unsubscribe?.note?.trim();
+  const unsubscribeNoteHtml = unsubscribeNote
+    ? `
+              <div style="margin-top:10px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.5;color:${BRAND.neutral600};">
+                ${escapeHtml(unsubscribeNote).replace(/\n/g, "<br />")}
+              </div>`
+    : "";
+  const unsubscribeBlock = content.unsubscribe
+    ? `
+          <tr>
+            <td align="center" style="padding:20px 32px 0;text-align:center;">
+              <a href="${escapeHtml(content.unsubscribe.url)}"
+                 style="display:inline-block;border:2px solid ${BRAND.orange};color:${BRAND.orange};background-color:transparent;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;text-decoration:none;padding:10px 24px;border-radius:999px;">
+                ${escapeHtml(content.unsubscribe.label)}
+              </a>
+              ${unsubscribeNoteHtml}
+            </td>
+          </tr>`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -169,6 +191,7 @@ export function renderBrandedEmail(content: BrandedEmailContent): string {
             </td>
           </tr>`
           }
+          ${unsubscribeBlock}
         </table>
       </td>
     </tr>
@@ -288,8 +311,10 @@ export function buildStaffOutboundEmail(opts: {
   bodyText: string;
   paymentUrl?: string;
   chrome?: EmailChrome;
+  unsubscribeUrl?: string;
 }): { subject: string; text: string; html: string } {
   const paymentUrl = opts.paymentUrl?.trim();
+  const unsubscribeUrl = opts.unsubscribeUrl?.trim();
   const chrome = mergeEmailChrome(opts.chrome);
   const subjectRaw = paymentUrl
     ? stripPaymentLinkFromText(opts.subject, paymentUrl)
@@ -320,13 +345,28 @@ export function buildStaffOutboundEmail(opts: {
       ? { label: "Pay securely", url: paymentUrl }
       : undefined,
     chrome,
+    unsubscribe: unsubscribeUrl
+      ? {
+          label: "Unsubscribe",
+          url: unsubscribeUrl,
+          note: chrome.unsubscribeNote,
+        }
+      : undefined,
   });
 
-  const text = paymentUrl
-    ? [plainBody, "", `Pay securely: ${paymentUrl}`].filter(Boolean).join("\n")
-    : isHtml
-      ? htmlToPlainText(opts.bodyText)
-      : opts.bodyText;
+  const textParts = [
+    paymentUrl
+      ? [plainBody, "", `Pay securely: ${paymentUrl}`].filter(Boolean).join("\n")
+      : isHtml
+        ? htmlToPlainText(opts.bodyText)
+        : opts.bodyText,
+  ];
+  if (unsubscribeUrl) {
+    const note = chrome.unsubscribeNote.trim();
+    if (note) textParts.push("", note);
+    textParts.push("", `Unsubscribe: ${unsubscribeUrl}`);
+  }
+  const text = textParts.join("\n");
 
   return { subject, text, html };
 }

@@ -553,7 +553,7 @@ export default function PaymentProvidersCard() {
               <p>
                 Add the Square Application ID and OAuth secret in{" "}
                 <Link
-                  href="/dashboard/admin"
+                  href="/dashboard/admin?tab=payment-platforms"
                   className="underline font-medium"
                 >
                   Admin Panel → Payment platforms
@@ -1006,7 +1006,7 @@ export default function PaymentProvidersCard() {
                 <>
                   Add Square, Stripe, or PayPal keys in{" "}
                   <Link
-                    href="/dashboard/admin"
+                    href="/dashboard/admin?tab=payment-platforms"
                     className="font-medium text-brand-dark underline"
                   >
                     Admin Panel → Payment platforms

@@ -10,6 +10,7 @@ import {
   updateProfileSchema,
   updatePasswordSchema,
   navOrderSchema,
+  updateNotificationsSchema,
   LEGAL_DOCS_VERSION,
 } from "../schemas/auth.schema";
 import {
@@ -44,6 +45,11 @@ import {
   provisionCrmCustomerForUser,
 } from "../utils/provisionCustomerAccount";
 import { syncCustomersToUserEmail } from "../utils/ensureCustomerLogin";
+import {
+  getEmailPreferences,
+  renameEmailPreferences,
+  setEmailPreferences,
+} from "../utils/emailPreferences";
 
 function toIsoOrNull(value: Date | string | null | undefined): string | null {
   if (!value) return null;
@@ -93,6 +99,8 @@ function buildUserPayload(user: {
       navOrder: user.uiPreferences?.navOrder ?? { order: [], children: {} },
     },
     needsLegalConsent: user.role === "customer" && !termsAcceptedAt,
+    generalNotifications: true,
+    billingAlerts: true,
   };
 }
 
@@ -109,7 +117,12 @@ async function toUserPayload(
 ) {
   const own = (user.phone ?? "").trim();
   const phone = own || (await lookupContactPhone(user.email));
-  return buildUserPayload({ ...user, phone });
+  const prefs = await getEmailPreferences(user.email);
+  return {
+    ...buildUserPayload({ ...user, phone }),
+    generalNotifications: prefs.generalNotifications,
+    billingAlerts: prefs.billingAlerts,
+  };
 }
 
 async function syncEmptyContactPhone(
@@ -461,6 +474,10 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
 
     await user.save();
 
+    if (email && previousEmail !== user.email) {
+      await renameEmailPreferences(previousEmail, user.email);
+    }
+
     if (
       user.role === "customer" &&
       email &&
@@ -558,6 +575,70 @@ export async function updatePassword(
     res.status(200).json({ message: "Password updated successfully" });
   } catch (err) {
     console.error("updatePassword error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function updateMyNotifications(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  const parsed = updateNotificationsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "Validation error",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  try {
+    const user = await User.findOne({ _id: req.user.id, ...activeUserFilter });
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    if (parsed.data.smsOptIn !== undefined) {
+      if (
+        parsed.data.smsOptIn &&
+        normalizePhoneDigits(user.phone).length !== 10
+      ) {
+        const contactPhone = await lookupContactPhone(user.email);
+        if (normalizePhoneDigits(contactPhone).length !== 10) {
+          res.status(400).json({
+            message:
+              "A valid 10-digit mobile number is required to opt in to text messages",
+          });
+          return;
+        }
+      }
+      user.smsOptIn = parsed.data.smsOptIn;
+      user.smsOptInAt = parsed.data.smsOptIn ? new Date() : null;
+      await user.save();
+    }
+
+    if (
+      parsed.data.generalNotifications !== undefined ||
+      parsed.data.billingAlerts !== undefined
+    ) {
+      await setEmailPreferences(user.email, {
+        generalNotifications: parsed.data.generalNotifications,
+        billingAlerts: parsed.data.billingAlerts,
+      });
+    }
+
+    const permissions = await getPermissionsForRole(user.role);
+    res.status(200).json({
+      user: await toUserPayload({ ...user.toObject(), permissions }),
+    });
+  } catch (err) {
+    console.error("updateMyNotifications error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }

@@ -5,11 +5,15 @@ import {
   requireRole,
 } from "../middleware/auth.middleware";
 import {
+  cancelScheduledEmailMessages,
   getEmailMessage,
   listEmailMessages,
   listEmailSendAccounts,
+  listScheduledEmailMessages,
   paymentLinkAvailability,
   previewEmailMessage,
+  rescheduleEmailMessages,
+  scheduleEmailMessages,
   searchEmailContacts,
   sendEmailMessages,
 } from "../controllers/emailMessage.controller";
@@ -38,6 +42,26 @@ router.post(
   previewEmailMessage,
 );
 router.post("/send", requirePermission("messages:write"), sendEmailMessages);
+router.post(
+  "/schedule",
+  requirePermission("messages:write"),
+  scheduleEmailMessages,
+);
+router.get(
+  "/scheduled",
+  requirePermission("messages:read"),
+  listScheduledEmailMessages,
+);
+router.patch(
+  "/scheduled/:id",
+  requirePermission("messages:write"),
+  rescheduleEmailMessages,
+);
+router.post(
+  "/scheduled/:id/cancel",
+  requirePermission("messages:write"),
+  cancelScheduledEmailMessages,
+);
 router.get("/", requirePermission("messages:read"), listEmailMessages);
 router.get("/:id", requirePermission("messages:read"), getEmailMessage);
 

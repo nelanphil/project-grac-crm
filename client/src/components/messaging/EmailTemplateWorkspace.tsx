@@ -3,7 +3,7 @@
 import { RefObject, useState } from "react";
 import { Loader2, Maximize2, Minimize2, Plus, Save, Trash2 } from "lucide-react";
 import { MergeFieldItem, MessageTemplateItem } from "@/lib/api";
-import { EmailChrome } from "@/lib/emailChrome";
+import { EmailChrome, UNSUBSCRIBE_NOTE_MAX } from "@/lib/emailChrome";
 import EmailBodyEditor, { EmailBodyEditorHandle } from "./EmailBodyEditor";
 import EmailChromeFields from "./EmailChromeFields";
 import EmailPreview from "./EmailPreview";
@@ -247,6 +247,41 @@ export default function EmailTemplateWorkspace({
             showReset={false}
             sections={["footer"]}
           />
+        </div>
+
+        <div className="mt-3 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2.5">
+          <p className="text-sm font-medium text-brand-dark">
+            Unsubscribe button (always included)
+          </p>
+          <p className="mt-0.5 text-xs text-neutral-500">
+            Shown under the button. The button itself cannot be removed.
+          </p>
+          <div className="mt-3 flex justify-center">
+            <span className="inline-flex cursor-default select-none rounded-full border-2 border-brand-orange px-5 py-1.5 text-sm font-bold text-brand-orange">
+              Unsubscribe
+            </span>
+          </div>
+          <label className="mt-3 block">
+            <span className="mb-1 block text-[11px] font-medium text-neutral-500">
+              Caption under the button
+            </span>
+            <textarea
+              value={emailChrome.unsubscribeNote ?? ""}
+              onChange={(e) =>
+                onEmailChromeChange({
+                  ...emailChrome,
+                  unsubscribeNote: e.target.value,
+                })
+              }
+              rows={3}
+              maxLength={UNSUBSCRIBE_NOTE_MAX}
+              placeholder="Optional caption shown under Unsubscribe"
+              className="w-full resize-y rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange"
+            />
+            <p className="mt-1 text-right text-[11px] text-neutral-400">
+              {(emailChrome.unsubscribeNote ?? "").length}/{UNSUBSCRIBE_NOTE_MAX}
+            </p>
+          </label>
         </div>
       </section>
       </>

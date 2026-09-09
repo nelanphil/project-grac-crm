@@ -40,6 +40,7 @@ import {
   provisionCrmCustomerForUser,
 } from "../utils/provisionCustomerAccount";
 import { syncCustomersToUserEmail } from "../utils/ensureCustomerLogin";
+import { renameEmailPreferences } from "../utils/emailPreferences";
 
 function generateTempPassword(): string {
   return crypto.randomBytes(12).toString("base64url");
@@ -461,6 +462,10 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     }
 
     await user.save();
+
+    if (email !== undefined && previousEmail !== user.email) {
+      await renameEmailPreferences(previousEmail, user.email);
+    }
 
     if (
       (nextRole === "customer" || previousRole === "customer") &&

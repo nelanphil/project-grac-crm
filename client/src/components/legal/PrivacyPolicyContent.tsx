@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { COMPANY } from "@/lib/constants";
 
-const LAST_UPDATED = "August 31, 2026";
+const LAST_UPDATED = "September 9, 2026";
 
 export default function PrivacyPolicyContent() {
   return (
@@ -212,8 +212,10 @@ export default function PrivacyPolicyContent() {
           <p className="mt-3">
             Depending on where you live, you may have rights to access, correct,
             delete, or obtain a copy of certain personal information, or to opt out of
-            certain processing. To exercise these rights, or to update your
-            communication preferences, contact us at{" "}
+            certain processing. To update email preferences, use the Unsubscribe
+            button in our emails or, if you have an account, Settings → Notifications.
+            You can turn general notifications and billing alerts on or off independently.
+            To exercise other rights, contact us at{" "}
             <a
               href={`mailto:${COMPANY.email}`}
               className="text-brand-orange underline-offset-2 hover:underline"

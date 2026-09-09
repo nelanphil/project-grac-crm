@@ -310,6 +310,51 @@ export async function updatePassword(
   });
 }
 
+export interface EmailPreferencePayload {
+  email: string;
+  generalNotifications: boolean;
+  billingAlerts: boolean;
+  channel?: "general" | "billing";
+}
+
+export async function updateMyNotifications(
+  token: string,
+  data: {
+    generalNotifications?: boolean;
+    billingAlerts?: boolean;
+    smsOptIn?: boolean;
+  },
+): Promise<{ user: AuthUser }> {
+  return authRequest<{ user: AuthUser }>("/auth/me/notifications", {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getPublicEmailPreferences(
+  token: string,
+): Promise<EmailPreferencePayload> {
+  const params = new URLSearchParams({ token });
+  return authRequest<EmailPreferencePayload>(
+    `/email-preferences?${params.toString()}`,
+    { method: "GET" },
+  );
+}
+
+export async function updatePublicEmailPreferences(
+  token: string,
+  data: {
+    generalNotifications?: boolean;
+    billingAlerts?: boolean;
+  },
+): Promise<EmailPreferencePayload> {
+  return authRequest<EmailPreferencePayload>("/email-preferences", {
+    method: "PATCH",
+    body: JSON.stringify({ token, ...data }),
+  });
+}
+
 export async function authForgotPassword(
   email: string,
 ): Promise<{ message: string; devResetUrl?: string; mailError?: string }> {
@@ -1903,9 +1948,9 @@ export interface InvoiceItem {
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
-  /** Present on paginated GET /invoices. */
+  /** Present on GET /invoices list responses. */
   customerName?: string;
-  /** Present on paginated GET /invoices. */
+  /** Present on GET /invoices list responses. */
   contactName?: string;
   /** Present on GET /invoices/:id only. */
   customer?: InvoiceCustomerSummary | null;
@@ -2003,6 +2048,26 @@ export async function createInvoicePayLink(
     expiresAt?: string;
     invoice: InvoiceItem;
   }>(`/invoices/${id}/pay-link`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function markInvoicePaid(
+  token: string,
+  id: string,
+): Promise<{ invoice: InvoiceItem }> {
+  return authRequest<{ invoice: InvoiceItem }>(`/invoices/${id}/mark-paid`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function reopenInvoice(
+  token: string,
+  id: string,
+): Promise<{ invoice: InvoiceItem }> {
+  return authRequest<{ invoice: InvoiceItem }>(`/invoices/${id}/reopen`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -4317,14 +4382,14 @@ export interface EmailPreviewResult {
 
 export interface EmailSendResultItem {
   contactId: string;
-  status: "sent" | "failed";
+  status: "sent" | "failed" | "skipped";
   emailId?: string;
   error?: string;
 }
 
 export interface EmailSendResponse {
   results: EmailSendResultItem[];
-  summary: { total: number; sent: number; failed: number };
+  summary: { total: number; sent: number; skipped?: number; failed: number };
   fromName: string;
   fromEmail: string;
   emailAccountId: string;
@@ -4454,6 +4519,126 @@ export async function sendEmailMessages(
   });
 }
 
+export type ScheduledEmailStatus =
+  | "scheduled"
+  | "sending"
+  | "sent"
+  | "cancelled"
+  | "failed";
+
+export interface ScheduledEmailItem {
+  _id: string;
+  contactIds: string[];
+  recipientCount: number;
+  subject: string;
+  fromName: string;
+  replyTo: string | null;
+  emailAccountRef: string | null;
+  accountFriendlyName: string | null;
+  emailsPerSecond: number;
+  includePaymentLink: boolean;
+  scheduledAt: string;
+  status: ScheduledEmailStatus;
+  summary: {
+    total: number;
+    sent: number;
+    skipped: number;
+    failed: number;
+  } | null;
+  errorMessage: string | null;
+  cancelledAt: string | null;
+  createdByUserRef: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function scheduleEmailMessages(
+  token: string,
+  data: {
+    contactIds: string[];
+    subject?: string;
+    body?: string;
+    emailChrome?: EmailChrome;
+    templateId?: string;
+    emailAccountId: string;
+    fromName?: string;
+    replyTo?: string;
+    emailsPerSecond?: number;
+    renewalYear?: number;
+    renewalMonth?: number;
+    includePaymentLink?: boolean;
+    scheduledAt: string;
+  },
+): Promise<{ scheduled: ScheduledEmailItem }> {
+  return authRequest<{ scheduled: ScheduledEmailItem }>(
+    "/email-messages/schedule",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function getScheduledEmails(
+  token: string,
+  options?: {
+    status?: ScheduledEmailStatus | "all";
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  scheduled: ScheduledEmailItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (options?.status) params.set("status", options.status);
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
+  const qs = params.toString();
+  return authRequest<{
+    scheduled: ScheduledEmailItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/email-messages/scheduled${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function rescheduleEmailMessages(
+  token: string,
+  id: string,
+  scheduledAt: string,
+): Promise<{ scheduled: ScheduledEmailItem }> {
+  return authRequest<{ scheduled: ScheduledEmailItem }>(
+    `/email-messages/scheduled/${id}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ scheduledAt }),
+    },
+  );
+}
+
+export async function cancelScheduledEmail(
+  token: string,
+  id: string,
+): Promise<{ scheduled: ScheduledEmailItem }> {
+  return authRequest<{ scheduled: ScheduledEmailItem }>(
+    `/email-messages/scheduled/${id}/cancel`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export async function getSentEmails(
   token: string,
   options?: {
@@ -4504,4 +4689,142 @@ export async function getSentEmail(
       headers: { Authorization: `Bearer ${token}` },
     },
   );
+}
+
+export type LegacyDumpKind = "customers" | "work_orders";
+
+export type LegacyDumpTargetInfo = {
+  available: boolean;
+  label: string | null;
+  reason?: string;
+};
+
+export type LegacyDumpCustomerRow = {
+  sqlId: number;
+  sqlName: string;
+  phone: string;
+  email: string;
+};
+
+export type LegacyDumpIdentityRow = LegacyDumpCustomerRow & {
+  reason: "phone" | "email" | "address";
+  mongoLegacyId: number;
+  mongoName: string;
+};
+
+export type LegacyDumpCollisionRow = LegacyDumpCustomerRow & {
+  occupiedBy: string;
+  occupiedLegacyId: number;
+  assignedId: number;
+};
+
+export type LegacyDumpMissingWoRow = {
+  woId: number;
+  customerId: number;
+  customerName: string;
+  date: string;
+};
+
+export type LegacyDumpOrphanWoRow = {
+  woId: number;
+  customerId: number;
+};
+
+export type LegacyDumpAuditReport = {
+  customersPresent: number;
+  customersIdentityLinked: LegacyDumpIdentityRow[];
+  customersMissing: LegacyDumpCustomerRow[];
+  customersCollisions: LegacyDumpCollisionRow[];
+  wosPresent: number;
+  wosFuzzy: number;
+  wosMissing: LegacyDumpMissingWoRow[];
+  wosOrphan: LegacyDumpOrphanWoRow[];
+};
+
+export type LegacyDumpImportSummary = {
+  customersParsed: number;
+  customersInserted: number;
+  contactsCreated: number;
+  customersSkippedLegacy: number;
+  customersSkippedIdentity: number;
+  customerCollisions: number;
+  workOrdersParsed: number;
+  workOrdersInserted: number;
+  workOrdersSkippedLegacy: number;
+  workOrdersSkippedFuzzy: number;
+  workOrderOrphans: number;
+};
+
+export type LegacyDumpTargetResult = {
+  target: "production" | "development" | "custom";
+  targetLabel: string;
+  mode: "audit" | "import";
+  customersParsed: number;
+  workOrdersParsed: number;
+  audit: LegacyDumpAuditReport;
+  summary: LegacyDumpImportSummary;
+};
+
+export type LegacyDumpResponse = {
+  files: Array<{ filename: string; kind: LegacyDumpKind }>;
+  targets: {
+    production: LegacyDumpTargetInfo;
+    development: LegacyDumpTargetInfo;
+  };
+  production?: LegacyDumpTargetResult;
+  development?: LegacyDumpTargetResult;
+};
+
+function appendLegacyDumpFiles(payload: FormData, files: File[]): void {
+  for (const file of files) {
+    payload.append("files", file);
+  }
+}
+
+export async function getLegacyDumpTargets(
+  token: string,
+): Promise<{
+  targets: LegacyDumpResponse["targets"];
+}> {
+  return authRequest(`/legacy-dumps/targets`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function auditLegacyDump(
+  token: string,
+  files: File[],
+): Promise<LegacyDumpResponse> {
+  const payload = new FormData();
+  appendLegacyDumpFiles(payload, files);
+  return authRequest<LegacyDumpResponse>("/legacy-dumps/audit", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: payload,
+  });
+}
+
+export async function executeLegacyDump(
+  token: string,
+  files: File[],
+  options: {
+    production: boolean;
+    development: boolean;
+    confirmProduction?: boolean;
+  },
+): Promise<LegacyDumpResponse> {
+  const payload = new FormData();
+  appendLegacyDumpFiles(payload, files);
+  payload.append("production", options.production ? "true" : "false");
+  payload.append("development", options.development ? "true" : "false");
+  payload.append(
+    "confirmProduction",
+    options.confirmProduction ? "true" : "false",
+  );
+  return authRequest<LegacyDumpResponse>("/legacy-dumps/execute", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: payload,
+  });
 }

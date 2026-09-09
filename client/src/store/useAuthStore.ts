@@ -39,6 +39,10 @@ export interface AuthUser {
   needsLegalConsent?: boolean;
   /** Per-user dashboard nav customization. */
   uiPreferences?: { navOrder: NavOrder };
+  /** Receive general (non-billing) email. Defaults on. */
+  generalNotifications?: boolean;
+  /** Receive billing email. Defaults on. */
+  billingAlerts?: boolean;
 }
 
 interface AuthStore {

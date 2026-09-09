@@ -40,6 +40,8 @@ import contactRouter, {
   contactFormSettingsRouter,
 } from "./contactForm.routes";
 import recaptchaCredentialsRoutes from "./recaptchaCredentials.routes";
+import emailPreferenceRoutes from "./emailPreference.routes";
+import legacyDumpRoutes from "./legacyDump.routes";
 
 const router = Router();
 
@@ -86,6 +88,8 @@ router.get("/public-assets/:slug/health", publicAssetHealth);
 router.get("/public-assets/:slug", getPublicAssetBySlug);
 router.use("/public-assets", publicAssetRoutes);
 router.use("/contact", contactRouter);
+router.use("/email-preferences", emailPreferenceRoutes);
 router.use("/contact-form-settings", contactFormSettingsRouter);
+router.use("/legacy-dumps", legacyDumpRoutes);
 
 export default router;
