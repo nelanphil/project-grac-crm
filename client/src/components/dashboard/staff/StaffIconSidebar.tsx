@@ -14,7 +14,6 @@ import {
 } from "react";
 import {
   Check,
-  ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
@@ -58,6 +57,10 @@ const LONG_PRESS_ACTIVATION = { delay: 500, tolerance: 8 };
 const WIGGLING_ACTIVATION = { distance: 4 };
 
 const STORAGE_KEY = "grac.staffSidebarExpanded";
+const FLYOUT_HIDE_DELAY = 150;
+const FLYOUT_GAP = 8;
+const HIDDEN_SCROLLBAR =
+  "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
 
 type TooltipState = {
   label: string;
@@ -65,14 +68,26 @@ type TooltipState = {
   left: number;
 } | null;
 
+type FlyoutState = {
+  item: NavItem;
+  top: number;
+  left: number;
+} | null;
+
+type HoverTarget =
+  | { kind: "tooltip"; label: string }
+  | { kind: "flyout"; item: NavItem };
+
 function NavLink({
   href,
   label,
   active,
   expanded,
   editMode,
-  onShowTooltip,
-  onHideTooltip,
+  hasPopup,
+  popupOpen,
+  onShowHover,
+  onHideHover,
   children,
 }: {
   href: string;
@@ -80,15 +95,17 @@ function NavLink({
   active: boolean;
   expanded: boolean;
   editMode?: boolean;
-  onShowTooltip: (label: string, el: HTMLElement) => void;
-  onHideTooltip: () => void;
+  hasPopup?: boolean;
+  popupOpen?: boolean;
+  onShowHover: (el: HTMLElement) => void;
+  onHideHover: () => void;
   children: ReactNode;
 }) {
   const handleEnter = (e: MouseEvent<HTMLAnchorElement>) => {
-    if (!expanded) onShowTooltip(label, e.currentTarget);
+    if (!expanded || hasPopup) onShowHover(e.currentTarget);
   };
   const handleFocus = (e: FocusEvent<HTMLAnchorElement>) => {
-    if (!expanded) onShowTooltip(label, e.currentTarget);
+    if (!expanded || hasPopup) onShowHover(e.currentTarget);
   };
   const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
     // Wiggling items are only for reordering; block navigation until "Done" is pressed.
@@ -98,13 +115,15 @@ function NavLink({
   return (
     <Link
       href={href}
-      title={expanded ? undefined : label}
+      title={expanded || hasPopup ? undefined : label}
       aria-label={label}
       aria-current={active ? "page" : undefined}
+      aria-haspopup={hasPopup ? "menu" : undefined}
+      aria-expanded={hasPopup ? popupOpen : undefined}
       onMouseEnter={handleEnter}
-      onMouseLeave={onHideTooltip}
+      onMouseLeave={onHideHover}
       onFocus={handleFocus}
-      onBlur={onHideTooltip}
+      onBlur={onHideHover}
       onClick={handleClick}
       className={`flex h-11 items-center rounded-xl transition-colors ${
         expanded ? "w-full gap-3 px-3" : "w-11 justify-center"
@@ -137,6 +156,10 @@ function ChildNavLink({
   active,
   editMode,
   depth,
+  hasPopup,
+  popupOpen,
+  onShowHover,
+  onHideHover,
 }: {
   href: string;
   label: string;
@@ -144,11 +167,29 @@ function ChildNavLink({
   active: boolean;
   editMode: boolean;
   depth: number;
+  hasPopup?: boolean;
+  popupOpen?: boolean;
+  onShowHover?: (el: HTMLElement) => void;
+  onHideHover?: () => void;
 }) {
   return (
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
+      aria-haspopup={hasPopup ? "menu" : undefined}
+      aria-expanded={hasPopup ? popupOpen : undefined}
+      onMouseEnter={
+        hasPopup && onShowHover
+          ? (e) => onShowHover(e.currentTarget)
+          : undefined
+      }
+      onMouseLeave={hasPopup ? onHideHover : undefined}
+      onFocus={
+        hasPopup && onShowHover
+          ? (e) => onShowHover(e.currentTarget)
+          : undefined
+      }
+      onBlur={hasPopup ? onHideHover : undefined}
       onClick={(e) => {
         if (editMode) e.preventDefault();
       }}
@@ -166,45 +207,91 @@ function ChildNavLink({
   );
 }
 
+function FlyoutChildLinks({
+  items,
+  pathname,
+  depth,
+  onNavigate,
+}: {
+  items: NavItem[];
+  pathname: string;
+  depth: number;
+  onNavigate: () => void;
+}) {
+  return (
+    <div
+      className={
+        depth > 0
+          ? "ml-3 flex flex-col gap-0.5 border-l border-white/10 pl-1.5"
+          : "flex flex-col gap-0.5"
+      }
+    >
+      {items.map((child) => {
+        const hasChildren = Boolean(child.children?.length);
+        const descendantActive = isNavSubtreeActive(pathname, child);
+        const active =
+          isNavItemActive(pathname, child.href, hasChildren) || descendantActive;
+        const Icon = child.icon;
+        return (
+          <div key={child.href} className="flex flex-col gap-0.5">
+            <Link
+              href={child.href}
+              role="menuitem"
+              aria-current={active ? "page" : undefined}
+              onClick={onNavigate}
+              className={`flex h-9 items-center gap-2 rounded-lg px-3 text-sm transition-colors ${
+                active
+                  ? "bg-brand-orange text-white"
+                  : "text-white/70 hover:bg-white/10 hover:text-white"
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate font-medium">{child.label}</span>
+            </Link>
+            {hasChildren ? (
+              <FlyoutChildLinks
+                items={child.children ?? []}
+                pathname={pathname}
+                depth={depth + 1}
+                onNavigate={onNavigate}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function StaffNavItem({
   item,
   pathname,
   sidebarExpanded,
   editMode,
-  onShowTooltip,
-  onHideTooltip,
+  openFlyoutHref,
+  onShowHover,
+  onHideHover,
   depth = 0,
 }: {
   item: NavItem;
   pathname: string;
   sidebarExpanded: boolean;
   editMode: boolean;
-  onShowTooltip: (label: string, el: HTMLElement) => void;
-  onHideTooltip: () => void;
+  openFlyoutHref?: string;
+  onShowHover: (el: HTMLElement, target: HoverTarget) => void;
+  onHideHover: () => void;
   depth?: number;
 }) {
+  const flyoutOpen = openFlyoutHref === item.href;
   const hasChildren = Boolean(item.children?.length);
   const descendantActive = isNavSubtreeActive(pathname, item);
   const parentActive = isNavItemActive(pathname, item.href, hasChildren);
   const Icon = item.icon;
   const canNestInside = depth < MAX_NAV_DEPTH;
-  const showChevron =
-    sidebarExpanded && (hasChildren || (editMode && canNestInside));
-
-  const [childrenOpen, setChildrenOpen] = useState(false);
-  const [prevDescendantActive, setPrevDescendantActive] =
-    useState(descendantActive);
-
-  if (descendantActive !== prevDescendantActive) {
-    setPrevDescendantActive(descendantActive);
-    if (descendantActive) setChildrenOpen(true);
-  }
-
-  const listOpen = editMode || childrenOpen;
   const showChildList =
+    editMode &&
     sidebarExpanded &&
-    (hasChildren || (editMode && canNestInside)) &&
-    listOpen;
+    (hasChildren || canNestInside);
 
   const {
     attributes,
@@ -229,40 +316,22 @@ function StaffNavItem({
           {...listeners}
           className={`nav-draggable ${editMode ? "nav-wiggle" : ""}`}
         >
-          <div className="flex w-full items-center gap-0.5">
-            <div className="min-w-0 flex-1">
-              <ChildNavLink
-                href={item.href}
-                label={item.label}
-                Icon={Icon}
-                active={
-                  hasChildren ? parentActive : parentActive || descendantActive
-                }
-                editMode={editMode}
-                depth={depth}
-              />
-            </div>
-            {showChevron ? (
-              <button
-                type="button"
-                aria-label={
-                  listOpen ? `Collapse ${item.label}` : `Expand ${item.label}`
-                }
-                aria-expanded={listOpen}
-                onClick={() => {
-                  if (!editMode) setChildrenOpen((v) => !v);
-                }}
-                data-nav-allow-click
-                className="flex h-9 w-8 shrink-0 items-center justify-center rounded-lg text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-              >
-                <ChevronRight
-                  className={`h-3.5 w-3.5 transition-transform ${
-                    listOpen ? "rotate-90" : ""
-                  }`}
-                />
-              </button>
-            ) : null}
-          </div>
+          <ChildNavLink
+            href={item.href}
+            label={item.label}
+            Icon={Icon}
+            active={parentActive || descendantActive}
+            editMode={editMode}
+            depth={depth}
+            hasPopup={hasChildren}
+            popupOpen={flyoutOpen}
+            onShowHover={
+              hasChildren
+                ? (el) => onShowHover(el, { kind: "flyout", item })
+                : undefined
+            }
+            onHideHover={hasChildren ? onHideHover : undefined}
+          />
         </div>
         {showChildList ? (
           <div className="flex flex-col gap-0.5">
@@ -277,8 +346,9 @@ function StaffNavItem({
                   pathname={pathname}
                   sidebarExpanded={sidebarExpanded}
                   editMode={editMode}
-                  onShowTooltip={onShowTooltip}
-                  onHideTooltip={onHideTooltip}
+                  openFlyoutHref={openFlyoutHref}
+                  onShowHover={onShowHover}
+                  onHideHover={onHideHover}
                   depth={depth + 1}
                 />
               ))}
@@ -297,7 +367,7 @@ function StaffNavItem({
   }
 
   return (
-    <div className={showChevron ? "flex w-full flex-col gap-0.5" : undefined}>
+    <div className={showChildList ? "flex w-full flex-col gap-0.5" : undefined}>
       <div
         ref={setNodeRef}
         style={{
@@ -310,49 +380,26 @@ function StaffNavItem({
         className="nav-draggable"
       >
         <div className={editMode ? "nav-wiggle" : undefined}>
-          <div
-            className={
-              showChevron ? "flex w-full items-center gap-0.5" : undefined
+          <NavLink
+            href={item.href}
+            label={item.label}
+            active={parentActive || descendantActive}
+            expanded={sidebarExpanded}
+            editMode={editMode}
+            hasPopup={hasChildren}
+            popupOpen={flyoutOpen}
+            onShowHover={(el) =>
+              onShowHover(
+                el,
+                hasChildren
+                  ? { kind: "flyout", item }
+                  : { kind: "tooltip", label: item.label },
+              )
             }
+            onHideHover={onHideHover}
           >
-            <div className={showChevron ? "min-w-0 flex-1" : undefined}>
-              <NavLink
-                href={item.href}
-                label={item.label}
-                active={
-                  hasChildren
-                    ? parentActive || (!sidebarExpanded && descendantActive)
-                    : parentActive || descendantActive
-                }
-                expanded={sidebarExpanded}
-                editMode={editMode}
-                onShowTooltip={onShowTooltip}
-                onHideTooltip={onHideTooltip}
-              >
-                <Icon className="h-5 w-5" />
-              </NavLink>
-            </div>
-            {showChevron ? (
-              <button
-                type="button"
-                aria-label={
-                  listOpen ? `Collapse ${item.label}` : `Expand ${item.label}`
-                }
-                aria-expanded={listOpen}
-                onClick={() => {
-                  if (!editMode) setChildrenOpen((v) => !v);
-                }}
-                data-nav-allow-click
-                className="flex h-11 w-9 shrink-0 items-center justify-center rounded-xl text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-              >
-                <ChevronRight
-                  className={`h-4 w-4 transition-transform ${
-                    listOpen ? "rotate-90" : ""
-                  }`}
-                />
-              </button>
-            ) : null}
-          </div>
+            <Icon className="h-5 w-5" />
+          </NavLink>
         </div>
       </div>
       {showChildList ? (
@@ -368,8 +415,9 @@ function StaffNavItem({
                 pathname={pathname}
                 sidebarExpanded={sidebarExpanded}
                 editMode={editMode}
-                onShowTooltip={onShowTooltip}
-                onHideTooltip={onHideTooltip}
+                openFlyoutHref={openFlyoutHref}
+                onShowHover={onShowHover}
+                onHideHover={onHideHover}
                 depth={1}
               />
             ))}
@@ -403,10 +451,13 @@ export default function StaffIconSidebar() {
   const [expanded, setExpanded] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
+  const [flyout, setFlyout] = useState<FlyoutState>(null);
   const [homeMenu, setHomeMenu] = useState<{
     top: number;
     left: number;
   } | null>(null);
+  const hideHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flyoutRef = useRef<HTMLDivElement>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -426,6 +477,15 @@ export default function StaffIconSidebar() {
     }
   }, []);
 
+  const clearHoverChrome = useCallback(() => {
+    if (hideHoverTimer.current) {
+      clearTimeout(hideHoverTimer.current);
+      hideHoverTimer.current = null;
+    }
+    setTooltip(null);
+    setFlyout(null);
+  }, []);
+
   const toggleExpanded = useCallback(() => {
     setExpanded((prev) => {
       const next = !prev;
@@ -436,28 +496,51 @@ export default function StaffIconSidebar() {
       }
       return next;
     });
-    setTooltip(null);
+    clearHoverChrome();
+  }, [clearHoverChrome]);
+
+  const cancelHideHover = useCallback(() => {
+    if (hideHoverTimer.current) {
+      clearTimeout(hideHoverTimer.current);
+      hideHoverTimer.current = null;
+    }
   }, []);
 
-  const showTooltip = useCallback(
-    (label: string, el: HTMLElement) => {
+  const scheduleHideHover = useCallback(() => {
+    cancelHideHover();
+    hideHoverTimer.current = setTimeout(() => {
+      setTooltip(null);
+      setFlyout(null);
+      hideHoverTimer.current = null;
+    }, FLYOUT_HIDE_DELAY);
+  }, [cancelHideHover]);
+
+  const showHover = useCallback(
+    (el: HTMLElement, target: HoverTarget) => {
       if (editMode) return;
+      cancelHideHover();
       const rect = el.getBoundingClientRect();
+      if (target.kind === "flyout") {
+        setTooltip(null);
+        setFlyout({
+          item: target.item,
+          top: rect.top,
+          left: rect.right + FLYOUT_GAP,
+        });
+        return;
+      }
+      setFlyout(null);
       setTooltip({
-        label,
+        label: target.label,
         top: rect.top + rect.height / 2,
         left: rect.right + 12,
       });
     },
-    [editMode],
+    [editMode, cancelHideHover],
   );
 
-  const hideTooltip = useCallback(() => {
-    setTooltip(null);
-  }, []);
-
   const handleDragStart = useCallback(() => {
-    setTooltip(null);
+    clearHoverChrome();
     setEditMode(true);
     setExpanded(true);
     try {
@@ -465,7 +548,7 @@ export default function StaffIconSidebar() {
     } catch {
       // ignore storage access errors
     }
-  }, []);
+  }, [clearHoverChrome]);
 
   const exitEditMode = useCallback(() => setEditMode(false), []);
 
@@ -509,13 +592,42 @@ export default function StaffIconSidebar() {
     [items, persistNavOrder],
   );
 
+  useEffect(() => {
+    return () => {
+      if (hideHoverTimer.current) clearTimeout(hideHoverTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!flyout) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFlyout(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [flyout]);
+
+  useEffect(() => {
+    if (!flyout || !flyoutRef.current) return;
+    const rect = flyoutRef.current.getBoundingClientRect();
+    const pad = 8;
+    if (rect.bottom <= window.innerHeight - pad) return;
+    const nextTop = Math.max(
+      pad,
+      flyout.top - (rect.bottom - (window.innerHeight - pad)),
+    );
+    if (nextTop !== flyout.top) {
+      setFlyout((prev) => (prev ? { ...prev, top: nextTop } : null));
+    }
+  }, [flyout]);
+
   const handleHomeContextMenu = useCallback(
     (e: MouseEvent<HTMLAnchorElement>) => {
       e.preventDefault();
-      setTooltip(null);
+      clearHoverChrome();
       setHomeMenu({ top: e.clientY, left: e.clientX });
     },
-    [],
+    [clearHoverChrome],
   );
 
   const closeHomeMenu = useCallback(() => setHomeMenu(null), []);
@@ -548,7 +660,7 @@ export default function StaffIconSidebar() {
 
       <nav
         ref={navRef}
-        className={`flex flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto px-2 ${
+        className={`flex min-h-0 flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 ${HIDDEN_SCROLLBAR} ${
           expanded ? "items-stretch" : "items-center"
         }`}
       >
@@ -587,8 +699,9 @@ export default function StaffIconSidebar() {
                 pathname={pathname}
                 sidebarExpanded={expanded}
                 editMode={editMode}
-                onShowTooltip={showTooltip}
-                onHideTooltip={hideTooltip}
+                openFlyoutHref={flyout?.item.href}
+                onShowHover={showHover}
+                onHideHover={scheduleHideHover}
               />
             ))}
           </SortableContext>
@@ -628,8 +741,10 @@ export default function StaffIconSidebar() {
           label="Settings"
           active={settingsActive}
           expanded={expanded}
-          onShowTooltip={showTooltip}
-          onHideTooltip={hideTooltip}
+          onShowHover={(el) =>
+            showHover(el, { kind: "tooltip", label: "Settings" })
+          }
+          onHideHover={scheduleHideHover}
         >
           <Settings className="h-5 w-5" />
         </NavLink>
@@ -643,6 +758,28 @@ export default function StaffIconSidebar() {
         >
           {tooltip.label}
         </span>
+      ) : null}
+
+      {flyout ? (
+        <div
+          ref={flyoutRef}
+          role="menu"
+          aria-label={`${flyout.item.label} pages`}
+          className={`fixed z-50 min-w-[12rem] max-w-[16rem] max-h-[min(24rem,calc(100vh-1rem))] overflow-y-auto overscroll-contain rounded-xl border border-white/10 bg-[var(--staff-shell)] p-1.5 shadow-lg ${HIDDEN_SCROLLBAR}`}
+          style={{ top: flyout.top, left: flyout.left }}
+          onMouseEnter={cancelHideHover}
+          onMouseLeave={scheduleHideHover}
+        >
+          <p className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white/40">
+            {flyout.item.label}
+          </p>
+          <FlyoutChildLinks
+            items={flyout.item.children ?? []}
+            pathname={pathname}
+            depth={0}
+            onNavigate={clearHoverChrome}
+          />
+        </div>
       ) : null}
 
       {homeMenu ? (
