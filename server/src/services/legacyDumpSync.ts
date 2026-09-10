@@ -199,9 +199,7 @@ export function resolveLegacyDumpUri(target: LegacyDumpTarget): string | null {
   const raw =
     target === "production"
       ? process.env.MONGODB_URI_PRODUCTION
-      : process.env.MONGODB_URI_DEVELOPMENT ??
-        process.env.MONGODB_URI ??
-        `mongodb://localhost:27017/${DEFAULT_DB}`;
+      : process.env.MONGODB_URI_DEVELOPMENT ?? process.env.MONGODB_URI;
   if (!raw) return null;
   return withDbName(raw);
 }

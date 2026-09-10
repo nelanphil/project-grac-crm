@@ -67,7 +67,7 @@ Repo-root `.env` is loaded by the API (`server/src/config/env.ts`).
 |----------|----------|-------------|
 | `PORT` | `.env` | API port (default 4009) |
 | `CLIENT_URL` | `.env` | Frontend URL for CORS and password-reset links |
-| `MONGODB_URI_DEVELOPMENT` / `MONGODB_URI_PRODUCTION` | `.env` | MongoDB connection strings |
+| `MONGODB_URI_DEVELOPMENT` / `MONGODB_URI_PRODUCTION` | `.env` | MongoDB connection strings. Both are required for Admin Panel → Database (legacy dump audit). On Render, set both secrets on `grac-crm-server` and allow Render outbound in Atlas Network Access (often `0.0.0.0/0` if IPs are not static). |
 | `MYSQL_*` | `.env` | MySQL connection settings |
 | `SMTP_HOST` | `.env` | Optional SMTP fallback host |
 | `SMTP_PORT` | `.env` | SMTP port (default `587`) |

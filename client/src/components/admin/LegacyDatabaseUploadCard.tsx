@@ -68,11 +68,20 @@ function AuditSection({
 function TargetReport({
   heading,
   result,
+  error,
 }: {
   heading: string;
   result?: LegacyDumpTargetResult;
+  error?: string;
 }) {
   if (!result) {
+    if (error) {
+      return (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {heading}: {error}
+        </div>
+      );
+    }
     return (
       <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-500">
         {heading}: not available
@@ -298,7 +307,20 @@ export default function LegacyDatabaseUploadCard({
       const result = await auditLegacyDump(token, files);
       setAudit(result);
       setTargets(result.targets);
-      if (!result.targets.production.available) setRunProduction(false);
+      if (
+        !result.targets.production.available ||
+        result.errors?.production ||
+        !result.production
+      ) {
+        setRunProduction(false);
+      }
+      if (
+        !result.targets.development.available ||
+        result.errors?.development ||
+        !result.development
+      ) {
+        setRunDevelopment(false);
+      }
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : "Audit failed. Try again.",
@@ -311,7 +333,8 @@ export default function LegacyDatabaseUploadCard({
   const productionCounts = audit?.production?.audit;
   const canExecute =
     Boolean(audit) &&
-    (runProduction || runDevelopment) &&
+    ((runProduction && Boolean(audit?.production)) ||
+      (runDevelopment && Boolean(audit?.development))) &&
     !executing &&
     Boolean(token);
 
@@ -341,6 +364,7 @@ export default function LegacyDatabaseUploadCard({
         targets: result.targets,
         production: result.production ?? prev?.production,
         development: result.development ?? prev?.development,
+        errors: prev?.errors,
       }));
     } catch (err) {
       setError(
@@ -460,8 +484,16 @@ export default function LegacyDatabaseUploadCard({
                 .join(" and ")}
               .
             </p>
-            <TargetReport heading="Production" result={audit.production} />
-            <TargetReport heading="Development" result={audit.development} />
+            <TargetReport
+              heading="Production"
+              result={audit.production}
+              error={audit.errors?.production}
+            />
+            <TargetReport
+              heading="Development"
+              result={audit.development}
+              error={audit.errors?.development}
+            />
 
             <div className="space-y-3 rounded-lg border border-neutral-200 px-4 py-4">
               <h3 className="text-base font-semibold text-brand-dark">
@@ -476,7 +508,7 @@ export default function LegacyDatabaseUploadCard({
                   type="checkbox"
                   className="mt-0.5"
                   checked={runProduction}
-                  disabled={!selectedTargets?.production.available}
+                  disabled={!selectedTargets?.production.available || !audit.production}
                   onChange={(e) => setRunProduction(e.target.checked)}
                 />
                 <span>
@@ -489,6 +521,11 @@ export default function LegacyDatabaseUploadCard({
                       {selectedTargets?.production.reason ?? "URI not configured"}
                     </span>
                   )}
+                  {selectedTargets?.production.available && !audit.production && (
+                    <span className="block text-xs text-neutral-400">
+                      Audit did not complete for this target
+                    </span>
+                  )}
                 </span>
               </label>
               <label className="flex items-start gap-2 text-sm">
@@ -496,7 +533,7 @@ export default function LegacyDatabaseUploadCard({
                   type="checkbox"
                   className="mt-0.5"
                   checked={runDevelopment}
-                  disabled={!selectedTargets?.development.available}
+                  disabled={!selectedTargets?.development.available || !audit.development}
                   onChange={(e) => setRunDevelopment(e.target.checked)}
                 />
                 <span>
@@ -507,6 +544,11 @@ export default function LegacyDatabaseUploadCard({
                   {!selectedTargets?.development.available && (
                     <span className="block text-xs text-neutral-400">
                       {selectedTargets?.development.reason ?? "URI not configured"}
+                    </span>
+                  )}
+                  {selectedTargets?.development.available && !audit.development && (
+                    <span className="block text-xs text-neutral-400">
+                      Audit did not complete for this target
                     </span>
                   )}
                 </span>
@@ -524,8 +566,14 @@ export default function LegacyDatabaseUploadCard({
         )}
 
         {executeResult && (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            Import finished.
+          <div
+            className={`rounded-md border px-4 py-3 text-sm ${
+              executeResult.errors
+                ? "border-amber-200 bg-amber-50 text-amber-900"
+                : "border-emerald-200 bg-emerald-50 text-emerald-800"
+            }`}
+          >
+            {executeResult.errors ? "Import finished with errors." : "Import finished."}
             {executeResult.production && (
               <span>
                 {" "}
@@ -543,6 +591,14 @@ export default function LegacyDatabaseUploadCard({
                 and {executeResult.development.summary.workOrdersInserted} work
                 orders.
               </span>
+            )}
+            {executeResult.errors?.production && (
+              <p className="mt-1">Production: {executeResult.errors.production}</p>
+            )}
+            {executeResult.errors?.development && (
+              <p className="mt-1">
+                Development: {executeResult.errors.development}
+              </p>
             )}
           </div>
         )}

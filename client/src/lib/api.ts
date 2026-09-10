@@ -4773,6 +4773,10 @@ export type LegacyDumpResponse = {
   };
   production?: LegacyDumpTargetResult;
   development?: LegacyDumpTargetResult;
+  errors?: {
+    production?: string;
+    development?: string;
+  };
 };
 
 function appendLegacyDumpFiles(payload: FormData, files: File[]): void {

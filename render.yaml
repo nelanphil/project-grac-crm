@@ -24,6 +24,11 @@ services:
       # Set the secret values below in the Render dashboard (never commit them)
       - key: MONGODB_URI_PRODUCTION
         sync: false
+      # Required for Admin Panel → Database dual-cluster audit/import from
+      # production. Same Atlas development URI as local .env. Atlas Network
+      # Access on that cluster must allow Render outbound (often 0.0.0.0/0).
+      - key: MONGODB_URI_DEVELOPMENT
+        sync: false
       - key: JWT_SECRET
         sync: false
       - key: JWT_EXPIRES_IN

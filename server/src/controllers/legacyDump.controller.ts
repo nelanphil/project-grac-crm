@@ -76,21 +76,20 @@ export async function auditLegacyDump(req: AuthRequest, res: Response): Promise<
     targets,
   };
 
-  const jobs: Array<Promise<void>> = [];
+  const jobs: Array<{ name: LegacyDumpTarget; promise: Promise<unknown> }> = [];
   for (const name of ["production", "development"] as LegacyDumpTarget[]) {
     const uri = resolveLegacyDumpUri(name);
     if (!uri) continue;
-    jobs.push(
-      runLegacyDumpSync({
+    jobs.push({
+      name,
+      promise: runLegacyDumpSync({
         customerSql: classified.customerSql,
         workOrderSql: classified.workOrderSql,
         mongoUri: uri,
         mode: "audit",
         target: name,
-      }).then((report) => {
-        result[name] = report;
       }),
-    );
+    });
   }
 
   if (jobs.length === 0) {
@@ -98,15 +97,37 @@ export async function auditLegacyDump(req: AuthRequest, res: Response): Promise<
     return;
   }
 
-  try {
-    await Promise.all(jobs);
-  } catch (err) {
+  const settled = await Promise.allSettled(jobs.map((job) => job.promise));
+  const errors: Partial<Record<LegacyDumpTarget, string>> = {};
+  settled.forEach((item, index) => {
+    const job = jobs[index];
+    if (!job) return;
+    const name = job.name;
+    if (item.status === "fulfilled") {
+      result[name] = item.value;
+      return;
+    }
+    const message =
+      item.reason instanceof Error ? item.reason.message : "Audit failed.";
+    errors[name] = message;
     console.error("[legacy-dump] audit failed", {
       actor: actorLabel(req),
-      message: err instanceof Error ? err.message : "unknown",
+      target: name,
+      message,
     });
+  });
+
+  if (Object.keys(errors).length > 0) {
+    result.errors = errors;
+  }
+
+  const succeeded = jobs.some((job) => result[job.name] != null);
+  if (!succeeded) {
     res.status(500).json({
-      message: err instanceof Error ? err.message : "Audit failed.",
+      message: Object.values(errors)[0] ?? "Audit failed.",
+      files: classified.files,
+      targets,
+      errors,
     });
     return;
   }
@@ -116,6 +137,7 @@ export async function auditLegacyDump(req: AuthRequest, res: Response): Promise<
     files: classified.files.map((f) => f.kind),
     production: targets.production.label,
     development: targets.development.label,
+    errors: Object.keys(errors),
   });
 
   res.json(result);
@@ -170,36 +192,62 @@ export async function executeLegacyDump(req: AuthRequest, res: Response): Promis
 
   executeInFlight = true;
   const result: Record<string, unknown> = { files: classified.files, targets };
+  const errors: Partial<Record<LegacyDumpTarget, string>> = {};
 
   try {
     for (const name of selected) {
       const uri = resolveLegacyDumpUri(name);
-      if (!uri) continue;
-      const report = await runLegacyDumpSync({
-        customerSql: classified.customerSql,
-        workOrderSql: classified.workOrderSql,
-        mongoUri: uri,
-        mode: "import",
-        target: name,
-      });
-      result[name] = report;
-      console.log("[legacy-dump] execute", {
-        actor: actorLabel(req),
-        target: name,
-        host: report.targetLabel,
-        customersInserted: report.summary.customersInserted,
-        workOrdersInserted: report.summary.workOrdersInserted,
-      });
+      if (!uri) {
+        errors[name] =
+          name === "production"
+            ? "MONGODB_URI_PRODUCTION is not set"
+            : "MONGODB_URI_DEVELOPMENT is not set";
+        continue;
+      }
+      try {
+        const report = await runLegacyDumpSync({
+          customerSql: classified.customerSql,
+          workOrderSql: classified.workOrderSql,
+          mongoUri: uri,
+          mode: "import",
+          target: name,
+        });
+        result[name] = report;
+        console.log("[legacy-dump] execute", {
+          actor: actorLabel(req),
+          target: name,
+          host: report.targetLabel,
+          customersInserted: report.summary.customersInserted,
+          workOrdersInserted: report.summary.workOrdersInserted,
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Import failed.";
+        errors[name] = message;
+        console.error("[legacy-dump] execute failed", {
+          actor: actorLabel(req),
+          target: name,
+          message,
+        });
+      }
     }
+
+    if (Object.keys(errors).length > 0) {
+      result.errors = errors;
+    }
+
+    const succeeded = selected.some((name) => result[name] != null);
+    if (!succeeded) {
+      res.status(500).json({
+        message: Object.values(errors)[0] ?? "Import failed.",
+        files: classified.files,
+        targets,
+        errors,
+      });
+      return;
+    }
+
     res.json(result);
-  } catch (err) {
-    console.error("[legacy-dump] execute failed", {
-      actor: actorLabel(req),
-      message: err instanceof Error ? err.message : "unknown",
-    });
-    res.status(500).json({
-      message: err instanceof Error ? err.message : "Import failed.",
-    });
   } finally {
     executeInFlight = false;
   }
