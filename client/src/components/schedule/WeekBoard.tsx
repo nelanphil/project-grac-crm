@@ -218,7 +218,7 @@ function StaffRow({
   });
 
   return (
-    <div className="grid grid-cols-[10rem_1fr] border-b border-neutral-100">
+    <div className="grid grid-cols-[5.5rem_1fr] border-b border-neutral-100 md:grid-cols-[10rem_1fr]">
       <div className="flex items-start justify-between gap-1 px-2 py-2">
         <div className="min-w-0">
           <div className="truncate text-xs font-semibold text-brand-dark">
@@ -287,8 +287,8 @@ export default function WeekBoard({
 
   return (
     <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white">
-      <div className="min-w-[720px]">
-        <div className="grid grid-cols-[10rem_1fr] border-b border-neutral-200 bg-neutral-50">
+      <div className="min-w-[36rem] md:min-w-[720px]">
+        <div className="grid grid-cols-[5.5rem_1fr] border-b border-neutral-200 bg-neutral-50 md:grid-cols-[10rem_1fr]">
           <div className="px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
             Technician
           </div>

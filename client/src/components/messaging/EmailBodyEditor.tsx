@@ -125,7 +125,7 @@ function EmojiPicker({ onPick }: { onPick: (char: string) => void }) {
         <Smile className="h-3.5 w-3.5" />
       </ToolbarButton>
       {open ? (
-        <div className="absolute left-0 top-9 z-20 w-[260px] rounded-lg border border-neutral-200 bg-white p-2 shadow-lg">
+        <div className="absolute left-0 top-9 z-20 w-[min(260px,calc(100vw-2rem))] rounded-lg border border-neutral-200 bg-white p-2 shadow-lg">
           <div className="max-h-56 space-y-2 overflow-y-auto">
             {CHAT_SYMBOLS.map((group) => (
               <div key={group.label}>

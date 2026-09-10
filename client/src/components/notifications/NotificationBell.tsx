@@ -54,7 +54,7 @@ export default function NotificationBell({
         ref={buttonRef}
         type="button"
         onClick={() => toggleOpen()}
-        className={`relative rounded-md p-2 transition-colors ${
+        className={`relative inline-flex h-11 w-11 items-center justify-center rounded-md p-2 transition-colors ${
           variant === "light"
             ? "text-[var(--staff-muted)] hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)]"
             : "text-white/80 hover:text-brand-orange"

@@ -161,7 +161,7 @@ export default function CustomerRecordCard({
             key={tab.id}
             type="button"
             onClick={() => setTab(tab.id)}
-            className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium ${
+            className={`inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${
               activeTab === tab.id
                 ? "bg-brand-orange text-white"
                 : "text-neutral-600 hover:bg-white"

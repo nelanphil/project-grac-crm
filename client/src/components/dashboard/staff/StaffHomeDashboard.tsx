@@ -532,7 +532,7 @@ export default function StaffHomeDashboard() {
 
         {expandedStanding ? (
           <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--staff-border)] bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--staff-border)] px-4 py-3">
               <h3 className="text-sm font-semibold text-[var(--staff-ink)]">
                 {STANDING_LABELS[expandedStanding]} invoices
               </h3>

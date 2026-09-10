@@ -152,11 +152,11 @@ export default function InvoiceBillingPanel({
         : "Create invoice";
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+    <div className="space-y-4 rounded-xl border border-neutral-200 bg-white p-4 shadow-sm sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold text-brand-dark">{title}</h2>
-          <p className="text-sm text-neutral-500 mt-0.5">
+          <p className="mt-0.5 text-sm text-neutral-500">
             Generate an invoice and collect payment via the configured checkout
             provider.
           </p>
@@ -165,7 +165,7 @@ export default function InvoiceBillingPanel({
           type="button"
           disabled={busy}
           onClick={handleCreate}
-          className="shrink-0 rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
+          className="inline-flex min-h-11 w-full shrink-0 items-center justify-center rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60 sm:w-auto"
         >
           {createLabel}
         </button>

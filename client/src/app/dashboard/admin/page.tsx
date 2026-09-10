@@ -8,6 +8,7 @@ import CloudinaryCredentialsCard from "@/components/admin/CloudinaryCredentialsC
 import PublicAssetManagerCard from "@/components/admin/PublicAssetManagerCard";
 import ContactFormEmailsCard from "@/components/admin/ContactFormEmailsCard";
 import LegacyDatabaseSection from "@/components/admin/LegacyDatabaseSection";
+import MobileTabBar from "@/components/ui/MobileTabBar";
 import { useAuthStore } from "@/store/useAuthStore";
 
 type TabId =
@@ -99,13 +100,13 @@ function AdminContent() {
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-neutral-200">
+      <MobileTabBar className="border-b border-neutral-200">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             type="button"
             onClick={() => setTab(tab.id)}
-            className={`border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
+            className={`shrink-0 border-b-2 px-2 pb-3 text-sm font-medium transition-colors md:px-1 ${
               activeTab === tab.id
                 ? "border-brand-orange text-brand-dark"
                 : "border-transparent text-neutral-500 hover:text-brand-dark"
@@ -114,7 +115,7 @@ function AdminContent() {
             {tab.label}
           </button>
         ))}
-      </div>
+      </MobileTabBar>
 
       {activeTab === "payment-platforms" && (
         <PaymentPlatformAppsCard token={token} />

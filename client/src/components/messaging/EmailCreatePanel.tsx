@@ -376,7 +376,7 @@ export default function EmailCreatePanel({
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="Search contacts by name or email…"
-              className="min-w-[220px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+              className="min-w-0 w-full flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange sm:min-w-[220px]"
             />
             <label className="inline-flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2 text-xs text-neutral-700">
               <input
@@ -679,7 +679,7 @@ export default function EmailCreatePanel({
           <h2 className="mb-3 text-sm font-semibold text-brand-dark">
             Configuration
           </h2>
-          <label className="block min-w-[220px] text-sm">
+          <label className="block min-w-0 text-sm sm:min-w-[220px]">
             <span className="mb-1 block text-xs font-medium text-neutral-500">
               Email account
             </span>

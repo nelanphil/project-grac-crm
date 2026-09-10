@@ -27,7 +27,7 @@ export default function TablePagination({
 }) {
   return (
     <div
-      className={`flex flex-col gap-3 px-6 py-3 sm:flex-row sm:items-center sm:justify-between ${
+      className={`flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 ${
         position === "top"
           ? "border-b border-neutral-100"
           : "border-t border-neutral-100"

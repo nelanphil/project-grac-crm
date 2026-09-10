@@ -15,8 +15,13 @@ export default function Footer() {
         <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <Link href="/" className="text-lg font-bold tracking-tight">
-              Generator Maintenance
-              <span className="text-brand-orange"> of Florida</span>
+              <span className="sm:hidden">
+                G<span className="text-brand-orange">MOF</span>
+              </span>
+              <span className="hidden sm:inline">
+                Generator Maintenance
+                <span className="text-brand-orange"> of Florida</span>
+              </span>
             </Link>
             <p className="mt-4 text-sm text-white/70">
               Safe, reliable standby generator installation, maintenance, and

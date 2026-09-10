@@ -20,16 +20,21 @@ export default function AuthCard({
   const showFooter = Boolean(footerText && footerLinkText && footerLinkHref);
 
   return (
-    <div className="flex items-center justify-center bg-neutral-100 px-4 py-12">
-      <div className="w-full max-w-md">
-        <div className="rounded-lg bg-white p-8 shadow-lg">
+    <div className="flex items-center justify-center bg-neutral-100 px-4 py-8 sm:py-12">
+      <div className="w-full min-w-0 max-w-md">
+        <div className="rounded-lg bg-white p-5 shadow-lg sm:p-8">
           <div className="text-center">
             <Link
               href="/"
-              className="text-xl font-bold tracking-tight text-brand-dark"
+              className="text-lg font-bold tracking-tight text-brand-dark sm:text-xl"
             >
-              Generator Maintenance{" "}
-              <span className="text-brand-orange">of Florida</span>
+              <span className="sm:hidden">
+                G<span className="text-brand-orange">MOF</span>
+              </span>
+              <span className="hidden sm:inline">
+                Generator Maintenance{" "}
+                <span className="text-brand-orange">of Florida</span>
+              </span>
             </Link>
             <h1 className="mt-6 text-2xl font-bold text-brand-dark">{title}</h1>
             <p className="mt-2 text-sm text-neutral-600">{subtitle}</p>

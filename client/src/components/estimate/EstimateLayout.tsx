@@ -51,12 +51,12 @@ export default function EstimateLayout({
             <div className="mt-6">{children}</div>
 
             {showNav && (
-              <div className="mt-10 flex items-center justify-between gap-4">
+              <div className="mt-10 flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
                   onClick={onPrevious}
                   disabled={step === 1}
-                  className="text-sm font-medium text-brand-midnight transition-colors hover:text-brand-orange disabled:cursor-not-allowed disabled:text-neutral-400"
+                  className="min-h-11 text-sm font-medium text-brand-midnight transition-colors hover:text-brand-orange disabled:cursor-not-allowed disabled:text-neutral-400"
                 >
                   &larr; Previous step
                 </button>
@@ -72,7 +72,7 @@ export default function EstimateLayout({
                   type="button"
                   onClick={onNext}
                   disabled={nextDisabled}
-                  className="rounded-full bg-brand-midnight px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-midnight/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-11 rounded-full bg-brand-midnight px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-midnight/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {nextLabel}
                 </button>

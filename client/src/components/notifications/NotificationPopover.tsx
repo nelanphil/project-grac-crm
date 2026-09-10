@@ -47,7 +47,7 @@ export default function NotificationPopover({ anchorRef }: Props) {
       ref={panelRef}
       role="dialog"
       aria-label="Notifications"
-      className="absolute right-0 top-full z-[60] mt-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-neutral-200 bg-white text-brand-dark shadow-lg"
+      className="fixed inset-x-3 top-[4.5rem] z-[60] max-h-[min(24rem,70dvh)] overflow-hidden rounded-lg border border-neutral-200 bg-white text-brand-dark shadow-lg md:absolute md:inset-x-auto md:right-0 md:top-full md:mt-2 md:w-[min(24rem,calc(100vw-2rem))] md:max-h-none"
     >
       <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
         <h2 className="text-sm font-semibold">Notifications</h2>

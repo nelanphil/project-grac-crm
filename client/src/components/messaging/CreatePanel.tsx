@@ -342,7 +342,7 @@ export default function CreatePanel({
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="Search contacts by name or phone…"
-              className="min-w-[220px] flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+              className="min-w-0 w-full flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange sm:min-w-[220px]"
             />
             <label className="inline-flex items-center gap-2 rounded-lg border border-neutral-200 px-3 py-2 text-xs text-neutral-700">
               <input
@@ -660,7 +660,7 @@ export default function CreatePanel({
             Twilio account &amp; number
           </h2>
           <div className="flex flex-wrap items-end gap-3">
-            <label className="min-w-[180px] flex-1 text-sm">
+            <label className="min-w-0 flex-1 text-sm sm:min-w-[180px]">
               <span className="mb-1 block text-xs font-medium text-neutral-500">
                 Twilio account
               </span>
@@ -680,7 +680,7 @@ export default function CreatePanel({
                 )}
               </select>
             </label>
-            <label className="min-w-[160px] flex-1 text-sm">
+            <label className="min-w-0 flex-1 text-sm sm:min-w-[160px]">
               <span className="mb-1 block text-xs font-medium text-neutral-500">
                 From number
               </span>

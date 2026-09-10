@@ -581,14 +581,14 @@ function CustomerDetailContent() {
         id="customer-work-orders"
         className="scroll-mt-28 space-y-4 lg:scroll-mt-6"
       >
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold text-brand-dark">
             Work Orders ({filteredWorkOrders.length})
           </h2>
           {canWriteJobs ? (
             <Link
               href={`/dashboard/work-orders/create?customerId=${customer._id}`}
-              className="inline-flex items-center gap-1 rounded-lg bg-brand-dark px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+              className="inline-flex min-h-11 items-center gap-1 rounded-lg bg-brand-dark px-3 py-2 text-xs font-medium text-white hover:opacity-90"
             >
               <Plus className="h-3.5 w-3.5" />
               New work order

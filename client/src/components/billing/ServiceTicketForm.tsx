@@ -133,10 +133,18 @@ function ProductSuggestMenu({
       const spaceAbove = rect.top - gutter;
       const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
       const maxHeight = Math.min(256, Math.max(openUp ? spaceAbove : spaceBelow, 120));
+      const width = Math.min(
+        Math.max(rect.width, 240),
+        window.innerWidth - gutter * 2,
+      );
+      const left = Math.min(
+        Math.max(gutter, rect.left),
+        window.innerWidth - width - gutter,
+      );
       setCoords({
         top: openUp ? Math.max(gutter, rect.top - maxHeight - 4) : rect.bottom + 4,
-        left: rect.left,
-        width: Math.max(rect.width, 240),
+        left,
+        width,
         maxHeight,
       });
     }

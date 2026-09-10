@@ -51,19 +51,20 @@ export default function MonthCalendar({
   });
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+    <div className="min-w-0 rounded-xl border border-neutral-200 bg-white p-3 shadow-sm sm:p-4">
       <h2 className="mb-3 text-sm font-semibold text-brand-dark">{label}</h2>
-      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+      <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-medium uppercase tracking-wide text-neutral-400 sm:text-[11px]">
         {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
           <div key={d} className="py-1">
-            {d}
+            <span className="sm:hidden">{d.slice(0, 1)}</span>
+            <span className="hidden sm:inline">{d}</span>
           </div>
         ))}
       </div>
       <div className="mt-1 grid grid-cols-7 gap-1">
         {cells.map((cell, i) => {
           if (!cell.date) {
-            return <div key={`empty-${i}`} className="min-h-[64px]" />;
+            return <div key={`empty-${i}`} className="min-h-11 sm:min-h-[64px]" />;
           }
           const n = counts.get(cell.date) ?? 0;
           const selected = cell.date === selectedDate;
@@ -72,7 +73,7 @@ export default function MonthCalendar({
               key={cell.date}
               type="button"
               onClick={() => onSelectDate(cell.date!)}
-              className={`min-h-[64px] rounded-lg border px-1.5 py-1 text-left ${
+              className={`min-h-11 rounded-lg border px-1 py-1 text-left sm:min-h-[64px] sm:px-1.5 ${
                 selected
                   ? "border-brand-orange bg-orange-50"
                   : "border-neutral-100 hover:border-neutral-300"

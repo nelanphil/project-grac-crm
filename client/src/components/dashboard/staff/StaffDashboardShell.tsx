@@ -32,7 +32,7 @@ export default function StaffDashboardShell({
         <div className="print:hidden">
           <StaffTopBar />
         </div>
-        <div className="w-full min-w-0 flex-1 px-4 pb-20 pt-6 sm:px-6 lg:px-8 print:px-0 print:py-0">
+        <div className="w-full min-w-0 flex-1 px-3 pb-24 pt-4 sm:px-6 sm:pb-20 sm:pt-6 lg:px-8 print:px-0 print:py-0">
           {children}
         </div>
       </div>
