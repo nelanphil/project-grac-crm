@@ -8,6 +8,7 @@ import {
   ArrowRight,
   ArrowUp,
   ArrowUpDown,
+  FileSpreadsheet,
   GitMerge,
 } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -28,6 +29,7 @@ import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import TablePagination from "@/components/ui/TablePagination";
 import { DEFAULT_PAGE_SIZE, type PageSize } from "@/lib/pagination";
+import { exportUpcomingRenewalsExcel } from "@/utils/exportUpcomingRenewalsExcel";
 
 const MONTH_NAMES = [
   "January",
@@ -170,6 +172,8 @@ export default function UpcomingRenewalsTable() {
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [sortKey, setSortKey] = useState<SortKey>("renewalDue");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const yearOptions = useMemo(() => {
     const years: number[] = [];
@@ -237,6 +241,22 @@ export default function UpcomingRenewalsTable() {
     setPage(1);
   }
 
+  const canExport =
+    !loading && !error && !exporting && sortedRenewals.length > 0;
+
+  async function handleExport() {
+    if (!canExport) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      await exportUpcomingRenewalsExcel(sortedRenewals, viewYear, viewMonth);
+    } catch {
+      setExportError("Failed to export upcoming renewals.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   useEffect(() => {
     if (!token) return;
 
@@ -262,14 +282,30 @@ export default function UpcomingRenewalsTable() {
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
       <div className="px-6 py-4 border-b border-neutral-100">
-        <div>
-          <h2 className="text-base font-semibold text-brand-dark">
-            Upcoming Renewals
-          </h2>
-          <p className="mt-0.5 text-xs text-neutral-500">
-            Contracts due this month, including prior-year expired with the same
-            renewal month
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-brand-dark">
+              Upcoming Renewals
+            </h2>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              Contracts due this month, including prior-year expired with the same
+              renewal month
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={!canExport}
+              className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-brand-dark transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              {exporting ? "Exporting…" : "Export to Excel"}
+            </button>
+            {exportError ? (
+              <p className="text-xs text-red-700">{exportError}</p>
+            ) : null}
+          </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
           <button
