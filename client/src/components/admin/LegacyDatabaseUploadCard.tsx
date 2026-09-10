@@ -1,35 +1,12 @@
 "use client";
 
-import {
-  ChangeEvent,
-  DragEvent,
-  ReactNode,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { ReactNode, useState } from "react";
 import { Database, Upload } from "lucide-react";
 import {
-  ApiError,
-  auditLegacyDump,
-  executeLegacyDump,
-  getLegacyDumpTargets,
-  LegacyDumpResponse,
-  LegacyDumpTargetResult,
-} from "@/lib/api";
-
-const MAX_FILES = 2;
-const MAX_BYTES = 10 * 1024 * 1024;
-
-function detectKindHint(file: File): string {
-  const name = file.name.toLowerCase();
-  if (name.includes("customer")) return "customers";
-  if (name.includes("work_order") || name.includes("work-order")) {
-    return "work_orders";
-  }
-  return "unknown";
-}
+  detectDumpKindHint,
+  LegacyDumpTerminalSession,
+} from "@/hooks/useLegacyDumpTerminal";
+import { LegacyDumpTargetResult } from "@/lib/api";
 
 function formatCount(n: number): string {
   return n.toLocaleString();
@@ -190,190 +167,40 @@ function TargetReport({
 }
 
 export default function LegacyDatabaseUploadCard({
-  token,
+  session,
 }: {
-  token: string | null;
+  session: LegacyDumpTerminalSession;
 }) {
-  const [files, setFiles] = useState<File[]>([]);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const [auditing, setAuditing] = useState(false);
-  const [executing, setExecuting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [audit, setAudit] = useState<LegacyDumpResponse | null>(null);
-  const [executeResult, setExecuteResult] = useState<LegacyDumpResponse | null>(
-    null,
-  );
-  const [runProduction, setRunProduction] = useState(true);
-  const [runDevelopment, setRunDevelopment] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [targets, setTargets] = useState<LegacyDumpResponse["targets"] | null>(
-    null,
-  );
-  const [dragActive, setDragActive] = useState(false);
-  const dragDepth = useRef(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!token) return;
-    let cancelled = false;
-    getLegacyDumpTargets(token)
-      .then((res) => {
-        if (!cancelled) setTargets(res.targets);
-      })
-      .catch(() => {
-        /* audit response also includes targets */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-
-  const selectedTargets = useMemo(
-    () => targets ?? audit?.targets ?? null,
-    [targets, audit],
-  );
-
-  function applyFiles(next: File[]) {
-    setFileError(null);
-    setAudit(null);
-    setExecuteResult(null);
-    setConfirmOpen(false);
-    if (next.length === 0) {
-      setFiles([]);
-      return;
-    }
-    if (next.length > MAX_FILES) {
-      setFileError("Choose at most two SQL files.");
-      setFiles([]);
-      return;
-    }
-    const oversized = next.find((f) => f.size > MAX_BYTES);
-    if (oversized) {
-      setFileError("Each file must be 10 MB or smaller.");
-      setFiles([]);
-      return;
-    }
-    const notSql = next.find((f) => !f.name.toLowerCase().endsWith(".sql"));
-    if (notSql) {
-      setFileError("Only .sql dumps are accepted.");
-      setFiles([]);
-      return;
-    }
-    setFiles(next);
-  }
-
-  function onFiles(e: ChangeEvent<HTMLInputElement>) {
-    applyFiles(Array.from(e.target.files ?? []));
-    e.target.value = "";
-  }
-
-  function onDragEnter(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragDepth.current += 1;
-    if (e.dataTransfer.types.includes("Files")) setDragActive(true);
-  }
-
-  function onDragOver(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
-  }
-
-  function onDragLeave(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragDepth.current = Math.max(0, dragDepth.current - 1);
-    if (dragDepth.current === 0) setDragActive(false);
-  }
-
-  function onDrop(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragDepth.current = 0;
-    setDragActive(false);
-    applyFiles(Array.from(e.dataTransfer.files ?? []));
-  }
-
-  async function runAudit() {
-    if (!token || files.length === 0) {
-      setFileError("Choose one or two .sql dumps first.");
-      return;
-    }
-    setAuditing(true);
-    setError(null);
-    setExecuteResult(null);
-    try {
-      const result = await auditLegacyDump(token, files);
-      setAudit(result);
-      setTargets(result.targets);
-      if (
-        !result.targets.production.available ||
-        result.errors?.production ||
-        !result.production
-      ) {
-        setRunProduction(false);
-      }
-      if (
-        !result.targets.development.available ||
-        result.errors?.development ||
-        !result.development
-      ) {
-        setRunDevelopment(false);
-      }
-    } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : "Audit failed. Try again.",
-      );
-    } finally {
-      setAuditing(false);
-    }
-  }
-
-  const productionCounts = audit?.production?.audit;
-  const canExecute =
-    Boolean(audit) &&
-    ((runProduction && Boolean(audit?.production)) ||
-      (runDevelopment && Boolean(audit?.development))) &&
-    !executing &&
-    Boolean(token);
-
-  function requestExecute() {
-    setError(null);
-    if (runProduction) {
-      setConfirmOpen(true);
-      return;
-    }
-    void doExecute(false);
-  }
-
-  async function doExecute(confirmProduction: boolean) {
-    if (!token) return;
-    setConfirmOpen(false);
-    setExecuting(true);
-    setError(null);
-    try {
-      const result = await executeLegacyDump(token, files, {
-        production: runProduction,
-        development: runDevelopment,
-        confirmProduction,
-      });
-      setExecuteResult(result);
-      setAudit((prev) => ({
-        files: result.files,
-        targets: result.targets,
-        production: result.production ?? prev?.production,
-        development: result.development ?? prev?.development,
-        errors: result.errors ?? prev?.errors,
-      }));
-    } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : "Import failed. Try again.",
-      );
-    } finally {
-      setExecuting(false);
-    }
-  }
+  const {
+    token,
+    files,
+    fileError,
+    dragActive,
+    error,
+    audit,
+    executeResult,
+    runProduction,
+    runDevelopment,
+    confirmOpen,
+    selectedTargets,
+    jobBusy,
+    auditing,
+    executing,
+    canExecute,
+    productionCounts,
+    fileInputRef,
+    setRunProduction,
+    setRunDevelopment,
+    setConfirmOpen,
+    onFiles,
+    onDragEnter,
+    onDragOver,
+    onDragLeave,
+    onDrop,
+    runAudit,
+    requestExecute,
+    doExecute,
+  } = session;
 
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
@@ -458,7 +285,7 @@ export default function LegacyDatabaseUploadCard({
               <li key={file.name}>
                 {file.name}{" "}
                 <span className="text-neutral-400">
-                  ({detectKindHint(file)}, {(file.size / 1024).toFixed(0)} KB)
+                  ({detectDumpKindHint(file)}, {(file.size / 1024).toFixed(0)} KB)
                 </span>
               </li>
             ))}
@@ -468,7 +295,7 @@ export default function LegacyDatabaseUploadCard({
         <button
           type="button"
           onClick={() => void runAudit()}
-          disabled={auditing || files.length === 0 || !token}
+          disabled={jobBusy || files.length === 0 || !token}
           className="inline-flex items-center gap-2 rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:bg-brand-dark/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Upload className="h-4 w-4" />

@@ -7,7 +7,7 @@ import PaymentPlatformAppsCard from "@/components/admin/PaymentPlatformAppsCard"
 import CloudinaryCredentialsCard from "@/components/admin/CloudinaryCredentialsCard";
 import PublicAssetManagerCard from "@/components/admin/PublicAssetManagerCard";
 import ContactFormEmailsCard from "@/components/admin/ContactFormEmailsCard";
-import LegacyDatabaseUploadCard from "@/components/admin/LegacyDatabaseUploadCard";
+import LegacyDatabaseSection from "@/components/admin/LegacyDatabaseSection";
 import { useAuthStore } from "@/store/useAuthStore";
 
 type TabId =
@@ -126,7 +126,7 @@ function AdminContent() {
         <PublicAssetManagerCard token={token} />
       )}
       {activeTab === "forms" && <ContactFormEmailsCard token={token} />}
-      {activeTab === "database" && <LegacyDatabaseUploadCard token={token} />}
+      {activeTab === "database" && <LegacyDatabaseSection token={token} />}
     </div>
   );
 }

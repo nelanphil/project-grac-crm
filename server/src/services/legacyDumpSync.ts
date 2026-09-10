@@ -228,6 +228,44 @@ export function describeLegacyDumpTargets(): Record<
   };
 }
 
+const PROGRESS_EVERY = 500;
+
+export async function countLegacyDumpCollections(
+  target: LegacyDumpTarget,
+  onLog?: (message: string) => void,
+): Promise<{
+  target: LegacyDumpTarget;
+  label: string;
+  customers: number;
+  workOrders: number;
+}> {
+  const uri = resolveLegacyDumpUri(target);
+  if (!uri) {
+    throw new Error(
+      target === "production"
+        ? "MONGODB_URI_PRODUCTION is not set"
+        : "MONGODB_URI_DEVELOPMENT is not set",
+    );
+  }
+  const label = describeMongoTarget(uri);
+  onLog?.(`[${target}] Counting documents on ${label}…`);
+  const conn = mongoose.createConnection(uri);
+  try {
+    await conn.asPromise();
+    const models = bindModels(conn);
+    const [customers, workOrders] = await Promise.all([
+      models.Customer.estimatedDocumentCount(),
+      models.WorkOrder.estimatedDocumentCount(),
+    ]);
+    onLog?.(
+      `[${target}] customers=${customers.toLocaleString()} work_orders=${workOrders.toLocaleString()}`,
+    );
+    return { target, label, customers, workOrders };
+  } finally {
+    await conn.close();
+  }
+}
+
 export function detectDumpKind(sql: string, filename = ""): DumpKind | null {
   const lower = filename.toLowerCase();
   if (/INSERT INTO\s+`customers`/i.test(sql)) return "customers";
@@ -756,6 +794,7 @@ export async function runLegacyDumpSync(options: {
   mode: "audit" | "import";
   target?: LegacyDumpTarget | "custom";
   verbose?: boolean;
+  onLog?: (message: string) => void;
 }): Promise<LegacyDumpSyncResult> {
   const {
     customerSql,
@@ -764,26 +803,49 @@ export async function runLegacyDumpSync(options: {
     mode,
     target = "custom",
     verbose = false,
+    onLog,
   } = options;
   const dryRun = mode === "audit";
   const log = (msg: string) => {
-    if (verbose) console.log(`[legacy-dump-sync] ${msg}`);
+    const line = `[${target}] ${msg}`;
+    if (verbose || onLog) {
+      console.log(`[legacy-dump-sync] ${line}`);
+    }
+    onLog?.(line);
+  };
+  const heartbeat = (done: number, total: number, noun: string) => {
+    if (total === 0) return;
+    if (done === total || done % PROGRESS_EVERY === 0) {
+      const verb = dryRun ? "matched" : "processed";
+      log(`${verb} ${done.toLocaleString()}/${total.toLocaleString()} ${noun}…`);
+    }
   };
 
+  log(
+    customerSql || workOrderSql
+      ? "Parsing SQL dumps…"
+      : "No dump SQL provided.",
+  );
   const customerRows = customerSql ? parseCustomerDump(customerSql) : [];
   const workOrderRows = workOrderSql ? parseWorkOrderDump(workOrderSql) : [];
   if (customerRows.length === 0 && workOrderRows.length === 0) {
     throw new Error("No customer or work order rows could be parsed from the upload.");
   }
+  log(
+    `Parsed ${customerRows.length.toLocaleString()} customers and ${workOrderRows.length.toLocaleString()} work orders.`,
+  );
 
   const targetLabel = describeMongoTarget(mongoUri);
   let conn: Connection | null = null;
 
   try {
+    log(`Connecting to ${targetLabel}…`);
     conn = mongoose.createConnection(mongoUri);
     await conn.asPromise();
+    log("Connected.");
     const models = bindModels(conn);
 
+    log("Loading existing customers…");
     const existingCustomers = await models.Customer.find({
       ...activeCustomerFilter,
       ...notMergedFilter,
@@ -804,6 +866,9 @@ export async function runLegacyDumpSync(options: {
     })
       .select("customerRef address zip")
       .lean();
+    log(
+      `Loaded ${existingCustomers.length.toLocaleString()} customers, ${contacts.length.toLocaleString()} contacts, ${addresses.length.toLocaleString()} addresses.`,
+    );
 
     const extrasByCustomer = new Map<
       string,
@@ -853,6 +918,10 @@ export async function runLegacyDumpSync(options: {
       `Collision remaps start at ${nextLegacyId} (mongo max ${maxMongoLegacy}, dump max ${maxSqlLegacy}).`,
     );
 
+    if (customerRows.length > 0) {
+      log("Matching dump customers…");
+    }
+
     const mysqlToCustomer = new Map<number, MappedCustomer>();
     let skippedLegacy = 0;
     let skippedIdentity = 0;
@@ -871,7 +940,9 @@ export async function runLegacyDumpSync(options: {
       wosOrphan: [],
     };
 
-    for (const row of customerRows) {
+    for (let i = 0; i < customerRows.length; i += 1) {
+      const row = customerRows[i]!;
+      try {
       const existingSameId = index.byLegacyId.get(row.legacyId) ?? [];
       const sameIdMatch = existingSameId.find((c) =>
         identitiesMatch(row, c, extrasByCustomer.get(c._id.toString())),
@@ -987,8 +1058,16 @@ export async function runLegacyDumpSync(options: {
       });
       insertedCustomers += 1;
       contactsCreated += 1;
+      } finally {
+        heartbeat(i + 1, customerRows.length, "customers");
+      }
     }
 
+    log(
+      `Customers: present=${audit.customersPresent.toLocaleString()} identity-linked=${audit.customersIdentityLinked.length.toLocaleString()} missing=${audit.customersMissing.length.toLocaleString()} collisions=${audit.customersCollisions.length.toLocaleString()}.`,
+    );
+
+    log("Loading existing work orders…");
     const existingWos = await models.WorkOrder.find()
       .select("legacyId customerId date descPerform")
       .lean();
@@ -997,6 +1076,13 @@ export async function runLegacyDumpSync(options: {
     for (const wo of existingWos) {
       if (wo.legacyId != null) existingWoLegacyIds.add(wo.legacyId);
       fuzzyWoKeys.add(woFuzzyKey(wo.customerId, wo.date, wo.descPerform ?? ""));
+    }
+
+    log(
+      `Loaded ${existingWos.length.toLocaleString()} work orders.`,
+    );
+    if (workOrderRows.length > 0) {
+      log(dryRun ? "Matching dump work orders…" : "Importing dump work orders…");
     }
 
     const siteCache = new Map<
@@ -1008,7 +1094,9 @@ export async function runLegacyDumpSync(options: {
     let orphanWos = 0;
     let insertedWos = 0;
 
-    for (const row of workOrderRows) {
+    for (let i = 0; i < workOrderRows.length; i += 1) {
+      const row = workOrderRows[i]!;
+      try {
       if (existingWoLegacyIds.has(row.legacyId)) {
         skippedWoLegacy += 1;
         audit.wosPresent += 1;
@@ -1083,7 +1171,14 @@ export async function runLegacyDumpSync(options: {
       existingWoLegacyIds.add(row.legacyId);
       fuzzyWoKeys.add(fuzzy);
       insertedWos += 1;
+      } finally {
+        heartbeat(i + 1, workOrderRows.length, "work orders");
+      }
     }
+
+    log(
+      `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()}.`,
+    );
 
     const summary: ImportSummary = {
       customersParsed: customerRows.length,
@@ -1099,6 +1194,12 @@ export async function runLegacyDumpSync(options: {
       workOrderOrphans: orphanWos,
     };
 
+    log(
+      dryRun
+        ? `Audit complete for ${targetLabel}.`
+        : `Import complete for ${targetLabel}: inserted ${summary.customersInserted.toLocaleString()} customers and ${summary.workOrdersInserted.toLocaleString()} work orders.`,
+    );
+
     return {
       target,
       targetLabel,
@@ -1110,6 +1211,7 @@ export async function runLegacyDumpSync(options: {
     };
   } finally {
     if (conn) {
+      log("Closing connection.");
       await conn.close();
     }
   }

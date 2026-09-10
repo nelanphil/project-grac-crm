@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import DashboardNav from "@/components/dashboard/DashboardNav";
 import StaffDashboardShell from "@/components/dashboard/staff/StaffDashboardShell";
+import { isJobTerminalPopoutPath } from "@/utils/jobTerminalWindow";
 import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
@@ -15,8 +16,16 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const hydrated = useHasHydrated();
   const role = useAuthStore((s) => s.user?.role);
+  const isTerminalPopout = isJobTerminalPopoutPath(pathname);
 
   if (!hydrated) {
+    if (isTerminalPopout) {
+      return (
+        <div className="h-dvh w-full bg-neutral-950" aria-busy="true">
+          {children}
+        </div>
+      );
+    }
     return (
       <div
         className="min-h-[50vh] bg-[var(--staff-canvas)] px-4 py-6 sm:px-6"

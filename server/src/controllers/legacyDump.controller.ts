@@ -1,12 +1,27 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import {
+  LEGACY_DUMP_HELP_LINES,
+  parseLegacyDumpCommand,
+} from "../services/legacyDumpCommands";
+import {
+  countLegacyDumpCollections,
   describeLegacyDumpTargets,
+  describeMongoTarget,
   detectDumpKind,
   LegacyDumpTarget,
+  LegacyDumpSyncResult,
   runLegacyDumpSync,
   resolveLegacyDumpUri,
 } from "../services/legacyDumpSync";
+import {
+  endSse,
+  initSse,
+  sendSse,
+  sseLog,
+  SseLevel,
+  wantsSse,
+} from "../utils/sse";
 
 const MAX_FILES = 2;
 let executeInFlight = false;
@@ -17,7 +32,19 @@ type ClassifiedDump = {
   files: Array<{ filename: string; kind: "customers" | "work_orders" }>;
 };
 
-function classifyUploads(files: Express.Multer.File[] | undefined): ClassifiedDump | { error: string } {
+type DumpJobResult = {
+  files: ClassifiedDump["files"];
+  targets: ReturnType<typeof describeLegacyDumpTargets>;
+  production?: LegacyDumpSyncResult;
+  development?: LegacyDumpSyncResult;
+  errors?: Partial<Record<LegacyDumpTarget, string>>;
+};
+
+type LogFn = (message: string, level?: SseLevel) => void;
+
+function classifyUploads(
+  files: Express.Multer.File[] | undefined,
+): ClassifiedDump | { error: string } {
   if (!files || files.length === 0) {
     return { error: "Upload at least one .sql dump." };
   }
@@ -59,115 +86,220 @@ function actorLabel(req: AuthRequest): string {
   return req.user?.email || req.user?.id || "unknown";
 }
 
-export function listLegacyDumpTargets(_req: AuthRequest, res: Response): void {
-  res.json({ targets: describeLegacyDumpTargets() });
+function disableTimeouts(req: AuthRequest, res: Response): void {
+  req.setTimeout(0);
+  res.setTimeout(0);
+  req.socket?.setTimeout(0);
 }
 
-export async function auditLegacyDump(req: AuthRequest, res: Response): Promise<void> {
-  const classified = classifyUploads(req.files as Express.Multer.File[] | undefined);
-  if ("error" in classified) {
-    res.status(400).json({ message: classified.error });
+function jsonOrStreamError(
+  _req: AuthRequest,
+  res: Response,
+  status: number,
+  message: string,
+): void {
+  if (res.headersSent) {
+    sseLog(res, message, "error");
+    sendSse(res, "error", { message });
+    endSse(res);
     return;
   }
+  res.status(status).json({ message });
+}
 
+async function runDumpJobs(options: {
+  classified: ClassifiedDump;
+  mode: "audit" | "import";
+  selected: LegacyDumpTarget[];
+  actor: string;
+  onLog: LogFn;
+}): Promise<{ result: DumpJobResult; succeeded: boolean }> {
+  const { classified, mode, selected, actor, onLog } = options;
   const targets = describeLegacyDumpTargets();
-  const result: Record<string, unknown> = {
-    files: classified.files,
-    targets,
-  };
+  const result: DumpJobResult = { files: classified.files, targets };
+  const errors: Partial<Record<LegacyDumpTarget, string>> = {};
 
-  const jobs: Array<{ name: LegacyDumpTarget; promise: Promise<unknown> }> = [];
-  for (const name of ["production", "development"] as LegacyDumpTarget[]) {
+  for (const name of selected) {
     const uri = resolveLegacyDumpUri(name);
-    if (!uri) continue;
-    jobs.push({
-      name,
-      promise: runLegacyDumpSync({
+    if (!uri) {
+      const message =
+        name === "production"
+          ? "MONGODB_URI_PRODUCTION is not set"
+          : "MONGODB_URI_DEVELOPMENT is not set";
+      errors[name] = message;
+      onLog(`${name}: ${message}`, "error");
+      continue;
+    }
+    onLog(
+      `Starting ${mode} on ${name} (${describeMongoTarget(uri)})…`,
+    );
+    try {
+      const report = await runLegacyDumpSync({
         customerSql: classified.customerSql,
         workOrderSql: classified.workOrderSql,
         mongoUri: uri,
-        mode: "audit",
+        mode,
         target: name,
-      }),
-    });
-  }
-
-  if (jobs.length === 0) {
-    res.status(500).json({ message: "No MongoDB URIs are configured for audit." });
-    return;
-  }
-
-  const settled = await Promise.allSettled(jobs.map((job) => job.promise));
-  const errors: Partial<Record<LegacyDumpTarget, string>> = {};
-  settled.forEach((item, index) => {
-    const job = jobs[index];
-    if (!job) return;
-    const name = job.name;
-    if (item.status === "fulfilled") {
-      result[name] = item.value;
-      return;
+        onLog: (message) => onLog(message),
+      });
+      result[name] = report;
+      onLog(`Finished ${mode} on ${name}.`, "ok");
+      if (mode === "import") {
+        console.log("[legacy-dump] execute", {
+          actor,
+          target: name,
+          host: report.targetLabel,
+          customersInserted: report.summary.customersInserted,
+          workOrdersInserted: report.summary.workOrdersInserted,
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `${mode} failed.`;
+      errors[name] = message;
+      onLog(`${name}: ${message}`, "error");
+      console.error(`[legacy-dump] ${mode} failed`, {
+        actor,
+        target: name,
+        message,
+      });
     }
-    const message =
-      item.reason instanceof Error ? item.reason.message : "Audit failed.";
-    errors[name] = message;
-    console.error("[legacy-dump] audit failed", {
-      actor: actorLabel(req),
-      target: name,
-      message,
-    });
-  });
+  }
 
   if (Object.keys(errors).length > 0) {
     result.errors = errors;
   }
+  const succeeded = selected.some((name) => result[name] != null);
+  return { result, succeeded };
+}
 
-  const succeeded = jobs.some((job) => result[job.name] != null);
+function finishDumpResponse(
+  req: AuthRequest,
+  res: Response,
+  stream: boolean,
+  result: DumpJobResult,
+  succeeded: boolean,
+  failMessage: string,
+): void {
+  if (stream) {
+    if (!succeeded) {
+      sseLog(res, failMessage, "error");
+      sendSse(res, "error", { message: failMessage });
+    }
+    sendSse(res, "result", result);
+    endSse(res);
+    return;
+  }
   if (!succeeded) {
     res.status(500).json({
-      message: Object.values(errors)[0] ?? "Audit failed.",
-      files: classified.files,
-      targets,
-      errors,
+      message: result.errors
+        ? Object.values(result.errors)[0] ?? failMessage
+        : failMessage,
+      ...result,
     });
     return;
   }
+  res.json(result);
+}
+
+export function listLegacyDumpTargets(_req: AuthRequest, res: Response): void {
+  res.json({ targets: describeLegacyDumpTargets() });
+}
+
+export async function auditLegacyDump(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  const classified = classifyUploads(req.files as Express.Multer.File[] | undefined);
+  if ("error" in classified) {
+    jsonOrStreamError(req, res, 400, classified.error);
+    return;
+  }
+
+  const selected = (
+    ["production", "development"] as LegacyDumpTarget[]
+  ).filter((name) => Boolean(resolveLegacyDumpUri(name)));
+  if (selected.length === 0) {
+    jsonOrStreamError(req, res, 500, "No MongoDB URIs are configured for audit.");
+    return;
+  }
+
+  const stream = wantsSse(req);
+  if (stream) {
+    disableTimeouts(req, res);
+    initSse(res);
+    sseLog(
+      res,
+      `Audit started by ${actorLabel(req)} (${classified.files.map((f) => f.kind).join(", ")}).`,
+    );
+  }
+
+  const onLog: LogFn = (message, level = "info") => {
+    if (stream) sseLog(res, message, level);
+  };
+
+  const { result, succeeded } = await runDumpJobs({
+    classified,
+    mode: "audit",
+    selected,
+    actor: actorLabel(req),
+    onLog,
+  });
 
   console.log("[legacy-dump] audit", {
     actor: actorLabel(req),
     files: classified.files.map((f) => f.kind),
-    production: targets.production.label,
-    development: targets.development.label,
-    errors: Object.keys(errors),
+    production: result.targets.production.label,
+    development: result.targets.development.label,
+    errors: Object.keys(result.errors ?? {}),
   });
 
-  res.json(result);
+  finishDumpResponse(req, res, stream, result, succeeded, "Audit failed.");
 }
 
-export async function executeLegacyDump(req: AuthRequest, res: Response): Promise<void> {
+export async function executeLegacyDump(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  await runExecute(req, res, {
+    runProduction: parseBool(body.production),
+    runDevelopment: parseBool(body.development),
+    confirmProduction: parseBool(body.confirmProduction),
+  });
+}
+
+async function runExecute(
+  req: AuthRequest,
+  res: Response,
+  options: {
+    runProduction: boolean;
+    runDevelopment: boolean;
+    confirmProduction: boolean;
+  },
+): Promise<void> {
   if (executeInFlight) {
-    res.status(409).json({ message: "A legacy dump import is already running." });
+    jsonOrStreamError(req, res, 409, "A legacy dump import is already running.");
     return;
   }
 
   const classified = classifyUploads(req.files as Express.Multer.File[] | undefined);
   if ("error" in classified) {
-    res.status(400).json({ message: classified.error });
+    jsonOrStreamError(req, res, 400, classified.error);
     return;
   }
 
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  const runProduction = parseBool(body.production);
-  const runDevelopment = parseBool(body.development);
-  const confirmProduction = parseBool(body.confirmProduction);
-
+  const { runProduction, runDevelopment, confirmProduction } = options;
   if (!runProduction && !runDevelopment) {
-    res.status(400).json({ message: "Select production and/or development." });
+    jsonOrStreamError(req, res, 400, "Select production and/or development.");
     return;
   }
   if (runProduction && !confirmProduction) {
-    res.status(400).json({
-      message: "Confirm production import before executing against production.",
-    });
+    jsonOrStreamError(
+      req,
+      res,
+      400,
+      "Confirm production import before executing against production.",
+    );
     return;
   }
 
@@ -175,80 +307,189 @@ export async function executeLegacyDump(req: AuthRequest, res: Response): Promis
   const selected: LegacyDumpTarget[] = [];
   if (runProduction) {
     if (!targets.production.available) {
-      res.status(400).json({ message: targets.production.reason ?? "Production URI is not configured." });
+      jsonOrStreamError(
+        req,
+        res,
+        400,
+        targets.production.reason ?? "Production URI is not configured.",
+      );
       return;
     }
     selected.push("production");
   }
   if (runDevelopment) {
     if (!targets.development.available) {
-      res.status(400).json({
-        message: targets.development.reason ?? "Development URI is not configured.",
-      });
+      jsonOrStreamError(
+        req,
+        res,
+        400,
+        targets.development.reason ?? "Development URI is not configured.",
+      );
       return;
     }
     selected.push("development");
   }
 
+  const stream = wantsSse(req) || res.headersSent;
   executeInFlight = true;
-  const result: Record<string, unknown> = { files: classified.files, targets };
-  const errors: Partial<Record<LegacyDumpTarget, string>> = {};
-
   try {
-    for (const name of selected) {
-      const uri = resolveLegacyDumpUri(name);
-      if (!uri) {
-        errors[name] =
-          name === "production"
-            ? "MONGODB_URI_PRODUCTION is not set"
-            : "MONGODB_URI_DEVELOPMENT is not set";
-        continue;
-      }
-      try {
-        const report = await runLegacyDumpSync({
-          customerSql: classified.customerSql,
-          workOrderSql: classified.workOrderSql,
-          mongoUri: uri,
-          mode: "import",
-          target: name,
-        });
-        result[name] = report;
-        console.log("[legacy-dump] execute", {
-          actor: actorLabel(req),
-          target: name,
-          host: report.targetLabel,
-          customersInserted: report.summary.customersInserted,
-          workOrdersInserted: report.summary.workOrdersInserted,
-        });
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Import failed.";
-        errors[name] = message;
-        console.error("[legacy-dump] execute failed", {
-          actor: actorLabel(req),
-          target: name,
-          message,
-        });
-      }
+    if (stream && !res.headersSent) {
+      disableTimeouts(req, res);
+      initSse(res);
+      sseLog(
+        res,
+        `Import started by ${actorLabel(req)} (${selected.join(", ")}).`,
+      );
+    } else if (stream) {
+      sseLog(
+        res,
+        `Import started by ${actorLabel(req)} (${selected.join(", ")}).`,
+      );
     }
 
-    if (Object.keys(errors).length > 0) {
-      result.errors = errors;
-    }
+    const onLog: LogFn = (message, level = "info") => {
+      if (stream) sseLog(res, message, level);
+    };
 
-    const succeeded = selected.some((name) => result[name] != null);
-    if (!succeeded) {
-      res.status(500).json({
-        message: Object.values(errors)[0] ?? "Import failed.",
-        files: classified.files,
-        targets,
-        errors,
-      });
-      return;
-    }
+    const { result, succeeded } = await runDumpJobs({
+      classified,
+      mode: "import",
+      selected,
+      actor: actorLabel(req),
+      onLog,
+    });
 
-    res.json(result);
+    finishDumpResponse(req, res, stream, result, succeeded, "Import failed.");
   } finally {
     executeInFlight = false;
   }
+}
+
+export async function runLegacyDumpCommand(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const rawCommand = typeof body.command === "string" ? body.command : "";
+  const parsed = parseLegacyDumpCommand(rawCommand);
+
+  disableTimeouts(req, res);
+  initSse(res);
+
+  const onLog: LogFn = (message, level = "info") => {
+    sseLog(res, message, level);
+  };
+
+  if (parsed.kind === "rejected") {
+    onLog(parsed.message, "error");
+    sendSse(res, "error", { message: parsed.message });
+    endSse(res);
+    return;
+  }
+
+  if (parsed.kind === "help") {
+    onLog("Available commands:");
+    for (const line of LEGACY_DUMP_HELP_LINES) {
+      onLog(line);
+    }
+    endSse(res);
+    return;
+  }
+
+  if (parsed.kind === "targets") {
+    const targets = describeLegacyDumpTargets();
+    for (const name of ["production", "development"] as LegacyDumpTarget[]) {
+      const info = targets[name];
+      if (info.available) {
+        onLog(`${name}: ${info.label}`, "ok");
+      } else {
+        onLog(`${name}: unavailable (${info.reason ?? "not configured"})`, "warn");
+      }
+    }
+    sendSse(res, "result", { targets });
+    endSse(res);
+    return;
+  }
+
+  if (parsed.kind === "counts") {
+    const counts: Array<{
+      target: LegacyDumpTarget;
+      label: string;
+      customers: number;
+      workOrders: number;
+    }> = [];
+    for (const name of parsed.targets) {
+      if (!resolveLegacyDumpUri(name)) {
+        onLog(
+          `${name}: ${
+            name === "production"
+              ? "MONGODB_URI_PRODUCTION is not set"
+              : "MONGODB_URI_DEVELOPMENT is not set"
+          }`,
+          "warn",
+        );
+        continue;
+      }
+      try {
+        counts.push(await countLegacyDumpCollections(name, (message) => onLog(message)));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Count failed.";
+        onLog(`${name}: ${message}`, "error");
+      }
+    }
+    sendSse(res, "result", { counts });
+    endSse(res);
+    return;
+  }
+
+  if (parsed.kind === "audit") {
+    const classified = classifyUploads(
+      req.files as Express.Multer.File[] | undefined,
+    );
+    if ("error" in classified) {
+      onLog(classified.error, "error");
+      sendSse(res, "error", { message: classified.error });
+      endSse(res);
+      return;
+    }
+    const selected = (
+      ["production", "development"] as LegacyDumpTarget[]
+    ).filter((name) => Boolean(resolveLegacyDumpUri(name)));
+    if (selected.length === 0) {
+      onLog("No MongoDB URIs are configured for audit.", "error");
+      sendSse(res, "error", {
+        message: "No MongoDB URIs are configured for audit.",
+      });
+      endSse(res);
+      return;
+    }
+    onLog(
+      `Audit started by ${actorLabel(req)} (${classified.files.map((f) => f.kind).join(", ")}).`,
+    );
+    const { result, succeeded } = await runDumpJobs({
+      classified,
+      mode: "audit",
+      selected,
+      actor: actorLabel(req),
+      onLog,
+    });
+    finishDumpResponse(req, res, true, result, succeeded, "Audit failed.");
+    return;
+  }
+
+  const classified = classifyUploads(
+    req.files as Express.Multer.File[] | undefined,
+  );
+  if ("error" in classified) {
+    onLog(classified.error, "error");
+    sendSse(res, "error", { message: classified.error });
+    endSse(res);
+    return;
+  }
+
+  await runExecute(req, res, {
+    runProduction: parsed.production,
+    runDevelopment: parsed.development,
+    confirmProduction: parsed.confirmProduction,
+  });
 }

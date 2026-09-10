@@ -1,6 +1,8 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { DashboardHistoryTracker } from "@/components/dashboard/DashboardBackLink";
+import { isJobTerminalPopoutPath } from "@/utils/jobTerminalWindow";
 import StaffIconSidebar from "./StaffIconSidebar";
 import StaffTopBar from "./StaffTopBar";
 
@@ -9,6 +11,17 @@ export default function StaffDashboardShell({
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+  const isTerminalPopout = isJobTerminalPopoutPath(pathname);
+
+  if (isTerminalPopout) {
+    return (
+      <div className="h-dvh w-full overflow-hidden bg-neutral-950">
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div className="staff-dashboard flex w-full min-h-[calc(100vh-0px)] max-w-full overflow-x-clip bg-[var(--staff-canvas)] print:bg-white print:min-h-0">
       <DashboardHistoryTracker />

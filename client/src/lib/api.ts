@@ -200,6 +200,110 @@ async function authRequest<T>(
   return body as T;
 }
 
+function parseSseBlock(block: string): { event: string; data: unknown } | null {
+  const normalized = block.replace(/\r/g, "");
+  if (!normalized.trim()) return null;
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const line of normalized.split("\n")) {
+    if (line.startsWith(":")) continue;
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+  }
+  if (dataLines.length === 0) return null;
+  const raw = dataLines.join("\n");
+  try {
+    return { event, data: JSON.parse(raw) };
+  } catch {
+    return { event, data: raw };
+  }
+}
+
+async function streamAuthRequest(
+  endpoint: string,
+  options: RequestInit,
+  onEvent: (event: string, data: unknown) => void,
+): Promise<unknown> {
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${endpoint}`, {
+      ...options,
+      headers: {
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        ...(options.headers ?? {}),
+        Accept: "text/event-stream",
+      },
+    });
+  } catch {
+    throw new ApiError(
+      "Could not reach the server. Check your connection and try again.",
+      0,
+    );
+  }
+
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/event-stream")) {
+    const body = (await res.json().catch(() => ({}))) as {
+      message?: string;
+      errors?: Record<string, string[]>;
+    };
+    if (!res.ok) {
+      throw new ApiError(
+        body.message ?? "Something went wrong. Please try again.",
+        res.status,
+        body.errors,
+      );
+    }
+    onEvent("result", body);
+    onEvent("done", {});
+    return body;
+  }
+
+  if (!res.body) {
+    throw new ApiError("Empty response from server.", res.status);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let lastResult: unknown;
+  let lastError: string | null = null;
+
+  const consume = (part: string) => {
+    const parsed = parseSseBlock(part);
+    if (!parsed) return;
+    onEvent(parsed.event, parsed.data);
+    if (parsed.event === "result") lastResult = parsed.data;
+    if (parsed.event === "error") {
+      const data = parsed.data as { message?: string };
+      lastError =
+        typeof data?.message === "string" ? data.message : "Request failed.";
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) consume(part);
+  }
+  if (buffer.trim()) consume(buffer);
+
+  if (lastResult !== undefined) return lastResult;
+  if (!res.ok) {
+    throw new ApiError(
+      lastError ?? "Something went wrong. Please try again.",
+      res.status,
+    );
+  }
+  return lastResult;
+}
+
 export async function authLogin(
   identifier: string,
   password: string,
@@ -4831,4 +4935,97 @@ export async function executeLegacyDump(
     headers: { Authorization: `Bearer ${token}` },
     body: payload,
   });
+}
+
+export type LegacyDumpLogHandler = (
+  message: string,
+  level: string,
+  ts: string,
+) => void;
+
+function dumpStreamOnEvent(
+  onLog: LegacyDumpLogHandler | undefined,
+): (event: string, data: unknown) => void {
+  return (event, data) => {
+    if (event !== "log" || !data || typeof data !== "object") return;
+    const row = data as { message?: string; level?: string; ts?: string };
+    if (typeof row.message === "string") {
+      onLog?.(
+        row.message,
+        row.level ?? "info",
+        row.ts ?? new Date().toISOString(),
+      );
+    }
+  };
+}
+
+export async function streamLegacyDumpAudit(
+  token: string,
+  files: File[],
+  onLog?: LegacyDumpLogHandler,
+): Promise<LegacyDumpResponse> {
+  const payload = new FormData();
+  appendLegacyDumpFiles(payload, files);
+  const result = await streamAuthRequest(
+    "/legacy-dumps/audit",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: payload,
+    },
+    dumpStreamOnEvent(onLog),
+  );
+  if (!result) throw new ApiError("Audit finished without a result.", 500);
+  return result as LegacyDumpResponse;
+}
+
+export async function streamLegacyDumpExecute(
+  token: string,
+  files: File[],
+  options: {
+    production: boolean;
+    development: boolean;
+    confirmProduction?: boolean;
+  },
+  onLog?: LegacyDumpLogHandler,
+): Promise<LegacyDumpResponse> {
+  const payload = new FormData();
+  appendLegacyDumpFiles(payload, files);
+  payload.append("production", options.production ? "true" : "false");
+  payload.append("development", options.development ? "true" : "false");
+  payload.append(
+    "confirmProduction",
+    options.confirmProduction ? "true" : "false",
+  );
+  const result = await streamAuthRequest(
+    "/legacy-dumps/execute",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: payload,
+    },
+    dumpStreamOnEvent(onLog),
+  );
+  if (!result) throw new ApiError("Import finished without a result.", 500);
+  return result as LegacyDumpResponse;
+}
+
+export async function streamLegacyDumpCommand(
+  token: string,
+  command: string,
+  files: File[],
+  onLog?: LegacyDumpLogHandler,
+): Promise<unknown> {
+  const payload = new FormData();
+  payload.append("command", command);
+  appendLegacyDumpFiles(payload, files);
+  return streamAuthRequest(
+    "/legacy-dumps/command",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: payload,
+    },
+    dumpStreamOnEvent(onLog),
+  );
 }
