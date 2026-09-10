@@ -364,7 +364,7 @@ export default function LegacyDatabaseUploadCard({
         targets: result.targets,
         production: result.production ?? prev?.production,
         development: result.development ?? prev?.development,
-        errors: prev?.errors,
+        errors: result.errors ?? prev?.errors,
       }));
     } catch (err) {
       setError(
