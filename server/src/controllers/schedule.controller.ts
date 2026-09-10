@@ -5,6 +5,7 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import {
   countTechnicianJobsOnDate,
   dayRouteForUser,
+  hydrateMissingAddressCoordinates,
   isDispatcherRole,
   listSchedulableStaff,
   listScheduleQueue,
@@ -250,5 +251,37 @@ export async function getScheduleRoute(
     }
     console.error("GET /schedule/route error:", err);
     res.status(500).json({ message: "Failed to load day route" });
+  }
+}
+
+const geocodeMissingSchema = z.object({
+  addressIds: z.array(z.string().min(1)).min(1).max(80),
+});
+
+export async function postScheduleGeocodeMissing(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!req.user?.permissions.includes("jobs:read")) {
+      res.status(403).json({ message: "Missing permission: jobs:read" });
+      return;
+    }
+    if (!isDispatcherRole(req.user.role)) {
+      res.status(403).json({ message: "Only dispatchers can geocode map pins" });
+      return;
+    }
+
+    const parsed = geocodeMissingSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ message: "addressIds (1–80) is required" });
+      return;
+    }
+
+    const updated = await hydrateMissingAddressCoordinates(parsed.data.addressIds);
+    res.json({ updated });
+  } catch (err) {
+    console.error("POST /schedule/geocode-missing error:", err);
+    res.status(500).json({ message: "Failed to geocode addresses" });
   }
 }

@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import {
   DndContext,
@@ -13,6 +20,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
   cancelWorkOrderAppointment,
+  geocodeMissingScheduleAddresses,
   getScheduleQueue,
   getScheduleRoute,
   getScheduleStaff,
@@ -45,9 +53,14 @@ import MonthCalendar from "@/components/schedule/MonthCalendar";
 import MonthTable from "@/components/schedule/MonthTable";
 import DayRouteMap from "@/components/schedule/DayRouteMap";
 import SuggestAssigneeModal from "@/components/schedule/SuggestAssigneeModal";
+import ScheduleMap, {
+  jobHasCoordinates,
+} from "@/components/schedule/ScheduleMap";
 
 type ViewMode = "week" | "month";
 type MonthMode = "calendar" | "table";
+type SurfaceMode = "calendar" | "map";
+type RailFilter = "current" | "unscheduled";
 
 function dropMinutes(event: DragEndEvent): number | null {
   const over = event.over;
@@ -58,6 +71,31 @@ function dropMinutes(event: DragEndEvent): number | null {
   const ratio = Math.max(0, Math.min(0.999, x / Math.max(1, over.rect.width)));
   const total = (BOARD_HOUR_END - BOARD_HOUR_START) * 60;
   return Math.round((BOARD_HOUR_START * 60 + ratio * total) / 15) * 15;
+}
+
+function uniqueJobs(...lists: WorkOrderListItem[][]): WorkOrderListItem[] {
+  const byId = new Map<string, WorkOrderListItem>();
+  for (const list of lists) {
+    for (const job of list) byId.set(job._id, job);
+  }
+  return [...byId.values()];
+}
+
+function applyAddressCoords(
+  jobs: WorkOrderListItem[],
+  updated: Array<{ addressId: string; lat: number; lng: number }>,
+): WorkOrderListItem[] {
+  if (updated.length === 0) return jobs;
+  const byId = new Map(updated.map((row) => [row.addressId, row]));
+  return jobs.map((job) => {
+    const id = job.address?._id;
+    const hit = id ? byId.get(id) : undefined;
+    if (!hit || !job.address) return job;
+    return {
+      ...job,
+      address: { ...job.address, lat: hit.lat, lng: hit.lng },
+    };
+  });
 }
 
 function emptyQueue() {
@@ -88,42 +126,92 @@ async function fetchCalendarData(
   };
 }
 
-function NeedsSchedulingRail({
+function RailFilterTip({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <span className="group/tip relative">
+      {children}
+      <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 hidden w-48 -translate-x-1/2 rounded-md bg-neutral-800 px-2 py-1.5 text-center text-[11px] font-normal leading-snug text-white opacity-0 shadow-lg transition-opacity md:block md:group-hover/tip:opacity-100">
+        {label}
+      </span>
+    </span>
+  );
+}
+
+function ScheduleRail({
   jobs,
+  filter,
+  onFilter,
   selectedId,
   onSelect,
   onSuggest,
   suggesting,
+  canSuggest,
   draggable,
 }: {
   jobs: WorkOrderListItem[];
+  filter: RailFilter;
+  onFilter: (filter: RailFilter) => void;
   selectedId: string | null;
   onSelect: (job: WorkOrderListItem) => void;
   onSuggest: () => void;
   suggesting: boolean;
+  canSuggest: boolean;
   draggable: boolean;
 }) {
   return (
-    <aside className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-brand-dark">
-          Needs scheduling
-        </h2>
+    <aside className="flex max-h-[40rem] min-h-0 flex-col space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex rounded-md border border-neutral-200 bg-white p-0.5 text-xs">
+          <RailFilterTip label="All work orders in this week or month. Unscheduled jobs are listed first.">
+            <button
+              type="button"
+              onClick={() => onFilter("current")}
+              className={`rounded px-2.5 py-1 font-medium ${
+                filter === "current"
+                  ? "bg-brand-orange text-white"
+                  : "text-neutral-600"
+              }`}
+            >
+              Current
+            </button>
+          </RailFilterTip>
+          <RailFilterTip label="Only work orders in this week or month that still need a time slot.">
+            <button
+              type="button"
+              onClick={() => onFilter("unscheduled")}
+              className={`rounded px-2.5 py-1 font-medium ${
+                filter === "unscheduled"
+                  ? "bg-brand-orange text-white"
+                  : "text-neutral-600"
+              }`}
+            >
+              Unscheduled
+            </button>
+          </RailFilterTip>
+        </div>
         <button
           type="button"
-          disabled={!selectedId || suggesting}
+          disabled={!canSuggest || suggesting}
           onClick={onSuggest}
-          className="text-xs font-medium text-brand-orange hover:underline disabled:opacity-40"
+          className="shrink-0 text-xs font-medium text-brand-orange hover:underline disabled:opacity-40"
         >
           {suggesting ? "Suggesting…" : "Suggest tech"}
         </button>
       </div>
       {jobs.length === 0 ? (
         <p className="text-xs text-neutral-400">
-          No work orders waiting to be scheduled.
+          {filter === "unscheduled"
+            ? "No unscheduled work orders in this range."
+            : "No work orders in this range."}
         </p>
       ) : (
-        <div className="space-y-2">
+        <div className="min-h-0 space-y-2 overflow-y-auto">
           {jobs.map((order) => (
             <UnscheduledCard
               key={order._id}
@@ -142,7 +230,7 @@ function NeedsSchedulingRail({
 export default function CalendarTab({
   initialDate,
 }: {
-  initialDate: string;
+  initialDate?: string;
 }) {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
@@ -150,10 +238,13 @@ export default function CalendarTab({
   const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
 
   const today = formatLocalDate(new Date());
-  const [anchorDate, setAnchorDate] = useState(initialDate);
-  const [selectedDate, setSelectedDate] = useState(initialDate);
+  const startDate = initialDate ?? today;
+  const [anchorDate, setAnchorDate] = useState(startDate);
+  const [selectedDate, setSelectedDate] = useState(startDate);
   const [view, setView] = useState<ViewMode>("week");
   const [monthMode, setMonthMode] = useState<MonthMode>("calendar");
+  const [surface, setSurface] = useState<SurfaceMode>("calendar");
+  const [railFilter, setRailFilter] = useState<RailFilter>("current");
 
   const [staff, setStaff] = useState<ScheduleStaffMember[]>([]);
   const [jobs, setJobs] = useState<WorkOrderListItem[]>([]);
@@ -162,7 +253,7 @@ export default function CalendarTab({
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
 
-  const [selectedUnscheduled, setSelectedUnscheduled] =
+  const [selectedRailJob, setSelectedRailJob] =
     useState<WorkOrderListItem | null>(null);
   const [editingJob, setEditingJob] = useState<WorkOrderListItem | null>(null);
   const [durationDraft, setDurationDraft] = useState(60);
@@ -194,6 +285,19 @@ export default function CalendarTab({
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
     [weekStart],
   );
+
+  const currentJobs = useMemo(() => {
+    const merged = uniqueJobs(jobs, railJobs);
+    return merged.sort((a, b) => {
+      const aScheduled = a.scheduledStart ? 1 : 0;
+      const bScheduled = b.scheduledStart ? 1 : 0;
+      return aScheduled - bScheduled;
+    });
+  }, [jobs, railJobs]);
+  const railListJobs =
+    railFilter === "unscheduled" ? railJobs : currentJobs;
+  const requestedGeocodeRef = useRef(new Set<string>());
+  const [geocodingPins, setGeocodingPins] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -247,6 +351,62 @@ export default function CalendarTab({
     };
   }, [token, range.from, range.to, dispatcher]);
 
+  useEffect(() => {
+    if (surface !== "map" || !token || !dispatcher) return;
+    const authToken = token;
+    let cancelled = false;
+
+    async function run() {
+      const missing = [
+        ...new Set(
+          currentJobs
+            .map((job) => job.address)
+            .filter(
+              (addr): addr is NonNullable<typeof addr> =>
+                Boolean(addr?._id) &&
+                !jobHasCoordinates({ address: addr } as WorkOrderListItem),
+            )
+            .map((addr) => addr._id)
+            .filter((id) => !requestedGeocodeRef.current.has(id)),
+        ),
+      ];
+      if (missing.length === 0) return;
+      setGeocodingPins(true);
+      try {
+        for (let i = 0; i < missing.length; i += 40) {
+          if (cancelled) return;
+          const batch = missing.slice(i, i + 40);
+          const { updated } = await geocodeMissingScheduleAddresses(
+            authToken,
+            batch,
+          );
+          batch.forEach((id) => requestedGeocodeRef.current.add(id));
+          if (updated.length === 0) continue;
+          setRailJobs((prev) => applyAddressCoords(prev, updated));
+          setJobs((prev) => applyAddressCoords(prev, updated));
+          setSelectedRailJob((prev) =>
+            prev ? (applyAddressCoords([prev], updated)[0] ?? prev) : prev,
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof ApiError
+              ? err.message
+              : "Failed to locate jobs on the map.",
+          );
+        }
+      } finally {
+        if (!cancelled) setGeocodingPins(false);
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [surface, token, dispatcher, currentJobs]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
@@ -269,7 +429,7 @@ export default function CalendarTab({
       if (updated.warnings?.length) {
         setWarning(updated.warnings.join(" "));
       }
-      setSelectedUnscheduled(null);
+      setSelectedRailJob(null);
       setEditingJob(null);
       setSuggestions(null);
       await load();
@@ -306,15 +466,18 @@ export default function CalendarTab({
   }
 
   async function handleSuggest() {
-    if (!token || !selectedUnscheduled) return;
+    const job =
+      selectedRailJob && !selectedRailJob.scheduledStart
+        ? selectedRailJob
+        : null;
+    if (!token || !job) return;
     setSuggesting(true);
     setError(null);
     try {
       const result = await suggestScheduleAssignee(token, {
-        workOrderId: selectedUnscheduled._id,
+        workOrderId: job._id,
         date: selectedDate,
-        estimatedMinutes:
-          selectedUnscheduled.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+        estimatedMinutes: job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
       });
       setSuggestions(result.suggestions);
     } catch (err) {
@@ -326,6 +489,10 @@ export default function CalendarTab({
     } finally {
       setSuggesting(false);
     }
+  }
+
+  function selectRailJob(job: WorkOrderListItem) {
+    setSelectedRailJob(job);
   }
 
   async function openRoute(userId: string) {
@@ -463,7 +630,7 @@ export default function CalendarTab({
               Month
             </button>
           </div>
-          {view === "month" && (
+          {view === "month" && surface === "calendar" && (
             <div className="flex rounded-md border border-neutral-200 bg-white p-0.5 text-sm">
               <button
                 type="button"
@@ -481,10 +648,26 @@ export default function CalendarTab({
               </button>
             </div>
           )}
+          <div className="flex rounded-md border border-neutral-200 bg-white p-0.5 text-sm">
+            <button
+              type="button"
+              onClick={() => setSurface("calendar")}
+              className={`rounded px-3 py-1.5 ${surface === "calendar" ? "bg-brand-orange text-white" : "text-neutral-600"}`}
+            >
+              Calendar
+            </button>
+            <button
+              type="button"
+              onClick={() => setSurface("map")}
+              className={`rounded px-3 py-1.5 ${surface === "map" ? "bg-brand-orange text-white" : "text-neutral-600"}`}
+            >
+              Map
+            </button>
+          </div>
         </div>
       </div>
 
-      {view === "week" && (
+      {(view === "week" || surface === "map") && (
         <div className="flex flex-wrap gap-1">
           {weekDays.map((day) => (
             <button
@@ -519,16 +702,53 @@ export default function CalendarTab({
 
       {loading ? (
         <p className="text-sm text-neutral-500">Loading schedule…</p>
+      ) : surface === "map" ? (
+        <div className="space-y-3">
+          {geocodingPins && (
+            <p className="text-xs text-neutral-500">
+              Locating jobs on the map…
+            </p>
+          )}
+          <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
+            {dispatcher && (
+              <ScheduleRail
+                jobs={railListJobs}
+                filter={railFilter}
+                onFilter={setRailFilter}
+                selectedId={selectedRailJob?._id ?? null}
+                onSelect={selectRailJob}
+                onSuggest={() => void handleSuggest()}
+                suggesting={suggesting}
+                canSuggest={Boolean(
+                  selectedRailJob && !selectedRailJob.scheduledStart,
+                )}
+                draggable={false}
+              />
+            )}
+            <ScheduleMap
+              unscheduled={dispatcher ? railJobs : []}
+              scheduled={jobs}
+              showScheduled={railFilter === "current"}
+              selectedId={selectedRailJob?._id ?? null}
+              onSelect={selectRailJob}
+            />
+          </div>
+        </div>
       ) : view === "week" ? (
         <DndContext sensors={sensors} onDragEnd={(e) => void handleDragEnd(e)}>
           <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
             {dispatcher && (
-              <NeedsSchedulingRail
-                jobs={railJobs}
-                selectedId={selectedUnscheduled?._id ?? null}
-                onSelect={setSelectedUnscheduled}
+              <ScheduleRail
+                jobs={railListJobs}
+                filter={railFilter}
+                onFilter={setRailFilter}
+                selectedId={selectedRailJob?._id ?? null}
+                onSelect={selectRailJob}
                 onSuggest={() => void handleSuggest()}
                 suggesting={suggesting}
+                canSuggest={Boolean(
+                  selectedRailJob && !selectedRailJob.scheduledStart,
+                )}
                 draggable={canWrite}
               />
             )}
@@ -550,12 +770,17 @@ export default function CalendarTab({
       ) : (
         <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
           {dispatcher && (
-            <NeedsSchedulingRail
-              jobs={railJobs}
-              selectedId={selectedUnscheduled?._id ?? null}
-              onSelect={setSelectedUnscheduled}
+            <ScheduleRail
+              jobs={railListJobs}
+              filter={railFilter}
+              onFilter={setRailFilter}
+              selectedId={selectedRailJob?._id ?? null}
+              onSelect={selectRailJob}
               onSuggest={() => void handleSuggest()}
               suggesting={suggesting}
+              canSuggest={Boolean(
+                selectedRailJob && !selectedRailJob.scheduledStart,
+              )}
               draggable={false}
             />
           )}
@@ -584,13 +809,13 @@ export default function CalendarTab({
         </div>
       )}
 
-      {suggestions && selectedUnscheduled && (
+      {suggestions && selectedRailJob && !selectedRailJob.scheduledStart && (
         <SuggestAssigneeModal
-          job={selectedUnscheduled}
+          job={selectedRailJob}
           suggestions={suggestions}
           saving={saving}
           onAssign={(userId, start) =>
-            void assignJob(selectedUnscheduled._id, userId, start)
+            void assignJob(selectedRailJob._id, userId, start)
           }
           onClose={() => setSuggestions(null)}
         />

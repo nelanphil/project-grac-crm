@@ -63,7 +63,7 @@ export function useLegacyDumpTerminal(token: string | null) {
       id: "welcome",
       ts: new Date().toISOString(),
       level: "info",
-      text: "Type help for commands. Destructive operations (drop/delete) are blocked.",
+      text: "Type help for commands including health, collections, and docs. Destructive operations (drop/delete) are blocked.",
     },
   ]);
   const dragDepth = useRef(0);

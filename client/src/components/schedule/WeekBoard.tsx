@@ -9,8 +9,8 @@ import {
   BOARD_HOUR_END,
   BOARD_HOUR_START,
   DEFAULT_ESTIMATED_MINUTES,
-  formatAddressLine,
   formatLocalTime,
+  formatMonthDayYear,
   minutesToLabel,
   nyDateParts,
   workOrderViewHref,
@@ -60,15 +60,33 @@ function UnscheduledCardShell({
         onClick={onSelect}
         className="w-full text-left"
       >
-        <div className="font-semibold text-brand-dark truncate">
-          {order.customerName || "Customer"}
+        <div className="flex items-start justify-between gap-2">
+          <div className="font-semibold text-brand-dark truncate">
+            {order.customerName || "Customer"}
+          </div>
+          <span
+            className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+              order.scheduledStart
+                ? "bg-blue-50 text-blue-700"
+                : "bg-orange-50 text-brand-orange"
+            }`}
+          >
+            {order.scheduledStart ? "Scheduled" : "Unscheduled"}
+          </span>
         </div>
         <div className="mt-0.5 text-neutral-500 truncate">
-          {formatAddressLine(order.address)}
+          {order.address?.city?.trim() ||
+            order.customerCity?.trim() ||
+            "—"}
         </div>
         <div className="mt-1 text-neutral-400">
-          {order.date ? order.date.slice(0, 10) : "No date"} ·{" "}
-          {minutesToLabel(order.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES)}
+          {[
+            order.workOrderType?.label,
+            order.date ? formatMonthDayYear(order.date.slice(0, 10)) : "No date",
+            minutesToLabel(order.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES),
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </div>
       </button>
       {href ? (
@@ -123,7 +141,7 @@ export function UnscheduledCard({
   onSelect: () => void;
   draggable?: boolean;
 }) {
-  if (!draggable) {
+  if (!draggable || Boolean(order.scheduledStart)) {
     return (
       <UnscheduledCardShell
         order={order}

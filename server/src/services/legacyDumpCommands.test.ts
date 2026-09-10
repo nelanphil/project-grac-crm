@@ -17,6 +17,49 @@ describe("parseLegacyDumpCommand", () => {
     });
   });
 
+  it("parses health, collections, docs, and show", () => {
+    assert.equal(parseLegacyDumpCommand("health").kind, "health");
+    assert.deepEqual(parseLegacyDumpCommand("collections"), {
+      kind: "collections",
+      targets: ["production", "development", "mysql"],
+    });
+    assert.deepEqual(parseLegacyDumpCommand("collections mysql"), {
+      kind: "collections",
+      targets: ["mysql"],
+    });
+    assert.deepEqual(parseLegacyDumpCommand("docs customers"), {
+      kind: "docs",
+      name: "customers",
+      target: "development",
+      limit: 25,
+      skip: 0,
+    });
+    assert.deepEqual(
+      parseLegacyDumpCommand("docs customers production --limit 5 --skip 10"),
+      {
+        kind: "docs",
+        name: "customers",
+        target: "production",
+        limit: 5,
+        skip: 10,
+      },
+    );
+    assert.deepEqual(parseLegacyDumpCommand("show customers 123 mysql"), {
+      kind: "show",
+      name: "customers",
+      id: "123",
+      target: "mysql",
+    });
+  });
+
+  it("rejects invalid reporting commands", () => {
+    assert.equal(parseLegacyDumpCommand("health extra").kind, "rejected");
+    assert.equal(parseLegacyDumpCommand("docs").kind, "rejected");
+    assert.equal(parseLegacyDumpCommand("docs customers --limit").kind, "rejected");
+    assert.equal(parseLegacyDumpCommand("show customers").kind, "rejected");
+    assert.equal(parseLegacyDumpCommand("collections staging").kind, "rejected");
+  });
+
   it("requires --confirm for production execute", () => {
     assert.equal(parseLegacyDumpCommand("execute development").kind, "execute");
     const missing = parseLegacyDumpCommand("execute production");

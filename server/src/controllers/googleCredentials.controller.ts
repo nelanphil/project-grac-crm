@@ -15,7 +15,6 @@ import {
 } from "../services/notification.service";
 
 const SLUG = "google";
-const TERRITORY_MAP_ROLES = new Set(["owner", "admin", "super-admin"]);
 
 function emptyToUndefined(value: string | undefined | null): string | undefined {
   if (value == null || value.trim() === "") return undefined;
@@ -50,14 +49,14 @@ export async function getGoogleCredentials(
 
 /**
  * GET /google-credentials/maps-browser-key
- * Returns the Maps JS browser key for territory map (owner/admin/super-admin).
+ * Returns the Maps JS browser key for Schedule and territory maps (jobs:read).
  */
 export async function getMapsBrowserApiKey(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
-  if (!req.user || !TERRITORY_MAP_ROLES.has(req.user.role)) {
-    res.status(403).json({ message: "Insufficient role" });
+  if (!req.user?.permissions.includes("jobs:read")) {
+    res.status(403).json({ message: "Missing permission: jobs:read" });
     return;
   }
 

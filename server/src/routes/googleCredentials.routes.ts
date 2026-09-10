@@ -14,12 +14,15 @@ import {
 const router = Router();
 
 const adminRoles = requireRole("admin", "super-admin", "owner");
-const territoryMapRoles = requireRole("admin", "super-admin", "owner");
 
 router.use(authenticate);
 
-// Territory map key — available to owners/admins before integrations middleware.
-router.get("/maps-browser-key", territoryMapRoles, getMapsBrowserApiKey);
+// Maps JS browser key — Schedule and territory maps (jobs:read, same as /schedule/*).
+router.get(
+  "/maps-browser-key",
+  requirePermission("jobs:read"),
+  getMapsBrowserApiKey,
+);
 
 router.use(adminRoles);
 

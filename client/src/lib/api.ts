@@ -1655,6 +1655,19 @@ export interface ScheduleQueue {
   pastDue: WorkOrderListItem[];
 }
 
+export async function geocodeMissingScheduleAddresses(
+  token: string,
+  addressIds: string[],
+): Promise<{ updated: Array<{ addressId: string; lat: number; lng: number }> }> {
+  return authRequest<{
+    updated: Array<{ addressId: string; lat: number; lng: number }>;
+  }>("/schedule/geocode-missing", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ addressIds }),
+  });
+}
+
 export async function getScheduleQueue(
   token: string,
   opts?: { from?: string; to?: string },
@@ -5027,5 +5040,88 @@ export async function streamLegacyDumpCommand(
       body: payload,
     },
     dumpStreamOnEvent(onLog),
+  );
+}
+
+export type DatabaseInspectTarget = "production" | "development" | "mysql";
+
+export type DatabaseInspectKind = "mongo" | "mysql";
+
+export type DatabaseOverview = {
+  id: DatabaseInspectTarget;
+  kind: DatabaseInspectKind;
+  label: string | null;
+  status: "connected" | "disconnected" | "unavailable";
+  reason?: string;
+  collectionCount?: number;
+};
+
+export type DatabaseCollectionInfo = {
+  name: string;
+  count: number;
+};
+
+export type DatabaseCollectionsResult = {
+  target: DatabaseInspectTarget;
+  kind: DatabaseInspectKind;
+  label: string;
+  collections: DatabaseCollectionInfo[];
+};
+
+export type DatabaseDocumentsPage = {
+  target: DatabaseInspectTarget;
+  kind: DatabaseInspectKind;
+  name: string;
+  documents: Record<string, unknown>[];
+  total: number;
+  limit: number;
+  skip: number;
+};
+
+export type DatabaseDocumentResult = {
+  target: DatabaseInspectTarget;
+  kind: DatabaseInspectKind;
+  name: string;
+  document: Record<string, unknown>;
+};
+
+export async function getDatabaseOverviews(
+  token: string,
+): Promise<{ databases: DatabaseOverview[] }> {
+  return authRequest("/databases", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getDatabaseCollections(
+  token: string,
+  target: DatabaseInspectTarget,
+): Promise<DatabaseCollectionsResult> {
+  return authRequest(`/databases/${target}/collections`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getDatabaseDocuments(
+  token: string,
+  target: DatabaseInspectTarget,
+  name: string,
+  options: { limit?: number; skip?: number; id?: string } = {},
+): Promise<DatabaseDocumentsPage> {
+  const params = new URLSearchParams();
+  if (options.limit != null) params.set("limit", String(options.limit));
+  if (options.skip != null) params.set("skip", String(options.skip));
+  if (options.id) params.set("id", options.id);
+  const qs = params.toString();
+  return authRequest(
+    `/databases/${target}/collections/${encodeURIComponent(name)}/documents${
+      qs ? `?${qs}` : ""
+    }`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
   );
 }
