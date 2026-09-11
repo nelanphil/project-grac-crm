@@ -8,7 +8,14 @@ import { CustomerAddress, ICustomerAddress } from "../models/mongo/CustomerAddre
 import { activeContactFilter, CustomerContact, ICustomerContact } from "../models/mongo/CustomerContact";
 import { Equipment, IEquipment } from "../models/mongo/Equipment";
 import { IInvoice, Invoice } from "../models/mongo/Invoice";
+import { IProduct, Product } from "../models/mongo/Product";
 import { IWorkOrder, WorkOrder } from "../models/mongo/WorkOrder";
+import {
+  hasPricedProductLines,
+  legacyWorkOrderHasBillableMoney,
+  mappedWorkOrderMoneyFields,
+  type LegacyCatalogProduct,
+} from "./legacyWorkOrderItems";
 import { mintCheckoutKey } from "../utils/checkoutKey";
 import {
   customerHasEquipmentData,
@@ -78,6 +85,7 @@ export type ImportSummary = {
   workOrdersSkippedLegacy: number;
   workOrdersSkippedFuzzy: number;
   workOrderOrphans: number;
+  workOrdersLineItemsBackfilled: number;
 };
 
 export type LegacyDumpSyncResult = {
@@ -168,6 +176,7 @@ type BoundModels = {
   Equipment: Model<IEquipment>;
   WorkOrder: Model<IWorkOrder>;
   Invoice: Model<IInvoice>;
+  Product: Model<IProduct>;
 };
 
 const notMergedFilter = {
@@ -673,7 +682,25 @@ function bindModels(conn: Connection): BoundModels {
     Equipment: conn.model<IEquipment>("Equipment", Equipment.schema),
     WorkOrder: conn.model<IWorkOrder>("WorkOrder", WorkOrder.schema),
     Invoice: conn.model<IInvoice>("Invoice", Invoice.schema),
+    Product: conn.model<IProduct>("Product", Product.schema),
   };
+}
+
+async function loadProductCatalog(
+  models: BoundModels,
+): Promise<LegacyCatalogProduct[]> {
+  const products = await models.Product.find({ active: { $ne: false } })
+    .select("_id productCode partNumber name kind listPrice unitPrice")
+    .lean();
+  return products.map((product) => ({
+    _id: String(product._id),
+    productCode: product.productCode,
+    partNumber: product.partNumber,
+    name: product.name,
+    kind: product.kind,
+    listPrice: product.listPrice,
+    unitPrice: product.unitPrice,
+  }));
 }
 
 async function createCustomerFromRow(
@@ -801,6 +828,7 @@ type ExistingWorkOrder = {
   customerZip?: string;
   customerPhone?: string;
   customerEmail?: string;
+  parts?: Array<{ lineType?: string }>;
 };
 
 function emptySnapshot(value: string | undefined): boolean {
@@ -847,6 +875,26 @@ async function backfillExistingWorkOrderCustomer(
     { $set: { customerRef: customer._id, customerId: customer.legacyId } },
   );
   existing.customerRef = customer._id;
+  return true;
+}
+
+async function backfillExistingWorkOrderLineItems(
+  models: BoundModels,
+  existing: ExistingWorkOrder,
+  row: WorkOrderRow,
+  catalog: LegacyCatalogProduct[],
+  dryRun: boolean,
+): Promise<boolean> {
+  if (hasPricedProductLines(existing.parts)) return false;
+  if (!legacyWorkOrderHasBillableMoney(row)) return false;
+
+  const money = mappedWorkOrderMoneyFields(row, catalog);
+  if (!hasPricedProductLines(money.parts) && money.total <= 0) return false;
+
+  if (dryRun) return true;
+
+  await models.WorkOrder.updateOne({ _id: existing._id }, { $set: money });
+  existing.parts = money.parts;
   return true;
 }
 
@@ -1133,7 +1181,7 @@ export async function runLegacyDumpSync(options: {
     log("Loading existing work orders…");
     const existingWos = await models.WorkOrder.find()
       .select(
-        "_id legacyId customerId customerRef customerName customerAddress customerCity customerZip customerPhone customerEmail date descPerform",
+        "_id legacyId customerId customerRef customerName customerAddress customerCity customerZip customerPhone customerEmail date descPerform parts",
       )
       .lean();
     const existingWoLegacyIds = new Set<number>();
@@ -1163,6 +1211,13 @@ export async function runLegacyDumpSync(options: {
     let orphanWos = 0;
     let insertedWos = 0;
     let backfilledWoRefs = 0;
+    let backfilledWoLineItems = 0;
+    const productCatalog = await loadProductCatalog(models);
+    if (workOrderRows.length > 0) {
+      log(
+        `Loaded ${productCatalog.length.toLocaleString()} active products for work-order line mapping.`,
+      );
+    }
 
     for (let i = 0; i < workOrderRows.length; i += 1) {
       const row = workOrderRows[i]!;
@@ -1182,6 +1237,14 @@ export async function runLegacyDumpSync(options: {
             log,
           );
           if (backfilled) backfilledWoRefs += 1;
+          const mappedItems = await backfillExistingWorkOrderLineItems(
+            models,
+            existing,
+            row,
+            productCatalog,
+            dryRun,
+          );
+          if (mappedItems) backfilledWoLineItems += 1;
         }
         continue;
       }
@@ -1217,6 +1280,7 @@ export async function runLegacyDumpSync(options: {
       }
 
       const site = await loadSiteRefs(models, customer._id, siteCache);
+      const money = mappedWorkOrderMoneyFields(row, productCatalog);
       await models.WorkOrder.create({
         legacyId: row.legacyId,
         userId: row.userId,
@@ -1227,16 +1291,10 @@ export async function runLegacyDumpSync(options: {
         descPerform: row.descPerform,
         paid: row.paid,
         runHours: row.runHours,
-        laborHours: row.laborHours,
         date: row.date,
         tech: row.tech,
         descPerformed: row.descPerformed,
-        totalParts: row.totalParts,
-        totalLabor: row.totalLabor,
-        miscExp: row.miscExp,
-        subtotal: row.subtotal,
-        shipping: row.shipping,
-        total: row.total,
+        ...money,
         certify: row.certify,
         completed: row.completed,
         customerName: displayName(customer),
@@ -1260,7 +1318,7 @@ export async function runLegacyDumpSync(options: {
     }
 
     log(
-      `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()} ref-backfills=${backfilledWoRefs.toLocaleString()}.`,
+      `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()} ref-backfills=${backfilledWoRefs.toLocaleString()} line-item-backfills=${backfilledWoLineItems.toLocaleString()}.`,
     );
 
     const summary: ImportSummary = {
@@ -1275,6 +1333,7 @@ export async function runLegacyDumpSync(options: {
       workOrdersSkippedLegacy: skippedWoLegacy,
       workOrdersSkippedFuzzy: skippedWoFuzzy,
       workOrderOrphans: orphanWos,
+      workOrdersLineItemsBackfilled: backfilledWoLineItems,
     };
 
     log(

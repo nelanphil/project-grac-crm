@@ -42,4 +42,8 @@ export const MIGRATIONS: MigrationEntry[] = [
     id: "2026-08-27-customer-message-threads",
     file: "merge-customer-message-threads",
   },
+  {
+    id: "2026-09-11-work-order-line-items",
+    file: "backfill-work-order-line-items",
+  },
 ];

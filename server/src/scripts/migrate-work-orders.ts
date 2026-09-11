@@ -13,6 +13,8 @@ import fs from "fs";
 import { connectMongoDB, disconnectMongoDB } from "../config/mongodb";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { Customer } from "../models/mongo/Customer";
+import { Product } from "../models/mongo/Product";
+import { mappedWorkOrderMoneyFields } from "../services/legacyWorkOrderItems";
 import mongoose from "mongoose";
 
 const DUMP_PATH = path.resolve(__dirname, "database_dump/work_orders.sql");
@@ -173,8 +175,24 @@ async function main() {
   const customerMap = await buildCustomerMap();
   console.log(`Found ${customerMap.size} customers for linking.`);
 
+  const catalog = (
+    await Product.find({ active: { $ne: false } })
+      .select("_id productCode partNumber name kind listPrice unitPrice")
+      .lean()
+  ).map((product) => ({
+    _id: String(product._id),
+    productCode: product.productCode,
+    partNumber: product.partNumber,
+    name: product.name,
+    kind: product.kind,
+    listPrice: product.listPrice,
+    unitPrice: product.unitPrice,
+  }));
+  console.log(`Loaded ${catalog.length} products for line-item mapping.`);
+
   const docs = rows.map((row) => ({
     ...row,
+    ...mappedWorkOrderMoneyFields(row, catalog),
     customerRef: customerMap.get(row.customerId)
       ? new mongoose.Types.ObjectId(customerMap.get(row.customerId))
       : undefined,
