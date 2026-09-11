@@ -118,33 +118,41 @@ async function enrichInvoiceDetail(invoice: {
 }): Promise<{
   customer: InvoiceCustomerSummary | null;
   serviceAddress: InvoiceServiceAddress | null;
+  customerRef?: string;
 }> {
   let customer: InvoiceCustomerSummary | null = null;
   let serviceAddress: InvoiceServiceAddress | null = null;
 
-  if (invoice.customerRef) {
-    const [cust, primaryContact] = await Promise.all([
-      Customer.findById(invoice.customerRef).lean(),
-      CustomerContact.findOne({
-        customerRef: invoice.customerRef,
-        isPrimary: true,
-      })
-        .select("phone email")
-        .lean(),
-    ]);
+  const resolvedCustomer = invoice.customerRef
+    ? await Customer.findById(invoice.customerRef).lean()
+    : typeof invoice.customerId === "number"
+      ? await Customer.findOne({
+          legacyId: invoice.customerId,
+          deletedAt: null,
+          $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
+        }).lean()
+      : null;
 
-    if (cust) {
-      customer = {
-        name: customerDisplayName(cust) || `Customer #${cust.legacyId}`,
-        accountNumber: cust.legacyId ?? invoice.customerId,
-        address: cust.address ?? "",
-        city: cust.city ?? "",
-        state: cust.state ?? "",
-        zip: cust.zip ?? "",
-        phone: (primaryContact?.phone || cust.phone || "").trim(),
-        email: (primaryContact?.email || cust.email || "").trim(),
-      };
-    }
+  if (resolvedCustomer) {
+    const primaryContact = await CustomerContact.findOne({
+      customerRef: resolvedCustomer._id,
+      isPrimary: true,
+    })
+      .select("phone email")
+      .lean();
+
+    customer = {
+      name:
+        customerDisplayName(resolvedCustomer) ||
+        `Customer #${resolvedCustomer.legacyId}`,
+      accountNumber: resolvedCustomer.legacyId ?? invoice.customerId,
+      address: resolvedCustomer.address ?? "",
+      city: resolvedCustomer.city ?? "",
+      state: resolvedCustomer.state ?? "",
+      zip: resolvedCustomer.zip ?? "",
+      phone: (primaryContact?.phone || resolvedCustomer.phone || "").trim(),
+      email: (primaryContact?.email || resolvedCustomer.email || "").trim(),
+    };
   }
 
   let addressRef: Types.ObjectId | null | undefined;
@@ -173,7 +181,13 @@ async function enrichInvoiceDetail(invoice: {
     }
   }
 
-  return { customer, serviceAddress };
+  return {
+    customer,
+    serviceAddress,
+    ...(resolvedCustomer && !invoice.customerRef
+      ? { customerRef: String(resolvedCustomer._id) }
+      : {}),
+  };
 }
 
 function isStaff(role?: string): boolean {

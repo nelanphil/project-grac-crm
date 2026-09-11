@@ -199,6 +199,14 @@ export async function enrichScheduleWorkOrders(
         .filter(Boolean) as string[],
     ),
   ];
+  const missingLegacyIds = [
+    ...new Set(
+      workOrders
+        .filter((wo) => !wo.customerRef)
+        .map((wo) => wo.customerId)
+        .filter((id): id is number => typeof id === "number"),
+    ),
+  ];
   const userIds = [
     ...new Set(
       workOrders
@@ -214,7 +222,8 @@ export async function enrichScheduleWorkOrders(
     ),
   ];
 
-  const [addresses, customers, users, types] = await Promise.all([
+  const [addresses, customers, fallbackCustomers, users, types] =
+    await Promise.all([
     addressIds.length
       ? CustomerAddress.find({ _id: { $in: addressIds } })
           .select("_id label address city state zip isPrimary lat lng")
@@ -223,6 +232,15 @@ export async function enrichScheduleWorkOrders(
     customerIds.length
       ? Customer.find({ _id: { $in: customerIds } })
           .select("_id accountName first last")
+          .lean()
+      : [],
+    missingLegacyIds.length
+      ? Customer.find({
+          legacyId: { $in: missingLegacyIds },
+          deletedAt: null,
+          $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
+        })
+          .select("_id legacyId accountName first last")
           .lean()
       : [],
     userIds.length
@@ -256,6 +274,14 @@ export async function enrichScheduleWorkOrders(
   const customerById = new Map(
     customers.map((c) => [c._id.toString(), customerDisplayName(c)]),
   );
+  const customerByLegacy = new Map<number, string>();
+  for (const customer of fallbackCustomers) {
+    const name = customerDisplayName(customer);
+    customerById.set(customer._id.toString(), name);
+    if (typeof customer.legacyId === "number") {
+      customerByLegacy.set(customer.legacyId, customer._id.toString());
+    }
+  }
   const userById = new Map(
     users.map((u) => [
       u._id.toString(),
@@ -273,15 +299,29 @@ export async function enrichScheduleWorkOrders(
     ]),
   );
 
-  return workOrders.map((wo) => ({
-    ...wo,
-    customerRef: wo.customerRef?.toString() ?? null,
-    workOrderTypeRef: wo.workOrderTypeRef?.toString() ?? null,
-    workOrderType: typeById.get(wo.workOrderTypeRef?.toString() ?? "") ?? null,
-    address: addressById.get(wo.addressRef?.toString() ?? "") ?? null,
-    customerName: customerById.get(wo.customerRef?.toString() ?? "") ?? null,
-    assignee: userById.get(wo.assignedUserRef?.toString() ?? "") ?? null,
-  }));
+  return workOrders.map((wo) => {
+    const resolvedRef =
+      wo.customerRef?.toString() ??
+      (typeof wo.customerId === "number"
+        ? (customerByLegacy.get(wo.customerId) ?? null)
+        : null);
+    const lookedUpName = resolvedRef
+      ? (customerById.get(resolvedRef) ?? null)
+      : null;
+    const snapshotName =
+      typeof wo.customerName === "string" && wo.customerName.trim()
+        ? wo.customerName.trim()
+        : null;
+    return {
+      ...wo,
+      customerRef: resolvedRef,
+      workOrderTypeRef: wo.workOrderTypeRef?.toString() ?? null,
+      workOrderType: typeById.get(wo.workOrderTypeRef?.toString() ?? "") ?? null,
+      address: addressById.get(wo.addressRef?.toString() ?? "") ?? null,
+      customerName: lookedUpName ?? snapshotName,
+      assignee: userById.get(wo.assignedUserRef?.toString() ?? "") ?? null,
+    };
+  });
 }
 
 export async function listSchedulableStaff(): Promise<LeanUser[]> {
@@ -412,6 +452,58 @@ async function geocodeToLatLng(
     cache.set(key, null);
     return null;
   }
+}
+
+const GEOCODE_CONCURRENCY = 5;
+
+export async function hydrateMissingAddressCoordinates(
+  addressIds: string[],
+): Promise<Array<{ addressId: string; lat: number; lng: number }>> {
+  const unique = [
+    ...new Set(
+      addressIds.filter((id) => mongoose.Types.ObjectId.isValid(id)),
+    ),
+  ];
+  if (unique.length === 0) return [];
+
+  const docs = await CustomerAddress.find({
+    _id: { $in: unique },
+    $or: [
+      { lat: null },
+      { lng: null },
+      { lat: { $exists: false } },
+      { lng: { $exists: false } },
+    ],
+  })
+    .select("address city state zip lat lng")
+    .lean();
+
+  const cache = new Map<string, LatLng | null>();
+  const updated: Array<{ addressId: string; lat: number; lng: number }> = [];
+
+  for (let i = 0; i < docs.length; i += GEOCODE_CONCURRENCY) {
+    const batch = docs.slice(i, i + GEOCODE_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (site) => {
+        const dest = await geocodeToLatLng(site, cache);
+        if (!dest) return null;
+        await CustomerAddress.updateOne(
+          { _id: site._id },
+          { $set: { lat: dest.lat, lng: dest.lng } },
+        );
+        return {
+          addressId: String(site._id),
+          lat: dest.lat,
+          lng: dest.lng,
+        };
+      }),
+    );
+    for (const row of results) {
+      if (row) updated.push(row);
+    }
+  }
+
+  return updated;
 }
 
 export type SuggestCandidate = {

@@ -2,7 +2,6 @@
 
 import { Upload } from "lucide-react";
 import JobTerminal from "@/components/admin/JobTerminal";
-import LegacyDatabaseUploadCard from "@/components/admin/LegacyDatabaseUploadCard";
 import {
   detectDumpKindHint,
   LegacyDumpTerminalSession,
@@ -65,28 +64,6 @@ function CompactDumpDrop({ session }: { session: LegacyDumpTerminalSession }) {
         />
       </div>
       {fileError && <p className="mt-1 text-[11px] text-red-400">{fileError}</p>}
-    </div>
-  );
-}
-
-export default function LegacyDatabaseSection({
-  token,
-}: {
-  token: string | null;
-}) {
-  const session = useLegacyDumpTerminal(token);
-
-  return (
-    <div className="space-y-4">
-      <JobTerminal
-        lines={session.lines}
-        busy={session.jobBusy}
-        disabled={!token}
-        placeholder="Type help for commands"
-        onSubmit={(command) => void session.onTerminalCommand(command)}
-        onClear={session.clearLines}
-      />
-      <LegacyDatabaseUploadCard session={session} />
     </div>
   );
 }

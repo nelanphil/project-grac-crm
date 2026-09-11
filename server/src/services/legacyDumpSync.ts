@@ -7,6 +7,7 @@ import { activeCustomerFilter, Customer, ICustomer } from "../models/mongo/Custo
 import { CustomerAddress, ICustomerAddress } from "../models/mongo/CustomerAddress";
 import { activeContactFilter, CustomerContact, ICustomerContact } from "../models/mongo/CustomerContact";
 import { Equipment, IEquipment } from "../models/mongo/Equipment";
+import { IInvoice, Invoice } from "../models/mongo/Invoice";
 import { IWorkOrder, WorkOrder } from "../models/mongo/WorkOrder";
 import { mintCheckoutKey } from "../utils/checkoutKey";
 import {
@@ -166,6 +167,7 @@ type BoundModels = {
   CustomerAddress: Model<ICustomerAddress>;
   Equipment: Model<IEquipment>;
   WorkOrder: Model<IWorkOrder>;
+  Invoice: Model<IInvoice>;
 };
 
 const notMergedFilter = {
@@ -670,6 +672,7 @@ function bindModels(conn: Connection): BoundModels {
     ),
     Equipment: conn.model<IEquipment>("Equipment", Equipment.schema),
     WorkOrder: conn.model<IWorkOrder>("WorkOrder", WorkOrder.schema),
+    Invoice: conn.model<IInvoice>("Invoice", Invoice.schema),
   };
 }
 
@@ -785,6 +788,66 @@ async function loadSiteRefs(
   }
   cache.set(key, refs);
   return refs;
+}
+
+type ExistingWorkOrder = {
+  _id: Types.ObjectId;
+  legacyId?: number;
+  customerId: number;
+  customerRef?: Types.ObjectId | null;
+  customerName?: string;
+  customerAddress?: string;
+  customerCity?: string;
+  customerZip?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+};
+
+function emptySnapshot(value: string | undefined): boolean {
+  return !value || !value.trim();
+}
+
+async function backfillExistingWorkOrderCustomer(
+  models: BoundModels,
+  existing: ExistingWorkOrder,
+  row: WorkOrderRow,
+  mysqlToCustomer: Map<number, MappedCustomer>,
+  index: IdentityIndex,
+  dryRun: boolean,
+  log: (msg: string) => void,
+): Promise<boolean> {
+  if (existing.customerRef) return false;
+  const customer =
+    mysqlToCustomer.get(row.customerId) ??
+    index.byLegacyId.get(row.customerId)?.[0];
+  if (!customer) return false;
+
+  const $set: Record<string, unknown> = {
+    customerRef: customer._id,
+    customerId: customer.legacyId,
+  };
+  if (emptySnapshot(existing.customerName)) $set.customerName = displayName(customer);
+  if (emptySnapshot(existing.customerAddress)) $set.customerAddress = customer.address;
+  if (emptySnapshot(existing.customerCity)) $set.customerCity = customer.city;
+  if (emptySnapshot(existing.customerZip)) $set.customerZip = customer.zip;
+  if (emptySnapshot(existing.customerPhone)) $set.customerPhone = customer.phone;
+  if (emptySnapshot(existing.customerEmail)) $set.customerEmail = customer.email;
+
+  log(
+    `${dryRun ? "Would backfill" : "Backfilling"} customerRef on existing WO ${row.legacyId} → ${displayName(customer)} (${customer.legacyId}).`,
+  );
+  if (dryRun) return true;
+
+  await models.WorkOrder.updateOne({ _id: existing._id }, { $set });
+  await models.Invoice.updateMany(
+    {
+      workOrderRef: existing._id,
+      $or: [{ customerRef: { $exists: false } }, { customerRef: null }],
+    },
+    { $set: { customerRef: customer._id, customerId: customer.legacyId } },
+  );
+  existing.customerRef = customer._id;
+  return true;
 }
 
 export async function runLegacyDumpSync(options: {
@@ -1069,12 +1132,18 @@ export async function runLegacyDumpSync(options: {
 
     log("Loading existing work orders…");
     const existingWos = await models.WorkOrder.find()
-      .select("legacyId customerId date descPerform")
+      .select(
+        "_id legacyId customerId customerRef customerName customerAddress customerCity customerZip customerPhone customerEmail date descPerform",
+      )
       .lean();
     const existingWoLegacyIds = new Set<number>();
+    const existingWoByLegacyId = new Map<number, ExistingWorkOrder>();
     const fuzzyWoKeys = new Set<string>();
     for (const wo of existingWos) {
-      if (wo.legacyId != null) existingWoLegacyIds.add(wo.legacyId);
+      if (wo.legacyId != null) {
+        existingWoLegacyIds.add(wo.legacyId);
+        existingWoByLegacyId.set(wo.legacyId, wo);
+      }
       fuzzyWoKeys.add(woFuzzyKey(wo.customerId, wo.date, wo.descPerform ?? ""));
     }
 
@@ -1093,6 +1162,7 @@ export async function runLegacyDumpSync(options: {
     let skippedWoFuzzy = 0;
     let orphanWos = 0;
     let insertedWos = 0;
+    let backfilledWoRefs = 0;
 
     for (let i = 0; i < workOrderRows.length; i += 1) {
       const row = workOrderRows[i]!;
@@ -1100,6 +1170,19 @@ export async function runLegacyDumpSync(options: {
       if (existingWoLegacyIds.has(row.legacyId)) {
         skippedWoLegacy += 1;
         audit.wosPresent += 1;
+        const existing = existingWoByLegacyId.get(row.legacyId);
+        if (existing) {
+          const backfilled = await backfillExistingWorkOrderCustomer(
+            models,
+            existing,
+            row,
+            mysqlToCustomer,
+            index,
+            dryRun,
+            log,
+          );
+          if (backfilled) backfilledWoRefs += 1;
+        }
         continue;
       }
 
@@ -1177,7 +1260,7 @@ export async function runLegacyDumpSync(options: {
     }
 
     log(
-      `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()}.`,
+      `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()} ref-backfills=${backfilledWoRefs.toLocaleString()}.`,
     );
 
     const summary: ImportSummary = {

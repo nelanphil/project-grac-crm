@@ -42,6 +42,7 @@ import contactRouter, {
 import recaptchaCredentialsRoutes from "./recaptchaCredentials.routes";
 import emailPreferenceRoutes from "./emailPreference.routes";
 import legacyDumpRoutes from "./legacyDump.routes";
+import databaseInspectRoutes from "./databaseInspect.routes";
 
 const router = Router();
 
@@ -91,5 +92,6 @@ router.use("/contact", contactRouter);
 router.use("/email-preferences", emailPreferenceRoutes);
 router.use("/contact-form-settings", contactFormSettingsRouter);
 router.use("/legacy-dumps", legacyDumpRoutes);
+router.use("/databases", databaseInspectRoutes);
 
 export default router;

@@ -477,8 +477,15 @@ export async function updateWorkOrder(
 
     const customer = workOrder.customerRef
       ? await Customer.findById(workOrder.customerRef)
-      : await Customer.findOne({ legacyId: workOrder.customerId });
+      : await Customer.findOne({
+          legacyId: workOrder.customerId,
+          deletedAt: null,
+          $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
+        });
     if (customer) {
+      if (!workOrder.customerRef) {
+        workOrder.customerRef = customer._id;
+      }
       await applyTicketFields(
         workOrder as unknown as Record<string, unknown>,
         rest,

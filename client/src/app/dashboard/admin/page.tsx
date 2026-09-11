@@ -7,7 +7,7 @@ import PaymentPlatformAppsCard from "@/components/admin/PaymentPlatformAppsCard"
 import CloudinaryCredentialsCard from "@/components/admin/CloudinaryCredentialsCard";
 import PublicAssetManagerCard from "@/components/admin/PublicAssetManagerCard";
 import ContactFormEmailsCard from "@/components/admin/ContactFormEmailsCard";
-import LegacyDatabaseSection from "@/components/admin/LegacyDatabaseSection";
+import DatabaseSection from "@/components/admin/DatabaseSection";
 import MobileTabBar from "@/components/ui/MobileTabBar";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -80,13 +80,17 @@ function AdminContent() {
   }, [user, isSuperAdmin, router]);
 
   function setTab(id: TabId) {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams();
     params.set("tab", id);
-    const query = params.toString();
-    router.replace(
-      query ? `/dashboard/admin?${query}` : "/dashboard/admin",
-      { scroll: false },
-    );
+    if (id === "database") {
+      const section = searchParams.get("section");
+      const target = searchParams.get("target");
+      const collection = searchParams.get("collection");
+      if (section) params.set("section", section);
+      if (target) params.set("target", target);
+      if (collection) params.set("collection", collection);
+    }
+    router.replace(`/dashboard/admin?${params.toString()}`, { scroll: false });
   }
 
   if (!user || !isSuperAdmin) return null;
@@ -127,7 +131,7 @@ function AdminContent() {
         <PublicAssetManagerCard token={token} />
       )}
       {activeTab === "forms" && <ContactFormEmailsCard token={token} />}
-      {activeTab === "database" && <LegacyDatabaseSection token={token} />}
+      {activeTab === "database" && <DatabaseSection token={token} />}
     </div>
   );
 }

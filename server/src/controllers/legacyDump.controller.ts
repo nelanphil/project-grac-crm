@@ -5,6 +5,12 @@ import {
   parseLegacyDumpCommand,
 } from "../services/legacyDumpCommands";
 import {
+  getInspectDocument,
+  listDatabaseOverviews,
+  listInspectCollections,
+  listInspectDocuments,
+} from "../services/databaseInspect";
+import {
   countLegacyDumpCollections,
   describeLegacyDumpTargets,
   describeMongoTarget,
@@ -396,6 +402,34 @@ export async function runLegacyDumpCommand(
     return;
   }
 
+  if (parsed.kind === "health") {
+    try {
+      const databases = await listDatabaseOverviews();
+      for (const db of databases) {
+        if (db.status === "connected") {
+          const noun = db.kind === "mysql" ? "tables" : "collections";
+          onLog(
+            `${db.id}: ${db.label ?? "ok"} (${db.collectionCount ?? 0} ${noun})`,
+            "ok",
+          );
+        } else {
+          onLog(
+            `${db.id}: ${db.status}${db.reason ? ` (${db.reason})` : ""}`,
+            "warn",
+          );
+        }
+      }
+      sendSse(res, "result", { databases });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Health check failed.";
+      onLog(message, "error");
+      sendSse(res, "error", { message });
+    }
+    endSse(res);
+    return;
+  }
+
   if (parsed.kind === "targets") {
     const targets = describeLegacyDumpTargets();
     for (const name of ["production", "development"] as LegacyDumpTarget[]) {
@@ -407,6 +441,75 @@ export async function runLegacyDumpCommand(
       }
     }
     sendSse(res, "result", { targets });
+    endSse(res);
+    return;
+  }
+
+  if (parsed.kind === "collections") {
+    const results: Awaited<ReturnType<typeof listInspectCollections>>[] = [];
+    for (const target of parsed.targets) {
+      try {
+        const listed = await listInspectCollections(target);
+        const noun = listed.kind === "mysql" ? "tables" : "collections";
+        onLog(
+          `${target}: ${listed.collections.length} ${noun} on ${listed.label}`,
+          "ok",
+        );
+        for (const collection of listed.collections) {
+          onLog(`  ${collection.name}  ${collection.count.toLocaleString()}`);
+        }
+        results.push(listed);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "List failed.";
+        onLog(`${target}: ${message}`, "error");
+      }
+    }
+    sendSse(res, "result", { collections: results });
+    endSse(res);
+    return;
+  }
+
+  if (parsed.kind === "docs") {
+    try {
+      const page = await listInspectDocuments(parsed.target, parsed.name, {
+        limit: parsed.limit,
+        skip: parsed.skip,
+      });
+      onLog(
+        `${parsed.target}/${parsed.name} total=${page.total.toLocaleString()} showing=${page.documents.length} skip=${page.skip}`,
+        "ok",
+      );
+      for (const document of page.documents) {
+        onLog(JSON.stringify(document));
+      }
+      sendSse(res, "result", page);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "docs failed.";
+      onLog(message, "error");
+      sendSse(res, "error", { message });
+    }
+    endSse(res);
+    return;
+  }
+
+  if (parsed.kind === "show") {
+    try {
+      const result = await getInspectDocument(
+        parsed.target,
+        parsed.name,
+        parsed.id,
+      );
+      onLog(
+        `${parsed.target}/${parsed.name} ${parsed.id}`,
+        "ok",
+      );
+      onLog(JSON.stringify(result.document, null, 2));
+      sendSse(res, "result", result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "show failed.";
+      onLog(message, "error");
+      sendSse(res, "error", { message });
+    }
     endSse(res);
     return;
   }

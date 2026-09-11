@@ -199,6 +199,16 @@ export function formatPrettyDate(localDate: string): string {
   });
 }
 
+export function formatMonthDayYear(localDate: string): string {
+  const iso = localDateTimeToIso(localDate, "12:00");
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: SCHEDULE_TIMEZONE,
+  });
+}
+
 export function formatPrettyDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
