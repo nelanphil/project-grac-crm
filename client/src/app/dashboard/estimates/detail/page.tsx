@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Download, Pencil } from "lucide-react";
+import { Download } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink, {
   dashboardBackLinkMutedClass,
@@ -38,7 +38,6 @@ function EstimateDetailContent() {
   const canWrite = useAuthStore((s) => s.hasPermission("estimates:write"));
   const canDelete = useAuthStore((s) => s.hasPermission("estimates:delete"));
   const [estimate, setEstimate] = useState<EstimateItem | null>(null);
-  const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -65,6 +64,36 @@ function EstimateDetailContent() {
   }
 
   const converted = estimate.status === "converted";
+  const ticket = {
+    variant: "estimate" as const,
+    number: estimate.number,
+    date: estimate.date,
+    tech: estimate.tech,
+    status: estimate.status,
+    customerName: estimate.customerName,
+    customerAddress: estimate.customerAddress,
+    customerCity: estimate.customerCity,
+    customerZip: estimate.customerZip,
+    customerPhone: estimate.customerPhone,
+    customerEmail: estimate.customerEmail,
+    workPhone: estimate.workPhone,
+    serialNumber: estimate.serialNumber,
+    generatorModel: estimate.generatorModel,
+    exerciseDay: estimate.exerciseDay,
+    exerciseTime: estimate.exerciseTime,
+    laborHours: estimate.laborHours,
+    descPerform: estimate.descPerform,
+    parts: estimate.parts,
+    totalParts: estimate.totalParts,
+    totalLabor: estimate.totalLabor,
+    miscExp: estimate.miscExp,
+    subtotal: estimate.subtotal,
+    shipping: estimate.shipping,
+    total: estimate.total,
+    signatureDataUrl: estimate.signatureDataUrl,
+    signedByName: estimate.signedByName,
+    contractDiscount: estimate.contractDiscount,
+  };
 
   return (
     <div className="space-y-4">
@@ -92,39 +121,29 @@ function EstimateDetailContent() {
             Export to PDF
           </button>
           {canWrite && !converted ? (
-            <>
-              <button
-                type="button"
-                disabled={converting}
-                onClick={async () => {
-                  if (!token) return;
-                  setConverting(true);
-                  setError(null);
-                  try {
-                    const { workOrder } = await convertEstimate(token, estimate._id);
-                    router.push(`/dashboard/work-orders/detail?id=${workOrder._id}`);
-                  } catch (err) {
-                    setError(
-                      err instanceof ApiError
-                        ? err.message
-                        : "Failed to convert estimate.",
-                    );
-                    setConverting(false);
-                  }
-                }}
-                className="rounded-lg bg-brand-orange px-3 py-2 text-sm font-medium text-white"
-              >
-                {converting ? "Converting…" : "Convert to work order"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditing((v) => !v)}
-                className="inline-flex items-center gap-2 rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white"
-              >
-                <Pencil className="h-4 w-4" />
-                {editing ? "View" : "Edit"}
-              </button>
-            </>
+            <button
+              type="button"
+              disabled={converting}
+              onClick={async () => {
+                if (!token) return;
+                setConverting(true);
+                setError(null);
+                try {
+                  const { workOrder } = await convertEstimate(token, estimate._id);
+                  router.push(`/dashboard/work-orders/detail?id=${workOrder._id}`);
+                } catch (err) {
+                  setError(
+                    err instanceof ApiError
+                      ? err.message
+                      : "Failed to convert estimate.",
+                  );
+                  setConverting(false);
+                }
+              }}
+              className="rounded-lg bg-brand-orange px-3 py-2 text-sm font-medium text-white"
+            >
+              {converting ? "Converting…" : "Convert to work order"}
+            </button>
           ) : null}
         </div>
       </div>
@@ -135,80 +154,57 @@ function EstimateDetailContent() {
         </div>
       ) : null}
 
-      {editing && !converted ? (
-        <ServiceTicketForm
-          variant="estimate"
-          initial={ticketFromRecord(estimate)}
-          submitting={submitting}
-          submitLabel="Save estimate"
-          extraActions={
-            canDelete ? (
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!token || !window.confirm("Delete this estimate?")) return;
-                  await deleteEstimate(token, estimate._id);
-                  router.push("/dashboard/estimates");
-                }}
-                className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700"
-              >
-                Delete
-              </button>
-            ) : null
-          }
-          onSubmit={async (payload) => {
-            if (!token) return;
-            setSubmitting(true);
-            setError(null);
-            try {
-              const { estimate: updated } = await updateEstimate(token, estimate._id, {
-                ...payload,
-                status: payload.status,
-              });
-              setEstimate(updated);
-              setEditing(false);
-            } catch (err) {
-              setError(
-                err instanceof ApiError ? err.message : "Failed to save estimate.",
-              );
-            } finally {
-              setSubmitting(false);
+      {canWrite && !converted ? (
+        <>
+          <ServiceTicketForm
+            variant="estimate"
+            initial={ticketFromRecord(estimate)}
+            submitting={submitting}
+            submitLabel="Save estimate"
+            extraActions={
+              canDelete ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!token || !window.confirm("Delete this estimate?")) return;
+                    await deleteEstimate(token, estimate._id);
+                    router.push("/dashboard/estimates");
+                  }}
+                  className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700"
+                >
+                  Delete
+                </button>
+              ) : null
             }
-          }}
-        />
+            onSubmit={async (payload) => {
+              if (!token) return;
+              setSubmitting(true);
+              setError(null);
+              try {
+                const { estimate: updated } = await updateEstimate(
+                  token,
+                  estimate._id,
+                  {
+                    ...payload,
+                    status: payload.status,
+                  },
+                );
+                setEstimate(updated);
+              } catch (err) {
+                setError(
+                  err instanceof ApiError ? err.message : "Failed to save estimate.",
+                );
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+          />
+          <div className="hidden print:block">
+            <ServiceTicketDocument ticket={ticket} />
+          </div>
+        </>
       ) : (
-        <ServiceTicketDocument
-          ticket={{
-            variant: "estimate",
-            number: estimate.number,
-            date: estimate.date,
-            tech: estimate.tech,
-            status: estimate.status,
-            customerName: estimate.customerName,
-            customerAddress: estimate.customerAddress,
-            customerCity: estimate.customerCity,
-            customerZip: estimate.customerZip,
-            customerPhone: estimate.customerPhone,
-            customerEmail: estimate.customerEmail,
-            workPhone: estimate.workPhone,
-            serialNumber: estimate.serialNumber,
-            generatorModel: estimate.generatorModel,
-            exerciseDay: estimate.exerciseDay,
-            exerciseTime: estimate.exerciseTime,
-            laborHours: estimate.laborHours,
-            descPerform: estimate.descPerform,
-            parts: estimate.parts,
-            totalParts: estimate.totalParts,
-            totalLabor: estimate.totalLabor,
-            miscExp: estimate.miscExp,
-            subtotal: estimate.subtotal,
-            shipping: estimate.shipping,
-            total: estimate.total,
-            signatureDataUrl: estimate.signatureDataUrl,
-            signedByName: estimate.signedByName,
-            contractDiscount: estimate.contractDiscount,
-          }}
-        />
+        <ServiceTicketDocument ticket={ticket} />
       )}
     </div>
   );

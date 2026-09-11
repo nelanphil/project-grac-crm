@@ -30,6 +30,7 @@ import { nextPrefixedNumber } from "../services/serviceTicket";
 import { syncWorkOrderInvoice } from "../services/invoice.service";
 import { addMinutes, formatLocalDate } from "../utils/scheduleTime";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
+import { findWorkOrderIdsMatchingNoteSearch } from "./workOrderNote.controller";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -192,6 +193,7 @@ export async function getWorkOrders(
     if (completedFilter !== undefined) filter.completed = completedFilter;
     if (search) {
       const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      const noteWorkOrderIds = await findWorkOrderIdsMatchingNoteSearch(re);
       filter.$and = [
         ...(Array.isArray(filter.$and) ? (filter.$and as object[]) : []),
         {
@@ -201,6 +203,9 @@ export async function getWorkOrders(
             { descPerform: re },
             { descPerformed: re },
             { customerName: re },
+            ...(noteWorkOrderIds.length > 0
+              ? [{ _id: { $in: noteWorkOrderIds } }]
+              : []),
           ],
         },
       ];

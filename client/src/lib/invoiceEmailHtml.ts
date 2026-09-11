@@ -65,6 +65,20 @@ export function invoiceEmailBodyHtml(invoice: InvoiceItem): string {
     ? `<p>Subtotal: ${escapeHtml(formatMoney(subtotalCents))}</p><p>${discountLabel}: −${escapeHtml(formatMoney(invoice.discountCents ?? 0))}</p><p><strong>Total due: ${escapeHtml(formatMoney(totalCents))}</strong></p>`
     : `<p><strong>Total due: ${escapeHtml(formatMoney(totalCents))}</strong></p>`;
 
+  const noteItems =
+    invoice.workOrderNotes && invoice.workOrderNotes.length > 0
+      ? invoice.workOrderNotes
+          .map(
+            (note) =>
+              `<li>${escapeHtml(note.content).replace(/\n/g, "<br>")}</li>`,
+          )
+          .join("")
+      : "";
+
+  const notesBlock = noteItems
+    ? `<p><strong>Notes</strong></p><ul>${noteItems}</ul>`
+    : "";
+
   return [
     "<p>Hi {{first_name}},</p>",
     `<p>Please find invoice <strong>${escapeHtml(invoice.number)}</strong> below.</p>`,
@@ -72,8 +86,11 @@ export function invoiceEmailBodyHtml(invoice: InvoiceItem): string {
     `<p>Issued: ${escapeHtml(formatDate(invoice.issuedAt))} · Due: ${escapeHtml(formatDate(invoice.dueDate))} · Status: ${escapeHtml(invoice.status)}</p>`,
     "<p><strong>Line items</strong></p>",
     `<ul>${lineItems}</ul>`,
+    notesBlock,
     totals,
-  ].join("");
+  ]
+    .filter(Boolean)
+    .join("");
 }
 
 export function pickInvoiceEmailContact(

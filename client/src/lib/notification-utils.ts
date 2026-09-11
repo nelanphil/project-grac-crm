@@ -8,6 +8,7 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   work_order: "Work order",
   contract: "Contract",
   customer_note: "Note",
+  work_order_note: "Work order note",
   user: "User",
   role: "Role",
   twilio_account: "Twilio",
@@ -46,6 +47,7 @@ export function notificationHref(
     case "contract":
       return "/dashboard/contracts";
     case "work_order":
+    case "work_order_note":
       return "/dashboard/work-orders";
     case "user":
     case "role":

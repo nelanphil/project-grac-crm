@@ -31,6 +31,7 @@ import {
   getOrCreateCheckoutKey,
 } from "../utils/checkoutKey";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
+import { listVisibleWorkOrderNotes } from "./workOrderNote.controller";
 
 export { resolveCustomerRefsForAuthUser };
 
@@ -119,6 +120,7 @@ async function enrichInvoiceDetail(invoice: {
   customer: InvoiceCustomerSummary | null;
   serviceAddress: InvoiceServiceAddress | null;
   customerRef?: string;
+  workOrderNotes?: Awaited<ReturnType<typeof listVisibleWorkOrderNotes>>;
 }> {
   let customer: InvoiceCustomerSummary | null = null;
   let serviceAddress: InvoiceServiceAddress | null = null;
@@ -181,9 +183,14 @@ async function enrichInvoiceDetail(invoice: {
     }
   }
 
+  const workOrderNotes = invoice.workOrderRef
+    ? await listVisibleWorkOrderNotes(invoice.workOrderRef)
+    : [];
+
   return {
     customer,
     serviceAddress,
+    workOrderNotes,
     ...(resolvedCustomer && !invoice.customerRef
       ? { customerRef: String(resolvedCustomer._id) }
       : {}),
@@ -796,7 +803,14 @@ export async function getInvoiceByPayToken(
       return;
     }
 
-    const publicInvoices = invoices.map((invoice) => toPublicInvoice(invoice));
+    const publicInvoices = await Promise.all(
+      invoices.map(async (invoice) => {
+        const workOrderNotes = invoice.workOrderRef
+          ? await listVisibleWorkOrderNotes(invoice.workOrderRef)
+          : [];
+        return { ...toPublicInvoice(invoice), workOrderNotes };
+      }),
+    );
     const totalCents = invoices.reduce(
       (sum, invoice) =>
         invoice.status === "paid" || invoice.status === "void"

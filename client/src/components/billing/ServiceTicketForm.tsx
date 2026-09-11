@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   DndContext,
@@ -56,6 +56,7 @@ import {
   ticketTotals,
 } from "@/lib/service-ticket";
 import { useAuthStore } from "@/store/useAuthStore";
+import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 
 function Field({
   label,
@@ -226,6 +227,40 @@ function ProductSuggestMenu({
   );
 }
 
+function isEmptyLine(row: TicketPartRow): boolean {
+  return !row.partNumber.trim() && !row.description.trim();
+}
+
+function LineRemoveConfirm({
+  label,
+  onCancel,
+  onConfirm,
+}: {
+  label: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-start gap-2 text-xs">
+      <p className="text-red-700">{label}</p>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="rounded border border-neutral-300 px-2 py-1 font-medium text-neutral-600 hover:bg-neutral-50"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={onConfirm}
+        className="rounded bg-red-600 px-2 py-1 font-medium text-white hover:bg-red-700"
+      >
+        Remove
+      </button>
+    </div>
+  );
+}
+
 function SortableLineRow({
   row,
   productResults,
@@ -258,6 +293,15 @@ function SortableLineRow({
   const searchRef = useRef<HTMLInputElement>(null);
   const didFocus = useRef(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLInputElement | null>(null);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+
+  function requestRemove() {
+    if (isEmptyLine(row)) {
+      onRemove();
+      return;
+    }
+    setConfirmingRemove(true);
+  }
 
   useEffect(() => {
     if (pendingFocus && !didFocus.current) {
@@ -276,134 +320,156 @@ function SortableLineRow({
     opacity: isDragging ? 0.65 : 1,
   };
 
+  const confirmRow = confirmingRemove ? (
+    <tr className="border-t border-red-100 bg-red-50">
+      <td colSpan={5} className="px-3 py-2">
+        <LineRemoveConfirm
+          label={
+            row.lineType === "note"
+              ? "Remove this line note?"
+              : "Remove this product?"
+          }
+          onCancel={() => setConfirmingRemove(false)}
+          onConfirm={onRemove}
+        />
+      </td>
+    </tr>
+  ) : null;
+
   if (row.lineType === "note") {
     return (
-      <tr ref={setNodeRef} style={style} className="border-t border-neutral-100 bg-neutral-50/60">
+      <>
+        <tr ref={setNodeRef} style={style} className="border-t border-neutral-100 bg-neutral-50/60">
+          <td className="px-1 py-1">
+            <button
+              type="button"
+              className="cursor-grab touch-none rounded p-1 text-neutral-400 hover:text-neutral-600"
+              aria-label="Reorder note"
+              {...attributes}
+              {...listeners}
+            >
+              <GripVertical className="h-4 w-4" />
+            </button>
+          </td>
+          <td className="px-2 py-1 text-xs text-neutral-400">Note</td>
+          <td className="px-2 py-1" colSpan={2}>
+            <textarea
+              rows={2}
+              value={row.description}
+              onChange={(e) => onChange({ description: e.target.value })}
+              placeholder="Line note"
+              className={inputClass}
+            />
+          </td>
+          <td className="px-1 py-1 text-right">
+            <button
+              type="button"
+              onClick={requestRemove}
+              className="rounded p-1 text-neutral-400 hover:text-red-600"
+              aria-label="Remove note"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </td>
+        </tr>
+        {confirmRow}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <tr ref={setNodeRef} style={style} className="border-t border-neutral-100">
         <td className="px-1 py-1">
           <button
             type="button"
             className="cursor-grab touch-none rounded p-1 text-neutral-400 hover:text-neutral-600"
-            aria-label="Reorder note"
+            aria-label="Reorder product"
             {...attributes}
             {...listeners}
           >
             <GripVertical className="h-4 w-4" />
           </button>
         </td>
-        <td className="px-2 py-1 text-xs text-neutral-400">Note</td>
-        <td className="px-2 py-1" colSpan={2}>
-          <textarea
-            rows={2}
-            value={row.description}
-            onChange={(e) => onChange({ description: e.target.value })}
-            placeholder="Line note"
+        <td className="w-16 px-2 py-1">
+          <input
+            value={row.quantity}
+            onChange={(e) => onChange({ quantity: e.target.value })}
             className={inputClass}
           />
+        </td>
+        <td className="relative px-2 py-1">
+          <input
+            ref={searchRef}
+            value={row.partNumber}
+            onFocus={onFocusSearch}
+            onChange={(e) =>
+              onChange(
+                {
+                  partNumber: e.target.value,
+                  productRef: "",
+                },
+                e.target.value,
+              )
+            }
+            className={inputClass}
+            placeholder="Search products"
+          />
+          {row.description ? (
+            <p className="mt-0.5 text-[11px] text-neutral-500">
+              {row.kind === "labor" ? "Labor · " : ""}
+              {row.description}
+            </p>
+          ) : null}
+          {isActiveSearch && productResults.length > 0 ? (
+            <ProductSuggestMenu
+              anchor={menuAnchor}
+              products={productResults}
+              discounts={discounts}
+              onClose={onCloseSearch}
+              onSelect={(product) => {
+                const listPrice = catalogListPrice(product);
+                const kind = product.kind === "labor" ? "labor" : "part";
+                onChange({
+                  productRef: product._id,
+                  partNumber: catalogCode(product),
+                  description: product.name,
+                  kind,
+                  quantity: row.quantity || "1",
+                  listPrice: String(listPrice),
+                  unitPrice: String(discountedUnitPrice(listPrice, kind, discounts)),
+                  priceOverridden: false,
+                });
+              }}
+            />
+          ) : null}
+        </td>
+        <td className="w-28 px-2 py-1">
+          <input
+            value={row.unitPrice}
+            onChange={(e) =>
+              onChange({ unitPrice: e.target.value, priceOverridden: true })
+            }
+            className={inputClass}
+          />
+          <p className="mt-0.5 text-[10px] text-neutral-400">
+            Line {formatMoney(partAmount(row))}
+            {row.priceOverridden ? " · override" : ""}
+          </p>
         </td>
         <td className="px-1 py-1 text-right">
           <button
             type="button"
-            onClick={onRemove}
+            onClick={requestRemove}
             className="rounded p-1 text-neutral-400 hover:text-red-600"
-            aria-label="Remove note"
+            aria-label="Remove product"
           >
             <Trash2 className="h-4 w-4" />
           </button>
         </td>
       </tr>
-    );
-  }
-
-  return (
-    <tr ref={setNodeRef} style={style} className="border-t border-neutral-100">
-      <td className="px-1 py-1">
-        <button
-          type="button"
-          className="cursor-grab touch-none rounded p-1 text-neutral-400 hover:text-neutral-600"
-          aria-label="Reorder product"
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
-      </td>
-      <td className="w-16 px-2 py-1">
-        <input
-          value={row.quantity}
-          onChange={(e) => onChange({ quantity: e.target.value })}
-          className={inputClass}
-        />
-      </td>
-      <td className="relative px-2 py-1">
-        <input
-          ref={searchRef}
-          value={row.partNumber}
-          onFocus={onFocusSearch}
-          onChange={(e) =>
-            onChange(
-              {
-                partNumber: e.target.value,
-                productRef: "",
-              },
-              e.target.value,
-            )
-          }
-          className={inputClass}
-          placeholder="Search products"
-        />
-        {row.description ? (
-          <p className="mt-0.5 text-[11px] text-neutral-500">
-            {row.kind === "labor" ? "Labor · " : ""}
-            {row.description}
-          </p>
-        ) : null}
-        {isActiveSearch && productResults.length > 0 ? (
-          <ProductSuggestMenu
-            anchor={menuAnchor}
-            products={productResults}
-            discounts={discounts}
-            onClose={onCloseSearch}
-            onSelect={(product) => {
-              const listPrice = catalogListPrice(product);
-              const kind = product.kind === "labor" ? "labor" : "part";
-              onChange({
-                productRef: product._id,
-                partNumber: catalogCode(product),
-                description: product.name,
-                kind,
-                quantity: row.quantity || "1",
-                listPrice: String(listPrice),
-                unitPrice: String(discountedUnitPrice(listPrice, kind, discounts)),
-                priceOverridden: false,
-              });
-            }}
-          />
-        ) : null}
-      </td>
-      <td className="w-28 px-2 py-1">
-        <input
-          value={row.unitPrice}
-          onChange={(e) =>
-            onChange({ unitPrice: e.target.value, priceOverridden: true })
-          }
-          className={inputClass}
-        />
-        <p className="mt-0.5 text-[10px] text-neutral-400">
-          Line {formatMoney(partAmount(row))}
-          {row.priceOverridden ? " · override" : ""}
-        </p>
-      </td>
-      <td className="px-1 py-1 text-right">
-        <button
-          type="button"
-          onClick={onRemove}
-          className="rounded p-1 text-neutral-400 hover:text-red-600"
-          aria-label="Remove product"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </td>
-    </tr>
+      {confirmRow}
+    </>
   );
 }
 
@@ -422,6 +488,7 @@ export default function ServiceTicketForm({
   submitLabel,
   onSubmit,
   extraActions,
+  invoiceAction,
 }: {
   variant: TicketVariant;
   initial?: TicketFormState;
@@ -429,9 +496,12 @@ export default function ServiceTicketForm({
   submitting?: boolean;
   submitLabel: string;
   onSubmit: (payload: ReturnType<typeof ticketToPayload>) => void | Promise<void>;
-  extraActions?: React.ReactNode;
+  extraActions?: ReactNode;
+  invoiceAction?: ReactNode;
 }) {
   const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
+  const canWriteJobs = useAuthStore((s) => s.hasPermission("jobs:write"));
   const [form, setForm] = useState<TicketFormState>(initial ?? emptyTicketForm());
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerListItem[]>([]);
@@ -771,7 +841,7 @@ export default function ServiceTicketForm({
   const equipmentFieldsLocked = Boolean(customer && existingEquipmentSelected);
 
   return (
-    <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6">
+    <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6 print:hidden">
       <article className="rounded-xl border border-neutral-200 bg-white px-4 py-6 shadow-sm sm:px-8">
         <header className="border-b border-neutral-200 pb-5 text-center">
           <p className="text-3xl font-black tracking-[0.2em] text-brand-dark">
@@ -903,330 +973,340 @@ export default function ServiceTicketForm({
           )}
         </div>
 
-        <div className="mt-5">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Customer
-          </p>
-          <div className="relative">
-            <input
-              value={customerQuery || form.customerName}
-              onChange={(e) => {
-                setCustomerQuery(e.target.value);
-                if (form.customerName) patch({ customerName: e.target.value });
-              }}
-              placeholder="Search customers"
-              aria-label="Search customers"
-              className={inputClass}
-            />
-            {customerResults.length > 0 ? (
-              <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
-                {customerResults.map((c) => (
-                  <li key={c._id}>
-                    <button
-                      type="button"
-                      onClick={() => applyCustomer(c)}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                    >
-                      <span className="font-medium text-brand-dark">
-                        {formatCustomerRecordName(c)}
-                      </span>
-                      <span className="mt-0.5 block text-xs text-neutral-500">
-                        {c.address} {c.city}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+        <div className="mt-5 grid gap-5 lg:grid-cols-3">
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              Customer
+            </p>
+            <div className="relative">
+              <input
+                value={customerQuery || form.customerName}
+                onChange={(e) => {
+                  setCustomerQuery(e.target.value);
+                  if (form.customerName) patch({ customerName: e.target.value });
+                }}
+                placeholder="Search customers"
+                aria-label="Search customers"
+                className={inputClass}
+              />
+              {customerResults.length > 0 ? (
+                <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
+                  {customerResults.map((c) => (
+                    <li key={c._id}>
+                      <button
+                        type="button"
+                        onClick={() => applyCustomer(c)}
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                      >
+                        <span className="font-medium text-brand-dark">
+                          {formatCustomerRecordName(c)}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-neutral-500">
+                          {c.address} {c.city}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+            {customer && customer.addresses.length > 1 ? (
+              <div className="mt-3">
+                <Field label="Service address">
+                  <select
+                    value={form.addressRef}
+                    onChange={(e) => applyAddress(e.target.value)}
+                    className={inputClass}
+                  >
+                    {customer.addresses.map((a) => (
+                      <option key={a._id} value={a._id}>
+                        {a.label || a.address}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
             ) : null}
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Field label="Name" className="sm:col-span-2">
+                <input
+                  value={form.customerName}
+                  onChange={(e) => patch({ customerName: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Address" className="sm:col-span-2">
+                <input
+                  value={form.customerAddress}
+                  onChange={(e) => patch({ customerAddress: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="City">
+                <input
+                  value={form.customerCity}
+                  onChange={(e) => patch({ customerCity: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="ZIP">
+                <input
+                  value={form.customerZip}
+                  onChange={(e) => patch({ customerZip: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Phone">
+                <PhoneInput
+                  value={form.customerPhone}
+                  onChange={(e) => patch({ customerPhone: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Email">
+                <input
+                  value={form.customerEmail}
+                  onChange={(e) => patch({ customerEmail: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Work phone" className="sm:col-span-2">
+                <PhoneInput
+                  value={form.workPhone}
+                  onChange={(e) => patch({ workPhone: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+            </div>
           </div>
-          {customer && customer.addresses.length > 1 ? (
-            <div className="mt-3">
-              <Field label="Service address">
+
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              Equipment
+            </p>
+            {customer ? (
+              <div>
                 <select
-                  value={form.addressRef}
-                  onChange={(e) => applyAddress(e.target.value)}
+                  value={existingEquipmentSelected ? form.equipmentRef : ""}
+                  onChange={(e) => applyEquipment(e.target.value)}
+                  aria-label="Equipment"
                   className={inputClass}
                 >
-                  {customer.addresses.map((a) => (
-                    <option key={a._id} value={a._id}>
-                      {a.label || a.address}
+                  {equipmentOptions.map((unit) => (
+                    <option key={unit._id} value={unit._id}>
+                      {[unit.generatorModel || "Generator", unit.serial]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </option>
                   ))}
-                </select>
-              </Field>
-            </div>
-          ) : null}
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label="Name">
-              <input
-                value={form.customerName}
-                onChange={(e) => patch({ customerName: e.target.value })}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Address" className="lg:col-span-2">
-              <input
-                value={form.customerAddress}
-                onChange={(e) => patch({ customerAddress: e.target.value })}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="City">
-              <input
-                value={form.customerCity}
-                onChange={(e) => patch({ customerCity: e.target.value })}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="ZIP">
-              <input
-                value={form.customerZip}
-                onChange={(e) => patch({ customerZip: e.target.value })}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Phone">
-              <PhoneInput
-                value={form.customerPhone}
-                onChange={(e) => patch({ customerPhone: e.target.value })}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Email">
-              <input
-                value={form.customerEmail}
-                onChange={(e) => patch({ customerEmail: e.target.value })}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Work phone">
-              <PhoneInput
-                value={form.workPhone}
-                onChange={(e) => patch({ workPhone: e.target.value })}
-                className={inputClass}
-              />
-            </Field>
-          </div>
-        </div>
-
-        <div className="mt-5">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Equipment
-          </p>
-          {customer ? (
-            <div>
-              <select
-                value={existingEquipmentSelected ? form.equipmentRef : ""}
-                onChange={(e) => applyEquipment(e.target.value)}
-                aria-label="Equipment"
-                className={inputClass}
-              >
-                {equipmentOptions.map((unit) => (
-                  <option key={unit._id} value={unit._id}>
-                    {[unit.generatorModel || "Generator", unit.serial]
-                      .filter(Boolean)
-                      .join(" · ")}
+                  <option value="">
+                    {hasExistingEquipment
+                      ? "Add another equipment"
+                      : "Add new equipment"}
                   </option>
-                ))}
-                <option value="">
-                  {hasExistingEquipment
-                    ? "Add another equipment"
-                    : "Add new equipment"}
-                </option>
-              </select>
-              {hasExistingEquipment ? (
-                <p className="mt-1 text-xs text-amber-700">
-                  This address already has equipment on file. Use an existing
-                  unit or add another.
-                </p>
-              ) : null}
+                </select>
+                {hasExistingEquipment ? (
+                  <p className="mt-1 text-xs text-amber-700">
+                    This address already has equipment on file. Use an existing
+                    unit or add another.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Field label="Serial number">
+                <input
+                  value={form.serialNumber}
+                  onChange={(e) => patch({ serialNumber: e.target.value })}
+                  readOnly={equipmentFieldsLocked}
+                  className={`${inputClass}${equipmentFieldsLocked ? " bg-neutral-50" : ""}`}
+                />
+              </Field>
+              <Field label="Model">
+                <input
+                  value={form.generatorModel}
+                  onChange={(e) => patch({ generatorModel: e.target.value })}
+                  readOnly={equipmentFieldsLocked}
+                  className={`${inputClass}${equipmentFieldsLocked ? " bg-neutral-50" : ""}`}
+                />
+              </Field>
+              <Field label="Exercise Day">
+                <input
+                  value={form.exerciseDay}
+                  onChange={(e) => patch({ exerciseDay: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="Time Set">
+                <input
+                  value={form.exerciseTime}
+                  onChange={(e) => patch({ exerciseTime: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
             </div>
-          ) : null}
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label="Serial number">
-              <input
-                value={form.serialNumber}
-                onChange={(e) => patch({ serialNumber: e.target.value })}
-                readOnly={equipmentFieldsLocked}
-                className={`${inputClass}${equipmentFieldsLocked ? " bg-neutral-50" : ""}`}
-              />
-            </Field>
-            <Field label="Model">
-              <input
-                value={form.generatorModel}
-                onChange={(e) => patch({ generatorModel: e.target.value })}
-                readOnly={equipmentFieldsLocked}
-                className={`${inputClass}${equipmentFieldsLocked ? " bg-neutral-50" : ""}`}
-              />
-            </Field>
-            <Field label="Exercise Day">
-              <input
-                value={form.exerciseDay}
-                onChange={(e) => patch({ exerciseDay: e.target.value })}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Time Set">
-              <input
-                value={form.exerciseTime}
-                onChange={(e) => patch({ exerciseTime: e.target.value })}
-                className={inputClass}
-              />
-            </Field>
           </div>
-        </div>
 
-        <div className="mt-5 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
-          <div>
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Parts & Labor
+          <div className="space-y-2 rounded border border-neutral-200 p-3 text-sm">
+            {discountBanner ? (
+              <p className="rounded bg-sky-50 px-2 py-1.5 text-xs text-sky-800">
+                {discountBanner}
               </p>
-              {discountBanner ? (
-                <p className="text-[11px] font-normal normal-case tracking-normal text-sky-800">
-                  {discountBanner}
-                </p>
-              ) : null}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={addProductRow}
-                  className="inline-flex items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add product
-                </button>
-                <button
-                  type="button"
-                  onClick={addNoteRow}
-                  className="inline-flex items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add note
-                </button>
-              </div>
+            ) : null}
+            <div className="flex justify-between">
+              <span>Total parts</span>
+              <span>{formatMoney(totals.totalParts)}</span>
             </div>
-            <div className="overflow-x-auto rounded border border-neutral-200">
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleDragEnd}
-              >
-                <table className="min-w-full text-sm">
-                  <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
-                    <tr>
-                      <th className="w-8 px-1 py-2" />
-                      <th className="w-16 px-2 py-2 text-left">Qty</th>
-                      <th className="px-2 py-2 text-left">Product</th>
-                      <th className="w-28 px-2 py-2 text-left">Amount</th>
-                      <th className="w-8 px-1 py-2" />
-                    </tr>
-                  </thead>
-                  <SortableContext
-                    items={form.parts.map((row) => row.id)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <tbody>
-                      {form.parts.length === 0 ? (
-                        <tr>
-                          <td
-                            colSpan={5}
-                            className="px-3 py-6 text-center text-sm text-neutral-400"
-                          >
-                            Add parts or labor from the product catalog.
-                          </td>
-                        </tr>
-                      ) : (
-                        form.parts.map((row) => (
-                          <SortableLineRow
-                            key={row.id}
-                            row={row}
-                            productResults={productResults}
-                            isActiveSearch={activePartId === row.id}
-                            pendingFocus={pendingFocusId === row.id}
-                            discounts={discountRules}
-                            onFocusSearch={() => setActivePartId(row.id)}
-                            onCloseSearch={() => {
-                              if (activePartId === row.id) {
-                                setActivePartId(null);
-                                setProductResults([]);
-                              }
-                            }}
-                            onChange={(updates, searchQuery) =>
-                              updatePart(row.id, updates, searchQuery)
-                            }
-                            onRemove={() => removePart(row.id)}
-                          />
-                        ))
-                      )}
-                    </tbody>
-                  </SortableContext>
-                </table>
-              </DndContext>
+            <div className="flex justify-between">
+              <span>Total labor</span>
+              <span>{formatMoney(totals.totalLabor)}</span>
             </div>
-          </div>
-
-          <div className="space-y-3">
-            {variant === "work-order" ? (
-              <Field label="Description of work performed">
-                <textarea
-                  rows={8}
-                  value={form.descPerformed}
-                  onChange={(e) => patch({ descPerformed: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
-            ) : (
-              <Field label="Description of work to be performed">
-                <textarea
-                  rows={8}
-                  value={form.descPerform}
-                  onChange={(e) => patch({ descPerform: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
-            )}
-            <div className="space-y-2 rounded border border-neutral-200 p-3 text-sm">
-              {discountBanner ? (
-                <p className="rounded bg-sky-50 px-2 py-1.5 text-xs text-sky-800">
-                  {discountBanner}
-                </p>
-              ) : null}
-              <div className="flex justify-between">
-                <span>Total parts</span>
-                <span>{formatMoney(totals.totalParts)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Total labor</span>
-                <span>{formatMoney(totals.totalLabor)}</span>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span>Misc exp.</span>
-                <input
-                  value={form.miscExp}
-                  onChange={(e) => patch({ miscExp: e.target.value })}
-                  className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
-                />
-              </div>
-              <div className="flex justify-between border-t border-neutral-200 pt-2">
-                <span>Sub total</span>
-                <span>{formatMoney(totals.subtotal)}</span>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span>Shipping</span>
-                <input
-                  value={form.shipping}
-                  onChange={(e) => patch({ shipping: e.target.value })}
-                  className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
-                />
-              </div>
-              <div className="flex justify-between border-t border-neutral-200 pt-2 font-semibold">
-                <span>Total</span>
-                <span>{formatMoney(totals.total)}</span>
-              </div>
+            <div className="flex items-center justify-between gap-2">
+              <span>Misc exp.</span>
+              <input
+                value={form.miscExp}
+                onChange={(e) => patch({ miscExp: e.target.value })}
+                className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
+              />
             </div>
+            <div className="flex justify-between border-t border-neutral-200 pt-2">
+              <span>Sub total</span>
+              <span>{formatMoney(totals.subtotal)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span>Shipping</span>
+              <input
+                value={form.shipping}
+                onChange={(e) => patch({ shipping: e.target.value })}
+                className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
+              />
+            </div>
+            <div className="flex justify-between border-t border-neutral-200 pt-2 font-semibold">
+              <span>Total</span>
+              <span>{formatMoney(totals.total)}</span>
+            </div>
+            {variant === "work-order" && invoiceAction ? (
+              <div className="pt-2">{invoiceAction}</div>
+            ) : null}
           </div>
         </div>
+
+        <div className="mx-auto mt-5 w-full max-w-3xl">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              Parts & Labor
+            </p>
+            {discountBanner ? (
+              <p className="text-[11px] font-normal normal-case tracking-normal text-sky-800">
+                {discountBanner}
+              </p>
+            ) : null}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={addProductRow}
+                className="inline-flex items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add product
+              </button>
+              <button
+                type="button"
+                onClick={addNoteRow}
+                className="inline-flex items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add note
+              </button>
+            </div>
+          </div>
+          <div className="overflow-x-auto rounded border border-neutral-200">
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <table className="min-w-full text-sm">
+                <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
+                  <tr>
+                    <th className="w-8 px-1 py-2" />
+                    <th className="w-16 px-2 py-2 text-left">Qty</th>
+                    <th className="px-2 py-2 text-left">Product</th>
+                    <th className="w-28 px-2 py-2 text-left">Amount</th>
+                    <th className="w-8 px-1 py-2" />
+                  </tr>
+                </thead>
+                <SortableContext
+                  items={form.parts.map((row) => row.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <tbody>
+                    {form.parts.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={5}
+                          className="px-3 py-6 text-center text-sm text-neutral-400"
+                        >
+                          Add parts or labor from the product catalog.
+                        </td>
+                      </tr>
+                    ) : (
+                      form.parts.map((row) => (
+                        <SortableLineRow
+                          key={row.id}
+                          row={row}
+                          productResults={productResults}
+                          isActiveSearch={activePartId === row.id}
+                          pendingFocus={pendingFocusId === row.id}
+                          discounts={discountRules}
+                          onFocusSearch={() => setActivePartId(row.id)}
+                          onCloseSearch={() => {
+                            if (activePartId === row.id) {
+                              setActivePartId(null);
+                              setProductResults([]);
+                            }
+                          }}
+                          onChange={(updates, searchQuery) =>
+                            updatePart(row.id, updates, searchQuery)
+                          }
+                          onRemove={() => removePart(row.id)}
+                        />
+                      ))
+                    )}
+                  </tbody>
+                </SortableContext>
+              </table>
+            </DndContext>
+          </div>
+        </div>
+
+        {variant === "estimate" ? (
+          <div className="mt-5">
+            <Field label="Description of work to be performed">
+              <textarea
+                rows={6}
+                value={form.descPerform}
+                onChange={(e) => patch({ descPerform: e.target.value })}
+                className={inputClass}
+              />
+            </Field>
+          </div>
+        ) : token && user && recordId ? (
+          <div className="mt-5">
+            <WorkOrderNotesPanel
+              token={token}
+              workOrderId={recordId}
+              userId={user.id}
+              canWrite={canWriteJobs}
+              userRole={user.role}
+              fallbackContent={form.descPerformed}
+            />
+          </div>
+        ) : variant === "work-order" ? (
+          <p className="mt-5 text-sm text-neutral-500">
+            Save this work order to add notes.
+          </p>
+        ) : null}
 
         <div className="mt-5 flex flex-wrap items-end justify-between gap-4 border-t border-neutral-200 pt-5">
           {variant === "work-order" ? (

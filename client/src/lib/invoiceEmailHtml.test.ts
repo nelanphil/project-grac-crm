@@ -86,6 +86,24 @@ describe("invoiceEmailHtml", () => {
     assert.match(html, /Discount SAVE/);
   });
 
+  it("includes visible work order notes without HTML injection", () => {
+    const html = invoiceEmailBodyHtml({
+      ...invoice,
+      workOrderNotes: [
+        {
+          _id: "n1",
+          workOrderRef: "wo-1",
+          content: "Replaced filter <script>",
+          visibleToCustomer: true,
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
+    });
+    assert.match(html, /<p><strong>Notes<\/strong><\/p>/);
+    assert.match(html, /Replaced filter &lt;script&gt;/);
+  });
+
   it("treats open and failed invoices as payable", () => {
     assert.equal(isInvoicePayable({ status: "open" }), true);
     assert.equal(isInvoicePayable({ status: "failed" }), true);

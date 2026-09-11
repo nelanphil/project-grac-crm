@@ -267,6 +267,24 @@ export default function InvoiceDocument({
         </table>
       </div>
 
+      {invoice.workOrderNotes && invoice.workOrderNotes.length > 0 ? (
+        <div className="mt-6 border-t border-neutral-200 pt-6">
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            Notes
+          </p>
+          <ul className="mt-2 space-y-3">
+            {invoice.workOrderNotes.map((note) => (
+              <li
+                key={note._id}
+                className="whitespace-pre-wrap text-sm text-neutral-700"
+              >
+                {note.content}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {invoice.paymentProvider ? (
         <p className={`mt-4 text-xs text-neutral-500 ${isCustomer ? "" : "capitalize"}`}>
           Payment method: {invoice.paymentProvider}

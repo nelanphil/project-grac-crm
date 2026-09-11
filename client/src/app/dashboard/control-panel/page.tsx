@@ -9,6 +9,7 @@ import GoogleCredentialsCard from "@/components/control-panel/GoogleCredentialsC
 import RecaptchaCredentialsCard from "@/components/control-panel/RecaptchaCredentialsCard";
 import PaymentProvidersCard from "@/components/control-panel/PaymentProvidersCard";
 import WorkOrderTypesCard from "@/components/control-panel/WorkOrderTypesCard";
+import NoteTemplatesCard from "@/components/control-panel/NoteTemplatesCard";
 import MobileTabBar from "@/components/ui/MobileTabBar";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -143,7 +144,12 @@ function ControlPanelContent() {
         </div>
       )}
 
-      {activeTab === "work-orders" && <WorkOrderTypesCard />}
+      {activeTab === "work-orders" && (
+        <div className="space-y-6">
+          <WorkOrderTypesCard />
+          <NoteTemplatesCard />
+        </div>
+      )}
     </div>
   );
 }

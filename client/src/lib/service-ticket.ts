@@ -215,7 +215,6 @@ export function ticketToPayload(form: TicketFormState) {
     addressRef: form.addressRef || null,
     equipmentRef: form.equipmentRef || null,
     descPerform: form.descPerform,
-    descPerformed: form.descPerformed,
     date: form.date || null,
     tech: form.tech,
     assignedUserRef: form.assignedUserRef || null,

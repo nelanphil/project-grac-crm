@@ -8,6 +8,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "work_order",
   "contract",
   "customer_note",
+  "work_order_note",
   "user",
   "role",
   "twilio_account",
@@ -33,6 +34,7 @@ export const OPERATIONAL_ENTITY_TYPES: NotificationEntityType[] = [
   "work_order",
   "contract",
   "customer_note",
+  "work_order_note",
 ];
 
 export const NOTIFICATION_ACTIONS = [

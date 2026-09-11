@@ -64,7 +64,7 @@ export type ServiceTicketView = {
   contractDiscount?: TicketContractDiscount | null;
 };
 
-export default function ServiceTicketDocument({
+function TicketTotals({
   ticket,
   invoiceAction,
 }: {
@@ -72,6 +72,63 @@ export default function ServiceTicketDocument({
   invoiceAction?: ReactNode;
 }) {
   const isEstimate = ticket.variant === "estimate";
+  return (
+    <div className="space-y-1 text-sm">
+      {ticket.contractDiscount &&
+      formatDiscountSummary(
+        ticket.contractDiscount,
+        ticket.contractDiscount.label,
+      ) ? (
+        <p className="text-xs text-sky-800">
+          {formatDiscountSummary(
+            ticket.contractDiscount,
+            ticket.contractDiscount.label,
+          )}
+        </p>
+      ) : null}
+      <p className="flex justify-between gap-4">
+        <span>Total parts</span>
+        <span>{formatMoney(ticket.totalParts)}</span>
+      </p>
+      <p className="flex justify-between gap-4">
+        <span>Total labor</span>
+        <span>{formatMoney(ticket.totalLabor)}</span>
+      </p>
+      <p className="flex justify-between gap-4">
+        <span>Misc exp.</span>
+        <span>{formatMoney(ticket.miscExp)}</span>
+      </p>
+      <p className="flex justify-between gap-4">
+        <span>Sub total</span>
+        <span>{formatMoney(ticket.subtotal)}</span>
+      </p>
+      <p className="flex justify-between gap-4">
+        <span>Shipping</span>
+        <span>{formatMoney(ticket.shipping)}</span>
+      </p>
+      <p className="flex justify-between gap-4 font-semibold">
+        <span>Total</span>
+        <span>{formatMoney(ticket.total)}</span>
+      </p>
+      {!isEstimate && invoiceAction ? (
+        <div className="pt-2 print:hidden">{invoiceAction}</div>
+      ) : null}
+    </div>
+  );
+}
+
+export default function ServiceTicketDocument({
+  ticket,
+  invoiceAction,
+  notesSlot,
+}: {
+  ticket: ServiceTicketView;
+  invoiceAction?: ReactNode;
+  notesSlot?: ReactNode;
+}) {
+  const isEstimate = ticket.variant === "estimate";
+  const showWorkToPerform = Boolean(ticket.descPerform?.trim()) && !isEstimate;
+
   return (
     <article className="invoice-document rounded-xl border border-neutral-200 bg-white px-4 py-6 shadow-sm sm:px-10 sm:py-10 print:rounded-none print:border-0 print:shadow-none print:px-0 print:py-0">
       <header className="border-b border-neutral-200 pb-5 text-center">
@@ -107,7 +164,7 @@ export default function ServiceTicketDocument({
         </p>
       </div>
 
-      <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+      <div className="mt-4 grid gap-4 text-sm lg:grid-cols-3">
         <div>
           <p className="font-semibold text-brand-dark">{ticket.customerName || "—"}</p>
           <p>{ticket.customerAddress}</p>
@@ -130,116 +187,77 @@ export default function ServiceTicketDocument({
             <p className="capitalize">Status: {ticket.status}</p>
           )}
         </div>
+        <TicketTotals ticket={ticket} invoiceAction={invoiceAction} />
       </div>
 
-      <div className="mt-4">
-        <p className="text-xs font-semibold uppercase text-neutral-500">
-          Work to be performed
-        </p>
-        <p className="mt-1 whitespace-pre-wrap text-sm">
-          {ticket.descPerform || "—"}
-        </p>
-      </div>
-
-      <div className="mt-5 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
-        <div>
+      {showWorkToPerform ? (
+        <div className="mt-4">
           <p className="text-xs font-semibold uppercase text-neutral-500">
-            Parts & Labor
+            Work to be performed
           </p>
-          <table className="mt-1 min-w-full text-sm">
-            <thead>
-              <tr className="border-b text-left text-xs uppercase text-neutral-500">
-                <th className="py-2">Qty</th>
-                <th className="py-2">Product</th>
-                <th className="py-2 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(ticket.parts.length
-                ? ticket.parts
-                : [{ quantity: 0, partNumber: "", amount: 0 }]
-              ).map((part, index) =>
-                part.lineType === "note" ? (
-                  <tr key={index} className="border-b border-neutral-100">
-                    <td colSpan={3} className="py-2 italic text-neutral-600">
-                      {part.description || "—"}
-                    </td>
-                  </tr>
-                ) : (
-                  <tr key={index} className="border-b border-neutral-100">
-                    <td className="py-2">{part.quantity || ""}</td>
-                    <td className="py-2">
-                      {part.partNumber}
-                      {part.description ? (
-                        <span className="ml-2 text-neutral-500">
-                          {part.kind === "labor" ? "Labor · " : ""}
-                          {part.description}
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="py-2 text-right">
-                      {part.amount ? formatMoney(part.amount) : ""}
-                    </td>
-                  </tr>
-                ),
-              )}
-            </tbody>
-          </table>
+          <p className="mt-1 whitespace-pre-wrap text-sm">
+            {ticket.descPerform}
+          </p>
         </div>
-        <div className="space-y-2 text-sm">
-          {!isEstimate ? (
-            <div>
-              <p className="text-xs font-semibold uppercase text-neutral-500">
-                Work performed
-              </p>
-              <p className="mt-1 whitespace-pre-wrap">
-                {ticket.descPerformed || "—"}
-              </p>
-            </div>
-          ) : null}
-          <div className="space-y-1 border-t border-neutral-200 pt-2">
-            {ticket.contractDiscount &&
-            formatDiscountSummary(
-              ticket.contractDiscount,
-              ticket.contractDiscount.label,
-            ) ? (
-              <p className="text-xs text-sky-800">
-                {formatDiscountSummary(
-                  ticket.contractDiscount,
-                  ticket.contractDiscount.label,
-                )}
-              </p>
-            ) : null}
-            <p className="flex justify-between">
-              <span>Total parts</span>
-              <span>{formatMoney(ticket.totalParts)}</span>
-            </p>
-            <p className="flex justify-between">
-              <span>Total labor</span>
-              <span>{formatMoney(ticket.totalLabor)}</span>
-            </p>
-            <p className="flex justify-between">
-              <span>Misc exp.</span>
-              <span>{formatMoney(ticket.miscExp)}</span>
-            </p>
-            <p className="flex justify-between">
-              <span>Sub total</span>
-              <span>{formatMoney(ticket.subtotal)}</span>
-            </p>
-            <p className="flex justify-between">
-              <span>Shipping</span>
-              <span>{formatMoney(ticket.shipping)}</span>
-            </p>
-            <p className="flex justify-between font-semibold">
-              <span>Total</span>
-              <span>{formatMoney(ticket.total)}</span>
-            </p>
-            {!isEstimate && invoiceAction ? (
-              <div className="pt-2 print:hidden">{invoiceAction}</div>
-            ) : null}
-          </div>
-        </div>
+      ) : null}
+
+      <div className="mx-auto mt-5 w-full max-w-3xl">
+        <p className="text-center text-xs font-semibold uppercase text-neutral-500">
+          Parts & Labor
+        </p>
+        <table className="mt-1 min-w-full text-sm">
+          <thead>
+            <tr className="border-b text-left text-xs uppercase text-neutral-500">
+              <th className="py-2">Qty</th>
+              <th className="py-2">Product</th>
+              <th className="py-2 text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(ticket.parts.length
+              ? ticket.parts
+              : [{ quantity: 0, partNumber: "", amount: 0 }]
+            ).map((part, index) =>
+              part.lineType === "note" ? (
+                <tr key={index} className="border-b border-neutral-100">
+                  <td colSpan={3} className="py-2 italic text-neutral-600">
+                    {part.description || "—"}
+                  </td>
+                </tr>
+              ) : (
+                <tr key={index} className="border-b border-neutral-100">
+                  <td className="py-2">{part.quantity || ""}</td>
+                  <td className="py-2">
+                    {part.partNumber}
+                    {part.description ? (
+                      <span className="ml-2 text-neutral-500">
+                        {part.kind === "labor" ? "Labor · " : ""}
+                        {part.description}
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="py-2 text-right">
+                    {part.amount ? formatMoney(part.amount) : ""}
+                  </td>
+                </tr>
+              ),
+            )}
+          </tbody>
+        </table>
       </div>
+
+      {isEstimate ? (
+        <div className="mt-5">
+          <p className="text-xs font-semibold uppercase text-neutral-500">
+            Work to be performed
+          </p>
+          <p className="mt-1 whitespace-pre-wrap text-sm">
+            {ticket.descPerform || "—"}
+          </p>
+        </div>
+      ) : notesSlot ? (
+        <div className="mt-5">{notesSlot}</div>
+      ) : null}
 
       <div className="mt-6 grid gap-5 sm:grid-cols-2">
         <p className="text-xs leading-relaxed text-neutral-600">

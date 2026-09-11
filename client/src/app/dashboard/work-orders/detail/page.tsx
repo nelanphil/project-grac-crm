@@ -3,15 +3,15 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Download, Pencil } from "lucide-react";
+import { Download } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink, {
   dashboardBackLinkMutedClass,
 } from "@/components/dashboard/DashboardBackLink";
 import ServiceTicketDocument from "@/components/billing/ServiceTicketDocument";
 import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
-import CustomerBillToCard from "@/components/billing/CustomerBillToCard";
 import InvoiceWorkOrderButton from "@/components/billing/InvoiceWorkOrderButton";
+import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -41,11 +41,9 @@ function WorkOrderDetailContent() {
   const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
   const canDelete = useAuthStore((s) => s.hasPermission("jobs:delete"));
   const [order, setOrder] = useState<WorkOrderListItem | null>(null);
-  const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [invoiceRefresh, setInvoiceRefresh] = useState(0);
 
   useEffect(() => {
     if (!token || !id) {
@@ -86,6 +84,71 @@ function WorkOrderDetailContent() {
   }
 
   const number = order.number || (order.legacyId ? String(order.legacyId) : "");
+  const ticket = {
+    variant: "work-order" as const,
+    number,
+    date: order.date,
+    tech: order.tech,
+    customerName: order.customerName ?? "",
+    customerAddress: order.customerAddress ?? "",
+    customerCity: order.customerCity ?? "",
+    customerZip: order.customerZip ?? "",
+    customerPhone: order.customerPhone ?? "",
+    customerEmail: order.customerEmail ?? "",
+    workPhone: order.workPhone ?? "",
+    serialNumber: order.serialNumber ?? "",
+    generatorModel: order.generatorModel ?? "",
+    exerciseDay: order.exerciseDay ?? "",
+    exerciseTime: order.exerciseTime ?? "",
+    paid: order.paid,
+    runHours: order.runHours,
+    laborHours: order.laborHours ?? 0,
+    descPerform: order.descPerform,
+    descPerformed: order.descPerformed,
+    parts: order.parts ?? [],
+    totalParts: order.totalParts ?? 0,
+    totalLabor: order.totalLabor ?? 0,
+    miscExp: order.miscExp ?? 0,
+    subtotal: order.subtotal ?? 0,
+    shipping: order.shipping ?? 0,
+    total: order.total,
+    signatureDataUrl: order.signatureDataUrl,
+    signedByName: order.signedByName,
+    contractDiscount: order.contractDiscount,
+  };
+
+  const notesPanel =
+    token && user ? (
+      <WorkOrderNotesPanel
+        token={token}
+        workOrderId={order._id}
+        userId={user.id}
+        canWrite={canWrite}
+        userRole={user.role}
+        fallbackContent={order.descPerformed}
+      />
+    ) : null;
+
+  const printNotes =
+    token && user ? (
+      <WorkOrderNotesPanel
+        token={token}
+        workOrderId={order._id}
+        userId={user.id}
+        canWrite={false}
+        userRole={user.role}
+        fallbackContent={order.descPerformed}
+      />
+    ) : null;
+
+  const invoiceAction =
+    token ? (
+      <InvoiceWorkOrderButton
+        token={token}
+        workOrderRef={order._id}
+        sourcePaid={order.paid}
+      />
+    ) : null;
 
   return (
     <div className="space-y-4">
@@ -114,16 +177,6 @@ function WorkOrderDetailContent() {
             <Download className="h-4 w-4" />
             Export to PDF
           </button>
-          {canWrite ? (
-            <button
-              type="button"
-              onClick={() => setEditing((v) => !v)}
-              className="inline-flex items-center gap-2 rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white"
-            >
-              <Pencil className="h-4 w-4" />
-              {editing ? "View" : "Edit"}
-            </button>
-          ) : null}
         </div>
       </div>
 
@@ -133,122 +186,71 @@ function WorkOrderDetailContent() {
         </div>
       ) : null}
 
-      {token ? (
-        <CustomerBillToCard
-          token={token}
-          workOrderRef={order._id}
-          refreshKey={invoiceRefresh}
-          customer={{
-            name: order.customerName ?? "",
-            address: order.customerAddress,
-            city: order.customerCity,
-            zip: order.customerZip,
-            phone: order.customerPhone,
-            email: order.customerEmail,
-            customerRef: order.customerRef,
-          }}
-        />
-      ) : null}
-
-      {editing ? (
-        <ServiceTicketForm
-          variant="work-order"
-          initial={ticketFromRecord(order)}
-          recordId={order._id}
-          submitting={submitting}
-          submitLabel="Save work order"
-          extraActions={
-            canDelete ? (
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!token || !window.confirm("Delete this work order?")) return;
-                  try {
-                    await deleteWorkOrder(token, order._id);
-                    router.push("/dashboard/work-orders");
-                  } catch (err) {
-                    setError(
-                      err instanceof ApiError
-                        ? err.message
-                        : "Failed to delete work order.",
-                    );
-                  }
-                }}
-                className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700"
-              >
-                Delete
-              </button>
-            ) : null
-          }
-          onSubmit={async (payload) => {
-            if (!token) return;
-            setSubmitting(true);
-            setError(null);
-            try {
-              const { assignedUserRef, ...rest } = payload;
-              const nextAssigned = assignedUserRef ?? null;
-              const prevAssigned = order.assignedUserRef ?? null;
-              const updated = await updateWorkOrder(token, order._id, {
-                ...rest,
-                ...(isDispatcherRole(user?.role) && nextAssigned !== prevAssigned
-                  ? { assignedUserRef: nextAssigned }
-                  : {}),
-              });
-              setOrder(updated);
-              setEditing(false);
-            } catch (err) {
-              setError(
-                err instanceof ApiError ? err.message : "Failed to save work order.",
-              );
-            } finally {
-              setSubmitting(false);
+      {canWrite ? (
+        <>
+          <ServiceTicketForm
+            variant="work-order"
+            initial={ticketFromRecord(order)}
+            recordId={order._id}
+            submitting={submitting}
+            submitLabel="Save work order"
+            invoiceAction={invoiceAction}
+            extraActions={
+              canDelete ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!token || !window.confirm("Delete this work order?")) return;
+                    try {
+                      await deleteWorkOrder(token, order._id);
+                      router.push("/dashboard/work-orders");
+                    } catch (err) {
+                      setError(
+                        err instanceof ApiError
+                          ? err.message
+                          : "Failed to delete work order.",
+                      );
+                    }
+                  }}
+                  className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700"
+                >
+                  Delete
+                </button>
+              ) : null
             }
-          }}
-        />
+            onSubmit={async (payload) => {
+              if (!token) return;
+              setSubmitting(true);
+              setError(null);
+              try {
+                const { assignedUserRef, ...rest } = payload;
+                const nextAssigned = assignedUserRef ?? null;
+                const prevAssigned = order.assignedUserRef ?? null;
+                const updated = await updateWorkOrder(token, order._id, {
+                  ...rest,
+                  ...(isDispatcherRole(user?.role) && nextAssigned !== prevAssigned
+                    ? { assignedUserRef: nextAssigned }
+                    : {}),
+                });
+                setOrder(updated);
+              } catch (err) {
+                setError(
+                  err instanceof ApiError ? err.message : "Failed to save work order.",
+                );
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+          />
+          <div className="hidden print:block">
+            <ServiceTicketDocument ticket={ticket} notesSlot={printNotes} />
+          </div>
+        </>
       ) : (
         <ServiceTicketDocument
-          ticket={{
-            variant: "work-order",
-            number,
-            date: order.date,
-            tech: order.tech,
-            customerName: order.customerName ?? "",
-            customerAddress: order.customerAddress ?? "",
-            customerCity: order.customerCity ?? "",
-            customerZip: order.customerZip ?? "",
-            customerPhone: order.customerPhone ?? "",
-            customerEmail: order.customerEmail ?? "",
-            workPhone: order.workPhone ?? "",
-            serialNumber: order.serialNumber ?? "",
-            generatorModel: order.generatorModel ?? "",
-            exerciseDay: order.exerciseDay ?? "",
-            exerciseTime: order.exerciseTime ?? "",
-            paid: order.paid,
-            runHours: order.runHours,
-            laborHours: order.laborHours ?? 0,
-            descPerform: order.descPerform,
-            descPerformed: order.descPerformed,
-            parts: order.parts ?? [],
-            totalParts: order.totalParts ?? 0,
-            totalLabor: order.totalLabor ?? 0,
-            miscExp: order.miscExp ?? 0,
-            subtotal: order.subtotal ?? 0,
-            shipping: order.shipping ?? 0,
-            total: order.total,
-            signatureDataUrl: order.signatureDataUrl,
-            signedByName: order.signedByName,
-            contractDiscount: order.contractDiscount,
-          }}
-          invoiceAction={
-            token ? (
-              <InvoiceWorkOrderButton
-                token={token}
-                workOrderRef={order._id}
-                sourcePaid={order.paid}
-                onCreated={() => setInvoiceRefresh((n) => n + 1)}
-              />
-            ) : null
-          }
+          ticket={ticket}
+          invoiceAction={invoiceAction}
+          notesSlot={notesPanel}
         />
       )}
     </div>

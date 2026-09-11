@@ -1465,6 +1465,135 @@ export async function deleteCustomerNote(
   );
 }
 
+export interface WorkOrderNoteAuthor {
+  first_name: string;
+  last_name: string;
+}
+
+export interface WorkOrderNote {
+  _id: string;
+  workOrderRef: string;
+  authorId?: string;
+  author?: WorkOrderNoteAuthor;
+  content: string;
+  visibleToCustomer: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getWorkOrderNotes(
+  token: string,
+  workOrderId: string,
+): Promise<{ notes: WorkOrderNote[] }> {
+  return authRequest<{ notes: WorkOrderNote[] }>(
+    `/work-orders/${workOrderId}/notes`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function createWorkOrderNote(
+  token: string,
+  workOrderId: string,
+  data: { content: string; visibleToCustomer?: boolean; templateId?: string },
+): Promise<{ note: WorkOrderNote }> {
+  return authRequest<{ note: WorkOrderNote }>(
+    `/work-orders/${workOrderId}/notes`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function updateWorkOrderNote(
+  token: string,
+  workOrderId: string,
+  noteId: string,
+  data: { content?: string; visibleToCustomer?: boolean },
+): Promise<{ note: WorkOrderNote }> {
+  return authRequest<{ note: WorkOrderNote }>(
+    `/work-orders/${workOrderId}/notes/${noteId}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deleteWorkOrderNote(
+  token: string,
+  workOrderId: string,
+  noteId: string,
+): Promise<void> {
+  await authRequest<Record<string, never>>(
+    `/work-orders/${workOrderId}/notes/${noteId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export type NoteTemplateScope = "global" | "personal";
+
+export interface NoteTemplateItem {
+  _id: string;
+  name: string;
+  body: string;
+  scope: NoteTemplateScope;
+  ownerId: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getNoteTemplates(
+  token: string,
+): Promise<{ templates: NoteTemplateItem[] }> {
+  return authRequest<{ templates: NoteTemplateItem[] }>("/note-templates", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createNoteTemplate(
+  token: string,
+  data: { name: string; body: string; scope?: NoteTemplateScope },
+): Promise<{ template: NoteTemplateItem }> {
+  return authRequest<{ template: NoteTemplateItem }>("/note-templates", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateNoteTemplate(
+  token: string,
+  id: string,
+  data: { name?: string; body?: string },
+): Promise<{ template: NoteTemplateItem }> {
+  return authRequest<{ template: NoteTemplateItem }>(`/note-templates/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteNoteTemplate(
+  token: string,
+  id: string,
+): Promise<void> {
+  await authRequest<Record<string, never>>(`/note-templates/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export type TicketLineType = "product" | "note";
 export type ProductKind = "part" | "labor";
 
@@ -2127,6 +2256,8 @@ export interface InvoiceItem {
   customer?: InvoiceCustomerSummary | null;
   /** Present on GET /invoices/:id only. */
   serviceAddress?: InvoiceServiceAddress | null;
+  /** Visible work-order notes, when the invoice is sourced from a work order. */
+  workOrderNotes?: WorkOrderNote[];
 }
 
 export interface CreateInvoiceInput {
@@ -4450,6 +4581,7 @@ export type NotificationEntityType =
   | "work_order"
   | "contract"
   | "customer_note"
+  | "work_order_note"
   | "user"
   | "role"
   | "twilio_account"
