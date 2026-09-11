@@ -94,6 +94,15 @@ export default function StaffTopBar() {
   const mobileNavRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
+    if (!mobileOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [mobileOpen]);
+
+  useEffect(() => {
     if (!editMode) return;
     // Belt-and-suspenders: dnd-kit's own click-suppression after a drag can race with the
     // browser's click dispatch, so block every click inside the wiggling nav at capture time.
@@ -273,11 +282,31 @@ export default function StaffTopBar() {
       />
 
       {mobileOpen && (
-        <div className="border-t border-[var(--staff-border)] bg-[var(--staff-surface)] md:hidden max-h-[min(70dvh,calc(100dvh-7.5rem))] overflow-y-auto overscroll-contain">
-          <nav
-            ref={mobileNavRef}
-            className="flex flex-col gap-5 px-4 pb-4 pt-4"
-          >
+        <div className="fixed inset-0 z-40 md:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="Close menu"
+            onClick={closeMenus}
+          />
+          <div className="absolute inset-y-0 left-0 flex w-[min(20rem,88vw)] flex-col bg-[var(--staff-surface)] shadow-xl">
+            <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-4 py-3">
+              <p className="text-sm font-semibold text-[var(--staff-ink)]">
+                Menu
+              </p>
+              <button
+                type="button"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[var(--staff-muted)] hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)]"
+                onClick={closeMenus}
+                aria-label="Close menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <nav
+              ref={mobileNavRef}
+              className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-4 pb-6 pt-4"
+            >
             <Link
               href="/dashboard"
               className={`rounded-lg px-3 py-2.5 text-sm font-medium ${
@@ -346,7 +375,8 @@ export default function StaffTopBar() {
               <LogOut className="h-4 w-4" />
               Sign out
             </button>
-          </nav>
+            </nav>
+          </div>
         </div>
       )}
     </header>

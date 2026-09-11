@@ -88,7 +88,7 @@ export default function Header() {
           <div className="flex items-center gap-1">
             <button
               type="button"
-              className="rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:hidden"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:hidden"
               onClick={() => setMobileOpen(!mobileOpen)}
               aria-label="Toggle menu"
               aria-expanded={mobileOpen}
@@ -119,7 +119,7 @@ export default function Header() {
         </div>
 
         {mobileOpen && (
-          <div className="border-t border-white/10 px-4 pb-4 md:hidden">
+          <div className="max-h-[min(70dvh,calc(100dvh-4rem))] overflow-y-auto overscroll-contain border-t border-white/10 px-4 pb-4 md:hidden">
             <nav className="flex flex-col gap-5 pt-4">
               {visibleSections.map((section) => (
                 <div key={section.label}>
@@ -257,7 +257,7 @@ export default function Header() {
           {showAuthedActions && <NotificationBell />}
           <button
             type="button"
-            className="inline-flex items-center justify-center rounded-md p-2 text-white"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-md p-2 text-white"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle menu"
           >
@@ -287,13 +287,13 @@ export default function Header() {
       </div>
 
       {mobileOpen && (
-        <div className="border-t border-white/10 px-4 pb-4 md:hidden">
+        <div className="max-h-[min(70dvh,calc(100dvh-4rem))] overflow-y-auto overscroll-contain border-t border-white/10 px-4 pb-4 md:hidden">
           <nav className="flex flex-col gap-3 pt-4">
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`text-sm font-medium ${
+                className={`min-h-11 inline-flex items-center text-sm font-medium ${
                   isActive(link.href) ? "text-brand-orange" : "text-white/90"
                 }`}
                 onClick={() => setMobileOpen(false)}

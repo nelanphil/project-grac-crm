@@ -48,6 +48,7 @@ import {
   localDateTimeToIso,
 } from "@/lib/schedule";
 import { useAuthStore } from "@/store/useAuthStore";
+import MobileTabBar from "@/components/ui/MobileTabBar";
 import CreatePanel from "./CreatePanel";
 import EmailCreatePanel from "./EmailCreatePanel";
 import { EmailBodyEditorHandle } from "./EmailBodyEditor";
@@ -1081,7 +1082,7 @@ export default function MessagingHub() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2 border-b border-neutral-200">
+      <MobileTabBar className="border-b border-neutral-200">
         {(
           [
             ["templates", "Templates"],
@@ -1096,7 +1097,7 @@ export default function MessagingHub() {
             key={value}
             type="button"
             onClick={() => setActiveTab(value)}
-            className={`border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
+            className={`shrink-0 border-b-2 px-2 pb-3 text-sm font-medium transition-colors md:px-1 ${
               activeTab === value
                 ? "border-brand-orange text-brand-dark"
                 : "border-transparent text-neutral-500 hover:text-brand-dark"
@@ -1105,7 +1106,7 @@ export default function MessagingHub() {
             {label}
           </button>
         ))}
-      </div>
+      </MobileTabBar>
 
       {activeTab === "templates" ? (
         <TemplatesPanel

@@ -206,7 +206,7 @@ export default function TemplatesPanel({
 
           <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-end gap-3">
-              <label className="min-w-[200px] flex-1 text-sm">
+              <label className="min-w-0 flex-1 text-sm sm:min-w-[200px]">
                 <span className="mb-1 block text-xs font-medium text-neutral-500">
                   Template name
                 </span>

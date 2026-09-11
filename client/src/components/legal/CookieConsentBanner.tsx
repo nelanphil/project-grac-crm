@@ -99,7 +99,7 @@ export default function CookieConsentBanner() {
 
   return (
     <div
-      className="fixed inset-x-0 bottom-0 z-50 border-t border-neutral-200 bg-white/95 p-4 shadow-[0_-4px_20px_rgba(0,0,0,0.08)] backdrop-blur-sm print:hidden"
+      className="fixed inset-x-0 bottom-0 z-50 border-t border-neutral-200 bg-white/95 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-[0_-4px_20px_rgba(0,0,0,0.08)] backdrop-blur-sm print:hidden"
       role="dialog"
       aria-label="Cookie consent"
     >
@@ -119,14 +119,14 @@ export default function CookieConsentBanner() {
           <button
             type="button"
             onClick={() => decide("declined")}
-            className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-brand-dark transition-colors hover:bg-neutral-50"
+            className="min-h-11 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-brand-dark transition-colors hover:bg-neutral-50"
           >
             Decline
           </button>
           <button
             type="button"
             onClick={() => decide("accepted")}
-            className="rounded-md bg-brand-orange px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+            className="min-h-11 rounded-md bg-brand-orange px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
           >
             Accept
           </button>

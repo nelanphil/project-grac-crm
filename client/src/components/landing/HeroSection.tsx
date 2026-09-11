@@ -18,7 +18,7 @@ export default function HeroSection() {
           <p className="text-sm font-semibold uppercase tracking-widest text-brand-orange">
             Expert Backup Power
           </p>
-          <h1 className="mt-4 text-4xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-6xl">
+          <h1 className="mt-4 text-[1.75rem] font-bold leading-tight tracking-tight break-words sm:text-5xl lg:text-6xl">
             With {COMPANY.name}
           </h1>
           <p className="mt-6 text-lg leading-relaxed text-white/80 sm:text-xl">

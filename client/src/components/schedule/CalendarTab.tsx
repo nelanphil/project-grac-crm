@@ -607,7 +607,7 @@ export default function CalendarTab({
           >
             Next
           </button>
-          <span className="text-sm font-medium text-neutral-600">
+          <span className="min-w-0 text-sm font-medium text-neutral-600 break-words">
             {view === "week"
               ? `${formatPrettyDate(weekStart)} – ${formatPrettyDate(weekEnd)}`
               : formatPrettyDate(monthStart)}
@@ -668,7 +668,7 @@ export default function CalendarTab({
       </div>
 
       {(view === "week" || surface === "map") && (
-        <div className="flex flex-wrap gap-1">
+        <div className="flex gap-1 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex-wrap md:overflow-visible md:pb-0">
           {weekDays.map((day) => (
             <button
               key={day}
@@ -677,7 +677,7 @@ export default function CalendarTab({
                 setSelectedDate(day);
                 setAnchorDate(day);
               }}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium ${
+              className={`shrink-0 rounded-md px-3 py-2 text-xs font-medium ${
                 day === selectedDate
                   ? "bg-brand-orange text-white"
                   : "bg-white text-neutral-600 border border-neutral-200"

@@ -246,11 +246,11 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
             : `flex h-full ${selectedCustomerRef ? "min-h-0" : "min-h-[420px] md:min-h-[420px]"}`
         }`}
       >
-            <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--staff-border)] px-3 py-2">
               <h2 className="text-sm font-semibold text-brand-dark">
                 Conversations
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2">
               {accounts.length > 0 ? (
                 <select
                   value={filterAccountId}
@@ -368,7 +368,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
             : `flex ${voiceOpen ? "min-h-[420px] md:min-h-[480px]" : "min-h-[320px]"}`
         }`}
       >
-        <div className="flex items-center justify-between border-b border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-2">
           <div className="flex items-center gap-2">
             <Phone className="h-4 w-4 text-brand-orange" />
             <h2 className="text-sm font-semibold text-brand-dark">

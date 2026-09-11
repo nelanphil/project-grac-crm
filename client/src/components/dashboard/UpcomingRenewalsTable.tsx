@@ -281,7 +281,7 @@ export default function UpcomingRenewalsTable() {
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-      <div className="px-6 py-4 border-b border-neutral-100">
+      <div className="border-b border-neutral-100 px-4 py-4 sm:px-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-brand-dark">

@@ -50,7 +50,7 @@ export default function MobileSectionNav({
   return (
     <nav
       aria-label="Page sections"
-      className="sticky top-[3.25rem] z-20 -mx-4 border-b border-neutral-200 bg-[var(--staff-canvas,#f7f5f1)]/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:hidden"
+      className="sticky top-[6.75rem] z-20 -mx-3 border-b border-neutral-200 bg-[var(--staff-canvas,#f7f5f1)]/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6 md:top-[3.25rem] lg:hidden"
     >
       <ul className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {sections.map((section) => {
@@ -65,7 +65,7 @@ export default function MobileSectionNav({
                   el?.scrollIntoView({ behavior: "smooth", block: "start" });
                   setActiveId(section.id);
                 }}
-                className={`inline-flex rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                className={`inline-flex min-h-11 items-center rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
                   active
                     ? "bg-brand-dark text-white"
                     : "bg-white text-neutral-600 ring-1 ring-inset ring-neutral-200 hover:text-brand-dark"

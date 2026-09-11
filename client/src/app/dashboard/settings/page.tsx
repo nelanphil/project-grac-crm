@@ -56,7 +56,7 @@ function SettingsContent() {
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`whitespace-nowrap rounded-lg px-4 py-2.5 text-left text-sm font-medium transition-colors ${
+              className={`min-h-11 whitespace-nowrap rounded-lg px-4 py-2.5 text-left text-sm font-medium transition-colors ${
                 activeTab === tab.id
                   ? "bg-brand-dark text-white"
                   : "text-neutral-600 hover:bg-neutral-100"
