@@ -26,6 +26,7 @@ import {
   updateEquipmentSchema,
 } from "../schemas/customerSite.schema";
 import {
+  checkCustomerDuplicatesSchema,
   createCustomerSchema,
   updateCustomerSchema,
   type CreateCustomerAddressNested,
@@ -51,9 +52,22 @@ import {
   customerHasSiteData,
   defaultAddressLabel,
   ensureCustomerSiteFromFlat,
+  normalizeAddressKey,
   normalizePhoneDigits,
   syncCustomerPrimaryFields,
 } from "../utils/customerSites";
+import {
+  buildDuplicateCheckResult,
+  DUPLICATE_ACCOUNT_NAME,
+  DUPLICATE_ADDRESS,
+  DUPLICATE_ADDRESS_IN_PAYLOAD,
+  DUPLICATE_PRIMARY_EMAIL,
+  DUPLICATE_PRIMARY_PHONE,
+  findAccountNameMatches,
+  findAddressMatches,
+  findEmailMatches,
+  findPhoneMatches,
+} from "../utils/customerDuplicates";
 import { getContractStanding } from "../utils/contractDates";
 import { ContractTemplate } from "../models/mongo/ContractTemplate";
 import {
@@ -961,6 +975,33 @@ export async function createCustomer(
       accountName = `${primary.first} ${primary.last}`.trim();
     }
 
+    const primaryPhoneMatches = await findPhoneMatches(trimStr(primary.phone));
+    if (primaryPhoneMatches.length > 0) {
+      res.status(409).json({
+        message: DUPLICATE_PRIMARY_PHONE,
+        matches: primaryPhoneMatches,
+      });
+      return;
+    }
+    const primaryEmailMatches = primaryEmail
+      ? await findEmailMatches(primaryEmail)
+      : [];
+    if (primaryEmailMatches.length > 0) {
+      res.status(409).json({
+        message: DUPLICATE_PRIMARY_EMAIL,
+        matches: primaryEmailMatches,
+      });
+      return;
+    }
+    const accountNameMatches = await findAccountNameMatches(accountName);
+    if (accountNameMatches.length > 0) {
+      res.status(409).json({
+        message: DUPLICATE_ACCOUNT_NAME,
+        matches: accountNameMatches,
+      });
+      return;
+    }
+
     // Pre-validate / geocode addresses that have a street before writing anything.
     const preparedAddresses: Array<{
       label: string;
@@ -1055,6 +1096,28 @@ export async function createCustomer(
         preparedAddresses.forEach((a, i) => {
           a.isPrimary = i === primaryIdx;
         });
+      }
+    }
+
+    const seenAddressKeys = new Set<string>();
+    for (const addr of preparedAddresses) {
+      const key = normalizeAddressKey(addr.address, addr.zip);
+      if (!key) continue;
+      if (seenAddressKeys.has(key)) {
+        res.status(409).json({ message: DUPLICATE_ADDRESS_IN_PAYLOAD });
+        return;
+      }
+      seenAddressKeys.add(key);
+      const addressMatches = await findAddressMatches({
+        address: addr.address,
+        zip: addr.zip,
+      });
+      if (addressMatches.length > 0) {
+        res.status(409).json({
+          message: DUPLICATE_ADDRESS,
+          matches: addressMatches,
+        });
+        return;
       }
     }
 
@@ -1363,6 +1426,17 @@ export async function updateCustomer(
     }
 
     const accountName = parsed.data.accountName;
+    const accountNameMatches = await findAccountNameMatches(
+      accountName,
+      customer._id.toString(),
+    );
+    if (accountNameMatches.length > 0) {
+      res.status(409).json({
+        message: DUPLICATE_ACCOUNT_NAME,
+        matches: accountNameMatches,
+      });
+      return;
+    }
     await Customer.findByIdAndUpdate(customer._id, {
       $set: { accountName },
     });
@@ -1571,43 +1645,14 @@ export async function getCustomerDuplicates(
     const excludeId = req.query.excludeId
       ? String(req.query.excludeId)
       : undefined;
-
-    const customers = await Customer.find({
-      ...notMergedFilter,
-      ...activeCustomerFilter,
-    })
-      .select("_id legacyId first last phone email address city state zip")
-      .lean();
-
-    const contacts = await CustomerContact.find({
-      customerRef: { $in: customers.map((c) => c._id) },
-      ...activeContactFilter,
-    })
-      .select("customerRef phone")
-      .lean();
-
-    const matchingCustomerIds = new Set<string>();
-    for (const contact of contacts) {
-      if (normalizePhoneDigits(contact.phone) === phone) {
-        matchingCustomerIds.add(contact.customerRef.toString());
-      }
-    }
-    for (const c of customers) {
-      if (normalizePhoneDigits(c.phone) === phone) {
-        matchingCustomerIds.add(c._id.toString());
-      }
-    }
-
-    const matches = customers.filter((c) => {
-      if (excludeId && c._id.toString() === excludeId) return false;
-      return matchingCustomerIds.has(c._id.toString());
-    });
+    const matches = await findPhoneMatches(phone, excludeId);
 
     res.status(200).json({
       phone,
       customers: matches.map((c) => ({
-        _id: c._id.toString(),
+        _id: c._id,
         legacyId: c.legacyId,
+        accountName: c.accountName,
         first: c.first,
         last: c.last,
         phone: c.phone,
@@ -1620,6 +1665,28 @@ export async function getCustomerDuplicates(
     });
   } catch (err) {
     console.error("GET /customers/duplicates error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// POST /customers/check-duplicates
+export async function checkCustomerDuplicates(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const parsed = checkCustomerDuplicatesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+      return;
+    }
+
+    const result = await buildDuplicateCheckResult(parsed.data);
+    res.status(200).json(result);
+  } catch (err) {
+    console.error("POST /customers/check-duplicates error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }

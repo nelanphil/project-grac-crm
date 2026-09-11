@@ -5,6 +5,7 @@ import {
   requireRole,
 } from "../middleware/auth.middleware";
 import {
+  checkCustomerDuplicates,
   checkEquipmentSerial,
   createCustomer,
   createCustomerAddress,
@@ -53,6 +54,11 @@ router.get(
   "/duplicates",
   requirePermission("customers:read"),
   getCustomerDuplicates,
+);
+router.post(
+  "/check-duplicates",
+  requirePermission("customers:read"),
+  checkCustomerDuplicates,
 );
 
 // Notes
