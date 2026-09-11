@@ -1056,6 +1056,60 @@ export async function getCustomerDuplicates(
   );
 }
 
+export type DuplicateSeverity = "none" | "warning" | "blocking";
+
+export interface DuplicateFieldMatch extends CustomerDuplicateMatch {
+  contactId?: string;
+  isPrimaryContact?: boolean;
+}
+
+export interface DuplicateFieldResult {
+  severity: DuplicateSeverity;
+  message?: string;
+  matches: DuplicateFieldMatch[];
+}
+
+export interface CheckCustomerDuplicatesInput {
+  excludeId?: string;
+  accountName?: string;
+  contacts?: Array<{
+    key: string;
+    phone?: string;
+    email?: string;
+    isPrimary?: boolean;
+  }>;
+  addresses?: Array<{
+    key: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+  }>;
+}
+
+export interface CheckCustomerDuplicatesResult {
+  accountName: DuplicateFieldResult;
+  contacts: Record<
+    string,
+    { phone: DuplicateFieldResult; email: DuplicateFieldResult }
+  >;
+  addresses: Record<string, DuplicateFieldResult>;
+}
+
+export async function checkCustomerDuplicates(
+  token: string,
+  body: CheckCustomerDuplicatesInput,
+): Promise<CheckCustomerDuplicatesResult> {
+  return authRequest<CheckCustomerDuplicatesResult>(
+    "/customers/check-duplicates",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
 export interface MergePreviewContract {
   _id: string;
   description: string;

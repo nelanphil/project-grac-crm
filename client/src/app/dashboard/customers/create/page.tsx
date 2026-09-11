@@ -1,11 +1,18 @@
 "use client";
 
-import { FormEvent, Suspense, useEffect, useId, useState } from "react";
+import { FormEvent, Suspense, useEffect, useId, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
+import DuplicateFieldHint, {
+  duplicateInputClass,
+} from "@/components/customers/DuplicateFieldHint";
+import {
+  firstBlockingDuplicateMessage,
+  useCustomerDuplicateChecks,
+} from "@/hooks/useCustomerDuplicateChecks";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -136,6 +143,32 @@ function CreateCustomerContent() {
   const [addresses, setAddresses] = useState<AddressDraft[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const duplicateInput = useMemo(
+    () => ({
+      accountName: accountName.trim(),
+      contacts: contacts.map((c) => ({
+        key: c.key,
+        phone: c.phone,
+        email: c.email,
+        isPrimary: c.isPrimary,
+      })),
+      addresses: addresses.map((a) => ({
+        key: a.key,
+        address: a.address,
+        city: a.city,
+        state: a.state,
+        zip: a.zip,
+      })),
+    }),
+    [accountName, contacts, addresses],
+  );
+  const {
+    result: duplicates,
+    checking: checkingDuplicates,
+    hasBlocking,
+    refresh: refreshDuplicates,
+  } = useCustomerDuplicateChecks(token, duplicateInput);
 
   useEffect(() => {
     if (user && !canManage) {
@@ -329,6 +362,13 @@ function CreateCustomerContent() {
     setSaving(true);
     setError(null);
     try {
+      const latestDuplicates = await refreshDuplicates();
+      const blockingMessage = firstBlockingDuplicateMessage(latestDuplicates);
+      if (blockingMessage) {
+        setError(blockingMessage);
+        return;
+      }
+
       const { customer } = await createCustomer(token, {
         accountName: accountName.trim(),
         contacts: contacts.map((c) => ({
@@ -417,7 +457,16 @@ function CreateCustomerContent() {
                 setAccountName(e.target.value);
               }}
               placeholder="Defaults from primary contact"
-              className={inputClass}
+              className={duplicateInputClass(
+                inputClass,
+                duplicates.accountName,
+              )}
+              aria-invalid={duplicates.accountName.severity === "blocking"}
+            />
+            <DuplicateFieldHint
+              result={duplicates.accountName}
+              checking={checkingDuplicates}
+              hasValue={accountName.trim().length >= 2}
             />
           </label>
         </section>
@@ -507,7 +556,19 @@ function CreateCustomerContent() {
                           phone: e.target.value,
                         })
                       }
-                      className={inputClass}
+                      className={duplicateInputClass(
+                        inputClass,
+                        duplicates.contacts[contact.key]?.phone,
+                      )}
+                      aria-invalid={
+                        duplicates.contacts[contact.key]?.phone.severity ===
+                        "blocking"
+                      }
+                    />
+                    <DuplicateFieldHint
+                      result={duplicates.contacts[contact.key]?.phone}
+                      checking={checkingDuplicates}
+                      hasValue={isValidUsPhone(contact.phone)}
                     />
                   </label>
                   <label className="block text-sm font-medium text-brand-dark">
@@ -518,7 +579,19 @@ function CreateCustomerContent() {
                       onChange={(e) =>
                         updateContact(contact.key, { email: e.target.value })
                       }
-                      className={inputClass}
+                      className={duplicateInputClass(
+                        inputClass,
+                        duplicates.contacts[contact.key]?.email,
+                      )}
+                      aria-invalid={
+                        duplicates.contacts[contact.key]?.email.severity ===
+                        "blocking"
+                      }
+                    />
+                    <DuplicateFieldHint
+                      result={duplicates.contacts[contact.key]?.email}
+                      checking={checkingDuplicates}
+                      hasValue={isValidEmail(contact.email)}
                     />
                   </label>
                   <label className="block text-sm font-medium text-brand-dark sm:col-span-2">
@@ -659,7 +732,14 @@ function CreateCustomerContent() {
                             suggested: null,
                           })
                         }
-                        className={inputClass}
+                        className={duplicateInputClass(
+                          inputClass,
+                          duplicates.addresses[addr.key],
+                        )}
+                        aria-invalid={
+                          duplicates.addresses[addr.key]?.severity ===
+                          "blocking"
+                        }
                       />
                     </label>
                     <label className="block text-sm font-medium text-brand-dark">
@@ -705,7 +785,14 @@ function CreateCustomerContent() {
                               suggested: null,
                             })
                           }
-                          className={inputClass}
+                          className={duplicateInputClass(
+                            inputClass,
+                            duplicates.addresses[addr.key],
+                          )}
+                          aria-invalid={
+                            duplicates.addresses[addr.key]?.severity ===
+                            "blocking"
+                          }
                         />
                       </label>
                     </div>
@@ -773,6 +860,13 @@ function CreateCustomerContent() {
                   </div>
 
                   <div className="mt-3 space-y-2">
+                    <DuplicateFieldHint
+                      result={duplicates.addresses[addr.key]}
+                      checking={checkingDuplicates}
+                      hasValue={Boolean(
+                        addr.address.trim() && addr.zip.trim(),
+                      )}
+                    />
                     {addr.validating ? (
                       <p className="inline-flex items-center gap-1.5 text-xs text-neutral-500">
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -962,7 +1056,11 @@ function CreateCustomerContent() {
           </Link>
           <button
             type="submit"
-            disabled={saving || addresses.some((a) => a.validating)}
+            disabled={
+              saving ||
+              hasBlocking ||
+              addresses.some((a) => a.validating)
+            }
             className="btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm disabled:opacity-60 sm:py-2"
           >
             {saving ? (
