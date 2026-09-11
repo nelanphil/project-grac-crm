@@ -155,13 +155,20 @@ function money(value: unknown): number {
   return Number.isFinite(n) ? roundMoney(n) : 0;
 }
 
+function unescapeDumpText(text: string): string {
+  return text
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n");
+}
+
 function combinedText(input: LegacyWorkOrderMoneyInput): string {
-  return `${input.descPerform ?? ""}\n${input.descPerformed ?? ""}`;
+  return `${unescapeDumpText(input.descPerform ?? "")}\n${unescapeDumpText(input.descPerformed ?? "")}`;
 }
 
 function firstLineLabel(text: string, fallback: string): string {
   const line =
-    text
+    unescapeDumpText(text)
       .split(/\r?\n/)
       .map((part) => part.trim())
       .find((part) => part.length > 0) ?? "";

@@ -58,6 +58,16 @@ describe("mapLegacyWorkOrderItems", () => {
     assert.equal(mapped.total, 0);
   });
 
+  it("uses the first readable line when dump text has escaped newlines", () => {
+    const mapped = mapLegacyWorkOrderItems({
+      descPerform: "Tune up and inspect\\r\\nCall only",
+      total: 250,
+    });
+    const labor = mapped.parts.find((part) => part.kind === "labor");
+    assert.equal(labor?.description, "Tune up and inspect");
+    assert.equal(mapped.total, 250);
+  });
+
   it("maps a total-only ASC ticket to a labor line", () => {
     const mapped = mapLegacyWorkOrderItems({
       descPerform: "ASC\nSent link 4/20/26",
