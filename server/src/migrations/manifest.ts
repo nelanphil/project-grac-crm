@@ -46,4 +46,8 @@ export const MIGRATIONS: MigrationEntry[] = [
     id: "2026-09-11-work-order-line-items",
     file: "backfill-work-order-line-items",
   },
+  {
+    id: "2026-09-13-asc-contract-dates",
+    file: "sync-asc-contracts",
+  },
 ];

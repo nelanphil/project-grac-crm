@@ -2,6 +2,10 @@
  * Recompute each customer's ASC / renewal dates from the latest work order
  * or invoice that includes the ASC product.
  *
+ * Idempotent: existing service contracts are updated only when dates change.
+ * Listed in migrations/manifest.ts so Render `preDeployCommand` (`npm run migrate`)
+ * applies it once on the next production deploy.
+ *
  * Run from server/:
  *   npx tsx src/scripts/sync-asc-contracts.ts
  *   npx tsx src/scripts/sync-asc-contracts.ts --dry-run
@@ -17,6 +21,9 @@ const envCandidates = [
 for (const envPath of envCandidates) {
   dotenv.config({ path: envPath });
 }
+
+import mongoose from "mongoose";
+mongoose.set("autoIndex", false);
 
 import { connectMongoDB, disconnectMongoDB } from "../config/mongodb";
 import { Contract } from "../models/mongo/Contract";
