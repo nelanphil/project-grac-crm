@@ -407,7 +407,10 @@ export default function LegacyDatabaseUploadCard({
                 Production inserted{" "}
                 {executeResult.production.summary.customersInserted} customers
                 and {executeResult.production.summary.workOrdersInserted} work
-                orders.
+                orders. ASC contracts created{" "}
+                {executeResult.production.summary.contractsCreated ?? 0},
+                updated{" "}
+                {executeResult.production.summary.contractsUpdated ?? 0}.
               </span>
             )}
             {executeResult.development && (
@@ -416,7 +419,10 @@ export default function LegacyDatabaseUploadCard({
                 Development inserted{" "}
                 {executeResult.development.summary.customersInserted} customers
                 and {executeResult.development.summary.workOrdersInserted} work
-                orders.
+                orders. ASC contracts created{" "}
+                {executeResult.development.summary.contractsCreated ?? 0},
+                updated{" "}
+                {executeResult.development.summary.contractsUpdated ?? 0}.
               </span>
             )}
             {executeResult.errors?.production && (

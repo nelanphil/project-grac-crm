@@ -157,6 +157,8 @@ async function runDumpJobs(options: {
           host: report.targetLabel,
           customersInserted: report.summary.customersInserted,
           workOrdersInserted: report.summary.workOrdersInserted,
+          contractsCreated: report.summary.contractsCreated,
+          contractsUpdated: report.summary.contractsUpdated,
         });
       }
     } catch (err) {

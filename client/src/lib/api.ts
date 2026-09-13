@@ -5056,6 +5056,10 @@ export type LegacyDumpImportSummary = {
   workOrdersSkippedLegacy: number;
   workOrdersSkippedFuzzy: number;
   workOrderOrphans: number;
+  workOrdersLineItemsBackfilled?: number;
+  ascCustomers?: number;
+  contractsCreated?: number;
+  contractsUpdated?: number;
 };
 
 export type LegacyDumpTargetResult = {

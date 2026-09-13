@@ -7,9 +7,15 @@ import { activeCustomerFilter, Customer, ICustomer } from "../models/mongo/Custo
 import { CustomerAddress, ICustomerAddress } from "../models/mongo/CustomerAddress";
 import { activeContactFilter, CustomerContact, ICustomerContact } from "../models/mongo/CustomerContact";
 import { Equipment, IEquipment } from "../models/mongo/Equipment";
+import { IContract, Contract } from "../models/mongo/Contract";
+import { IContractTemplate, ContractTemplate } from "../models/mongo/ContractTemplate";
 import { IInvoice, Invoice } from "../models/mongo/Invoice";
 import { IProduct, Product } from "../models/mongo/Product";
 import { IWorkOrder, WorkOrder } from "../models/mongo/WorkOrder";
+import {
+  syncAscContractsFromRecords,
+  type AscContractSyncSummary,
+} from "./ascContractSync";
 import {
   hasPricedProductLines,
   legacyWorkOrderHasBillableMoney,
@@ -86,6 +92,9 @@ export type ImportSummary = {
   workOrdersSkippedFuzzy: number;
   workOrderOrphans: number;
   workOrdersLineItemsBackfilled: number;
+  ascCustomers: number;
+  contractsCreated: number;
+  contractsUpdated: number;
 };
 
 export type LegacyDumpSyncResult = {
@@ -177,6 +186,8 @@ type BoundModels = {
   WorkOrder: Model<IWorkOrder>;
   Invoice: Model<IInvoice>;
   Product: Model<IProduct>;
+  Contract: Model<IContract>;
+  ContractTemplate: Model<IContractTemplate>;
 };
 
 const notMergedFilter = {
@@ -683,6 +694,11 @@ function bindModels(conn: Connection): BoundModels {
     WorkOrder: conn.model<IWorkOrder>("WorkOrder", WorkOrder.schema),
     Invoice: conn.model<IInvoice>("Invoice", Invoice.schema),
     Product: conn.model<IProduct>("Product", Product.schema),
+    Contract: conn.model<IContract>("Contract", Contract.schema),
+    ContractTemplate: conn.model<IContractTemplate>(
+      "ContractTemplate",
+      ContractTemplate.schema,
+    ),
   };
 }
 
@@ -1321,6 +1337,30 @@ export async function runLegacyDumpSync(options: {
       `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()} ref-backfills=${backfilledWoRefs.toLocaleString()} line-item-backfills=${backfilledWoLineItems.toLocaleString()}.`,
     );
 
+    log(
+      dryRun
+        ? "Auditing ASC contract dates from latest ASC work orders and invoices…"
+        : "Updating ASC contract dates from latest ASC work orders and invoices…",
+    );
+    let ascSync: AscContractSyncSummary = {
+      customersWithAsc: 0,
+      contractsCreated: 0,
+      contractsUpdated: 0,
+      skippedNoCustomer: 0,
+      skippedNoDate: 0,
+    };
+    try {
+      ascSync = await syncAscContractsFromRecords(models, {
+        dryRun,
+        onLog: log,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "ASC contract sync failed.";
+      log(`ASC contract sync failed: ${message}`);
+      throw err;
+    }
+
     const summary: ImportSummary = {
       customersParsed: customerRows.length,
       customersInserted: dryRun ? 0 : insertedCustomers,
@@ -1334,6 +1374,9 @@ export async function runLegacyDumpSync(options: {
       workOrdersSkippedFuzzy: skippedWoFuzzy,
       workOrderOrphans: orphanWos,
       workOrdersLineItemsBackfilled: backfilledWoLineItems,
+      ascCustomers: ascSync.customersWithAsc,
+      contractsCreated: dryRun ? 0 : ascSync.contractsCreated,
+      contractsUpdated: dryRun ? 0 : ascSync.contractsUpdated,
     };
 
     log(
