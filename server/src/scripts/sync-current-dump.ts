@@ -204,6 +204,7 @@ async function main(): Promise<void> {
     log(`  Work orders skipped (legacy):  ${result.summary.workOrdersSkippedLegacy}`);
     log(`  Work orders skipped (same job):${result.summary.workOrdersSkippedFuzzy}`);
     log(`  Work order orphans:            ${result.summary.workOrderOrphans}`);
+    log(`  Work order line items mapped:  ${result.summary.workOrdersLineItemsBackfilled}`);
   }
   log(`  Finished in ${elapsedSec}s`);
 }
