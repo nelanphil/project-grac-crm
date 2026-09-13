@@ -973,7 +973,7 @@ export default function ServiceTicketForm({
           )}
         </div>
 
-        <div className="mt-5 grid gap-5 lg:grid-cols-3">
+        <div className="mt-5 grid gap-5 lg:grid-cols-2">
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
               Customer
@@ -1105,12 +1105,6 @@ export default function ServiceTicketForm({
                       : "Add new equipment"}
                   </option>
                 </select>
-                {hasExistingEquipment ? (
-                  <p className="mt-1 text-xs text-amber-700">
-                    This address already has equipment on file. Use an existing
-                    unit or add another.
-                  </p>
-                ) : null}
               </div>
             ) : null}
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -1146,53 +1140,11 @@ export default function ServiceTicketForm({
               </Field>
             </div>
           </div>
-
-          <div className="space-y-2 rounded border border-neutral-200 p-3 text-sm">
-            {discountBanner ? (
-              <p className="rounded bg-sky-50 px-2 py-1.5 text-xs text-sky-800">
-                {discountBanner}
-              </p>
-            ) : null}
-            <div className="flex justify-between">
-              <span>Total parts</span>
-              <span>{formatMoney(totals.totalParts)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Total labor</span>
-              <span>{formatMoney(totals.totalLabor)}</span>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <span>Misc exp.</span>
-              <input
-                value={form.miscExp}
-                onChange={(e) => patch({ miscExp: e.target.value })}
-                className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
-              />
-            </div>
-            <div className="flex justify-between border-t border-neutral-200 pt-2">
-              <span>Sub total</span>
-              <span>{formatMoney(totals.subtotal)}</span>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <span>Shipping</span>
-              <input
-                value={form.shipping}
-                onChange={(e) => patch({ shipping: e.target.value })}
-                className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
-              />
-            </div>
-            <div className="flex justify-between border-t border-neutral-200 pt-2 font-semibold">
-              <span>Total</span>
-              <span>{formatMoney(totals.total)}</span>
-            </div>
-            {variant === "work-order" && invoiceAction ? (
-              <div className="pt-2">{invoiceAction}</div>
-            ) : null}
-          </div>
         </div>
 
-        <div className="mx-auto mt-5 w-full max-w-3xl">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-start">
+          <div className="min-w-0 flex-1">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
               Parts & Labor
             </p>
@@ -1277,6 +1229,50 @@ export default function ServiceTicketForm({
                 </SortableContext>
               </table>
             </DndContext>
+          </div>
+          </div>
+
+          <div className="w-full shrink-0 space-y-2 rounded border border-neutral-200 p-3 text-sm lg:w-72">
+            {discountBanner ? (
+              <p className="rounded bg-sky-50 px-2 py-1.5 text-xs text-sky-800">
+                {discountBanner}
+              </p>
+            ) : null}
+            <div className="flex justify-between">
+              <span>Total parts</span>
+              <span>{formatMoney(totals.totalParts)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Total labor</span>
+              <span>{formatMoney(totals.totalLabor)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span>Misc exp.</span>
+              <input
+                value={form.miscExp}
+                onChange={(e) => patch({ miscExp: e.target.value })}
+                className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
+              />
+            </div>
+            <div className="flex justify-between border-t border-neutral-200 pt-2">
+              <span>Sub total</span>
+              <span>{formatMoney(totals.subtotal)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span>Shipping</span>
+              <input
+                value={form.shipping}
+                onChange={(e) => patch({ shipping: e.target.value })}
+                className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
+              />
+            </div>
+            <div className="flex justify-between border-t border-neutral-200 pt-2 font-semibold">
+              <span>Total</span>
+              <span>{formatMoney(totals.total)}</span>
+            </div>
+            {variant === "work-order" && invoiceAction ? (
+              <div className="pt-2">{invoiceAction}</div>
+            ) : null}
           </div>
         </div>
 
