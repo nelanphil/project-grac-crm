@@ -5,6 +5,7 @@ const CHANGE_EVENT = "grac:dashboard-back-change";
 const TRANSIENT_FORM_PATHS = [
   "/dashboard/work-orders/create",
   "/dashboard/estimates/create",
+  "/dashboard/estimates/templates/create",
   "/dashboard/customers/create",
 ];
 
@@ -19,6 +20,9 @@ const PATH_LABELS: { prefix: string; label: string }[] = [
   { prefix: "/dashboard/work-orders", label: "Back to work orders" },
   { prefix: "/dashboard/estimates/detail", label: "Back to estimate" },
   { prefix: "/dashboard/estimates/create", label: "Back to new estimate" },
+  { prefix: "/dashboard/estimates/templates/edit", label: "Back to edit template" },
+  { prefix: "/dashboard/estimates/templates/create", label: "Back to new template" },
+  { prefix: "/dashboard/estimates/templates", label: "Back to estimate templates" },
   { prefix: "/dashboard/estimates", label: "Back to estimates" },
   { prefix: "/dashboard/orders/detail", label: "Back to invoice" },
   { prefix: "/dashboard/orders", label: "Back to invoices" },

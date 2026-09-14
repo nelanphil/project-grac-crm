@@ -387,4 +387,39 @@ export function ticketFromRecord(record: {
   };
 }
 
+export function applyEstimateTemplate(
+  form: TicketFormState,
+  template: {
+    descPerform?: string | null;
+    laborHours?: number | null;
+    parts?: Parameters<typeof ticketFromRecord>[0]["parts"];
+  } | null,
+): TicketFormState {
+  if (!template) {
+    return {
+      ...form,
+      descPerform: "",
+      laborHours: "",
+      laborOverridden: false,
+      totalLabor: "",
+      parts: [],
+    };
+  }
+
+  const mapped = ticketFromRecord({
+    descPerform: template.descPerform,
+    laborHours: template.laborHours,
+    parts: template.parts,
+  });
+
+  return {
+    ...form,
+    descPerform: mapped.descPerform,
+    laborHours: mapped.laborHours,
+    laborOverridden: false,
+    totalLabor: "",
+    parts: mapped.parts,
+  };
+}
+
 export const SERVICE_TICKET_TERMS = `Payment is due upon completion of work unless otherwise agreed in writing. Generator Maintenance of Florida is not liable for incidental or consequential damages, including loss of food, property, or business interruption. A 3% convenience fee applies to credit card payments. Checks may be mailed to Generator Maintenance of Florida.`;
