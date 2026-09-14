@@ -3093,6 +3093,103 @@ export async function deleteEstimate(token: string, id: string): Promise<void> {
   });
 }
 
+export interface EstimateTemplateItem {
+  _id: string;
+  name: string;
+  descPerform: string;
+  laborHours: number;
+  parts: WorkOrderPart[];
+  productCount: number;
+  isDefault: boolean;
+  createdBy: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type EstimateTemplatePayload = {
+  name: string;
+  descPerform?: string;
+  laborHours?: number;
+  parts?: WorkOrderPart[];
+};
+
+export async function getEstimateTemplates(
+  token: string,
+): Promise<{ templates: EstimateTemplateItem[] }> {
+  return authRequest<{ templates: EstimateTemplateItem[] }>(
+    "/estimate-templates",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function getEstimateTemplate(
+  token: string,
+  id: string,
+): Promise<{ template: EstimateTemplateItem }> {
+  return authRequest<{ template: EstimateTemplateItem }>(
+    `/estimate-templates/${id}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function createEstimateTemplate(
+  token: string,
+  data: EstimateTemplatePayload,
+): Promise<{ template: EstimateTemplateItem }> {
+  return authRequest<{ template: EstimateTemplateItem }>("/estimate-templates", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateEstimateTemplate(
+  token: string,
+  id: string,
+  data: Partial<EstimateTemplatePayload>,
+): Promise<{ template: EstimateTemplateItem }> {
+  return authRequest<{ template: EstimateTemplateItem }>(
+    `/estimate-templates/${id}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function setEstimateTemplateDefault(
+  token: string,
+  id: string,
+  isDefault = true,
+): Promise<{ template: EstimateTemplateItem }> {
+  return authRequest<{ template: EstimateTemplateItem }>(
+    `/estimate-templates/${id}/default`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ isDefault }),
+    },
+  );
+}
+
+export async function deleteEstimateTemplate(
+  token: string,
+  id: string,
+): Promise<void> {
+  await authRequest<Record<string, never>>(`/estimate-templates/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export interface FinancialsSummary {
   from: string | null;
   to: string | null;

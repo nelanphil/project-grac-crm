@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileText, Search } from "lucide-react";
+import { Copy, FileText, Plus, Search } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
@@ -43,6 +44,7 @@ export default function EstimatesPage() {
 function EstimatesContent() {
   const router = useRouter();
   const token = useAuthStore((s) => s.token);
+  const canWrite = useAuthStore((s) => s.hasPermission("estimates:write"));
   const [estimates, setEstimates] = useState<EstimateItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -123,11 +125,31 @@ function EstimatesContent() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-brand-dark">Estimates</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          Quotes that can be converted into work orders.
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-brand-dark">Estimates</h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            Quotes that can be converted into work orders.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/dashboard/estimates/templates"
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+          >
+            <Copy className="h-4 w-4" />
+            Templates
+          </Link>
+          {canWrite ? (
+            <Link
+              href="/dashboard/estimates/create"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90"
+            >
+              <Plus className="h-4 w-4" />
+              New estimate
+            </Link>
+          ) : null}
+        </div>
       </div>
 
       <FilterStatsCards
@@ -168,6 +190,14 @@ function EstimatesContent() {
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-24 text-center shadow-sm">
               <FileText className="mb-4 h-10 w-10 text-neutral-300" />
               <p className="text-sm font-medium text-neutral-500">No estimates yet</p>
+              {canWrite ? (
+                <Link
+                  href="/dashboard/estimates/create"
+                  className="mt-4 text-sm font-medium text-brand-orange hover:underline"
+                >
+                  Create an estimate
+                </Link>
+              ) : null}
             </div>
           }
           mobile={

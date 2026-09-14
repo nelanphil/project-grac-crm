@@ -16,6 +16,7 @@ import {
   Landmark,
   ClipboardList,
   FileSpreadsheet,
+  Copy,
   CreditCard,
   LayoutDashboard,
   LucideIcon,
@@ -159,6 +160,14 @@ export const NAV_SECTIONS: NavSection[] = [
             label: "Estimates",
             icon: FileSpreadsheet,
             excludeRoles: ["customer", "agent"],
+            children: [
+              {
+                href: "/dashboard/estimates/templates",
+                label: "Templates",
+                icon: Copy,
+                excludeRoles: ["customer", "agent"],
+              },
+            ],
           },
         ],
       },
