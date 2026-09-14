@@ -89,6 +89,40 @@ export function emptyPartRow(): TicketPartRow {
   };
 }
 
+export function isBlankProductRow(row: TicketPartRow): boolean {
+  return (
+    row.lineType === "product" &&
+    !row.productRef.trim() &&
+    !row.partNumber.trim() &&
+    !row.description.trim()
+  );
+}
+
+export function withTrailingEmptyProduct(parts: TicketPartRow[]): TicketPartRow[] {
+  const last = [...parts].reverse().find((row) => row.lineType === "product");
+  if (last && isBlankProductRow(last)) return parts;
+  return [...parts, emptyPartRow()];
+}
+
+export function insertEmptyProductBelow(
+  parts: TicketPartRow[],
+  rowId: string,
+): { parts: TicketPartRow[]; emptyId: string } {
+  const index = parts.findIndex((row) => row.id === rowId);
+  const next = index >= 0 ? parts[index + 1] : undefined;
+  if (next && isBlankProductRow(next)) {
+    return { parts, emptyId: next.id };
+  }
+  const empty = emptyPartRow();
+  if (index < 0) {
+    return { parts: [...parts, empty], emptyId: empty.id };
+  }
+  return {
+    parts: [...parts.slice(0, index + 1), empty, ...parts.slice(index + 1)],
+    emptyId: empty.id,
+  };
+}
+
 export function emptyNoteRow(): TicketPartRow {
   return {
     id: newRowId(),
@@ -134,7 +168,7 @@ export function emptyTicketForm(): TicketFormState {
     totalLabor: "",
     descPerform: "",
     descPerformed: "",
-    parts: [],
+    parts: withTrailingEmptyProduct([]),
     miscExp: "",
     shipping: "",
     signatureDataUrl: "",
@@ -231,10 +265,7 @@ export function ticketToPayload(form: TicketFormState) {
       .filter((row) =>
         row.lineType === "note"
           ? Boolean(row.description.trim())
-          : row.partNumber.trim() ||
-            row.description.trim() ||
-            parseMoney(row.quantity) > 0 ||
-            parseMoney(row.unitPrice) > 0,
+          : Boolean(row.partNumber.trim() || row.description.trim()),
       )
       .map((row) =>
         row.lineType === "note"
@@ -375,7 +406,7 @@ export function ticketFromRecord(record: {
     totalLabor: record.totalLabor ? String(record.totalLabor) : "",
     descPerform: record.descPerform ?? "",
     descPerformed: record.descPerformed ?? "",
-    parts,
+    parts: withTrailingEmptyProduct(parts),
     miscExp: record.miscExp ? String(record.miscExp) : "",
     shipping: record.shipping ? String(record.shipping) : "",
     signatureDataUrl: record.signatureDataUrl ?? "",
@@ -402,7 +433,7 @@ export function applyEstimateTemplate(
       laborHours: "",
       laborOverridden: false,
       totalLabor: "",
-      parts: [],
+      parts: withTrailingEmptyProduct([]),
     };
   }
 
@@ -418,7 +449,7 @@ export function applyEstimateTemplate(
     laborHours: mapped.laborHours,
     laborOverridden: false,
     totalLabor: "",
-    parts: mapped.parts,
+    parts: withTrailingEmptyProduct(mapped.parts.filter((row) => !isBlankProductRow(row))),
   };
 }
 

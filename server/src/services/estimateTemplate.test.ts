@@ -34,7 +34,8 @@ describe("estimate templates", () => {
         lineType: "product",
         partNumber: "",
         description: "",
-        quantity: 0,
+        quantity: 1,
+        unitPrice: 50,
       },
     ]);
 
