@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   authenticate,
+  requireAnyPermission,
   requirePermission,
 } from "../middleware/auth.middleware";
 import {
@@ -17,7 +18,11 @@ router.use(authenticate);
 
 router.get("/", requirePermission("products:read"), getProducts);
 router.get("/:id", requirePermission("products:read"), getProductById);
-router.post("/", requirePermission("products:write"), createProduct);
+router.post(
+  "/",
+  requireAnyPermission("products:write", "estimates:write", "jobs:write"),
+  createProduct,
+);
 router.patch("/:id", requirePermission("products:write"), updateProduct);
 router.delete("/:id", requirePermission("products:delete"), deleteProduct);
 

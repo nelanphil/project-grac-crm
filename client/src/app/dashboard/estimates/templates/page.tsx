@@ -187,19 +187,19 @@ function EstimateTemplatesContent() {
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {templates.map((template) => (
-                <tr key={template._id} className="hover:bg-neutral-50">
+                <tr
+                  key={template._id}
+                  className="cursor-pointer hover:bg-neutral-50"
+                  onClick={() =>
+                    router.push(
+                      `/dashboard/estimates/templates/edit?id=${template._id}`,
+                    )
+                  }
+                >
                   <td className="px-6 py-4">
-                    <button
-                      type="button"
-                      className="text-left font-medium text-brand-dark hover:underline"
-                      onClick={() =>
-                        router.push(
-                          `/dashboard/estimates/templates/edit?id=${template._id}`,
-                        )
-                      }
-                    >
+                    <span className="font-medium text-brand-dark">
                       {template.name}
-                    </button>
+                    </span>
                     {template.isDefault ? (
                       <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
                         <Star className="h-3 w-3 fill-current" />
@@ -218,7 +218,7 @@ function EstimateTemplatesContent() {
                   <td className="px-6 py-4 text-neutral-600">
                     {formatMoneyFromTemplate(template)}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Link
                         href={`/dashboard/estimates/create?templateId=${template._id}`}
@@ -237,22 +237,14 @@ function EstimateTemplatesContent() {
                         </button>
                       ) : null}
                       {canWrite ? (
-                        <>
-                          <Link
-                            href={`/dashboard/estimates/templates/edit?id=${template._id}`}
-                            className="rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                          >
-                            Edit
-                          </Link>
-                          <button
-                            type="button"
-                            disabled={busyId === template._id}
-                            onClick={() => handleDelete(template)}
-                            className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
-                          >
-                            Delete
-                          </button>
-                        </>
+                        <button
+                          type="button"
+                          disabled={busyId === template._id}
+                          onClick={() => handleDelete(template)}
+                          className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
                       ) : null}
                     </div>
                   </td>

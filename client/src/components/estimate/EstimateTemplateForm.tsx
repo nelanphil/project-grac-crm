@@ -7,6 +7,7 @@ import {
   emptyTicketForm,
   ticketToPayload,
   ticketTotals,
+  withTrailingEmptyProduct,
 } from "@/lib/service-ticket";
 import type { WorkOrderPart } from "@/lib/api";
 
@@ -49,7 +50,9 @@ export default function EstimateTemplateForm({
   const [laborHours, setLaborHours] = useState(
     initialLaborHours ? String(initialLaborHours) : "",
   );
-  const [parts, setParts] = useState<TicketPartRow[]>(initialParts);
+  const [parts, setParts] = useState<TicketPartRow[]>(
+    withTrailingEmptyProduct(initialParts),
+  );
 
   const totals = useMemo(
     () =>

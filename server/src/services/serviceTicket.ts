@@ -97,13 +97,7 @@ export function normalizeParts(
     })
     .filter((part) => {
       if (part.lineType === "note") return Boolean(part.description);
-      return (
-        part.partNumber ||
-        part.description ||
-        part.quantity > 0 ||
-        part.unitPrice > 0 ||
-        part.amount > 0
-      );
+      return Boolean(part.partNumber || part.description);
     });
 }
 
