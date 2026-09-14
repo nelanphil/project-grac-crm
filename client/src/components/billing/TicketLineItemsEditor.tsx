@@ -17,7 +17,13 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Plus, Trash2 } from "lucide-react";
-import { ProductItem, getProducts } from "@/lib/api";
+import {
+  ApiError,
+  ProductItem,
+  ProductKind,
+  createProduct,
+  getProducts,
+} from "@/lib/api";
 import {
   DEFAULT_PRODUCT_DISCOUNTS,
   discountedUnitPrice,
@@ -27,6 +33,7 @@ import {
   TicketPartRow,
   emptyNoteRow,
   emptyPartRow,
+  insertEmptyProductBelow,
   partAmount,
 } from "@/lib/service-ticket";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -61,13 +68,19 @@ function ProductSuggestMenu({
   anchor,
   products,
   discounts,
+  searchQuery,
+  canCreate,
   onSelect,
+  onCreate,
   onClose,
 }: {
   anchor: HTMLElement | null;
   products: ProductItem[];
   discounts: ProductDiscounts;
+  searchQuery: string;
+  canCreate: boolean;
   onSelect: (product: ProductItem) => void;
+  onCreate: (code: string) => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLUListElement>(null);
@@ -122,7 +135,12 @@ function ProductSuggestMenu({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [anchor, onClose]);
 
-  if (!coords || products.length === 0) return null;
+  const query = searchQuery.trim();
+  const queryCode = query.replace(/\s+/g, "").toUpperCase();
+  const exactMatch = products.some((product) => catalogCode(product).toUpperCase() === queryCode);
+  const showCreate = canCreate && queryCode.length > 0 && !exactMatch;
+
+  if (!coords || (products.length === 0 && !showCreate)) return null;
 
   return createPortal(
     <ul
@@ -176,6 +194,18 @@ function ProductSuggestMenu({
           </li>
         );
       })}
+      {showCreate ? (
+        <li className={products.length ? "border-t border-neutral-100" : ""}>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onCreate(queryCode)}
+            className="w-full px-3 py-2 text-left text-xs text-brand-blue hover:bg-sky-50"
+          >
+            Create product <span className="font-semibold">{queryCode}</span>
+          </button>
+        </li>
+      ) : null}
     </ul>,
     document.body,
   );
@@ -215,26 +245,158 @@ function LineRemoveConfirm({
   );
 }
 
+function CreateProductDialog({
+  initialCode,
+  onClose,
+  onCreated,
+}: {
+  initialCode: string;
+  onClose: () => void;
+  onCreated: (product: ProductItem) => void;
+}) {
+  const token = useAuthStore((s) => s.token);
+  const [productCode, setProductCode] = useState(initialCode);
+  const [name, setName] = useState(initialCode);
+  const [kind, setKind] = useState<ProductKind>("part");
+  const [listPrice, setListPrice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit() {
+    if (!token) return;
+    const code = productCode.replace(/\s+/g, "").toUpperCase();
+    const productName = name.trim().toUpperCase() || code;
+    if (!code || !productName) {
+      setError("Product code and name are required.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const { product } = await createProduct(token, {
+        productCode: code,
+        name: productName,
+        kind,
+        listPrice: Number(listPrice) || 0,
+      });
+      onCreated(product);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to create product.",
+      );
+      setSaving(false);
+    }
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/40 sm:items-center">
+      <div className="w-full rounded-t-xl bg-white p-5 shadow-xl sm:max-w-md sm:rounded-xl">
+        <h2 className="text-base font-semibold text-brand-dark">
+          Add product code
+        </h2>
+        <p className="mt-1 text-xs text-neutral-500">
+          This saves to the product catalog and adds it to the current line.
+        </p>
+        <div className="mt-4 grid gap-3">
+          <label className="block text-xs">
+            <span className="mb-1 block font-semibold uppercase tracking-wide text-neutral-500">
+              Product code
+            </span>
+            <input
+              value={productCode}
+              onChange={(e) => setProductCode(e.target.value.toUpperCase())}
+              className={inputClass}
+            />
+          </label>
+          <label className="block text-xs">
+            <span className="mb-1 block font-semibold uppercase tracking-wide text-neutral-500">
+              Name
+            </span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value.toUpperCase())}
+              className={inputClass}
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-xs">
+              <span className="mb-1 block font-semibold uppercase tracking-wide text-neutral-500">
+                Type
+              </span>
+              <select
+                value={kind}
+                onChange={(e) => setKind(e.target.value as ProductKind)}
+                className={inputClass}
+              >
+                <option value="part">Part</option>
+                <option value="labor">Labor</option>
+              </select>
+            </label>
+            <label className="block text-xs">
+              <span className="mb-1 block font-semibold uppercase tracking-wide text-neutral-500">
+                Price
+              </span>
+              <input
+                value={listPrice}
+                onChange={(e) => setListPrice(e.target.value)}
+                inputMode="decimal"
+                className={inputClass}
+              />
+            </label>
+          </div>
+        </div>
+        {error ? (
+          <p className="mt-3 text-sm text-red-700">{error}</p>
+        ) : null}
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void handleSubmit()}
+            className="rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Add product"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function SortableLineRow({
   row,
   productResults,
   isActiveSearch,
   pendingFocus,
   discounts,
+  searchQuery,
+  canCreate,
   onFocusSearch,
   onCloseSearch,
   onChange,
   onRemove,
+  onCreateProduct,
 }: {
   row: TicketPartRow;
   productResults: ProductItem[];
   isActiveSearch: boolean;
   pendingFocus: boolean;
   discounts: ProductDiscounts;
+  searchQuery: string;
+  canCreate: boolean;
   onFocusSearch: () => void;
   onCloseSearch: () => void;
   onChange: (updates: Partial<TicketPartRow>, searchQuery?: string) => void;
   onRemove: () => void;
+  onCreateProduct: (code: string) => void;
 }) {
   const {
     attributes,
@@ -375,12 +537,15 @@ function SortableLineRow({
               {row.description}
             </p>
           ) : null}
-          {isActiveSearch && productResults.length > 0 ? (
+          {isActiveSearch && (productResults.length > 0 || canCreate) ? (
             <ProductSuggestMenu
               anchor={menuAnchor}
               products={productResults}
               discounts={discounts}
+              searchQuery={searchQuery || row.partNumber}
+              canCreate={canCreate}
               onClose={onCloseSearch}
+              onCreate={onCreateProduct}
               onSelect={(product) => {
                 const listPrice = catalogListPrice(product);
                 const kind = product.kind === "labor" ? "labor" : "part";
@@ -439,10 +604,19 @@ export default function TicketLineItemsEditor({
   banner?: ReactNode;
 }) {
   const token = useAuthStore((s) => s.token);
+  const canCreateProduct = useAuthStore(
+    (s) =>
+      s.hasPermission("products:write") ||
+      s.hasPermission("estimates:write") ||
+      s.hasPermission("jobs:write"),
+  );
   const [productQuery, setProductQuery] = useState<Record<string, string>>({});
   const [productResults, setProductResults] = useState<ProductItem[]>([]);
   const [activePartId, setActivePartId] = useState<string | null>(null);
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+  const [createFor, setCreateFor] = useState<{ rowId: string; code: string } | null>(
+    null,
+  );
   const discountRules = discounts ?? DEFAULT_PRODUCT_DISCOUNTS;
 
   const sensors = useSensors(
@@ -474,20 +648,40 @@ export default function TicketLineItemsEditor({
     onChange([...parts, emptyNoteRow()]);
   }
 
+  function applyProductToRow(id: string, product: ProductItem) {
+    const listPrice = catalogListPrice(product);
+    const kind = product.kind === "labor" ? "labor" : "part";
+    updatePart(id, {
+      productRef: product._id,
+      partNumber: catalogCode(product),
+      description: product.name,
+      kind,
+      quantity:
+        parts.find((row) => row.id === id)?.quantity || "1",
+      listPrice: String(listPrice),
+      unitPrice: String(discountedUnitPrice(listPrice, kind, discountRules)),
+      priceOverridden: false,
+    });
+  }
+
   function updatePart(
     id: string,
     updates: Partial<TicketPartRow>,
     searchQuery?: string,
   ) {
-    onChange(patchRow(parts, id, updates));
+    let next = patchRow(parts, id, updates);
     if (searchQuery !== undefined) {
       setProductQuery((prev) => ({ ...prev, [id]: searchQuery }));
     }
     if (updates.productRef) {
-      setActivePartId(null);
+      const inserted = insertEmptyProductBelow(next, id);
+      next = inserted.parts;
+      setActivePartId(inserted.emptyId);
+      setPendingFocusId(inserted.emptyId);
       setProductResults([]);
-      setPendingFocusId(null);
+      setCreateFor(null);
     }
+    onChange(next);
   }
 
   function removePart(id: string) {
@@ -575,6 +769,8 @@ export default function TicketLineItemsEditor({
                       isActiveSearch={activePartId === row.id}
                       pendingFocus={pendingFocusId === row.id}
                       discounts={discountRules}
+                      searchQuery={productQuery[row.id] ?? row.partNumber}
+                      canCreate={canCreateProduct}
                       onFocusSearch={() => setActivePartId(row.id)}
                       onCloseSearch={() => {
                         if (activePartId === row.id) {
@@ -586,6 +782,11 @@ export default function TicketLineItemsEditor({
                         updatePart(row.id, updates, searchQuery)
                       }
                       onRemove={() => removePart(row.id)}
+                      onCreateProduct={(code) => {
+                        setCreateFor({ rowId: row.id, code });
+                        setActivePartId(null);
+                        setProductResults([]);
+                      }}
                     />
                   ))
                 )}
@@ -594,6 +795,13 @@ export default function TicketLineItemsEditor({
           </table>
         </DndContext>
       </div>
+      {createFor ? (
+        <CreateProductDialog
+          initialCode={createFor.code}
+          onClose={() => setCreateFor(null)}
+          onCreated={(product) => applyProductToRow(createFor.rowId, product)}
+        />
+      ) : null}
     </div>
   );
 }

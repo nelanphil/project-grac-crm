@@ -55,13 +55,19 @@ export function requireRole(...roles: string[]) {
 }
 
 export function requirePermission(permission: string) {
+  return requireAnyPermission(permission);
+}
+
+export function requireAnyPermission(...permissions: string[]) {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({ message: "Unauthorized" });
       return;
     }
-    if (!req.user.permissions.includes(permission)) {
-      res.status(403).json({ message: `Missing permission: ${permission}` });
+    if (!permissions.some((permission) => req.user!.permissions.includes(permission))) {
+      res.status(403).json({
+        message: `Missing permission: ${permissions.join(" or ")}`,
+      });
       return;
     }
     next();
