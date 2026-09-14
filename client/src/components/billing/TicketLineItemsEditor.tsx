@@ -19,11 +19,22 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Plus, Trash2 } from "lucide-react";
 import {
   ApiError,
+  ManufacturerItem,
   ProductItem,
-  ProductKind,
+  createManufacturer,
   createProduct,
+  getManufacturers,
   getProducts,
 } from "@/lib/api";
+import ProductEditorFields, {
+  EMPTY_PRODUCT_FORM,
+  defaultManufacturerId,
+  isProductFormComplete,
+  normalizeProductCode,
+  toProductWritePayload,
+  uppercaseText,
+  type ProductFormState,
+} from "@/components/products/ProductEditorFields";
 import {
   DEFAULT_PRODUCT_DISCOUNTS,
   discountedUnitPrice,
@@ -255,30 +266,93 @@ function CreateProductDialog({
   onCreated: (product: ProductItem) => void;
 }) {
   const token = useAuthStore((s) => s.token);
-  const [productCode, setProductCode] = useState(initialCode);
-  const [name, setName] = useState(initialCode);
-  const [kind, setKind] = useState<ProductKind>("part");
-  const [listPrice, setListPrice] = useState("");
+  const [form, setForm] = useState<ProductFormState>({
+    ...EMPTY_PRODUCT_FORM,
+    productCode: normalizeProductCode(initialCode),
+    name: uppercaseText(initialCode),
+  });
+  const [manufacturers, setManufacturers] = useState<ManufacturerItem[]>([]);
+  const [addingManufacturer, setAddingManufacturer] = useState(false);
+  const [newManufacturerName, setNewManufacturerName] = useState("");
+  const [addingManufacturerSaving, setAddingManufacturerSaving] =
+    useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { manufacturers: list } = await getManufacturers(token);
+        if (cancelled) return;
+        setManufacturers(list);
+        setForm((prev) => {
+          if (
+            prev.manufacturer &&
+            list.some((m) => m._id === prev.manufacturer)
+          ) {
+            return prev;
+          }
+          return { ...prev, manufacturer: defaultManufacturerId(list) };
+        });
+      } catch (err) {
+        if (cancelled) return;
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Failed to load manufacturers.",
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  function resetManufacturerAdd() {
+    setAddingManufacturer(false);
+    setNewManufacturerName("");
+    setAddingManufacturerSaving(false);
+  }
+
+  async function handleAddManufacturer() {
+    if (!token) return;
+    const name = uppercaseText(newManufacturerName.trim());
+    if (!name) return;
+    setAddingManufacturerSaving(true);
+    setError(null);
+    try {
+      const { manufacturer } = await createManufacturer(token, { name });
+      setManufacturers((prev) =>
+        prev.some((m) => m._id === manufacturer._id)
+          ? prev
+          : [...prev, manufacturer].sort((a, b) =>
+              a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+            ),
+      );
+      setForm((prev) => ({ ...prev, manufacturer: manufacturer._id }));
+      resetManufacturerAdd();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to add manufacturer.",
+      );
+      setAddingManufacturerSaving(false);
+    }
+  }
+
   async function handleSubmit() {
     if (!token) return;
-    const code = productCode.replace(/\s+/g, "").toUpperCase();
-    const productName = name.trim().toUpperCase() || code;
-    if (!code || !productName) {
-      setError("Product code and name are required.");
+    if (!isProductFormComplete(form, addingManufacturer)) {
+      setError("Product code, name, manufacturer, and list price are required.");
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      const { product } = await createProduct(token, {
-        productCode: code,
-        name: productName,
-        kind,
-        listPrice: Number(listPrice) || 0,
-      });
+      const { product } = await createProduct(token, toProductWritePayload(form));
       onCreated(product);
     } catch (err) {
       setError(
@@ -290,60 +364,32 @@ function CreateProductDialog({
 
   return createPortal(
     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/40 sm:items-center">
-      <div className="w-full rounded-t-xl bg-white p-5 shadow-xl sm:max-w-md sm:rounded-xl">
+      <div className="max-h-[90vh] w-full overflow-y-auto rounded-t-xl bg-white p-5 shadow-xl sm:max-w-xl sm:rounded-xl">
         <h2 className="text-base font-semibold text-brand-dark">
-          Add product code
+          Add product
         </h2>
         <p className="mt-1 text-xs text-neutral-500">
           This saves to the product catalog and adds it to the current line.
         </p>
-        <div className="mt-4 grid gap-3">
-          <label className="block text-xs">
-            <span className="mb-1 block font-semibold uppercase tracking-wide text-neutral-500">
-              Product code
-            </span>
-            <input
-              value={productCode}
-              onChange={(e) => setProductCode(e.target.value.toUpperCase())}
-              className={inputClass}
-            />
-          </label>
-          <label className="block text-xs">
-            <span className="mb-1 block font-semibold uppercase tracking-wide text-neutral-500">
-              Name
-            </span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value.toUpperCase())}
-              className={inputClass}
-            />
-          </label>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block text-xs">
-              <span className="mb-1 block font-semibold uppercase tracking-wide text-neutral-500">
-                Type
-              </span>
-              <select
-                value={kind}
-                onChange={(e) => setKind(e.target.value as ProductKind)}
-                className={inputClass}
-              >
-                <option value="part">Part</option>
-                <option value="labor">Labor</option>
-              </select>
-            </label>
-            <label className="block text-xs">
-              <span className="mb-1 block font-semibold uppercase tracking-wide text-neutral-500">
-                Price
-              </span>
-              <input
-                value={listPrice}
-                onChange={(e) => setListPrice(e.target.value)}
-                inputMode="decimal"
-                className={inputClass}
-              />
-            </label>
-          </div>
+        <p className="mt-1 text-xs text-neutral-500">
+          <span className="font-medium text-red-600">*</span> Required
+        </p>
+        <div className="mt-4">
+          <ProductEditorFields
+            form={form}
+            onChange={(updates) => setForm((prev) => ({ ...prev, ...updates }))}
+            manufacturers={manufacturers}
+            addingManufacturer={addingManufacturer}
+            newManufacturerName={newManufacturerName}
+            addingManufacturerSaving={addingManufacturerSaving}
+            onStartAddManufacturer={() => {
+              setAddingManufacturer(true);
+              setNewManufacturerName("");
+            }}
+            onCancelAddManufacturer={resetManufacturerAdd}
+            onNewManufacturerNameChange={setNewManufacturerName}
+            onAddManufacturer={() => void handleAddManufacturer()}
+          />
         </div>
         {error ? (
           <p className="mt-3 text-sm text-red-700">{error}</p>
@@ -358,7 +404,7 @@ function CreateProductDialog({
           </button>
           <button
             type="button"
-            disabled={saving}
+            disabled={saving || !isProductFormComplete(form, addingManufacturer)}
             onClick={() => void handleSubmit()}
             className="rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
           >

@@ -1,8 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Package, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import ProductEditorFields, {
+  EMPTY_PRODUCT_FORM,
+  defaultManufacturerId,
+  isProductFormComplete,
+  moneyString,
+  normalizeProductCode,
+  toProductWritePayload,
+  uppercaseText,
+  type ProductFormState,
+} from "@/components/products/ProductEditorFields";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import TablePagination from "@/components/ui/TablePagination";
@@ -30,34 +40,6 @@ function formatMoney(amount: number): string {
     style: "currency",
     currency: "USD",
   }).format(amount || 0);
-}
-
-function normalizeProductCode(productCode: string): string {
-  return productCode.replace(/\s+/g, "").toUpperCase();
-}
-
-function uppercaseText(value: string): string {
-  return value.toUpperCase();
-}
-
-function buildProductAltCode(productCode: string): string {
-  const code = normalizeProductCode(productCode);
-  if (!code) return "";
-  if (code.startsWith("GMOF")) return code;
-  return `GMOF${code}`;
-}
-
-function sanitizeMoneyInput(raw: string): string {
-  const cleaned = raw.replace(/[^\d.]/g, "");
-  const firstDot = cleaned.indexOf(".");
-  if (firstDot === -1) return cleaned;
-  const whole = cleaned.slice(0, firstDot);
-  const fraction = cleaned.slice(firstDot + 1).replace(/\./g, "").slice(0, 2);
-  return `${whole}.${fraction}`;
-}
-
-function moneyString(amount: number): string {
-  return Number.isFinite(amount) ? amount.toFixed(2) : "";
 }
 
 function productCodeOf(product: ProductItem): string {
@@ -102,159 +84,6 @@ function KindBadge({ kind }: { kind: ProductKind }) {
   );
 }
 
-type ProductFormState = {
-  productCode: string;
-  productNumber: string;
-  name: string;
-  manufacturer: string;
-  kind: ProductKind;
-  listPrice: string;
-  cost: string;
-  strikeThroughPrice: string;
-  active: boolean;
-  notes: string;
-};
-
-const EMPTY_FORM: ProductFormState = {
-  productCode: "",
-  productNumber: "",
-  name: "",
-  manufacturer: "",
-  kind: "part",
-  listPrice: "0.00",
-  cost: "0.00",
-  strikeThroughPrice: "",
-  active: true,
-  notes: "",
-};
-
-const ADD_MANUFACTURER = "__add__";
-const DEFAULT_MANUFACTURER_NAME = "GENERAC";
-
-function defaultManufacturerId(list: ManufacturerItem[]): string {
-  const match = list.find(
-    (m) => m.name.toUpperCase() === DEFAULT_MANUFACTURER_NAME,
-  );
-  return match?._id ?? list[0]?._id ?? "";
-}
-
-const inputClass =
-  "w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue";
-
-const textInputClass = `${inputClass} uppercase`;
-
-function applyUppercaseInput(
-  value: string,
-  onChange: (value: string) => void,
-  transform: (raw: string) => string,
-) {
-  onChange(transform(value));
-}
-
-function UppercaseInput({
-  value,
-  onChange,
-  transform = uppercaseText,
-  className,
-  ...props
-}: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
-  value: string;
-  onChange: (value: string) => void;
-  transform?: (raw: string) => string;
-}) {
-  return (
-    <input
-      {...props}
-      value={value}
-      autoCapitalize="characters"
-      autoCorrect="off"
-      spellCheck={false}
-      onChange={(e) => applyUppercaseInput(e.target.value, onChange, transform)}
-      onBlur={(e) => {
-        applyUppercaseInput(e.target.value, onChange, transform);
-        props.onBlur?.(e);
-      }}
-      className={`${textInputClass} ${className ?? ""}`.trim()}
-    />
-  );
-}
-
-function UppercaseTextarea({
-  value,
-  onChange,
-  className,
-  ...props
-}: Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange"> & {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <textarea
-      {...props}
-      value={value}
-      autoCapitalize="characters"
-      autoCorrect="off"
-      spellCheck={false}
-      onChange={(e) => applyUppercaseInput(e.target.value, onChange, uppercaseText)}
-      onBlur={(e) => {
-        applyUppercaseInput(e.target.value, onChange, uppercaseText);
-        props.onBlur?.(e);
-      }}
-      className={`${textInputClass} ${className ?? ""}`.trim()}
-    />
-  );
-}
-
-function FieldLabel({
-  children,
-  required,
-}: {
-  children: ReactNode;
-  required?: boolean;
-}) {
-  return (
-    <span className="mb-1 block text-neutral-600">
-      {children}{" "}
-      {required ? (
-        <span className="font-medium text-red-600">*</span>
-      ) : (
-        <span className="font-normal text-neutral-400">(optional)</span>
-      )}
-    </span>
-  );
-}
-
-function MoneyInput({
-  value,
-  onChange,
-  placeholder,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-}) {
-  return (
-    <div className="relative">
-      <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-sm text-neutral-500">
-        $
-      </span>
-      <input
-        inputMode="decimal"
-        autoComplete="off"
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => onChange(sanitizeMoneyInput(e.target.value))}
-        onBlur={() => {
-          if (value.trim() === "") return;
-          const n = Number(value);
-          if (!Number.isNaN(n)) onChange(n.toFixed(2));
-        }}
-        className={`${inputClass} pl-7`}
-      />
-    </div>
-  );
-}
-
 export default function ProductsPage() {
   return (
     <AuthGuard>
@@ -285,7 +114,7 @@ function ProductsContent() {
   const [showInactive, setShowInactive] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProductItem | null>(null);
-  const [form, setForm] = useState<ProductFormState>(EMPTY_FORM);
+  const [form, setForm] = useState<ProductFormState>(EMPTY_PRODUCT_FORM);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [manufacturers, setManufacturers] = useState<ManufacturerItem[]>([]);
@@ -385,7 +214,6 @@ function ProductsContent() {
     onPrev: () => setPage((p) => Math.max(1, p - 1)),
     onNext: () => setPage((p) => Math.min(totalPages, p + 1)),
   };
-  const previewAltCode = buildProductAltCode(form.productCode);
 
   function resetManufacturerAdd() {
     setAddingManufacturer(false);
@@ -395,7 +223,7 @@ function ProductsContent() {
 
   function openCreate() {
     setEditing(null);
-    setForm(EMPTY_FORM);
+    setForm(EMPTY_PRODUCT_FORM);
     resetManufacturerAdd();
     setModalOpen(true);
   }
@@ -453,18 +281,7 @@ function ProductsContent() {
     setSaving(true);
     setError(null);
     try {
-      const payload = {
-        productCode: normalizeProductCode(form.productCode),
-        productNumber: uppercaseText(form.productNumber.trim()),
-        name: uppercaseText(form.name.trim()),
-        manufacturer: form.manufacturer || undefined,
-        kind: form.kind,
-        listPrice: Number(form.listPrice) || 0,
-        cost: Number(form.cost) || 0,
-        strikeThroughPrice: Number(form.strikeThroughPrice) || 0,
-        active: form.active,
-        notes: uppercaseText(form.notes.trim()),
-      };
+      const payload = toProductWritePayload(form);
       if (editing) {
         await updateProduct(token, editing._id, payload);
       } else {
@@ -750,153 +567,24 @@ function ProductsContent() {
             <p className="mt-1 text-xs text-neutral-500">
               <span className="font-medium text-red-600">*</span> Required
             </p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <label className="block text-sm">
-                <FieldLabel required>Product code</FieldLabel>
-                <UppercaseInput
-                  value={form.productCode}
-                  transform={normalizeProductCode}
-                  onChange={(productCode) =>
-                    setForm((prev) => ({ ...prev, productCode }))
-                  }
-                />
-              </label>
-              <label className="block text-sm">
-                <FieldLabel>Product number</FieldLabel>
-                <UppercaseInput
-                  value={form.productNumber}
-                  onChange={(productNumber) =>
-                    setForm((prev) => ({ ...prev, productNumber }))
-                  }
-                />
-              </label>
-              <label className="block text-sm sm:col-span-2">
-                <FieldLabel>Product alt code</FieldLabel>
-                <UppercaseInput
-                  value={previewAltCode}
-                  readOnly
-                  className="bg-neutral-50 text-neutral-500"
-                  onChange={() => undefined}
-                />
-              </label>
-              <label className="block text-sm sm:col-span-2">
-                <FieldLabel required>Name</FieldLabel>
-                <UppercaseInput
-                  value={form.name}
-                  onChange={(name) => setForm((prev) => ({ ...prev, name }))}
-                />
-              </label>
-              <label className="block text-sm">
-                <FieldLabel required>Type</FieldLabel>
-                <select
-                  value={form.kind}
-                  onChange={(e) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      kind: e.target.value as ProductKind,
-                    }))
-                  }
-                  className={inputClass}
-                >
-                  <option value="part">Part</option>
-                  <option value="labor">Labor</option>
-                </select>
-              </label>
-              <div className="block text-sm">
-                <FieldLabel required>Manufacturer</FieldLabel>
-                <select
-                  value={addingManufacturer ? ADD_MANUFACTURER : form.manufacturer}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === ADD_MANUFACTURER) {
-                      setAddingManufacturer(true);
-                      setNewManufacturerName("");
-                      return;
-                    }
-                    setAddingManufacturer(false);
-                    setNewManufacturerName("");
-                    setForm((prev) => ({ ...prev, manufacturer: v }));
-                  }}
-                  className={textInputClass}
-                >
-                  {manufacturers.map((m) => (
-                    <option key={m._id} value={m._id}>
-                      {uppercaseText(m.name)}
-                    </option>
-                  ))}
-                  <option value={ADD_MANUFACTURER}>Add manufacturer…</option>
-                </select>
-                {addingManufacturer ? (
-                  <div className="mt-2 flex gap-2">
-                    <UppercaseInput
-                      value={newManufacturerName}
-                      placeholder="MANUFACTURER NAME"
-                      autoFocus
-                      onChange={setNewManufacturerName}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void handleAddManufacturer();
-                        }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      disabled={
-                        addingManufacturerSaving || !newManufacturerName.trim()
-                      }
-                      onClick={() => void handleAddManufacturer()}
-                      className="shrink-0 rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
-                    >
-                      {addingManufacturerSaving ? "Adding…" : "Add"}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-              <label className="block text-sm">
-                <FieldLabel required>List price</FieldLabel>
-                <MoneyInput
-                  value={form.listPrice}
-                  onChange={(listPrice) =>
-                    setForm((prev) => ({ ...prev, listPrice }))
-                  }
-                />
-              </label>
-              <label className="block text-sm">
-                <FieldLabel>Cost</FieldLabel>
-                <MoneyInput
-                  value={form.cost}
-                  onChange={(cost) => setForm((prev) => ({ ...prev, cost }))}
-                />
-              </label>
-              <label className="block text-sm">
-                <FieldLabel>Strike-through price</FieldLabel>
-                <MoneyInput
-                  value={form.strikeThroughPrice}
-                  onChange={(strikeThroughPrice) =>
-                    setForm((prev) => ({ ...prev, strikeThroughPrice }))
-                  }
-                  placeholder="MSRP"
-                />
-              </label>
-              <label className="block text-sm sm:col-span-2">
-                <FieldLabel>Description</FieldLabel>
-                <UppercaseTextarea
-                  value={form.notes}
-                  rows={3}
-                  onChange={(notes) => setForm((prev) => ({ ...prev, notes }))}
-                />
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm text-neutral-600 sm:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={form.active}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, active: e.target.checked }))
-                  }
-                />
-                Active
-              </label>
+            <div className="mt-4">
+              <ProductEditorFields
+                form={form}
+                onChange={(updates) =>
+                  setForm((prev) => ({ ...prev, ...updates }))
+                }
+                manufacturers={manufacturers}
+                addingManufacturer={addingManufacturer}
+                newManufacturerName={newManufacturerName}
+                addingManufacturerSaving={addingManufacturerSaving}
+                onStartAddManufacturer={() => {
+                  setAddingManufacturer(true);
+                  setNewManufacturerName("");
+                }}
+                onCancelAddManufacturer={resetManufacturerAdd}
+                onNewManufacturerNameChange={setNewManufacturerName}
+                onAddManufacturer={() => void handleAddManufacturer()}
+              />
             </div>
             <div className="mt-6 flex justify-end gap-2">
               <button
@@ -908,15 +596,7 @@ function ProductsContent() {
               </button>
               <button
                 type="button"
-                disabled={
-                  saving ||
-                  !form.productCode ||
-                  !form.name.trim() ||
-                  !form.manufacturer ||
-                  addingManufacturer ||
-                  form.listPrice.trim() === "" ||
-                  Number.isNaN(Number(form.listPrice))
-                }
+                disabled={saving || !isProductFormComplete(form, addingManufacturer)}
                 onClick={() => void handleSave()}
                 className="rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
               >
