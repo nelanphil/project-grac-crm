@@ -135,7 +135,10 @@ describe("getPublicAssetBySlug", () => {
       assert.deepEqual(body, {
         message: "Public asset not found or inactive.",
       });
-      assert.equal(findOne.mock.calls[0].arguments[0].isActive, true);
+      const filter = findOne.mock.calls[0]?.arguments[0] as
+        | { isActive?: boolean }
+        | undefined;
+      assert.equal(filter?.isActive, true);
     } finally {
       findOne.mock.restore();
     }
