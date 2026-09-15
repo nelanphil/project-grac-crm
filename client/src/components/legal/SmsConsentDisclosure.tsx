@@ -23,8 +23,9 @@ export default function SmsConsentDisclosure({
     <span className={className}>
       I agree to receive automated transactional text messages from {COMPANY.name}{" "}
       at the mobile number I provide, including {SMS_MESSAGE_TYPES}. Message
-      frequency varies. Message and data rates may apply. Reply STOP to opt out or
-      HELP for help. Consent is not a condition of purchase. See our{" "}
+      frequency varies. Message and data rates may apply. Msg & data rates may apply.
+      Reply STOP to opt out or HELP for help. Consent is not a condition of
+      purchase. See our{" "}
       <Link
         href="/privacy"
         target="_blank"
