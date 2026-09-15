@@ -230,7 +230,11 @@ export function normalizeTaxRatePercent(value: string | number | null | undefine
 }
 
 export function computeTaxAmount(taxable: number, ratePercent: number): number {
-  return Math.round((taxable * normalizeTaxRatePercent(ratePercent)) * 100) / 100;
+  return (
+    Math.round(
+      ((taxable * normalizeTaxRatePercent(ratePercent)) / 100) * 100,
+    ) / 100
+  );
 }
 
 export function ticketTotals(form: TicketFormState) {
