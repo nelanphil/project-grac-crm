@@ -38,6 +38,9 @@ export interface IInvoice extends Document {
   originalAmountCents?: number | null;
   discountCode?: string | null;
   discountCents?: number;
+  taxRatePercent: number;
+  taxCents: number;
+  taxOverridden: boolean;
   currency: string;
   status: InvoiceStatus;
   dueDate: Date | null;
@@ -100,6 +103,9 @@ const invoiceSchema = new Schema<IInvoice>(
     originalAmountCents: { type: Number, default: null, min: 0 },
     discountCode: { type: String, default: null, trim: true, uppercase: true },
     discountCents: { type: Number, default: 0, min: 0 },
+    taxRatePercent: { type: Number, default: 0, min: 0, max: 100 },
+    taxCents: { type: Number, default: 0, min: 0 },
+    taxOverridden: { type: Boolean, default: false },
     currency: { type: String, default: "USD" },
     status: {
       type: String,

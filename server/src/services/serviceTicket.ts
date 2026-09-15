@@ -3,6 +3,10 @@ import {
   discountedLaborTotal,
   ProductDiscounts,
 } from "../utils/productDiscounts";
+import {
+  computeTaxAmount,
+  normalizeTaxRatePercent,
+} from "./taxSettings";
 
 export const LABOR_INCLUDED_MINUTES = 30;
 export const LABOR_BLOCK_MINUTES = 30;
@@ -116,6 +120,9 @@ export function computeTicketTotals(input: {
   laborOverridden?: boolean;
   miscExp?: number;
   shipping?: number;
+  taxRate?: number;
+  tax?: number;
+  taxOverridden?: boolean;
   contractDiscount?: ProductDiscounts | null;
 }): {
   totalParts: number;
@@ -123,6 +130,9 @@ export function computeTicketTotals(input: {
   miscExp: number;
   subtotal: number;
   shipping: number;
+  taxRate: number;
+  tax: number;
+  taxOverridden: boolean;
   total: number;
 } {
   const productLines = input.parts.filter((part) => part.lineType !== "note");
@@ -147,8 +157,23 @@ export function computeTicketTotals(input: {
   const miscExp = roundMoney(input.miscExp ?? 0);
   const shipping = roundMoney(input.shipping ?? 0);
   const subtotal = roundMoney(totalParts + totalLabor + miscExp);
-  const total = roundMoney(subtotal + shipping);
-  return { totalParts, totalLabor, miscExp, subtotal, shipping, total };
+  const taxRate = normalizeTaxRatePercent(input.taxRate);
+  const taxOverridden = Boolean(input.taxOverridden);
+  const tax = taxOverridden
+    ? roundMoney(input.tax ?? 0)
+    : computeTaxAmount(subtotal, taxRate);
+  const total = roundMoney(subtotal + shipping + tax);
+  return {
+    totalParts,
+    totalLabor,
+    miscExp,
+    subtotal,
+    shipping,
+    taxRate,
+    tax,
+    taxOverridden,
+    total,
+  };
 }
 
 export async function nextPrefixedNumber<T extends { number?: string | null }>(

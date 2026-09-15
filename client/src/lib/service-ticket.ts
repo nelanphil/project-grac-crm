@@ -59,6 +59,9 @@ export interface TicketFormState {
   parts: TicketPartRow[];
   miscExp: string;
   shipping: string;
+  taxRate: string;
+  tax: string;
+  taxOverridden: boolean;
   signatureDataUrl: string;
   signedByName: string;
   completed: boolean;
@@ -171,6 +174,9 @@ export function emptyTicketForm(): TicketFormState {
     parts: withTrailingEmptyProduct([]),
     miscExp: "",
     shipping: "",
+    taxRate: "",
+    tax: "",
+    taxOverridden: false,
     signatureDataUrl: "",
     signedByName: "",
     completed: false,
@@ -217,6 +223,20 @@ export function hasLaborProductLines(parts: TicketPartRow[]): boolean {
   return parts.some((row) => row.lineType !== "note" && row.kind === "labor");
 }
 
+export function normalizeTaxRatePercent(value: string | number | null | undefined): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(100, Math.round(n * 10000) / 10000);
+}
+
+export function computeTaxAmount(taxable: number, ratePercent: number): number {
+  return (
+    Math.round(
+      ((taxable * normalizeTaxRatePercent(ratePercent)) / 100) * 100,
+    ) / 100
+  );
+}
+
 export function ticketTotals(form: TicketFormState) {
   const totalParts = form.parts.reduce((sum, row) => {
     if (row.lineType === "note" || row.kind === "labor") return sum;
@@ -238,8 +258,23 @@ export function ticketTotals(form: TicketFormState) {
   const miscExp = parseMoney(form.miscExp);
   const shipping = parseMoney(form.shipping);
   const subtotal = Math.round((totalParts + totalLabor + miscExp) * 100) / 100;
-  const total = Math.round((subtotal + shipping) * 100) / 100;
-  return { totalParts, totalLabor, miscExp, shipping, subtotal, total, laborHours };
+  const taxRate = normalizeTaxRatePercent(form.taxRate);
+  const tax = form.taxOverridden
+    ? parseMoney(form.tax)
+    : computeTaxAmount(subtotal, taxRate);
+  const total = Math.round((subtotal + shipping + tax) * 100) / 100;
+  return {
+    totalParts,
+    totalLabor,
+    miscExp,
+    shipping,
+    subtotal,
+    taxRate,
+    tax,
+    taxOverridden: form.taxOverridden,
+    total,
+    laborHours,
+  };
 }
 
 export function ticketToPayload(form: TicketFormState) {
@@ -261,6 +296,9 @@ export function ticketToPayload(form: TicketFormState) {
     laborOverridden: form.laborOverridden && !hasLaborProductLines(form.parts),
     miscExp: totals.miscExp,
     shipping: totals.shipping,
+    taxRate: totals.taxRate,
+    tax: totals.tax,
+    taxOverridden: totals.taxOverridden,
     parts: form.parts
       .filter((row) =>
         row.lineType === "note"
@@ -355,6 +393,9 @@ export function ticketFromRecord(record: {
   }>;
   miscExp?: number | null;
   shipping?: number | null;
+  taxRate?: number | null;
+  tax?: number | null;
+  taxOverridden?: boolean;
   signatureDataUrl?: string | null;
   signedByName?: string | null;
   completed?: boolean;
@@ -409,6 +450,12 @@ export function ticketFromRecord(record: {
     parts: withTrailingEmptyProduct(parts),
     miscExp: record.miscExp ? String(record.miscExp) : "",
     shipping: record.shipping ? String(record.shipping) : "",
+    taxRate:
+      record.taxRate != null && record.taxRate !== undefined
+        ? String(record.taxRate)
+        : "",
+    tax: record.tax ? String(record.tax) : "",
+    taxOverridden: Boolean(record.taxOverridden),
     signatureDataUrl: record.signatureDataUrl ?? "",
     signedByName: record.signedByName ?? "",
     completed: Boolean(record.completed),
