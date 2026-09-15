@@ -86,9 +86,13 @@ services:
       - key: NEXT_PUBLIC_SITE_URL
         value: https://genmaintoffl.com
     routes:
-      # Proxy pretty frontend URLs to the API. A wildcard is required so
-      # `/public-assets/slug` and `/public-assets/slug/` both match; the
-      # previous `:slug` rule did not, so production served the Next 404 page.
+      # Public image links are copied as https://genmaintoffl.com/images/<slug>.
+      # The static export has no server, so Render proxies to the unauthenticated
+      # API route (which 302s to Cloudinary). Wildcard matches with/without a
+      # trailing slash. Keep /public-assets/* for already-shared links.
+      - type: rewrite
+        source: /images/*
+        destination: https://gmof-server.onrender.com/public-assets/*
       - type: rewrite
         source: /public-assets/*
         destination: https://gmof-server.onrender.com/public-assets/*
