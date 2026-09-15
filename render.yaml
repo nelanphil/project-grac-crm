@@ -88,11 +88,18 @@ services:
     routes:
       # Public image links are copied as https://genmaintoffl.com/images/<slug>.
       # The static export has no server, so Render proxies to the unauthenticated
-      # API route (which 302s to Cloudinary). Wildcard matches with/without a
-      # trailing slash. Keep /public-assets/* for already-shared links.
+      # API route, which streams Cloudinary bytes so the browser URL stays on
+      # /images/<slug>. Match with and without a trailing slash. Keep
+      # /public-assets/:slug for already-shared links.
       - type: rewrite
-        source: /images/*
-        destination: https://gmof-server.onrender.com/public-assets/*
+        source: /images/:slug
+        destination: https://gmof-server.onrender.com/public-assets/:slug
       - type: rewrite
-        source: /public-assets/*
-        destination: https://gmof-server.onrender.com/public-assets/*
+        source: /images/:slug/
+        destination: https://gmof-server.onrender.com/public-assets/:slug
+      - type: rewrite
+        source: /public-assets/:slug
+        destination: https://gmof-server.onrender.com/public-assets/:slug
+      - type: rewrite
+        source: /public-assets/:slug/
+        destination: https://gmof-server.onrender.com/public-assets/:slug
