@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, LogOut, Menu, Plus, X } from "lucide-react";
 import {
   closestCorners,
@@ -93,6 +94,11 @@ export default function StaffTopBar() {
 
   const mobileNavRef = useRef<HTMLElement>(null);
 
+  const closeMenus = useCallback(() => {
+    setMobileOpen(false);
+    setNewOpen(false);
+  }, []);
+
   useEffect(() => {
     if (!mobileOpen) return;
     const previous = document.body.style.overflow;
@@ -101,6 +107,24 @@ export default function StaffTopBar() {
       document.body.style.overflow = previous;
     };
   }, [mobileOpen]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closeMenus();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [mobileOpen, closeMenus]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const closeAtDesktop = () => {
+      if (mq.matches) closeMenus();
+    };
+    mq.addEventListener("change", closeAtDesktop);
+    return () => mq.removeEventListener("change", closeAtDesktop);
+  }, [closeMenus]);
 
   useEffect(() => {
     if (!editMode) return;
@@ -131,11 +155,6 @@ export default function StaffTopBar() {
   function handleLogout() {
     logout();
     router.push("/auth/login");
-  }
-
-  function closeMenus() {
-    setMobileOpen(false);
-    setNewOpen(false);
   }
 
   const newMenuItems = (
@@ -185,11 +204,17 @@ export default function StaffTopBar() {
   );
 
   return (
-    <header className="sticky top-0 z-30 w-full border-b border-[var(--staff-border)] bg-[var(--staff-surface)]/95 backdrop-blur">
+    <header
+      className={`sticky top-0 w-full border-b border-[var(--staff-border)] ${
+        mobileOpen
+          ? "z-0 bg-[var(--staff-surface)]"
+          : "z-30 bg-[var(--staff-surface)]/95 backdrop-blur"
+      }`}
+    >
       <div className="relative flex w-full items-center gap-2 px-3 py-3 sm:gap-3 sm:px-5 lg:px-6">
         <button
           type="button"
-          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[var(--staff-muted)] transition-colors hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)] md:hidden"
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[var(--staff-muted)] transition-colors hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)] lg:hidden"
           onClick={() => setMobileOpen((v) => !v)}
           aria-label="Toggle menu"
           aria-expanded={mobileOpen}
@@ -201,7 +226,7 @@ export default function StaffTopBar() {
           )}
         </button>
 
-        <div className="absolute left-1/2 hidden w-full max-w-2xl -translate-x-1/2 items-center gap-2 px-3 md:flex">
+        <div className="absolute left-1/2 hidden w-full max-w-2xl -translate-x-1/2 items-center gap-2 px-3 lg:flex">
           <CustomerHeaderSearch className="min-w-0 max-w-xl flex-1" />
 
           <div className="relative shrink-0">
@@ -229,8 +254,12 @@ export default function StaffTopBar() {
           </div>
         </div>
 
-        <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
-          <div className="relative md:hidden">
+        <div
+          className={`ml-auto flex shrink-0 items-center gap-1 sm:gap-2 ${
+            mobileOpen ? "invisible" : ""
+          }`}
+        >
+          <div className="relative lg:hidden">
             <button
               type="button"
               onClick={() => setNewOpen((v) => !v)}
@@ -277,108 +306,111 @@ export default function StaffTopBar() {
       </div>
 
       <CustomerHeaderSearch
-        className="w-full border-t border-[var(--staff-border)] px-3 py-2 md:hidden"
+        className="w-full border-t border-[var(--staff-border)] px-3 py-2 lg:hidden"
         inputClassName="w-full rounded-xl border border-[var(--staff-border)] bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-brand-orange focus:ring-2 focus:ring-brand-orange/20"
       />
 
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/40"
-            aria-label="Close menu"
-            onClick={closeMenus}
-          />
-          <div className="absolute inset-y-0 left-0 flex w-[min(20rem,88vw)] flex-col bg-[var(--staff-surface)] shadow-xl">
-            <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-4 py-3">
-              <p className="text-sm font-semibold text-[var(--staff-ink)]">
-                Menu
-              </p>
+      {mobileOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div className="fixed inset-0 z-[70] isolate lg:hidden">
               <button
                 type="button"
-                className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[var(--staff-muted)] hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)]"
-                onClick={closeMenus}
+                className="absolute inset-0 bg-black/40"
                 aria-label="Close menu"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <nav
-              ref={mobileNavRef}
-              className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-4 pb-6 pt-4"
-            >
-            <Link
-              href="/dashboard"
-              className={`rounded-lg px-3 py-2.5 text-sm font-medium ${
-                pathname === "/dashboard"
-                  ? "bg-[var(--staff-ink)] text-white"
-                  : "text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-              }`}
-              onClick={closeMenus}
-            >
-              Home
-            </Link>
-            {editMode ? (
-              <button
-                type="button"
-                onClick={() => setEditMode(false)}
-                data-nav-allow-click
-                className="flex items-center justify-center gap-1.5 rounded-lg bg-brand-orange px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-orange/90"
-              >
-                <Check className="h-4 w-4" />
-                Done
-              </button>
-            ) : null}
-            {visibleItems.length ? (
-              <DndContext
-                sensors={sensors}
-                collisionDetection={navCollision}
-                onDragStart={handleDragStart}
-                onDragEnd={handleDragEnd}
-              >
-                <div className="flex flex-col gap-1">
-                  <RootDropZone
-                    editMode={editMode}
-                    className="rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-center text-[11px] font-medium text-neutral-400"
-                  />
-                  <SortableContext
-                    items={visibleItems.map((item) => item.href)}
-                    strategy={verticalListSortingStrategy}
+                onClick={closeMenus}
+              />
+              <div className="absolute inset-y-0 left-0 flex h-dvh w-[min(20rem,88vw)] flex-col bg-[var(--staff-surface)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] shadow-xl">
+                <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-4 py-3">
+                  <p className="text-sm font-semibold text-[var(--staff-ink)]">
+                    Menu
+                  </p>
+                  <button
+                    type="button"
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[var(--staff-muted)] hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)]"
+                    onClick={closeMenus}
+                    aria-label="Close menu"
                   >
-                    {visibleItems.map((item) => (
-                      <NavItemGroup
-                        key={item.href}
-                        item={item}
-                        pathname={pathname}
-                        variant="sidebar"
-                        onNavigate={closeMenus}
-                        editable
-                        editMode={editMode}
-                      />
-                    ))}
-                  </SortableContext>
-                  <RootDropZone
-                    editMode={editMode}
-                    className="rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-center text-[11px] font-medium text-neutral-400"
-                  />
+                    <X className="h-5 w-5" />
+                  </button>
                 </div>
-              </DndContext>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => {
-                closeMenus();
-                handleLogout();
-              }}
-              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-            >
-              <LogOut className="h-4 w-4" />
-              Sign out
-            </button>
-            </nav>
-          </div>
-        </div>
-      )}
+                <nav
+                  ref={mobileNavRef}
+                  className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-4 pb-6 pt-4"
+                >
+                  <Link
+                    href="/dashboard"
+                    className={`rounded-lg px-3 py-2.5 text-sm font-medium ${
+                      pathname === "/dashboard"
+                        ? "bg-[var(--staff-ink)] text-white"
+                        : "text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                    }`}
+                    onClick={closeMenus}
+                  >
+                    Home
+                  </Link>
+                  {editMode ? (
+                    <button
+                      type="button"
+                      onClick={() => setEditMode(false)}
+                      data-nav-allow-click
+                      className="flex items-center justify-center gap-1.5 rounded-lg bg-brand-orange px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-orange/90"
+                    >
+                      <Check className="h-4 w-4" />
+                      Done
+                    </button>
+                  ) : null}
+                  {visibleItems.length ? (
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={navCollision}
+                      onDragStart={handleDragStart}
+                      onDragEnd={handleDragEnd}
+                    >
+                      <div className="flex flex-col gap-1">
+                        <RootDropZone
+                          editMode={editMode}
+                          className="rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-center text-[11px] font-medium text-neutral-400"
+                        />
+                        <SortableContext
+                          items={visibleItems.map((item) => item.href)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          {visibleItems.map((item) => (
+                            <NavItemGroup
+                              key={item.href}
+                              item={item}
+                              pathname={pathname}
+                              variant="sidebar"
+                              onNavigate={closeMenus}
+                              editable
+                              editMode={editMode}
+                            />
+                          ))}
+                        </SortableContext>
+                        <RootDropZone
+                          editMode={editMode}
+                          className="rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-center text-[11px] font-medium text-neutral-400"
+                        />
+                      </div>
+                    </DndContext>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeMenus();
+                      handleLogout();
+                    }}
+                    className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Sign out
+                  </button>
+                </nav>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </header>
   );
 }

@@ -25,7 +25,7 @@ export default function StaffDashboardShell({
   return (
     <div className="staff-dashboard flex w-full min-h-[calc(100vh-0px)] max-w-full overflow-x-clip bg-[var(--staff-canvas)] print:bg-white print:min-h-0">
       <DashboardHistoryTracker />
-      <div className="hidden md:block print:hidden">
+      <div className="hidden lg:block print:hidden">
         <StaffIconSidebar />
       </div>
       <div className="flex min-w-0 w-full flex-1 flex-col">

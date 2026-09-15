@@ -50,7 +50,7 @@ export default function MobileSectionNav({
   return (
     <nav
       aria-label="Page sections"
-      className="sticky top-[6.75rem] z-20 -mx-3 border-b border-neutral-200 bg-[var(--staff-canvas,#f7f5f1)]/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6 md:top-[3.25rem] lg:hidden"
+      className="sticky top-[6.75rem] z-20 -mx-3 border-b border-neutral-200 bg-[var(--staff-canvas,#f7f5f1)]/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:top-[3.25rem] lg:hidden"
     >
       <ul className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {sections.map((section) => {
