@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import {
   InvoiceCustomerSummary,
   InvoiceItem,
@@ -11,6 +12,27 @@ function formatMoney(cents: number): string {
     style: "currency",
     currency: "USD",
   }).format(cents / 100);
+}
+
+function formatTaxRate(rate: number): string {
+  const rounded = Math.round(rate * 10000) / 10000;
+  return `${rounded}%`;
+}
+
+function invoiceMoneyBreakdown(invoice: InvoiceItem) {
+  const taxCents = invoice.taxCents ?? 0;
+  const discountCents = invoice.discountCents ?? 0;
+  const totalBeforeDiscount = invoice.originalAmountCents ?? invoice.amountCents;
+  const subtotalCents = Math.max(totalBeforeDiscount - taxCents, 0);
+  const totalDue = Math.max(totalBeforeDiscount - discountCents, 0);
+  return {
+    taxCents,
+    taxRatePercent: invoice.taxRatePercent ?? 0,
+    discountCents,
+    discountCode: invoice.discountCode,
+    subtotalCents,
+    totalDue,
+  };
 }
 
 function formatDate(date: string | null | undefined): string {
@@ -50,9 +72,11 @@ function addressesEqual(
 export default function InvoiceDocument({
   invoice,
   isCustomer,
+  taxEditor,
 }: {
   invoice: InvoiceItem;
   isCustomer: boolean;
+  taxEditor?: ReactNode;
 }) {
   const billTo = invoice.customer ?? null;
   const serviceAddress = invoice.serviceAddress ?? null;
@@ -63,6 +87,7 @@ export default function InvoiceDocument({
   const serviceLines = serviceAddress
     ? formatAddressLines(serviceAddress)
     : [];
+  const money = invoiceMoneyBreakdown(invoice);
 
   return (
     <article className={`invoice-document rounded-xl border border-neutral-200 bg-white px-4 py-6 shadow-sm sm:px-10 sm:py-10 print:rounded-none print:border-0 print:shadow-none print:px-0 print:py-0 ${isCustomer ? "uppercase" : ""}`}>
@@ -220,49 +245,44 @@ export default function InvoiceDocument({
             )}
           </tbody>
           <tfoot>
-            {invoice.discountCents && invoice.discountCents > 0 ? (
-              <>
-                <tr>
-                  <td className="pt-4 text-sm text-neutral-600">Subtotal</td>
-                  <td className="pt-4 text-right text-sm text-neutral-700">
-                    {formatMoney(
-                      invoice.originalAmountCents ?? invoice.amountCents,
-                    )}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="pt-2 text-sm text-neutral-600">
-                    Discount{invoice.discountCode ? ` ${invoice.discountCode}` : ""}
-                  </td>
-                  <td className="pt-2 text-right text-sm text-emerald-700">
-                    −{formatMoney(invoice.discountCents)}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="pt-3 text-base font-semibold text-brand-dark">
-                    Total due
-                  </td>
-                  <td className="pt-3 text-right text-base font-semibold text-brand-dark">
-                    {formatMoney(
-                      Math.max(
-                        (invoice.originalAmountCents ?? invoice.amountCents) -
-                          invoice.discountCents,
-                        0,
-                      ),
-                    )}
-                  </td>
-                </tr>
-              </>
-            ) : (
+            <tr>
+              <td className="pt-4 text-sm text-neutral-600">Subtotal</td>
+              <td className="pt-4 text-right text-sm text-neutral-700">
+                {formatMoney(money.subtotalCents)}
+              </td>
+            </tr>
+            {money.discountCents > 0 ? (
               <tr>
-                <td className="pt-4 text-base font-semibold text-brand-dark">
-                  Total due
+                <td className="pt-2 text-sm text-neutral-600">
+                  Discount{money.discountCode ? ` ${money.discountCode}` : ""}
                 </td>
-                <td className="pt-4 text-right text-base font-semibold text-brand-dark">
-                  {formatMoney(invoice.amountCents)}
+                <td className="pt-2 text-right text-sm text-emerald-700">
+                  −{formatMoney(money.discountCents)}
                 </td>
               </tr>
-            )}
+            ) : null}
+            <tr>
+              <td className="pt-2 text-sm text-neutral-600">
+                Tax
+                {money.taxRatePercent > 0
+                  ? ` (${formatTaxRate(money.taxRatePercent)})`
+                  : ""}
+                {taxEditor ? (
+                  <div className="mt-1 print:hidden">{taxEditor}</div>
+                ) : null}
+              </td>
+              <td className="pt-2 text-right text-sm text-neutral-700 align-top">
+                {formatMoney(money.taxCents)}
+              </td>
+            </tr>
+            <tr>
+              <td className="pt-3 text-base font-semibold text-brand-dark">
+                Total due
+              </td>
+              <td className="pt-3 text-right text-base font-semibold text-brand-dark">
+                {formatMoney(money.totalDue)}
+              </td>
+            </tr>
           </tfoot>
         </table>
       </div>

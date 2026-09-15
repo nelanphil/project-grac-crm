@@ -52,18 +52,29 @@ export function invoiceEmailBodyHtml(invoice: InvoiceItem): string {
       : "<li>No line items.</li>";
 
   const hasDiscount = Boolean(invoice.discountCents && invoice.discountCents > 0);
-  const subtotalCents = invoice.originalAmountCents ?? invoice.amountCents;
-  const totalCents = hasDiscount
-    ? Math.max(subtotalCents - (invoice.discountCents ?? 0), 0)
-    : invoice.amountCents;
+  const taxCents = invoice.taxCents ?? 0;
+  const totalBeforeDiscount = invoice.originalAmountCents ?? invoice.amountCents;
+  const subtotalCents = Math.max(totalBeforeDiscount - taxCents, 0);
+  const totalCents = Math.max(totalBeforeDiscount - (invoice.discountCents ?? 0), 0);
 
   const discountLabel = invoice.discountCode
     ? `Discount ${escapeHtml(invoice.discountCode)}`
     : "Discount";
 
-  const totals = hasDiscount
-    ? `<p>Subtotal: ${escapeHtml(formatMoney(subtotalCents))}</p><p>${discountLabel}: −${escapeHtml(formatMoney(invoice.discountCents ?? 0))}</p><p><strong>Total due: ${escapeHtml(formatMoney(totalCents))}</strong></p>`
-    : `<p><strong>Total due: ${escapeHtml(formatMoney(totalCents))}</strong></p>`;
+  const taxLabel =
+    invoice.taxRatePercent && invoice.taxRatePercent > 0
+      ? `Tax (${invoice.taxRatePercent}%)`
+      : "Tax";
+
+  const totalsParts = [
+    `<p>Subtotal: ${escapeHtml(formatMoney(subtotalCents))}</p>`,
+    hasDiscount
+      ? `<p>${discountLabel}: −${escapeHtml(formatMoney(invoice.discountCents ?? 0))}</p>`
+      : "",
+    `<p>${escapeHtml(taxLabel)}: ${escapeHtml(formatMoney(taxCents))}</p>`,
+    `<p><strong>Total due: ${escapeHtml(formatMoney(totalCents))}</strong></p>`,
+  ].filter(Boolean);
+  const totals = totalsParts.join("");
 
   const noteItems =
     invoice.workOrderNotes && invoice.workOrderNotes.length > 0

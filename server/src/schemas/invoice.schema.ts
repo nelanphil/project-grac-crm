@@ -12,3 +12,15 @@ export const createInvoiceSchema = z.object({
 });
 
 export type CreateInvoiceInput = z.infer<typeof createInvoiceSchema>;
+
+export const updateInvoiceTaxSchema = z
+  .object({
+    taxCents: z.number().int().min(0).optional(),
+    taxRatePercent: z.number().min(0).max(100).optional(),
+  })
+  .refine(
+    (value) => value.taxCents != null || value.taxRatePercent != null,
+    { message: "taxCents or taxRatePercent is required" },
+  );
+
+export type UpdateInvoiceTaxInput = z.infer<typeof updateInvoiceTaxSchema>;

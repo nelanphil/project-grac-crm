@@ -111,6 +111,8 @@ function WorkOrderDetailContent() {
     miscExp: order.miscExp ?? 0,
     subtotal: order.subtotal ?? 0,
     shipping: order.shipping ?? 0,
+    taxRate: order.taxRate ?? 0,
+    tax: order.tax ?? 0,
     total: order.total,
     signatureDataUrl: order.signatureDataUrl,
     signedByName: order.signedByName,

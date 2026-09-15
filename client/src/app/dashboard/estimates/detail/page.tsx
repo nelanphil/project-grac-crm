@@ -89,6 +89,8 @@ function EstimateDetailContent() {
     miscExp: estimate.miscExp,
     subtotal: estimate.subtotal,
     shipping: estimate.shipping,
+    taxRate: estimate.taxRate ?? 0,
+    tax: estimate.tax ?? 0,
     total: estimate.total,
     signatureDataUrl: estimate.signatureDataUrl,
     signedByName: estimate.signedByName,

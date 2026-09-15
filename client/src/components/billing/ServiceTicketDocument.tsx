@@ -15,6 +15,11 @@ function formatMoney(amount: number): string {
   }).format(amount || 0);
 }
 
+function formatTaxRate(rate: number): string {
+  const rounded = Math.round(rate * 10000) / 10000;
+  return `${rounded}%`;
+}
+
 function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
   const d = new Date(value);
@@ -58,6 +63,8 @@ export type ServiceTicketView = {
   miscExp: number;
   subtotal: number;
   shipping: number;
+  taxRate?: number;
+  tax?: number;
   total: number;
   signatureDataUrl?: string;
   signedByName?: string;
@@ -105,6 +112,15 @@ function TicketTotals({
       <p className="flex justify-between gap-4">
         <span>Shipping</span>
         <span>{formatMoney(ticket.shipping)}</span>
+      </p>
+      <p className="flex justify-between gap-4">
+        <span>
+          Tax
+          {ticket.taxRate && ticket.taxRate > 0
+            ? ` (${formatTaxRate(ticket.taxRate)})`
+            : ""}
+        </span>
+        <span>{formatMoney(ticket.tax ?? 0)}</span>
       </p>
       <p className="flex justify-between gap-4 font-semibold">
         <span>Total</span>

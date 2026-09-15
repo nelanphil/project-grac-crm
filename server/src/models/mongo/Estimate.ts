@@ -56,6 +56,9 @@ export interface IEstimate extends Document {
   miscExp: number;
   subtotal: number;
   shipping: number;
+  taxRate?: number;
+  tax?: number;
+  taxOverridden?: boolean;
   total: number;
   signatureDataUrl: string;
   signedAt: Date | null;
@@ -142,6 +145,9 @@ const estimateSchema = new Schema<IEstimate>(
     miscExp: { type: Number, default: 0 },
     subtotal: { type: Number, default: 0 },
     shipping: { type: Number, default: 0 },
+    taxRate: { type: Number, default: undefined },
+    tax: { type: Number, default: 0 },
+    taxOverridden: { type: Boolean, default: false },
     total: { type: Number, default: 0 },
     signatureDataUrl: { type: String, default: "" },
     signedAt: { type: Date, default: null },

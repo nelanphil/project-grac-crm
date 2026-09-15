@@ -42,6 +42,7 @@ import contactRouter, {
   contactFormSettingsRouter,
 } from "./contactForm.routes";
 import recaptchaCredentialsRoutes from "./recaptchaCredentials.routes";
+import taxSettingsRoutes from "./taxSettings.routes";
 import emailPreferenceRoutes from "./emailPreference.routes";
 import legacyDumpRoutes from "./legacyDump.routes";
 import databaseInspectRoutes from "./databaseInspect.routes";
@@ -72,6 +73,7 @@ router.use("/twilio-accounts", twilioAccountRoutes);
 router.use("/email-accounts", emailAccountRoutes);
 router.use("/google-credentials", googleCredentialsRoutes);
 router.use("/recaptcha-credentials", recaptchaCredentialsRoutes);
+router.use("/tax-settings", taxSettingsRoutes);
 router.use("/message-templates", messageTemplateRoutes);
 router.use("/messaging", messagingRoutes);
 router.use("/email-messages", emailMessageRoutes);

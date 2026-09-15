@@ -8,11 +8,12 @@ import { ContractTemplate } from "../models/mongo/ContractTemplate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact } from "../models/mongo/CustomerContact";
-import { createInvoiceSchema } from "../schemas/invoice.schema";
+import { createInvoiceSchema, updateInvoiceTaxSchema } from "../schemas/invoice.schema";
 import {
   dollarsToCents,
   ensureOpenInvoiceForWorkOrder,
   InvoiceAmountError,
+  invoiceTaxFromCurrentRate,
   markInvoicePaid,
   nextInvoiceNumber,
   reopenInvoice,
@@ -32,6 +33,11 @@ import {
 } from "../utils/checkoutKey";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { listVisibleWorkOrderNotes } from "./workOrderNote.controller";
+import {
+  computeTaxAmount,
+  normalizeTaxRatePercent,
+  taxCentsFromDollars,
+} from "../services/taxSettings";
 
 export { resolveCustomerRefsForAuthUser };
 
@@ -65,6 +71,9 @@ function toPublicInvoice(doc: IInvoice | Record<string, unknown>) {
       typeof d.originalAmountCents === "number" ? d.originalAmountCents : null,
     discountCode: d.discountCode ? String(d.discountCode) : null,
     discountCents: Number(d.discountCents) || 0,
+    taxRatePercent: Number(d.taxRatePercent) || 0,
+    taxCents: Number(d.taxCents) || 0,
+    taxOverridden: Boolean(d.taxOverridden),
     currency: d.currency,
     status: d.status,
     dueDate: d.dueDate,
@@ -566,6 +575,9 @@ export async function createInvoice(
       }
     }
 
+    const tax = await invoiceTaxFromCurrentRate(amountCents);
+    amountCents = amountCents + tax.taxCents;
+
     const issuedAt = new Date();
     const invoice = await Invoice.create({
       number: await nextInvoiceNumber(issuedAt),
@@ -582,6 +594,9 @@ export async function createInvoice(
       dueDate,
       issuedAt,
       metadata,
+      taxRatePercent: tax.taxRatePercent,
+      taxCents: tax.taxCents,
+      taxOverridden: tax.taxOverridden,
     });
 
     logNotificationAsync({
@@ -597,6 +612,83 @@ export async function createInvoice(
   } catch (err) {
     console.error("[invoices] create failed", err);
     res.status(500).json({ message: "Failed to create invoice" });
+  }
+}
+
+const PROCESSED_INVOICE_STATUSES = new Set(["paid", "void"]);
+
+export async function updateInvoiceTax(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const parsed = updateInvoiceTaxSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: "Validation failed",
+        errors: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const id = String(req.params.id ?? "");
+    if (!Types.ObjectId.isValid(id)) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+
+    const invoice = await Invoice.findById(id);
+    if (!invoice) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+
+    if (PROCESSED_INVOICE_STATUSES.has(invoice.status)) {
+      res.status(409).json({
+        message: "Tax cannot be changed on a processed invoice",
+        invoice: toPublicInvoice(invoice),
+      });
+      return;
+    }
+
+    const oldTaxCents = Number(invoice.taxCents) || 0;
+    const currentTotal =
+      typeof invoice.originalAmountCents === "number"
+        ? invoice.originalAmountCents
+        : invoice.amountCents;
+    const preTaxCents = Math.max(currentTotal - oldTaxCents, 0);
+
+    const taxRatePercent = normalizeTaxRatePercent(
+      parsed.data.taxRatePercent ?? invoice.taxRatePercent,
+    );
+    const taxOverridden = parsed.data.taxCents != null;
+    const taxCents = taxOverridden
+      ? parsed.data.taxCents!
+      : taxCentsFromDollars(computeTaxAmount(preTaxCents / 100, taxRatePercent));
+
+    const nextTotal = preTaxCents + taxCents;
+    if (typeof invoice.originalAmountCents === "number") {
+      invoice.originalAmountCents = nextTotal;
+    }
+    invoice.amountCents = nextTotal;
+    invoice.taxRatePercent = taxRatePercent;
+    invoice.taxCents = taxCents;
+    invoice.taxOverridden = taxOverridden;
+    await invoice.save();
+
+    logNotificationAsync({
+      entityType: "invoice",
+      action: "updated",
+      entityId: String(invoice._id),
+      customerRef: invoice.customerRef ?? null,
+      summary: `Invoice ${invoice.number} tax updated`,
+      ...actorFromRequest(req.user),
+    });
+
+    res.json({ invoice: toPublicInvoice(invoice) });
+  } catch (err) {
+    console.error("[invoices] update tax failed", err);
+    res.status(500).json({ message: "Failed to update invoice tax" });
   }
 }
 

@@ -35,6 +35,9 @@ export const ticketMoneySchema = z.object({
   laborOverridden: z.boolean().optional(),
   miscExp: z.number().min(0).optional(),
   shipping: z.number().min(0).optional(),
+  taxRate: z.number().min(0).max(100).optional(),
+  tax: z.number().min(0).optional(),
+  taxOverridden: z.boolean().optional(),
   subtotal: z.number().min(0).optional(),
   total: z.number().min(0).optional(),
 });
