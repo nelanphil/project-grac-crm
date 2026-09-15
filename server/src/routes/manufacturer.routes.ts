@@ -1,7 +1,7 @@
 import { Router } from "express";
 import {
   authenticate,
-  requirePermission,
+  requireAnyPermission,
 } from "../middleware/auth.middleware";
 import {
   getManufacturers,
@@ -12,7 +12,15 @@ const router = Router();
 
 router.use(authenticate);
 
-router.get("/", requirePermission("products:read"), getManufacturers);
-router.post("/", requirePermission("products:write"), createManufacturer);
+router.get(
+  "/",
+  requireAnyPermission("products:read", "estimates:read", "jobs:read"),
+  getManufacturers,
+);
+router.post(
+  "/",
+  requireAnyPermission("products:write", "estimates:write", "jobs:write"),
+  createManufacturer,
+);
 
 export default router;
