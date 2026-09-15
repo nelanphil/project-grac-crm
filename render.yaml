@@ -68,16 +68,17 @@ services:
       - key: MYSQL_DATABASE
         sync: false
 
-  # Frontend (Next.js) — static export (`output: 'export'` in next.config.ts).
-  # Every route is a client-rendered SPA page (data loaded from the API at
-  # runtime), so it deploys as a static site. Record pages use query params
-  # (e.g. /dashboard/customers/detail?id=...) instead of dynamic segments.
+  # Frontend (Next.js static export served by a small Node process).
+  # Render Static Site rewrites never applied /images/<slug>, so the CDN
+  # served 404.html (and preloaded the OG jpg unused). This process proxies
+  # slug paths to the API and serves `out/` for everything else.
+  # Do not use the free plan: a sleeping origin would take the marketing site down.
   - type: web
     name: grac-crm-client
-    runtime: static
+    runtime: node
     rootDir: client
     buildCommand: npm install && npm run build
-    staticPublishPath: out
+    startCommand: npm run start:static
     envVars:
       # URL of the deployed backend API (baked into the bundle at build time)
       - key: NEXT_PUBLIC_API_URL
@@ -85,21 +86,3 @@ services:
       # Canonical frontend origin used for public image links
       - key: NEXT_PUBLIC_SITE_URL
         value: https://genmaintoffl.com
-    routes:
-      # Public image links are copied as https://genmaintoffl.com/images/<slug>.
-      # The static export has no server, so Render proxies to the unauthenticated
-      # API route, which streams Cloudinary bytes so the browser URL stays on
-      # /images/<slug>. Match with and without a trailing slash. Keep
-      # /public-assets/:slug for already-shared links.
-      - type: rewrite
-        source: /images/:slug
-        destination: https://gmof-server.onrender.com/public-assets/:slug
-      - type: rewrite
-        source: /images/:slug/
-        destination: https://gmof-server.onrender.com/public-assets/:slug
-      - type: rewrite
-        source: /public-assets/:slug
-        destination: https://gmof-server.onrender.com/public-assets/:slug
-      - type: rewrite
-        source: /public-assets/:slug/
-        destination: https://gmof-server.onrender.com/public-assets/:slug

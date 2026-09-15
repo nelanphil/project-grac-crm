@@ -21,8 +21,9 @@ const nextConfig: NextConfig = {
     unoptimized: true,
   },
   // Local `next dev` only — static export cannot apply these at serve time.
-  // Production uses `/images/:slug` rewrites in render.yaml to the API proxy.
-  // Slug pattern excludes dots so static files like *.jpg are not proxied.
+  // Production serves `out/` with scripts/serve-static.mjs, which proxies
+  // /images/<slug> to the API. Slug pattern excludes dots so static files
+  // like *.jpg are not proxied.
   async rewrites() {
     return [
       {

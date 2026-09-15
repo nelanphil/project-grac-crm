@@ -7,7 +7,9 @@
     "dev": "npm run dev:client",
     "build": "next build",
     "start:client": "next start",
+    "start:static": "node scripts/serve-static.mjs",
     "start": "npm run start:client",
+    "test": "node --test scripts/publicImagePath.test.mjs",
     "lint": "eslint"
   },
   "dependencies": {
