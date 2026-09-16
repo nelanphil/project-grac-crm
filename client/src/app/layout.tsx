@@ -1,9 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
-import Header from "@/components/layout/Header";
-import Footer from "@/components/layout/Footer";
-import CookieConsentBanner from "@/components/legal/CookieConsentBanner";
-import ScrollToTopButton from "@/components/ui/ScrollToTopButton";
+import SiteChrome from "@/components/layout/SiteChrome";
 import "./globals.css";
 
 const inter = Inter({
@@ -56,11 +53,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col">
-        <Header />
-        <main className="flex-1">{children}</main>
-        <Footer />
-        <CookieConsentBanner />
-        <ScrollToTopButton />
+        <SiteChrome>{children}</SiteChrome>
       </body>
     </html>
   );
