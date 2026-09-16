@@ -75,6 +75,29 @@ export async function submitContactForm(
   return body;
 }
 
+export async function submitSmsOptIn(data: {
+  phone: string;
+  smsOptIn: true;
+}): Promise<{ message: string }> {
+  const res = await fetch(`${API_URL}/sms-opt-in`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new ApiError(
+      body.message ?? "Something went wrong. Please try again.",
+      res.status,
+      body.errors,
+    );
+  }
+
+  return body;
+}
+
 // ---------------------------------------------------------------------------
 // Leads
 // ---------------------------------------------------------------------------

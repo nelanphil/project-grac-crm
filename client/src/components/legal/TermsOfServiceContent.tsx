@@ -107,7 +107,8 @@ export default function TermsOfServiceContent() {
           <p className="mt-3">
             {COMPANY.name} may send optional automated transactional SMS/MMS
             messages if you opt in by providing a mobile number and checking an
-            unchecked consent box (on signup, first login, or an estimate request).
+            unchecked consent box (on our SMS program page, signup, first login, or
+            an estimate request).
             Messages are sent by {COMPANY.name} and may include appointment
             confirmations and reminders, invoices, payment receipts, and account or
             service alerts. Message frequency varies. Message and data rates may

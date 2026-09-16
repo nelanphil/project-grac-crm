@@ -4,6 +4,7 @@ import {
   SMS_CONSENT_DISCLOSURE_TEXT,
   SMS_MESSAGE_TYPES,
 } from "@/lib/smsConsent";
+import SmsOptInForm from "@/components/legal/SmsOptInForm";
 
 const linkClass = "text-brand-orange underline-offset-2 hover:underline";
 
@@ -16,6 +17,33 @@ export default function SmsProgramContent() {
       </p>
 
       <div className="mt-10 space-y-8 text-base leading-relaxed text-neutral-700">
+        <section>
+          <h2 className="text-xl font-semibold text-brand-dark">
+            Opt in to text messages
+          </h2>
+          <p className="mt-3">
+            End users opt in by visiting this page, entering a mobile number, and
+            checking an unchecked checkbox. Consent is optional and is not required
+            to create an account or to purchase. The same unchecked checkbox is also
+            used at{" "}
+            <Link href="/auth/signup" className={linkClass}>
+              account signup
+            </Link>
+            .
+          </p>
+          <p className="mt-3">
+            {COMPANY.name} sends optional automated transactional text messages
+            including {SMS_MESSAGE_TYPES}. Message frequency varies. Message and
+            data rates may apply. Msg & data rates may apply. Reply{" "}
+            <strong>STOP</strong> to opt out or <strong>HELP</strong> for help.
+            Consent is not a condition of purchase.
+          </p>
+          <p className="mt-3">
+            Exact checkbox wording: {SMS_CONSENT_DISCLOSURE_TEXT}
+          </p>
+          <SmsOptInForm />
+        </section>
+
         <section>
           <h2 className="text-xl font-semibold text-brand-dark">Who sends these messages</h2>
           <p className="mt-3">
@@ -34,21 +62,11 @@ export default function SmsProgramContent() {
         </section>
 
         <section>
-          <h2 className="text-xl font-semibold text-brand-dark">What you may receive</h2>
-          <p className="mt-3">
-            Messages include {SMS_MESSAGE_TYPES}. Message frequency varies. Message
-            and data rates may apply. Msg & data rates may apply. Reply{" "}
-            <strong>STOP</strong> to opt out or <strong>HELP</strong> for help.
-            Consent is not a condition of purchase.
-          </p>
-        </section>
-
-        <section>
           <h2 className="text-xl font-semibold text-brand-dark">How you opt in</h2>
           <p className="mt-3">
             You opt in by entering your mobile number and checking an{" "}
-            <strong>unchecked</strong> box. Consent is optional and is not required
-            to create an account or to purchase. We collect this consent on:
+            <strong>unchecked</strong> box on this page, then submitting the form.
+            We also collect this consent on:
           </p>
           <ul className="mt-3 list-disc space-y-2 pl-5">
             <li>
@@ -65,41 +83,6 @@ export default function SmsProgramContent() {
               </Link>
             </li>
           </ul>
-          <p className="mt-3">
-            Exact checkbox wording: {SMS_CONSENT_DISCLOSURE_TEXT}
-          </p>
-        </section>
-
-        <section>
-          <h2 className="text-xl font-semibold text-brand-dark">
-            Example of our opt-in
-          </h2>
-          <p className="mt-3">
-            The checkbox starts unchecked. This is the same wording used at signup.
-          </p>
-          <div className="mt-4 space-y-3 rounded-lg border border-neutral-200 bg-neutral-50 p-4">
-            <div className="flex gap-3 text-sm text-brand-dark">
-              <input
-                type="checkbox"
-                defaultChecked={false}
-                readOnly
-                aria-label="I agree to receive text messages (optional)."
-                className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-orange"
-              />
-              <p>I agree to receive text messages (optional).</p>
-            </div>
-            <p>
-              {SMS_CONSENT_DISCLOSURE_TEXT} See our{" "}
-              <Link href="/privacy" className={linkClass}>
-                Privacy Policy
-              </Link>{" "}
-              and{" "}
-              <Link href="/terms" className={linkClass}>
-                Terms of Service
-              </Link>
-              .
-            </p>
-          </div>
         </section>
 
         <section>

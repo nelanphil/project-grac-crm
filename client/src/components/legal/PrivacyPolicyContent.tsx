@@ -85,8 +85,9 @@ export default function PrivacyPolicyContent() {
           <p className="mt-3">
             {COMPANY.name} offers an optional SMS program for transactional account
             and service notifications. If you provide a mobile number and opt in
-            (for example, by checking an unchecked box on our signup form, first-login
-            consent screen, or estimate request), you consent to receive automated
+            (for example, by checking an unchecked box on our SMS program page,
+            signup form, first-login consent screen, or estimate request), you consent
+            to receive automated
             SMS/MMS messages from {COMPANY.name} at that number. Messages may include
             appointment confirmations and reminders, invoices, payment receipts, and
             account or service alerts. Message frequency varies. Message and data
