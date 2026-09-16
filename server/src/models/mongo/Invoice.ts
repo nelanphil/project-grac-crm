@@ -65,7 +65,7 @@ const lineItemSchema = new Schema<IInvoiceLineItem>(
 
 const invoiceSchema = new Schema<IInvoice>(
   {
-    number: { type: String, required: true, unique: true, index: true },
+    number: { type: String, required: true, unique: true },
     customerId: { type: Number, required: true, index: true },
     customerRef: {
       type: Schema.Types.ObjectId,

@@ -86,7 +86,7 @@ const estimatePartSchema = new Schema<IEstimatePart>(
 
 const estimateSchema = new Schema<IEstimate>(
   {
-    number: { type: String, required: true, unique: true, index: true },
+    number: { type: String, required: true, unique: true },
     status: {
       type: String,
       enum: ESTIMATE_STATUSES,

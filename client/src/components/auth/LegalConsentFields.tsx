@@ -97,8 +97,11 @@ export default function LegalConsentFields({
           onChange={(e) => onSmsOptInChange(e.target.checked)}
           className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
         />
-        <SmsConsentDisclosure />
+        <span>I agree to receive text messages (optional).</span>
       </label>
+      <p className="text-sm text-neutral-600">
+        <SmsConsentDisclosure />
+      </p>
     </div>
   );
 }

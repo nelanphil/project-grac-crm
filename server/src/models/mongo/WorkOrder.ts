@@ -91,7 +91,7 @@ const workOrderPartSchema = new Schema<IWorkOrderPart>(
 const workOrderSchema = new Schema<IWorkOrder>(
   {
     legacyId: { type: Number, index: true },
-    number: { type: String, default: undefined, index: true, sparse: true },
+    number: { type: String, default: undefined },
     userId: { type: Number, index: true },
     customerId: { type: Number, index: true, required: true },
     customerRef: { type: Schema.Types.ObjectId, ref: "Customer" },
