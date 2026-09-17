@@ -6,8 +6,6 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import MessagingHub from "@/components/messaging/MessagingHub";
 import { useAuthStore } from "@/store/useAuthStore";
 
-const ADMIN_ROLES = ["admin", "super-admin", "owner"];
-
 export default function MessagingPage() {
   return (
     <AuthGuard>
@@ -19,8 +17,9 @@ export default function MessagingPage() {
 function MessagingPageContent() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
-
-  const isAdmin = user ? ADMIN_ROLES.includes(user.role) : false;
+  const isAdmin = useAuthStore((s) =>
+    s.hasRole("admin", "super-admin", "owner"),
+  );
 
   useEffect(() => {
     if (user && !isAdmin) {

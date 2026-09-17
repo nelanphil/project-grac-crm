@@ -12,6 +12,10 @@ import {
   ensureDiscountPermissions,
 } from "./models/mongo/RolePermission";
 import { seedDefaultRoles } from "./models/mongo/Role";
+import {
+  mergeDuplicateTechnicianRoles,
+  migrateUserRoles,
+} from "./utils/migrateUserRoles";
 import { seedDefaultManufacturers } from "./models/mongo/Manufacturer";
 import { seedContractTemplates } from "./models/mongo/ContractTemplate";
 import { startRenewalInvoiceScheduler } from "./jobs/scheduler";
@@ -19,6 +23,8 @@ import { startRenewalInvoiceScheduler } from "./jobs/scheduler";
 async function bootstrap(): Promise<void> {
   await connectMongoDB();
   await seedDefaultRoles();
+  await mergeDuplicateTechnicianRoles();
+  await migrateUserRoles();
   await seedDefaultPermissions();
   await revokeCustomerListAccess();
   await ensureContractPermissions();

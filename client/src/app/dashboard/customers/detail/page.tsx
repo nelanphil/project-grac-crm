@@ -22,6 +22,7 @@ import MobileSectionNav from "@/components/ui/MobileSectionNav";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { useAuthStore } from "@/store/useAuthStore";
+import { isCustomerRole } from "@/lib/dashboard-role";
 import {
   getCustomer,
   getWorkOrdersForCustomer,
@@ -132,13 +133,13 @@ function CustomerDetailContent() {
   const [statusError, setStatusError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (user?.role === "customer") {
+    if (isCustomerRole(user)) {
       router.replace("/dashboard");
     }
   }, [user, router]);
 
   useEffect(() => {
-    if (!token || !id || user?.role === "customer") return;
+    if (!token || !id || isCustomerRole(user)) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -278,7 +279,7 @@ function CustomerDetailContent() {
     }
   }
 
-  if (!user || user.role === "customer") return null;
+  if (!user || isCustomerRole(user)) return null;
 
   if (loading) {
     return (

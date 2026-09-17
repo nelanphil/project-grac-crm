@@ -101,9 +101,15 @@ export const updatePasswordSchema = z.object({
     .max(100),
 });
 
-export const updateRoleSchema = z.object({
-  role: z.string().min(1),
-});
+export const updateRoleSchema = z
+  .object({
+    role: z.string().min(1).optional(),
+    roles: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .refine((data) => Boolean(data.role || (data.roles && data.roles.length > 0)), {
+    message: "Role is required",
+    path: ["role"],
+  });
 
 const navOrderHrefList = z.array(z.string().max(200)).max(50);
 

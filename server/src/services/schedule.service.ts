@@ -25,12 +25,9 @@ import {
   type LatLng,
 } from "../utils/googleRoutes";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
+import { TECH_ROLE, isTechnicianRole } from "../utils/roles";
 
-export const DISPATCHER_ROLES = ["super-admin", "admin", "owner"] as const;
-
-export function isDispatcherRole(role: string | undefined): boolean {
-  return Boolean(role && (DISPATCHER_ROLES as readonly string[]).includes(role));
-}
+export { DISPATCHER_ROLES, isDispatcherRole } from "../utils/roles";
 
 export function staffDisplayName(user: {
   first_name?: string;
@@ -68,6 +65,7 @@ type LeanUser = {
   last_name: string;
   email: string;
   role: string;
+  roles?: string[];
   schedulable?: boolean;
   homeLocation?: HomeLocation | null;
   weeklyHours?: WeeklyHours | null;
@@ -80,6 +78,7 @@ export type PublicStaff = {
   last_name: string;
   email: string;
   role: string;
+  roles: string[];
   schedulable: boolean;
   homeLocation: HomeLocation;
   weeklyHours: WeeklyHours;
@@ -93,7 +92,8 @@ export function toPublicStaff(user: LeanUser): PublicStaff {
     last_name: user.last_name,
     email: user.email,
     role: user.role,
-    schedulable: Boolean(user.schedulable),
+    roles: Array.isArray(user.roles) && user.roles.length > 0 ? user.roles : [user.role],
+    schedulable: isTechnicianRole(user),
     homeLocation: {
       address: user.homeLocation?.address ?? "",
       city: user.homeLocation?.city ?? "",
@@ -102,7 +102,7 @@ export function toPublicStaff(user: LeanUser): PublicStaff {
       lat: user.homeLocation?.lat ?? null,
       lng: user.homeLocation?.lng ?? null,
     },
-    weeklyHours: user.weeklyHours ?? defaultWeeklyHours(Boolean(user.schedulable)),
+    weeklyHours: user.weeklyHours ?? defaultWeeklyHours(isTechnicianRole(user)),
     scheduleExceptions: user.scheduleExceptions ?? [],
   };
 }
@@ -327,11 +327,10 @@ export async function enrichScheduleWorkOrders(
 export async function listSchedulableStaff(): Promise<LeanUser[]> {
   return User.find({
     ...activeUserFilter,
-    schedulable: true,
-    role: { $ne: "customer" },
+    roles: TECH_ROLE,
   })
     .select(
-      "first_name last_name email role schedulable homeLocation weeklyHours scheduleExceptions",
+      "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions",
     )
     .sort({ last_name: 1, first_name: 1 })
     .lean();
@@ -870,7 +869,7 @@ export async function dayRouteForUser(opts: {
     ...activeUserFilter,
   })
     .select(
-      "first_name last_name email role schedulable homeLocation weeklyHours scheduleExceptions",
+      "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions",
     )
     .lean();
   if (!user) {
@@ -1135,7 +1134,7 @@ export async function listNextAvailableSlots(opts?: {
     const windows = staff
       .map((s) => {
         const window = resolveDayWindow(
-          s.weeklyHours ?? defaultWeeklyHours(Boolean(s.schedulable)),
+          s.weeklyHours ?? defaultWeeklyHours(isTechnicianRole(s)),
           s.scheduleExceptions,
           localDate,
         );

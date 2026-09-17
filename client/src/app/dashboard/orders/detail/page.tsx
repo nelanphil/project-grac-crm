@@ -8,6 +8,7 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import InvoiceDocument from "@/components/billing/InvoiceDocument";
 import { useAuthStore } from "@/store/useAuthStore";
+import { isCustomerRole } from "@/lib/dashboard-role";
 import {
   ApiError,
   getInvoice,
@@ -35,7 +36,7 @@ function InvoiceDetailContent() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const hasRole = useAuthStore((s) => s.hasRole);
-  const isCustomer = user?.role === "customer";
+  const isCustomer = isCustomerRole(user);
   const canEmail = hasRole("admin", "super-admin", "owner");
 
   const [invoice, setInvoice] = useState<InvoiceItem | null>(null);

@@ -124,7 +124,7 @@ function WorkOrderDetailContent() {
         workOrderId={order._id}
         userId={user.id}
         canWrite={canWrite}
-        userRole={user.role}
+        userRole={user}
         fallbackContent={order.descPerformed}
       />
     ) : null;
@@ -136,7 +136,7 @@ function WorkOrderDetailContent() {
         workOrderId={order._id}
         userId={user.id}
         canWrite={false}
-        userRole={user.role}
+        userRole={user}
         fallbackContent={order.descPerformed}
       />
     ) : null;
@@ -228,7 +228,7 @@ function WorkOrderDetailContent() {
                 const prevAssigned = order.assignedUserRef ?? null;
                 const updated = await updateWorkOrder(token, order._id, {
                   ...rest,
-                  ...(isDispatcherRole(user?.role) && nextAssigned !== prevAssigned
+                  ...(isDispatcherRole(user) && nextAssigned !== prevAssigned
                     ? { assignedUserRef: nextAssigned }
                     : {}),
                 });

@@ -6,6 +6,7 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import CustomerNotesPanel from "@/components/customers/CustomerNotesPanel";
 import { useAuthStore } from "@/store/useAuthStore";
+import { isCustomerRole } from "@/lib/dashboard-role";
 import { formatCustomerRecordName } from "@/lib/formatName";
 import { ApiError, CustomerDetail, getCustomer } from "@/lib/api";
 
@@ -22,13 +23,13 @@ function CustomerNotesContent() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (user?.role === "customer") {
+    if (isCustomerRole(user)) {
       router.replace("/dashboard");
     }
   }, [user, router]);
 
   useEffect(() => {
-    if (!token || !id || user?.role === "customer") return;
+    if (!token || !id || isCustomerRole(user)) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -45,7 +46,7 @@ function CustomerNotesContent() {
       .finally(() => setLoading(false));
   }, [token, id, user]);
 
-  if (!user || user.role === "customer") return null;
+  if (!user || isCustomerRole(user)) return null;
 
   if (loading) {
     return <div className="text-sm text-neutral-500 py-6">Loading notes…</div>;

@@ -6,8 +6,6 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuthStore } from "@/store/useAuthStore";
 import UsersTab from "./UsersTab";
 
-const ALLOWED_ROLES = ["admin", "super-admin", "owner"];
-
 export default function UsersPage() {
   return (
     <AuthGuard>
@@ -18,8 +16,10 @@ export default function UsersPage() {
 
 function UsersContent() {
   const router = useRouter();
+  const allowed = useAuthStore((s) =>
+    s.hasRole("admin", "super-admin", "owner"),
+  );
   const user = useAuthStore((s) => s.user);
-  const allowed = user ? ALLOWED_ROLES.includes(user.role) : false;
 
   useEffect(() => {
     if (user && !allowed) {

@@ -13,11 +13,6 @@ import {
 import { Role } from "../models/mongo/Role";
 import { createUserSchema, updateUserSchema } from "../schemas/user.schema";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
-import {
-  defaultSchedulableForRole,
-  defaultWeeklyHours,
-  emptyHomeLocation,
-} from "../utils/scheduleTime";
 import { updateRoleSchema } from "../schemas/auth.schema";
 import {
   applyUsername,
@@ -41,6 +36,20 @@ import {
 } from "../utils/provisionCustomerAccount";
 import { syncCustomersToUserEmail } from "../utils/ensureCustomerLogin";
 import { renameEmailPreferences } from "../utils/emailPreferences";
+import {
+  isCustomerRole,
+  isOwnerRole,
+  isSuperAdminRole,
+  isTechnicianRole,
+  RoleAssignmentError,
+  rolesFromPayload,
+  syncRoleFields,
+} from "../utils/roles";
+import {
+  defaultWeeklyHours,
+  emptyHomeLocation,
+  weeklyHoursNeverEnabled,
+} from "../utils/scheduleTime";
 
 function generateTempPassword(): string {
   return crypto.randomBytes(12).toString("base64url");
@@ -136,6 +145,7 @@ function formatUser(user: {
   first_name: string;
   last_name: string;
   role: string;
+  roles?: string[];
   username?: string | null;
   usernameKey?: string | null;
   territories?: IUserTerritories | null;
@@ -146,16 +156,17 @@ function formatUser(user: {
   createdAt: Date;
   updatedAt?: Date;
 }) {
+  const synced = syncRoleFields(user);
   return {
     _id: String(user._id),
     email: user.email,
     first_name: user.first_name,
     last_name: user.last_name,
-    role: user.role,
+    role: synced.role,
+    roles: synced.roles,
     username: user.username ?? null,
     usernameNumber: usernameNumberFromKey(user.username, user.usernameKey),
     territories: formatTerritories(user.territories),
-    schedulable: Boolean(user.schedulable),
     homeLocation: formatHomeLocation(user.homeLocation),
     weeklyHours: formatWeeklyHours(user.weeklyHours),
     scheduleExceptions: user.scheduleExceptions ?? [],
@@ -164,9 +175,32 @@ function formatUser(user: {
   };
 }
 
-async function assertRoleExists(roleSlug: string): Promise<boolean> {
-  const role = await Role.findOne({ slug: roleSlug, deletedAt: null }).lean();
-  return Boolean(role);
+async function assertRolesExist(slugs: string[]): Promise<boolean> {
+  const roles = await Role.find({
+    slug: { $in: slugs },
+    deletedAt: null,
+  })
+    .select("slug")
+    .lean();
+  return roles.length === slugs.length;
+}
+
+async function resolveAssignedRoles(input: {
+  role?: string;
+  roles?: string[];
+}): Promise<{ ok: true; roles: string[]; role: string } | { ok: false; message: string }> {
+  try {
+    const assigned = rolesFromPayload(input);
+    if (!(await assertRolesExist(assigned))) {
+      return { ok: false, message: "Invalid or deleted role" };
+    }
+    const synced = syncRoleFields({ roles: assigned });
+    return { ok: true, roles: synced.roles, role: synced.role };
+  } catch (err) {
+    const message =
+      err instanceof RoleAssignmentError ? err.message : "Invalid role";
+    return { ok: false, message };
+  }
 }
 
 function formatConflictMessage(
@@ -204,22 +238,27 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
     return;
   }
 
-  const { email, first_name, last_name, role, username } = parsed.data;
+  const { email, first_name, last_name, username } = parsed.data;
   const plainPassword = parsed.data.password ?? generateTempPassword();
   const passwordWasGenerated = !parsed.data.password;
 
   try {
-    if (!(await assertRoleExists(role))) {
-      res.status(400).json({ message: "Invalid or deleted role" });
+    const assigned = await resolveAssignedRoles(parsed.data);
+    if (!assigned.ok) {
+      res.status(400).json({ message: assigned.message });
       return;
     }
+    const { roles, role } = assigned;
+    const isCustomer = isCustomerRole(roles);
+    const isOwner = isOwnerRole(roles);
+    const isTech = isTechnicianRole(roles);
 
     const territories =
-      role === "owner" && parsed.data.territories
+      isOwner && parsed.data.territories
         ? normalizeTerritoriesInput(parsed.data.territories)
         : emptyTerritories();
 
-    if (role === "owner" && (territories.counties.length || territories.zips.length)) {
+    if (isOwner && (territories.counties.length || territories.zips.length)) {
       const conflicts = await findTerritoryConflicts(territories);
       if (conflicts.length > 0) {
         res.status(409).json({
@@ -240,7 +279,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
     });
     if (emailConflict) {
       const message =
-        role === "customer" || emailConflict.type === "customer"
+        isCustomer || emailConflict.type === "customer"
           ? EMAIL_CONFLICT_ADMIN
           : "Email already in use";
       res.status(409).json({ message });
@@ -248,13 +287,8 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
     }
 
     const password_hash = await bcrypt.hash(plainPassword, 10);
-
-    const isCustomer = role === "customer";
-    const schedulable = isCustomer
-      ? false
-      : (parsed.data.schedulable ?? defaultSchedulableForRole(role));
     const weeklyHours =
-      parsed.data.weeklyHours ?? defaultWeeklyHours(schedulable);
+      parsed.data.weeklyHours ?? defaultWeeklyHours(isTech);
 
     let homeLocation = emptyHomeLocation();
     if (parsed.data.homeLocation) {
@@ -274,9 +308,9 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       softDeleted.password_hash = password_hash;
       softDeleted.first_name = first_name;
       softDeleted.last_name = last_name;
+      softDeleted.roles = roles;
       softDeleted.role = role;
       softDeleted.territories = territories;
-      softDeleted.schedulable = schedulable;
       softDeleted.weeklyHours = weeklyHours;
       softDeleted.homeLocation = homeLocation;
       softDeleted.scheduleExceptions = scheduleExceptions;
@@ -301,8 +335,8 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
         first_name,
         last_name,
         role,
+        roles,
         territories,
-        schedulable,
         weeklyHours,
         homeLocation,
         scheduleExceptions,
@@ -321,7 +355,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       }
     }
 
-    if (role === "customer") {
+    if (isCustomer) {
       try {
         await provisionCrmCustomerForUser(user);
       } catch (err) {
@@ -332,7 +366,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       }
     }
 
-    if (role === "owner") {
+    if (isOwner) {
       scheduleOwnerReassignment(`user-create=${String(user._id)}`);
     }
 
@@ -365,17 +399,24 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     return;
   }
 
-  const { email, first_name, last_name, role, username, password } = parsed.data;
+  const { email, first_name, last_name, username, password } = parsed.data;
 
   try {
-    if (password !== undefined && req.user?.role !== "super-admin") {
+    if (password !== undefined && !isSuperAdminRole(req.user)) {
       res.status(403).json({ message: "Only super-admins can set user passwords" });
       return;
     }
 
-    if (role !== undefined && !(await assertRoleExists(role))) {
-      res.status(400).json({ message: "Invalid or deleted role" });
-      return;
+    const wantsRoleChange =
+      parsed.data.roles !== undefined || parsed.data.role !== undefined;
+    let assigned: { roles: string[]; role: string } | null = null;
+    if (wantsRoleChange) {
+      const resolved = await resolveAssignedRoles(parsed.data);
+      if (!resolved.ok) {
+        res.status(400).json({ message: resolved.message });
+        return;
+      }
+      assigned = { roles: resolved.roles, role: resolved.role };
     }
 
     const user = await User.findOne({ _id: req.params.id, ...activeUserFilter });
@@ -384,7 +425,9 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    const previousRole = user.role;
+    const wasOwner = isOwnerRole(user);
+    const wasCustomer = isCustomerRole(user);
+    const wasTech = isTechnicianRole(user);
     const previousTerritories = formatTerritories(user.territories);
     const previousEmail = user.email;
 
@@ -393,9 +436,9 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
         excludeUserId: user._id,
       });
       if (emailConflict) {
-        const nextRoleForConflict = role ?? user.role;
+        const nextRoles = assigned?.roles ?? user.roles;
         const message =
-          nextRoleForConflict === "customer" || emailConflict.type === "customer"
+          isCustomerRole(nextRoles) || emailConflict.type === "customer"
             ? EMAIL_CONFLICT_ADMIN
             : "Email already in use";
         res.status(409).json({ message });
@@ -405,10 +448,15 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     }
     if (first_name !== undefined) user.first_name = first_name;
     if (last_name !== undefined) user.last_name = last_name;
-    if (role !== undefined) user.role = role;
+    if (assigned) {
+      user.roles = assigned.roles;
+      user.role = assigned.role;
+    }
 
-    const nextRole = role ?? user.role;
-    if (nextRole !== "owner") {
+    const nextIsOwner = isOwnerRole(user);
+    const nextIsCustomer = isCustomerRole(user);
+    const nextIsTech = isTechnicianRole(user);
+    if (!nextIsOwner) {
       user.territories = emptyTerritories();
     } else if (parsed.data.territories !== undefined) {
       const territories = normalizeTerritoriesInput(parsed.data.territories);
@@ -438,14 +486,10 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
       user.password_hash = await bcrypt.hash(password, 10);
     }
 
-    if (nextRole === "customer") {
-      user.schedulable = false;
-    } else if (parsed.data.schedulable !== undefined) {
-      user.schedulable = parsed.data.schedulable;
-    }
-
     if (parsed.data.weeklyHours !== undefined) {
       user.weeklyHours = parsed.data.weeklyHours;
+    } else if (!wasTech && nextIsTech && weeklyHoursNeverEnabled(user.weeklyHours)) {
+      user.weeklyHours = defaultWeeklyHours(true);
     }
 
     if (parsed.data.homeLocation !== undefined) {
@@ -468,7 +512,7 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     }
 
     if (
-      (nextRole === "customer" || previousRole === "customer") &&
+      (nextIsCustomer || wasCustomer) &&
       email !== undefined &&
       previousEmail !== user.email
     ) {
@@ -482,12 +526,7 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     const zips = [
       ...new Set([...previousTerritories.zips, ...nextTerritories.zips]),
     ];
-    if (
-      previousRole === "owner" ||
-      user.role === "owner" ||
-      counties.length > 0 ||
-      zips.length > 0
-    ) {
+    if (wasOwner || nextIsOwner || counties.length > 0 || zips.length > 0) {
       scheduleOwnerReassignment(`user-update=${String(user._id)}`);
     }
 
@@ -523,8 +562,9 @@ export async function updateUserRole(
   }
 
   try {
-    if (!(await assertRoleExists(parsed.data.role))) {
-      res.status(400).json({ message: "Invalid or deleted role" });
+    const assigned = await resolveAssignedRoles(parsed.data);
+    if (!assigned.ok) {
+      res.status(400).json({ message: assigned.message });
       return;
     }
 
@@ -534,15 +574,19 @@ export async function updateUserRole(
       return;
     }
 
-    const previousRole = user.role;
-    const previousTerritories = formatTerritories(user.territories);
-    user.role = parsed.data.role;
-    if (parsed.data.role !== "owner") {
+    const wasOwner = isOwnerRole(user);
+    const wasTech = isTechnicianRole(user);
+    user.roles = assigned.roles;
+    user.role = assigned.role;
+    if (!isOwnerRole(user)) {
       user.territories = emptyTerritories();
+    }
+    if (!wasTech && isTechnicianRole(user) && weeklyHoursNeverEnabled(user.weeklyHours)) {
+      user.weeklyHours = defaultWeeklyHours(true);
     }
     await user.save();
 
-    if (previousRole === "owner" || parsed.data.role === "owner") {
+    if (wasOwner || isOwnerRole(user)) {
       scheduleOwnerReassignment(`user-role=${String(user._id)}`);
     }
 
@@ -552,8 +596,8 @@ export async function updateUserRole(
       entityType: "user",
       action: "updated",
       entityId: String(user._id),
-      summary: `User role changed to ${parsed.data.role}`,
-      metadata: { email: user.email, role: user.role },
+      summary: `User roles changed to ${assigned.roles.join(", ")}`,
+      metadata: { email: user.email, role: user.role, roles: user.roles },
       ...actorFromRequest(req.user),
     });
 
@@ -586,7 +630,7 @@ export async function softDeleteUser(
     }
 
     const previousUsername = user.username;
-    const previousRole = user.role;
+    const wasOwner = isOwnerRole(user);
     const previousTerritories = formatTerritories(user.territories);
     user.deletedAt = new Date();
     // Free unique usernameKey so active users can claim the bare name
@@ -595,7 +639,7 @@ export async function softDeleteUser(
     user.territories = emptyTerritories();
     await user.save();
 
-    if (previousRole === "owner") {
+    if (wasOwner) {
       scheduleOwnerReassignment(`user-delete=${String(user._id)}`);
     }
 

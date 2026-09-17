@@ -230,11 +230,7 @@ export function isEmailScheduleTimeValid(iso: string): boolean {
   return !Number.isNaN(t) && t >= Date.now() + MIN_EMAIL_SCHEDULE_LEAD_MS;
 }
 
-export const DISPATCHER_ROLES = ["super-admin", "admin", "owner"];
-
-export function isDispatcherRole(role: string | null | undefined): boolean {
-  return Boolean(role && DISPATCHER_ROLES.includes(role));
-}
+export { DISPATCHER_ROLES, isDispatcherRole } from "@/lib/dashboard-role";
 
 export function weeklyHoursNeverEnabled(hours: UserWeeklyHours): boolean {
   return WEEKDAY_KEYS.every((key) => !hours[key].enabled);

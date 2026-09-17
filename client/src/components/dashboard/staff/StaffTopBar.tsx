@@ -57,8 +57,8 @@ export default function StaffTopBar() {
   const [editMode, setEditMode] = useState(false);
 
   const baseSections = useMemo(
-    () => getVisibleNavSections(user?.role),
-    [user?.role],
+    () => getVisibleNavSections(user),
+    [user],
   );
   const visibleItems = useMemo(
     () => applyNavOrder(baseSections, navOrder),

@@ -119,8 +119,18 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
 ];
 
 export async function getPermissionsForRole(role: UserRole): Promise<string[]> {
-  const docs = await RolePermission.find({ role }).select("permission -_id").lean();
-  return docs.map((d) => d.permission);
+  return getPermissionsForRoles([role]);
+}
+
+export async function getPermissionsForRoles(
+  roles: UserRole[],
+): Promise<string[]> {
+  const slugs = [...new Set(roles.filter(Boolean))];
+  if (slugs.length === 0) return [];
+  const docs = await RolePermission.find({ role: { $in: slugs } })
+    .select("permission -_id")
+    .lean();
+  return [...new Set(docs.map((d) => d.permission))];
 }
 
 /**

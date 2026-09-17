@@ -151,7 +151,7 @@ export async function getWorkOrders(
       filter.addressRef = addressId;
     }
 
-    const dispatcher = isDispatcherRole(req.user?.role);
+    const dispatcher = isDispatcherRole(req.user);
     let scopedUserId = assignedUserId;
     if (!dispatcher && (from || to || unscheduled || assignedUserId)) {
       scopedUserId = req.user?.id ?? "";
@@ -450,7 +450,7 @@ export async function updateWorkOrder(
       return;
     }
 
-    const dispatcher = isDispatcherRole(req.user?.role);
+    const dispatcher = isDispatcherRole(req.user);
     const isAssignee =
       workOrder.assignedUserRef &&
       String(workOrder.assignedUserRef) === req.user?.id;
@@ -637,7 +637,7 @@ export async function cancelWorkOrderAppointment(
       res.status(403).json({ message: "Missing permission: jobs:write" });
       return;
     }
-    if (!isDispatcherRole(req.user?.role)) {
+    if (!isDispatcherRole(req.user)) {
       res.status(403).json({
         message: "Only dispatchers can cancel appointments",
       });

@@ -17,7 +17,7 @@ export default function RolesPage() {
 function RolesContent() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
-  const allowed = user?.role === "super-admin";
+  const allowed = useAuthStore((s) => s.hasRole("super-admin"));
 
   useEffect(() => {
     if (user && !allowed) {

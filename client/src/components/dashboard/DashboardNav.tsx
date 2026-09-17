@@ -8,7 +8,7 @@ import NavItemGroup from "./NavItemGroup";
 export default function DashboardNav() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
-  const visibleSections = getVisibleNavSections(user?.role);
+  const visibleSections = getVisibleNavSections(user);
 
   return (
     <aside className="hidden w-56 shrink-0 md:block print:hidden">

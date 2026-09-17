@@ -20,6 +20,14 @@ import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import TablePagination from "@/components/ui/TablePagination";
 import { defaultWeeklyHours, weeklyHoursNeverEnabled } from "@/lib/schedule";
 import { DEFAULT_PAGE_SIZE, type PageSize } from "@/lib/pagination";
+import {
+  isCustomerRole,
+  isOwnerRole,
+  isSuperAdminRole,
+  isTechnicianRole,
+  normalizeRoles,
+  TECH_ROLE,
+} from "@/lib/dashboard-role";
 
 type ModalMode = "create" | "edit" | null;
 type UserView = "staff" | "customers";
@@ -29,11 +37,10 @@ const emptyForm = {
   last_name: "",
   email: "",
   username: "",
-  role: "agent",
+  roles: ["agent"] as string[],
   password: "",
   counties: [] as string[],
   zips: [] as string[],
-  schedulable: false,
   weeklyHours: defaultWeeklyHours(false),
 };
 
@@ -44,7 +51,7 @@ function normalizeZipInput(raw: string): string {
 export default function UsersTab() {
   const token = useAuthStore((s) => s.token);
   const currentUser = useAuthStore((s) => s.user);
-  const isSuperAdmin = currentUser?.role === "super-admin";
+  const isSuperAdmin = isSuperAdminRole(currentUser);
 
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [roleList, setRoleList] = useState<RoleItem[]>([]);
@@ -86,30 +93,37 @@ export default function UsersTab() {
     return roleList.find((r) => r.slug === slug)?.label ?? slug;
   }
 
+  function formatUserRoles(user: UserListItem): string {
+    return normalizeRoles(user).map(getRoleLabel).join(", ");
+  }
+
   const staffRoles = useMemo(
     () => roleList.filter((r) => r.slug !== "customer"),
     [roleList],
   );
-  const createRoles = roleList;
 
   const staffUsers = useMemo(
-    () => users.filter((user) => user.role !== "customer"),
+    () => users.filter((user) => !isCustomerRole(user)),
     [users],
   );
 
   const customerUsers = useMemo(
-    () => users.filter((user) => user.role === "customer"),
+    () => users.filter((user) => isCustomerRole(user)),
     [users],
   );
 
   const visibleUsers = view === "staff" ? staffUsers : customerUsers;
   const isCustomerView = view === "customers";
-  const isCustomerForm = form.role === "customer";
+  const isCustomerForm = isCustomerRole(form.roles) || isCustomerView;
 
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
     return visibleUsers.filter((user) => {
-      if (view === "staff" && roleFilter !== "all" && user.role !== roleFilter) {
+      if (
+        view === "staff" &&
+        roleFilter !== "all" &&
+        !normalizeRoles(user).includes(roleFilter)
+      ) {
         return false;
       }
       if (!q) return true;
@@ -151,14 +165,15 @@ export default function UsersTab() {
   }
 
   function openCreate() {
-    const role =
-      view === "customers" ? "customer" : (staffRoles[0]?.slug ?? "agent");
-    const schedulable = role === "tech";
+    const roles =
+      view === "customers"
+        ? ["customer"]
+        : [staffRoles[0]?.slug ?? "agent"];
+    const tech = isTechnicianRole(roles);
     setForm({
       ...emptyForm,
-      role,
-      schedulable,
-      weeklyHours: defaultWeeklyHours(schedulable),
+      roles,
+      weeklyHours: defaultWeeklyHours(tech),
     });
     setZipDraft("");
     setEditingId(null);
@@ -173,15 +188,12 @@ export default function UsersTab() {
       last_name: user.last_name,
       email: user.email,
       username: user.username ?? "",
-      role: user.role,
+      roles: isCustomerRole(user) ? ["customer"] : normalizeRoles(user),
       password: "",
       counties: user.territories?.counties ?? [],
       zips: user.territories?.zips ?? [],
-      schedulable:
-        user.role === "customer"
-          ? false
-          : (user.schedulable ?? user.role === "tech"),
-      weeklyHours: user.weeklyHours ?? defaultWeeklyHours(Boolean(user.schedulable)),
+      weeklyHours:
+        user.weeklyHours ?? defaultWeeklyHours(isTechnicianRole(user)),
     });
     setZipDraft("");
     setEditingId(user._id);
@@ -224,6 +236,28 @@ export default function UsersTab() {
     setForm((f) => ({ ...f, zips: f.zips.filter((z) => z !== zip) }));
   }
 
+  function toggleFormRole(slug: string) {
+    setForm((f) => {
+      const has = f.roles.includes(slug);
+      let roles = has
+        ? f.roles.filter((role) => role !== slug)
+        : [...f.roles, slug];
+      if (roles.length === 0) {
+        roles = [staffRoles[0]?.slug ?? "agent"];
+      }
+      const droppedOwner = slug === "owner" && has;
+      return {
+        ...f,
+        roles,
+        weeklyHours:
+          slug === TECH_ROLE && !has && weeklyHoursNeverEnabled(f.weeklyHours)
+            ? defaultWeeklyHours(true)
+            : f.weeklyHours,
+        ...(droppedOwner ? { counties: [] as string[], zips: [] as string[] } : {}),
+      };
+    });
+  }
+
   function onZipKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
       if (zipDraft.trim()) {
@@ -246,13 +280,12 @@ export default function UsersTab() {
       addZip(zipDraft);
     }
 
-    const territories =
-      form.role === "owner"
-        ? {
-            counties: form.counties,
-            zips: form.zips,
-          }
-        : undefined;
+    const territories = isOwnerRole(form.roles)
+      ? {
+          counties: form.counties,
+          zips: form.zips,
+        }
+      : undefined;
 
     try {
       if (modal === "create") {
@@ -260,32 +293,30 @@ export default function UsersTab() {
           email: string;
           first_name: string;
           last_name: string;
-          role: string;
+          roles: string[];
           password?: string;
           username?: string | null;
           territories?: { counties: string[]; zips: string[] };
-          schedulable?: boolean;
           weeklyHours?: UserWeeklyHours;
         } = {
           email: form.email.trim(),
           first_name: form.first_name.trim(),
           last_name: form.last_name.trim(),
-          role: form.role,
+          roles: form.roles,
           username: form.username.trim() === "" ? null : form.username.trim(),
         };
         if (form.password.trim()) {
           payload.password = form.password;
         }
         if (territories) payload.territories = territories;
-        payload.schedulable = form.role === "customer" ? false : form.schedulable;
-        if (payload.schedulable) {
+        if (isTechnicianRole(form.roles)) {
           payload.weeklyHours = weeklyHoursNeverEnabled(form.weeklyHours)
             ? defaultWeeklyHours(true)
             : form.weeklyHours;
         }
         const { user, temporaryPassword } = await createUser(token, payload);
         setUsers((prev) => [user, ...prev]);
-        if (user.role === "customer" && view !== "customers") {
+        if (isCustomerRole(user) && view !== "customers") {
           setUserView("customers");
         }
         if (temporaryPassword) {
@@ -298,36 +329,31 @@ export default function UsersTab() {
           email: string;
           first_name: string;
           last_name: string;
-          role: string;
+          roles: string[];
           username: string | null;
           password?: string;
           territories?: { counties: string[]; zips: string[] };
-          schedulable?: boolean;
           weeklyHours?: UserWeeklyHours;
         } = {
           email: form.email.trim(),
           first_name: form.first_name.trim(),
           last_name: form.last_name.trim(),
-          role: form.role,
+          roles: form.roles,
           username: form.username.trim() === "" ? null : form.username.trim(),
         };
         if (isSuperAdmin && form.password.trim()) {
           payload.password = form.password;
         }
-        if (form.role === "customer") {
-          payload.schedulable = false;
+        if (isCustomerRole(form.roles)) {
           payload.territories = { counties: [], zips: [] };
         } else {
-          if (form.role === "owner") {
-            payload.territories = {
-              counties: form.counties,
-              zips: form.zips,
-            };
-          } else {
-            payload.territories = { counties: [], zips: [] };
-          }
-          payload.schedulable = form.schedulable;
-          if (form.schedulable) {
+          payload.territories = isOwnerRole(form.roles)
+            ? {
+                counties: form.counties,
+                zips: form.zips,
+              }
+            : { counties: [], zips: [] };
+          if (isTechnicianRole(form.roles)) {
             payload.weeklyHours = weeklyHoursNeverEnabled(form.weeklyHours)
               ? defaultWeeklyHours(true)
               : form.weeklyHours;
@@ -478,7 +504,7 @@ export default function UsersTab() {
               badges={
                 isCustomerView ? undefined : (
                   <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
-                    {getRoleLabel(user.role)}
+                    {formatUserRoles(user)}
                   </span>
                 )
               }
@@ -493,12 +519,6 @@ export default function UsersTab() {
                           usernameNumber={user.usernameNumber}
                         />
                       }
-                    />
-                  )}
-                  {!isCustomerView && (
-                    <DataField
-                      label="Work schedule"
-                      value={user.schedulable ? "On" : "Off"}
                     />
                   )}
                   <DataField
@@ -548,12 +568,7 @@ export default function UsersTab() {
                     )}
                     {!isCustomerView && (
                       <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                        Role
-                      </th>
-                    )}
-                    {!isCustomerView && (
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                        Work schedule
+                        Roles
                       </th>
                     )}
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
@@ -580,13 +595,8 @@ export default function UsersTab() {
                         </td>
                       )}
                       {!isCustomerView && (
-                        <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
-                          {getRoleLabel(user.role)}
-                        </td>
-                      )}
-                      {!isCustomerView && (
-                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                          {user.schedulable ? "On" : "Off"}
+                        <td className="px-6 py-4 text-neutral-700">
+                          {formatUserRoles(user)}
                         </td>
                       )}
                       <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
@@ -632,7 +642,7 @@ export default function UsersTab() {
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-3 py-3 sm:px-4 sm:py-6">
           <div
             className={`flex w-full max-h-[min(92dvh,920px)] flex-col overflow-hidden rounded-xl bg-white shadow-xl ${
-              form.role === "owner" ? "max-w-2xl" : "max-w-md"
+              isOwnerRole(form.roles) ? "max-w-2xl" : "max-w-md"
             }`}
           >
             <div className="shrink-0 border-b border-neutral-100 px-4 py-4 sm:px-6">
@@ -737,43 +747,49 @@ export default function UsersTab() {
 
                 <div>
                   <label className="block text-sm font-medium text-brand-dark">
-                    Role
+                    {isCustomerForm ? "Role" : "Roles"}
                   </label>
-                  {modal === "edit" && isCustomerForm ? (
+                  {isCustomerForm ? (
                     <input
                       readOnly
                       value={getRoleLabel("customer")}
                       className="mt-1 block w-full rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700"
                     />
                   ) : (
-                    <select
-                      value={form.role}
-                      onChange={(e) => {
-                        const role = e.target.value;
-                        setForm((f) => ({
-                          ...f,
-                          role,
-                          schedulable:
-                            role === "customer" ? false : f.schedulable,
-                          ...(role !== "owner"
-                            ? { counties: [], zips: [] }
-                            : {}),
-                        }));
-                      }}
-                      className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                    >
-                      {(modal === "create" ? createRoles : staffRoles).map(
-                        (r) => (
-                          <option key={r.slug} value={r.slug}>
-                            {r.label}
-                          </option>
-                        ),
-                      )}
-                    </select>
+                    <div className="mt-2 space-y-2 rounded-md border border-neutral-200 bg-white p-3">
+                      {staffRoles.map((r) => {
+                        const checked = form.roles.includes(r.slug);
+                        const onlyRole =
+                          checked && form.roles.length === 1;
+                        return (
+                          <label
+                            key={r.slug}
+                            className="flex items-start gap-2 text-sm text-neutral-700"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={onlyRole}
+                              onChange={() => toggleFormRole(r.slug)}
+                              className="mt-0.5 rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
+                            />
+                            <span>
+                              <span className="font-medium">{r.label}</span>
+                              {r.slug === TECH_ROLE ? (
+                                <span className="mt-0.5 block text-xs text-neutral-500">
+                                  Puts this person on the Schedule board and in
+                                  work-order assignment.
+                                </span>
+                              ) : null}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
 
-                {form.role === "owner" && (
+                {isOwnerRole(form.roles) && (
                   <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4">
                     <div>
                       <p className="text-sm font-medium text-brand-dark">
@@ -874,39 +890,6 @@ export default function UsersTab() {
                         ownership.
                       </p>
                     </div>
-                  </div>
-                )}
-
-                {!isCustomerForm && (
-                  <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4">
-                    <div>
-                      <p className="text-sm font-medium text-brand-dark">
-                        Work schedule
-                      </p>
-                      <p className="mt-0.5 text-xs text-neutral-500">
-                        When on, this user appears as a technician on the Schedule
-                        page. Set weekly hours and home location there.
-                      </p>
-                    </div>
-                    <label className="flex items-center gap-2 text-sm text-neutral-700">
-                      <input
-                        type="checkbox"
-                        checked={form.schedulable}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setForm((f) => ({
-                            ...f,
-                            schedulable: checked,
-                            weeklyHours:
-                              checked && weeklyHoursNeverEnabled(f.weeklyHours)
-                                ? defaultWeeklyHours(true)
-                                : f.weeklyHours,
-                          }));
-                        }}
-                        className="rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
-                      />
-                      On work schedule
-                    </label>
                   </div>
                 )}
 

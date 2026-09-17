@@ -19,7 +19,7 @@ function DashboardContent() {
 
   if (!user) return null;
 
-  if (isStaffRole(user.role)) {
+  if (isStaffRole(user)) {
     return <StaffHomeDashboard />;
   }
 

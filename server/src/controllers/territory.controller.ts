@@ -12,8 +12,11 @@ import {
   reassignOwnersForTerritoryChange,
   scheduleOwnerReassignment,
 } from "../utils/ownerTerritory";
-
-const TERRITORY_ROLES = new Set(["owner", "admin", "super-admin"]);
+import {
+  isDispatcherRole,
+  isOrgAdminRole,
+  isOwnerRole,
+} from "../utils/roles";
 
 function formatTerritories(
   territories?: IUserTerritories | null,
@@ -62,14 +65,14 @@ export async function listTerritories(
   res: Response,
 ): Promise<void> {
   try {
-    if (!req.user || !TERRITORY_ROLES.has(req.user.role)) {
+    if (!req.user || !isDispatcherRole(req.user)) {
       res.status(403).json({ message: "Insufficient role" });
       return;
     }
 
     const owners = await User.find({
       ...activeUserFilter,
-      role: "owner",
+      roles: "owner",
     })
       .select("-password_hash")
       .sort({ last_name: 1, first_name: 1 })
@@ -103,17 +106,16 @@ export async function updateTerritories(
   }
 
   try {
-    if (!req.user || !TERRITORY_ROLES.has(req.user.role)) {
+    if (!req.user || !isDispatcherRole(req.user)) {
       res.status(403).json({ message: "Insufficient role" });
       return;
     }
 
     const targetId = String(req.params.userId);
     const isSelf = targetId === req.user.id;
-    const isOrgAdmin =
-      req.user.role === "admin" || req.user.role === "super-admin";
+    const isOrgAdmin = isOrgAdminRole(req.user);
 
-    if (req.user.role === "owner" && !isSelf) {
+    if (isOwnerRole(req.user) && !isSelf) {
       res.status(403).json({
         message: "Owners can only update their own territory",
       });
@@ -131,7 +133,7 @@ export async function updateTerritories(
       return;
     }
 
-    if (user.role !== "owner") {
+    if (!isOwnerRole(user)) {
       res.status(400).json({
         message: "Territories can only be assigned to owner-role users",
       });
@@ -185,7 +187,7 @@ export async function recalculateTerritories(
   res: Response,
 ): Promise<void> {
   try {
-    if (!req.user || !TERRITORY_ROLES.has(req.user.role)) {
+    if (!req.user || !isDispatcherRole(req.user)) {
       res.status(403).json({ message: "Insufficient role" });
       return;
     }

@@ -9,6 +9,7 @@ import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import TablePagination from "@/components/ui/TablePagination";
 import { useAuthStore } from "@/store/useAuthStore";
+import { isCustomerRole } from "@/lib/dashboard-role";
 import { DEFAULT_PAGE_SIZE, type PageSize } from "@/lib/pagination";
 import {
   getLeads,
@@ -72,7 +73,7 @@ function LeadsContent() {
   const rangeEnd = Math.min(safePage * pageSize, total);
 
   useEffect(() => {
-    if (user?.role === "customer") {
+    if (isCustomerRole(user)) {
       router.replace("/dashboard");
     }
   }, [user, router]);
@@ -86,7 +87,7 @@ function LeadsContent() {
   }, [search]);
 
   useEffect(() => {
-    if (!token || user?.role === "customer") return;
+    if (!token || isCustomerRole(user)) return;
 
     let cancelled = false;
 
@@ -181,7 +182,7 @@ function LeadsContent() {
     }
   }
 
-  if (!user || user.role === "customer") return null;
+  if (!user || isCustomerRole(user)) return null;
 
   if (loading && leads.length === 0) {
     return (

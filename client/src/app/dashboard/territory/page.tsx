@@ -13,8 +13,11 @@ import {
   updateTerritories,
 } from "@/lib/api";
 import { useAuthStore } from "@/store/useAuthStore";
-
-const TERRITORY_ROLES = ["admin", "super-admin", "owner"];
+import {
+  isDispatcherRole,
+  isOrgAdminRole,
+  isOwnerRole,
+} from "@/lib/dashboard-role";
 
 export default function TerritoryPage() {
   return (
@@ -28,8 +31,8 @@ function TerritoryPageContent() {
   const router = useRouter();
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
-  const isAllowed = user ? TERRITORY_ROLES.includes(user.role) : false;
-  const isOrgAdmin = user?.role === "admin" || user?.role === "super-admin";
+  const isAllowed = isDispatcherRole(user);
+  const isOrgAdmin = isOrgAdminRole(user);
 
   const [owners, setOwners] = useState<TerritoryOwner[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,7 +58,7 @@ function TerritoryPageContent() {
       setOwners(list);
       setSelectedId((prev) => {
         if (prev && list.some((o) => o._id === prev)) return prev;
-        if (user?.role === "owner") {
+        if (user && isOwnerRole(user)) {
           return (
             list.find((o) => o._id === user.id)?._id ?? list[0]?._id ?? null
           );
@@ -135,7 +138,7 @@ function TerritoryPageContent() {
         <div>
           <h1 className="text-2xl font-bold text-brand-dark">Territory</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            {user.role === "owner"
+            {isOwnerRole(user)
               ? "Assign the Florida counties and ZIP carve-outs you cover. Customers in your territory are assigned to you automatically."
               : "Manage owner territories by county and ZIP. ZIP claims override county ownership when owners share a county."}
           </p>
@@ -259,7 +262,7 @@ function TerritoryPageContent() {
                 otherOwners={owners.filter((o) => o._id !== selected._id)}
                 onSave={(territories) => handleSave(selected._id, territories)}
                 submitLabel={
-                  user.role === "owner" ? "Save my territory" : "Save territory"
+                  isOwnerRole(user) ? "Save my territory" : "Save territory"
                 }
               />
             </div>

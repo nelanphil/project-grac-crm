@@ -15,7 +15,7 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname();
   const hydrated = useHasHydrated();
-  const role = useAuthStore((s) => s.user?.role);
+  const user = useAuthStore((s) => s.user);
   const isTerminalPopout = isJobTerminalPopoutPath(pathname);
 
   if (!hydrated) {
@@ -37,7 +37,7 @@ export default function DashboardLayout({
     );
   }
 
-  if (isStaffRole(role)) {
+  if (isStaffRole(user)) {
     return <StaffDashboardShell>{children}</StaffDashboardShell>;
   }
 

@@ -70,7 +70,7 @@ function AdminContent() {
   const searchParams = useSearchParams();
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
-  const isSuperAdmin = user?.role === "super-admin";
+  const isSuperAdmin = useAuthStore((s) => s.hasRole("super-admin"));
   const activeTab = parseTab(searchParams.get("tab"));
 
   useEffect(() => {

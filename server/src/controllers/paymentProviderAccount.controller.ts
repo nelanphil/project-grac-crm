@@ -36,14 +36,19 @@ import {
   verifySquareOAuthState,
 } from "../services/squareOAuth.service";
 import { getPaymentPlatformsReady } from "../services/paymentPlatform.service";
+import {
+  isOrgAdminRole,
+  isOwnerRole,
+  isSuperAdminRole,
+} from "../utils/roles";
 
 function emptyToUndefined(value: string | undefined | null): string | undefined {
   if (value == null || value.trim() === "") return undefined;
   return value.trim();
 }
 
-function isOrgAdmin(role?: string): boolean {
-  return role === "admin" || role === "super-admin";
+function isOrgAdmin(user: Parameters<typeof isOrgAdminRole>[0]): boolean {
+  return isOrgAdminRole(user);
 }
 
 function ownerScopeFilter(ownerUserId: string | null) {
@@ -140,10 +145,10 @@ async function resolveOwnerUserIdForWrite(
   req: AuthRequest,
   requested: string | null | undefined,
 ): Promise<{ ownerUserId: string | null; error?: string }> {
-  if (req.user?.role === "owner") {
+  if (req.user && isOwnerRole(req.user)) {
     return { ownerUserId: req.user.id };
   }
-  if (!isOrgAdmin(req.user?.role)) {
+  if (!isOrgAdmin(req.user)) {
     return { ownerUserId: null, error: "Forbidden" };
   }
   if (requested === undefined) {
@@ -152,8 +157,8 @@ async function resolveOwnerUserIdForWrite(
   if (requested === null || requested === "") {
     return { ownerUserId: null };
   }
-  const owner = await User.findById(requested).select("role").lean();
-  if (!owner || owner.role !== "owner") {
+  const owner = await User.findById(requested).select("role roles").lean();
+  if (!owner || !isOwnerRole(owner)) {
     return { ownerUserId: null, error: "ownerUserId must reference an owner user" };
   }
   return { ownerUserId: requested };
@@ -163,8 +168,8 @@ async function assertCanAccessAccount(
   req: AuthRequest,
   account: IPaymentProviderAccount,
 ): Promise<boolean> {
-  if (isOrgAdmin(req.user?.role)) return true;
-  if (req.user?.role === "owner") {
+  if (isOrgAdmin(req.user)) return true;
+  if (req.user && isOwnerRole(req.user)) {
     return (
       Boolean(account.ownerUserRef) &&
       String(account.ownerUserRef) === req.user.id
@@ -188,7 +193,7 @@ export async function getPaymentProviderAccounts(
   res: Response,
 ): Promise<void> {
   const filter: Record<string, unknown> = {};
-  if (req.user?.role === "owner") {
+  if (req.user && isOwnerRole(req.user)) {
     filter.ownerUserRef = new Types.ObjectId(req.user.id);
   }
 
@@ -247,7 +252,7 @@ export async function createPaymentProviderAccount(
   }
   // Owners always assign to themselves; admins may omit for global.
   const ownerUserId =
-    req.user?.role === "owner"
+    req.user && isOwnerRole(req.user)
       ? req.user.id
       : data.ownerUserId === undefined
         ? null
@@ -377,7 +382,7 @@ export async function updatePaymentProviderAccount(
   if (data.isActive !== undefined) account.isActive = data.isActive;
 
   if (data.ownerUserId !== undefined) {
-    if (req.user?.role === "owner") {
+    if (req.user && isOwnerRole(req.user)) {
       // Owners cannot reassign away from themselves
       account.ownerUserRef = new Types.ObjectId(req.user.id);
     } else {
@@ -541,9 +546,9 @@ export async function startSquareOAuth(
   }
 
   let ownerUserId: string | null = null;
-  if (req.user?.role === "owner") {
+  if (req.user && isOwnerRole(req.user)) {
     ownerUserId = req.user.id;
-  } else if (isOrgAdmin(req.user?.role)) {
+  } else if (isOrgAdmin(req.user)) {
     const resolved = await resolveOwnerUserIdForWrite(
       req,
       parsed.data.ownerUserId === undefined ? null : parsed.data.ownerUserId,
@@ -590,7 +595,7 @@ export async function saveSquareOAuthApp(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
-  if (req.user?.role !== "super-admin") {
+  if (!isSuperAdminRole(req.user)) {
     res.status(403).json({
       message: "Only a super-admin can configure Square OAuth app credentials",
     });

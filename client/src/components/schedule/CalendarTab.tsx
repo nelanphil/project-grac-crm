@@ -234,7 +234,7 @@ export default function CalendarTab({
 }) {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
-  const dispatcher = isDispatcherRole(user?.role);
+  const dispatcher = isDispatcherRole(user);
   const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
 
   const today = formatLocalDate(new Date());

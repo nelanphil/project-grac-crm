@@ -242,7 +242,9 @@ function StaffRow({
           <div className="truncate text-xs font-semibold text-brand-dark">
             {staff.first_name} {staff.last_name}
           </div>
-          <div className="text-[10px] text-neutral-400">{staff.role}</div>
+          <div className="text-[10px] text-neutral-400">
+            {(staff.roles?.length ? staff.roles : [staff.role]).join(", ")}
+          </div>
         </div>
         <button
           type="button"
@@ -323,8 +325,8 @@ export default function WeekBoard({
         </div>
         {staff.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-neutral-500">
-            No schedulable staff. Turn on work schedule under Users, then set
-            hours on the Technicians tab.
+            No technicians on the board. Assign the Technician role under Users,
+            then set hours on the Technicians tab.
           </div>
         ) : (
           staff.map((person) => (

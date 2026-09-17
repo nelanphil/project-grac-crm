@@ -20,7 +20,7 @@ import {
 import { User, UserRole, activeUserFilter } from "../models/mongo/User";
 import { findPrimaryContactForUserEmail } from "../utils/resolveCustomerLogin";
 import { PasswordResetToken } from "../models/mongo/PasswordResetToken";
-import { getPermissionsForRole } from "../models/mongo/RolePermission";
+import { getPermissionsForRoles } from "../models/mongo/RolePermission";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { normalizePhoneDigits } from "../utils/customerSites";
 import {
@@ -50,6 +50,11 @@ import {
   renameEmailPreferences,
   setEmailPreferences,
 } from "../utils/emailPreferences";
+import {
+  isCustomerRole,
+  normalizeRoles,
+  primaryRole,
+} from "../utils/roles";
 
 function toIsoOrNull(value: Date | string | null | undefined): string | null {
   if (!value) return null;
@@ -63,6 +68,7 @@ function buildUserPayload(user: {
   first_name: string;
   last_name: string;
   role: UserRole;
+  roles?: UserRole[];
   username?: string | null;
   usernameKey?: string | null;
   termsAcceptedAt?: Date | string | null;
@@ -80,12 +86,14 @@ function buildUserPayload(user: {
   permissions: string[];
 }) {
   const termsAcceptedAt = toIsoOrNull(user.termsAcceptedAt);
+  const roles = normalizeRoles(user);
   return {
     id: String(user._id),
     email: user.email,
     first_name: user.first_name,
     last_name: user.last_name,
-    role: user.role,
+    role: primaryRole(roles) ?? user.role,
+    roles,
     username: user.username ?? null,
     usernameNumber: usernameNumberFromKey(user.username, user.usernameKey),
     permissions: user.permissions,
@@ -98,10 +106,17 @@ function buildUserPayload(user: {
     uiPreferences: {
       navOrder: user.uiPreferences?.navOrder ?? { order: [], children: {} },
     },
-    needsLegalConsent: user.role === "customer" && !termsAcceptedAt,
+    needsLegalConsent: isCustomerRole(roles) && !termsAcceptedAt,
     generalNotifications: true,
     billingAlerts: true,
   };
+}
+
+async function permissionsForUser(user: {
+  role?: string;
+  roles?: string[];
+}): Promise<string[]> {
+  return getPermissionsForRoles(normalizeRoles(user));
 }
 
 async function lookupContactPhone(userEmail: string | null | undefined): Promise<string> {
@@ -209,7 +224,7 @@ export async function register(req: Request, res: Response): Promise<void> {
         return;
       }
 
-      const permissions = await getPermissionsForRole(softDeleted.role);
+      const permissions = await permissionsForUser(softDeleted);
       void sendSignupConfirmationEmail({
         email: softDeleted.email,
         firstName: softDeleted.first_name,
@@ -244,7 +259,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       throw err;
     }
 
-    const permissions = await getPermissionsForRole(user.role);
+    const permissions = await permissionsForUser(user);
     void sendSignupConfirmationEmail({
       email: user.email,
       firstName: user.first_name,
@@ -320,11 +335,11 @@ export async function acceptLegalConsent(
     if (parsed.data.phone) user.phone = parsed.data.phone;
     await user.save();
 
-    if (user.role === "customer" && parsed.data.phone) {
+    if (isCustomerRole(user) && parsed.data.phone) {
       await syncEmptyContactPhone(user.email, parsed.data.phone);
     }
 
-    const permissions = await getPermissionsForRole(user.role);
+    const permissions = await permissionsForUser(user);
     res.status(200).json({
       user: await toUserPayload({ ...user.toObject(), permissions }),
     });
@@ -395,13 +410,14 @@ export async function login(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const permissions = await getPermissionsForRole(matchedUser.role);
+    const permissions = await permissionsForUser(matchedUser);
 
     const token = jwt.sign(
       {
         sub: String(matchedUser._id),
         email: matchedUser.email,
-        role: matchedUser.role,
+        role: primaryRole(matchedUser) ?? matchedUser.role,
+        roles: normalizeRoles(matchedUser),
         permissions,
       },
       env.jwt.secret,
@@ -450,7 +466,7 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
       if (emailConflict) {
         res.status(409).json({
           message:
-            user.role === "customer" || emailConflict.type === "customer"
+            isCustomerRole(user) || emailConflict.type === "customer"
               ? EMAIL_CONFLICT_SIGNUP
               : "Email already in use",
         });
@@ -479,7 +495,7 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
     }
 
     if (
-      user.role === "customer" &&
+      isCustomerRole(user) &&
       email &&
       previousEmail !== user.email
     ) {
@@ -493,7 +509,7 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
       return;
     }
 
-    const permissions = await getPermissionsForRole(fresh.role);
+    const permissions = await permissionsForUser(fresh);
     res.status(200).json({
       user: await toUserPayload({ ...fresh, permissions }),
     });
@@ -633,7 +649,7 @@ export async function updateMyNotifications(
       });
     }
 
-    const permissions = await getPermissionsForRole(user.role);
+    const permissions = await permissionsForUser(user);
     res.status(200).json({
       user: await toUserPayload({ ...user.toObject(), permissions }),
     });
@@ -659,7 +675,7 @@ export async function me(req: AuthRequest, res: Response): Promise<void> {
       return;
     }
 
-    const permissions = await getPermissionsForRole(user.role);
+    const permissions = await permissionsForUser(user);
 
     res.status(200).json({
       user: await toUserPayload({ ...user, permissions }),

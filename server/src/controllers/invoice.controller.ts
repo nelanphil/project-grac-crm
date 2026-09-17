@@ -32,17 +32,9 @@ import {
 } from "../utils/checkoutKey";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { listVisibleWorkOrderNotes } from "./workOrderNote.controller";
+import { isStaffRole } from "../utils/roles";
 
 export { resolveCustomerRefsForAuthUser };
-
-const STAFF_ROLES = new Set([
-  "admin",
-  "super-admin",
-  "owner",
-  "manager",
-  "tech",
-  "dispatcher",
-]);
 
 function toPublicInvoice(doc: IInvoice | Record<string, unknown>) {
   const d =
@@ -197,8 +189,8 @@ async function enrichInvoiceDetail(invoice: {
   };
 }
 
-function isStaff(role?: string): boolean {
-  return Boolean(role && STAFF_ROLES.has(role));
+function isStaff(user: Parameters<typeof isStaffRole>[0]): boolean {
+  return isStaffRole(user);
 }
 
 export { mintPayToken } from "../utils/payToken";
@@ -312,7 +304,7 @@ export async function getInvoices(
       filter.workOrderRef = workOrderRef;
     }
 
-    if (isStaff(req.user?.role)) {
+    if (isStaff(req.user)) {
       if (typeof customerRef === "string" && customerRef) {
         filter.customerRef = customerRef;
       }
@@ -406,7 +398,7 @@ export async function getInvoiceById(
       return;
     }
 
-    if (!isStaff(req.user?.role)) {
+    if (!isStaff(req.user)) {
       const refs = await resolveCustomerRefsForAuthUser(req.user?.id ?? "");
       if (
         !invoice.customerRef ||
@@ -697,7 +689,7 @@ export async function startInvoiceCheckout(
       return;
     }
 
-    if (!isStaff(req.user?.role) && req.user?.id) {
+    if (!isStaff(req.user) && req.user?.id) {
       const refs = await resolveCustomerRefsForAuthUser(req.user.id);
       if (
         !invoice.customerRef ||

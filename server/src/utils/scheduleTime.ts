@@ -76,8 +76,11 @@ export function defaultWeeklyHours(weekdayEnabled: boolean): WeeklyHours {
   };
 }
 
-export function defaultSchedulableForRole(role: string): boolean {
-  return role === "tech";
+export function weeklyHoursNeverEnabled(
+  hours: WeeklyHours | null | undefined,
+): boolean {
+  if (!hours) return true;
+  return WEEKDAY_KEYS.every((key) => !hours[key]?.enabled);
 }
 
 function nyParts(date: Date): {

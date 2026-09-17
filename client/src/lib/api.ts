@@ -543,10 +543,10 @@ export interface UserListItem {
   first_name: string;
   last_name: string;
   role: AuthUser["role"];
+  roles: string[];
   username: string | null;
   usernameNumber: number | null;
   territories: UserTerritories;
-  schedulable: boolean;
   homeLocation: UserHomeLocation;
   weeklyHours: UserWeeklyHours;
   scheduleExceptions: ScheduleException[];
@@ -570,10 +570,10 @@ export async function createUser(
     password?: string;
     first_name: string;
     last_name: string;
-    role: string;
+    role?: string;
+    roles?: string[];
     username?: string | null;
     territories?: UserTerritories;
-    schedulable?: boolean;
     weeklyHours?: UserWeeklyHours;
     homeLocation?: UserHomeLocation;
     scheduleExceptions?: ScheduleException[];
@@ -597,10 +597,10 @@ export async function updateUser(
     first_name?: string;
     last_name?: string;
     role?: string;
+    roles?: string[];
     username?: string | null;
     password?: string;
     territories?: UserTerritories;
-    schedulable?: boolean;
     weeklyHours?: UserWeeklyHours;
     homeLocation?: UserHomeLocation;
     scheduleExceptions?: ScheduleException[];
@@ -1910,7 +1910,8 @@ export interface ScheduleStaffMember {
   last_name: string;
   email: string;
   role: string;
-  schedulable: boolean;
+  roles: string[];
+  schedulable?: boolean;
   homeLocation: UserHomeLocation;
   weeklyHours: UserWeeklyHours;
   scheduleExceptions: ScheduleException[];

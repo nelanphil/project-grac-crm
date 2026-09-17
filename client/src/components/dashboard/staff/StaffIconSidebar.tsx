@@ -437,11 +437,11 @@ function StaffNavItem({
 
 export default function StaffIconSidebar() {
   const pathname = usePathname();
-  const role = useAuthStore((s) => s.user?.role);
+  const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
   const navOrder = useAuthStore((s) => s.user?.uiPreferences?.navOrder);
   const setNavOrder = useAuthStore((s) => s.setNavOrder);
-  const baseSections = useMemo(() => getVisibleNavSections(role), [role]);
+  const baseSections = useMemo(() => getVisibleNavSections(user), [user]);
   const items = useMemo(
     () => applyNavOrder(baseSections, navOrder),
     [baseSections, navOrder],

@@ -13,8 +13,7 @@ import {
   updateWorkOrderNote,
   WorkOrderNote,
 } from "@/lib/api";
-
-const ADMIN_ROLES = new Set(["admin", "super-admin", "owner"]);
+import { isAdminRole, type RoleLike } from "@/lib/dashboard-role";
 
 function formatNoteDate(date: string): string {
   return new Date(date).toLocaleString(undefined, {
@@ -38,10 +37,10 @@ export default function WorkOrderNotesPanel({
   workOrderId: string;
   userId: string;
   canWrite: boolean;
-  userRole?: string;
+  userRole?: RoleLike;
   fallbackContent?: string;
 }) {
-  const isAdmin = Boolean(userRole && ADMIN_ROLES.has(userRole));
+  const isAdmin = isAdminRole(userRole);
   const [notes, setNotes] = useState<WorkOrderNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

@@ -11,7 +11,7 @@ type TabId = "calendar" | "technicians";
 
 function SchedulePageInner() {
   const user = useAuthStore((s) => s.user);
-  const dispatcher = isDispatcherRole(user?.role);
+  const dispatcher = isDispatcherRole(user);
 
   const [tab, setTab] = useState<TabId>("calendar");
 

@@ -8,6 +8,7 @@ import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import TablePagination from "@/components/ui/TablePagination";
 import { useAuthStore } from "@/store/useAuthStore";
+import { isCustomerRole } from "@/lib/dashboard-role";
 import { ApiError, getInvoices, InvoiceItem } from "@/lib/api";
 import {
   DEFAULT_PAGE_SIZE,
@@ -45,7 +46,7 @@ function OrdersContent() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
 
-  const isCustomer = user?.role === "customer";
+  const isCustomer = isCustomerRole(user);
 
   useEffect(() => {
     const timer = setTimeout(() => {

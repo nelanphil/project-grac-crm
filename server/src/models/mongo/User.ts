@@ -5,6 +5,7 @@ import {
   type ScheduleException,
   type WeeklyHours,
 } from "../../utils/scheduleTime";
+import { isTechnicianRole, syncRoleFields } from "../../utils/roles";
 
 // UserRole is now an open string to support dynamic roles
 export type UserRole = string;
@@ -25,14 +26,20 @@ export interface IUser extends Document {
   password_hash: string;
   first_name: string;
   last_name: string;
+  /** Highest-ranked assigned role. Always derived from `roles`. */
   role: UserRole;
+  /** All assigned role slugs. Source of truth for permissions and scheduling. */
+  roles: UserRole[];
   /** Display / login handle (not unique). Never includes numeric suffix. */
   username: string | null;
   /** Unique backend key, e.g. doc1 / doc2. Never exposed to clients. */
   usernameKey: string | null;
   /** Geographic territories for owner-role users. */
   territories: IUserTerritories;
-  /** When true, this staff user appears on the dispatcher board. */
+  /**
+   * Legacy flag kept in sync with the Technician role.
+   * Scheduling should key off `roles` including `tech`.
+   */
   schedulable: boolean;
   homeLocation: IUserHomeLocation;
   weeklyHours: IWeeklyHours;
@@ -151,6 +158,7 @@ const userSchema = new Schema<IUser>(
     first_name: { type: String, required: true, trim: true },
     last_name: { type: String, required: true, trim: true },
     role: { type: String, default: "agent", required: true },
+    roles: { type: [String], default: [] },
     username: {
       type: String,
       default: null,
@@ -195,6 +203,8 @@ const userSchema = new Schema<IUser>(
   { timestamps: true },
 );
 
+userSchema.index({ roles: 1 });
+
 userSchema.index(
   { usernameKey: 1 },
   {
@@ -202,6 +212,17 @@ userSchema.index(
     partialFilterExpression: { usernameKey: { $type: "string" } },
   },
 );
+
+userSchema.pre("save", function syncRoles(next) {
+  const synced = syncRoleFields({
+    role: this.role,
+    roles: Array.isArray(this.roles) ? this.roles : [],
+  });
+  this.roles = synced.roles;
+  this.role = synced.role;
+  this.schedulable = isTechnicianRole(synced);
+  next();
+});
 
 export const User = mongoose.model<IUser>("User", userSchema);
 

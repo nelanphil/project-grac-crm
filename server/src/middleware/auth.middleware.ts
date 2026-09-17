@@ -1,18 +1,20 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
-import { getPermissionsForRole } from "../models/mongo/RolePermission";
+import { getPermissionsForRoles } from "../models/mongo/RolePermission";
 import { verifyRecordingPlaybackToken } from "../utils/recordingPlayback";
+import { hasRole, normalizeRoles, primaryRole } from "../utils/roles";
 
 export interface AuthTokenPayload {
   sub: string;
   email: string;
   role: string;
+  roles?: string[];
   permissions: string[];
 }
 
 export interface AuthRequest extends Request {
-  user?: AuthTokenPayload & { id: string };
+  user?: AuthTokenPayload & { id: string; roles: string[] };
 }
 
 export async function authenticate(
@@ -30,10 +32,17 @@ export async function authenticate(
 
   try {
     const decoded = jwt.verify(token, env.jwt.secret) as unknown as AuthTokenPayload;
+    const roles = normalizeRoles(decoded);
     // Always load current role permissions from DB so newly seeded grants
     // (e.g. messages:*) apply without forcing users to log in again.
-    const permissions = await getPermissionsForRole(decoded.role);
-    req.user = { ...decoded, id: decoded.sub, permissions };
+    const permissions = await getPermissionsForRoles(roles);
+    req.user = {
+      ...decoded,
+      id: decoded.sub,
+      role: primaryRole(roles) ?? decoded.role,
+      roles,
+      permissions,
+    };
     next();
   } catch {
     res.status(401).json({ message: "Invalid or expired token" });
@@ -46,7 +55,7 @@ export function requireRole(...roles: string[]) {
       res.status(401).json({ message: "Unauthorized" });
       return;
     }
-    if (!roles.includes(req.user.role)) {
+    if (!hasRole(req.user, ...roles)) {
       res.status(403).json({ message: "Insufficient role" });
       return;
     }

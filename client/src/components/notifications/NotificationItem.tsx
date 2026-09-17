@@ -23,7 +23,7 @@ export default function NotificationListItem({
   onNavigate,
 }: Props) {
   const router = useRouter();
-  const role = useAuthStore((s) => s.user?.role);
+  const user = useAuthStore((s) => s.user);
   const storeMarkRead = useNotificationsStore((s) => s.markRead);
   const setOpen = useNotificationsStore((s) => s.setOpen);
   const markRead = onMarkRead ?? storeMarkRead;
@@ -53,7 +53,7 @@ export default function NotificationListItem({
 
   function handleClick() {
     if (!item.read) markRead(item.id);
-    const href = notificationHref(item, role);
+    const href = notificationHref(item, user ?? undefined);
     if (onNavigate) onNavigate();
     else setOpen(false);
     if (href) router.push(href);

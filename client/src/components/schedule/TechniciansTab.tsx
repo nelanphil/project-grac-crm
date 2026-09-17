@@ -18,6 +18,10 @@ import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import StaffWorkHoursForm from "@/components/schedule/StaffWorkHoursForm";
 import {
+  isTechnicianRole,
+  normalizeRoles,
+} from "@/lib/dashboard-role";
+import {
   defaultWeeklyHours,
   emptyHomeLocation,
   weeklyHoursSummary,
@@ -57,14 +61,16 @@ export default function TechniciansTab() {
 
   const technicians = useMemo(
     () =>
-      users.filter(
-        (user) => user.schedulable && user.role !== "customer",
-      ),
+      users.filter((user) => isTechnicianRole(user)),
     [users],
   );
 
   function getRoleLabel(slug: string) {
     return roleList.find((r) => r.slug === slug)?.label ?? slug;
+  }
+
+  function formatUserRoles(user: UserListItem): string {
+    return normalizeRoles(user).map(getRoleLabel).join(", ");
   }
 
   function openEdit(user: UserListItem) {
@@ -162,7 +168,7 @@ export default function TechniciansTab() {
       <div className="border-b border-neutral-100 px-4 py-4 sm:px-6">
         <h2 className="text-lg font-semibold text-brand-dark">Technicians</h2>
         <p className="mt-0.5 text-sm text-neutral-500">
-          Staff with work schedule turned on. Toggle that under Users, then set
+          Staff with the Technician role. Assign that role under Users, then set
           hours and home location here.
         </p>
       </div>
@@ -172,8 +178,7 @@ export default function TechniciansTab() {
           isEmpty={technicians.length === 0}
           empty={
             <div className="px-4 py-10 text-center text-sm text-neutral-500 sm:px-6">
-              No one is on a work schedule yet. Edit a staff user under Users
-              and turn on work schedule.
+              No technicians yet. Assign the Technician role under Users.
             </div>
           }
           mobile={technicians.map((user) => (
@@ -183,7 +188,7 @@ export default function TechniciansTab() {
               subtitle={user.email}
               badges={
                 <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
-                  {getRoleLabel(user.role)}
+                  {formatUserRoles(user)}
                 </span>
               }
               fields={
@@ -242,7 +247,7 @@ export default function TechniciansTab() {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
-                        {getRoleLabel(user.role)}
+                        {formatUserRoles(user)}
                       </td>
                       <td className="px-6 py-4 text-neutral-600">
                         {weeklyHoursSummary(user.weeklyHours)}

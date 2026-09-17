@@ -75,29 +75,38 @@ const scheduleExceptionSchema = z.object({
   note: z.string().trim().max(200).optional().default(""),
 });
 
-export const createUserSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .max(100, "Password is too long")
-    .optional(),
-  first_name: z.string().min(1, "First name is required").max(100),
-  last_name: z.string().min(1, "Last name is required").max(100),
-  role: z.string().min(1, "Role is required"),
-  username: usernameField,
-  territories: territoriesSchema,
-  schedulable: z.boolean().optional(),
-  weeklyHours: weeklyHoursSchema,
-  homeLocation: homeLocationSchema,
-  scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
-});
+const rolesField = z.array(z.string().min(1)).min(1).optional();
+
+export const createUserSchema = z
+  .object({
+    email: z.string().email("Invalid email address"),
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters")
+      .max(100, "Password is too long")
+      .optional(),
+    first_name: z.string().min(1, "First name is required").max(100),
+    last_name: z.string().min(1, "Last name is required").max(100),
+    role: z.string().min(1).optional(),
+    roles: rolesField,
+    username: usernameField,
+    territories: territoriesSchema,
+    schedulable: z.boolean().optional(),
+    weeklyHours: weeklyHoursSchema,
+    homeLocation: homeLocationSchema,
+    scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
+  })
+  .refine((data) => Boolean(data.role || (data.roles && data.roles.length > 0)), {
+    message: "Role is required",
+    path: ["role"],
+  });
 
 export const updateUserSchema = z.object({
   email: z.string().email("Invalid email address").optional(),
   first_name: z.string().min(1).max(100).optional(),
   last_name: z.string().min(1).max(100).optional(),
   role: z.string().min(1).optional(),
+  roles: rolesField,
   username: usernameField,
   password: z
     .string()

@@ -9,6 +9,7 @@ import ContractStatsCard from "@/components/contracts/ContractStatsCard";
 import ContractsCard from "@/components/control-panel/ContractsCard";
 import TablePagination from "@/components/ui/TablePagination";
 import { useAuthStore } from "@/store/useAuthStore";
+import { isCustomerRole } from "@/lib/dashboard-role";
 import {
   DEFAULT_PAGE_SIZE,
   paginationRange,
@@ -29,8 +30,6 @@ import {
   matchesContractTypeFilter,
 } from "@/lib/contractTypes";
 import { formatCustomerRecordName } from "@/lib/formatName";
-
-const ADMIN_ROLES = ["admin", "super-admin", "owner"];
 
 type ContractsView = "customer" | "manage";
 
@@ -76,7 +75,9 @@ function ContractsContent() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
-  const isAdmin = user ? ADMIN_ROLES.includes(user.role) : false;
+  const isAdmin = useAuthStore((s) =>
+    s.hasRole("admin", "super-admin", "owner"),
+  );
 
   const typeTabs = useMemo(
     () => buildContractTypeFilterTabs(templates),
@@ -123,13 +124,13 @@ function ContractsContent() {
   };
 
   useEffect(() => {
-    if (user?.role === "customer") {
+    if (isCustomerRole(user)) {
       router.replace("/dashboard");
     }
   }, [user, router]);
 
   useEffect(() => {
-    if (!token || user?.role === "customer") return;
+    if (!token || isCustomerRole(user)) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -153,7 +154,7 @@ function ContractsContent() {
   }, [token, user, standingFilter]);
 
   useEffect(() => {
-    if (!token || user?.role === "customer") return;
+    if (!token || isCustomerRole(user)) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatsLoading(true);
@@ -164,7 +165,7 @@ function ContractsContent() {
       .finally(() => setStatsLoading(false));
   }, [token, user]);
 
-  if (!user || user.role === "customer") return null;
+  if (!user || isCustomerRole(user)) return null;
 
   if (loading && contracts.length === 0 && statsContracts.length === 0)
     return (

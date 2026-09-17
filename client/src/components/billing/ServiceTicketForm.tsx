@@ -740,7 +740,7 @@ export default function ServiceTicketForm({
               workOrderId={recordId}
               userId={user.id}
               canWrite={canWriteJobs}
-              userRole={user.role}
+              userRole={user}
               fallbackContent={form.descPerformed}
             />
           </div>

@@ -10,21 +10,11 @@ import {
   updateWorkOrderNoteSchema,
 } from "../schemas/workOrderNote.schema";
 import { isDispatcherRole } from "../services/schedule.service";
+import { isAdminRole, isStaffRole, DISPATCHER_ROLES } from "../utils/roles";
 import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
-
-const ADMIN_ROLES = new Set(["admin", "super-admin", "owner"]);
-const STAFF_ROLES = new Set([
-  "admin",
-  "super-admin",
-  "owner",
-  "manager",
-  "tech",
-  "dispatcher",
-  "agent",
-]);
 
 type PopulatedAuthor = {
   _id: mongoose.Types.ObjectId;
@@ -42,14 +32,6 @@ export type PublicWorkOrderNote = {
   createdAt: string;
   updatedAt: string;
 };
-
-function isAdminRole(role?: string): boolean {
-  return Boolean(role && ADMIN_ROLES.has(role));
-}
-
-function isStaffRole(role?: string): boolean {
-  return Boolean(role && STAFF_ROLES.has(role));
-}
 
 function hasJobsPermission(req: AuthRequest, permission: string): boolean {
   return Boolean(req.user?.permissions.includes(permission));
@@ -140,7 +122,7 @@ async function canWriteNotes(
     res.status(403).json({ message: "Missing permission: jobs:write" });
     return false;
   }
-  const dispatcher = isDispatcherRole(req.user.role);
+  const dispatcher = isDispatcherRole(req.user);
   const isAssignee =
     workOrder.assignedUserRef &&
     String(workOrder.assignedUserRef) === req.user.id;
@@ -158,7 +140,10 @@ async function resolveLegacyAuthorId(
 ): Promise<mongoose.Types.ObjectId | null> {
   if (assignedUserRef) return assignedUserRef;
   const admin = await User.findOne({
-    role: { $in: [...ADMIN_ROLES] },
+    $or: [
+      { roles: { $in: [...DISPATCHER_ROLES] } },
+      { role: { $in: [...DISPATCHER_ROLES] } },
+    ],
   })
     .select("_id")
     .lean();
@@ -243,7 +228,7 @@ export async function getWorkOrderNotes(
 
     await ensureLegacyWorkOrderNote(workOrder);
 
-    const staff = isStaffRole(req.user?.role);
+    const staff = isStaffRole(req.user);
     const query: Record<string, unknown> = { workOrderRef: workOrder._id };
     if (!staff) {
       query.visibleToCustomer = true;
@@ -366,7 +351,7 @@ export async function updateWorkOrderNote(
     }
 
     const isAuthor = note.authorId.toString() === req.user!.id;
-    if (!isAuthor && !isAdminRole(req.user?.role)) {
+    if (!isAuthor && !isAdminRole(req.user)) {
       res.status(403).json({ message: "You can only edit your own notes" });
       return;
     }
@@ -428,7 +413,7 @@ export async function deleteWorkOrderNote(
     }
 
     const isAuthor = note.authorId.toString() === req.user!.id;
-    if (!isAuthor && !isAdminRole(req.user?.role)) {
+    if (!isAuthor && !isAdminRole(req.user)) {
       res.status(403).json({ message: "You can only delete your own notes" });
       return;
     }

@@ -11,9 +11,11 @@ import {
 import { NotificationRead } from "../models/mongo/NotificationRead";
 import { User } from "../models/mongo/User";
 import { resolveCustomerRefsForUser } from "../utils/resolveCustomerLogin";
-
-/** Org-wide notification visibility (owners are territory-scoped). */
-const FULL_ACCESS_ROLES = new Set(["super-admin", "admin"]);
+import {
+  isCustomerRole,
+  isOrgAdminRole,
+  isOwnerRole,
+} from "../utils/roles";
 
 export interface LogNotificationInput {
   entityType: NotificationEntityType;
@@ -45,6 +47,7 @@ export interface NotificationListItem {
 export interface AuthUserLike {
   id: string;
   role: string;
+  roles?: string[];
 }
 
 export function actorFromRequest(user?: { id: string } | null): {
@@ -134,11 +137,11 @@ async function resolveOwnerCustomerRefs(
 export async function buildVisibilityFilter(
   user: AuthUserLike
 ): Promise<FilterQuery<INotificationEvent>> {
-  if (FULL_ACCESS_ROLES.has(user.role)) {
+  if (isOrgAdminRole(user)) {
     return {};
   }
 
-  if (user.role === "owner") {
+  if (isOwnerRole(user)) {
     const refs = await resolveOwnerCustomerRefs(user.id);
     if (refs.length === 0) {
       return { _id: { $in: [] } };
@@ -146,7 +149,7 @@ export async function buildVisibilityFilter(
     return { customerRef: { $in: refs } };
   }
 
-  if (user.role === "customer") {
+  if (isCustomerRole(user)) {
     const refs = await resolveCustomerRefsForUser(user.id);
     if (refs.length === 0) {
       return { _id: { $in: [] } };
@@ -172,7 +175,9 @@ function serializeEvent(
 ): NotificationListItem {
   const id = String(event._id);
   const actorUserId = event.actorUserId ? String(event.actorUserId) : null;
-  const redactActor = user?.role === "customer" && actorUserId !== user.id;
+  const redactActor = user
+    ? isCustomerRole(user) && actorUserId !== user.id
+    : false;
   return {
     id,
     entityType: event.entityType,

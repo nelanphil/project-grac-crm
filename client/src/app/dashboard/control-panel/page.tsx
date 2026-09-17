@@ -13,8 +13,6 @@ import NoteTemplatesCard from "@/components/control-panel/NoteTemplatesCard";
 import MobileTabBar from "@/components/ui/MobileTabBar";
 import { useAuthStore } from "@/store/useAuthStore";
 
-const ADMIN_ROLES = ["admin", "super-admin", "owner"];
-
 type TabId = "payments" | "communications" | "api-services" | "work-orders";
 
 const TABS: { id: TabId; label: string }[] = [
@@ -68,7 +66,9 @@ function ControlPanelContent() {
   const searchParams = useSearchParams();
   const user = useAuthStore((s) => s.user);
 
-  const isAdmin = user ? ADMIN_ROLES.includes(user.role) : false;
+  const isAdmin = useAuthStore((s) =>
+    s.hasRole("admin", "super-admin", "owner"),
+  );
   const activeTab = parseTab(
     searchParams.get("tab"),
     Boolean(searchParams.get("square_oauth")),

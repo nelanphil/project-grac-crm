@@ -18,7 +18,7 @@ function AdminTerminalPopout() {
   const router = useRouter();
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
-  const isSuperAdmin = user?.role === "super-admin";
+  const isSuperAdmin = useAuthStore((s) => s.hasRole("super-admin"));
 
   function popIn() {
     if (window.opener && !window.opener.closed) {

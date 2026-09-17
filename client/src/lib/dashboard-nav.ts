@@ -21,6 +21,7 @@ import {
   LayoutDashboard,
   LucideIcon,
 } from "lucide-react";
+import { normalizeRoles, type RoleLike } from "@/lib/dashboard-role";
 
 export interface NavItem {
   href: string;
@@ -194,15 +195,17 @@ export function parseNestDroppableId(id: string): string | null {
 
 function isItemVisible(
   item: { includeRoles?: string[]; excludeRoles?: string[] },
-  role: string | undefined,
+  role: RoleLike,
 ): boolean {
+  const roles = normalizeRoles(role);
+  if (item.excludeRoles?.some((slug) => roles.includes(slug))) return false;
   if (item.includeRoles) {
-    return item.includeRoles.includes(role ?? "");
+    return item.includeRoles.some((slug) => roles.includes(slug));
   }
-  return !item.excludeRoles?.includes(role ?? "");
+  return true;
 }
 
-function visibleTree(items: NavItem[], role: string | undefined): NavItem[] {
+function visibleTree(items: NavItem[], role: RoleLike): NavItem[] {
   return items.flatMap((item) => {
     const kids = visibleTree(item.children ?? [], role);
     if (isItemVisible(item, role)) {
@@ -217,7 +220,7 @@ function visibleTree(items: NavItem[], role: string | undefined): NavItem[] {
   });
 }
 
-export function getVisibleNavSections(role: string | undefined): NavSection[] {
+export function getVisibleNavSections(role: RoleLike): NavSection[] {
   return NAV_SECTIONS.map((section) => ({
     ...section,
     items: visibleTree(section.items, role),

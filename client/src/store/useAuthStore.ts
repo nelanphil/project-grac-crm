@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { CookieConsentStatus } from "@/store/useConsentStore";
+import {
+  hasRole as roleHas,
+  isCustomerRole,
+  normalizeRoles,
+} from "@/lib/dashboard-role";
 
 export type UserRole = string;
 
@@ -15,6 +20,7 @@ export interface AuthUser {
   id: string;
   email: string;
   role: UserRole;
+  roles?: UserRole[];
   permissions: string[];
   first_name: string;
   last_name: string;
@@ -66,7 +72,7 @@ export function userNeedsLegalConsent(
   if (!user) return false;
   if (typeof user.needsLegalConsent === "boolean")
     return user.needsLegalConsent;
-  return user.role === "customer" && !user.termsAcceptedAt;
+  return isCustomerRole(user) && !user.termsAcceptedAt;
 }
 
 export const useAuthStore = create<AuthStore>()(
@@ -79,11 +85,13 @@ export const useAuthStore = create<AuthStore>()(
 
       login: (token, user) => {
         const previous = get().user;
+        const roles = normalizeRoles(user);
         set({
           token,
           user: {
             ...user,
-            needsLegalConsent: userNeedsLegalConsent(user),
+            roles,
+            needsLegalConsent: userNeedsLegalConsent({ ...user, roles }),
             cookieConsentStatus:
               user.cookieConsentStatus ?? previous?.cookieConsentStatus ?? null,
           },
@@ -114,7 +122,7 @@ export const useAuthStore = create<AuthStore>()(
 
       hasRole: (...roles) => {
         const { user } = get();
-        return user ? roles.includes(user.role) : false;
+        return user ? roleHas(user, ...roles) : false;
       },
     }),
     {

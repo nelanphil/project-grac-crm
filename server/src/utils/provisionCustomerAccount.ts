@@ -7,6 +7,7 @@ import {
   normalizePhoneDigits,
 } from "./customerSites";
 import { mintCheckoutKey } from "./checkoutKey";
+import { isCustomerRole } from "./roles";
 
 export const EMAIL_CONFLICT_ADMIN =
   "A customer with this email already exists.";
@@ -139,9 +140,9 @@ export async function findEmailConflict(
   if (excludeUserId) {
     userQuery._id = { $ne: excludeUserId };
   }
-  const existingUser = await User.findOne(userQuery).select("_id role").lean();
+  const existingUser = await User.findOne(userQuery).select("_id role roles").lean();
   if (existingUser) {
-    if (opts?.allowCustomerUser && existingUser.role === "customer") {
+    if (opts?.allowCustomerUser && isCustomerRole(existingUser)) {
       // fall through to customer-primary check
     } else {
       return { type: "user", userId: existingUser._id as Types.ObjectId };

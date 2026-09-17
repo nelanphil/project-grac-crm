@@ -92,19 +92,16 @@ export default function ProductsPage() {
   );
 }
 
-const PRODUCT_WRITE_ROLES = new Set(["admin", "super-admin", "owner", "manager"]);
-const PRODUCT_DELETE_ROLES = new Set(["admin", "super-admin", "owner"]);
-
 function ProductsContent() {
   const token = useAuthStore((s) => s.token);
-  const role = useAuthStore((s) => s.user?.role);
-  const permissions = useAuthStore((s) => s.user?.permissions);
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const hasRole = useAuthStore((s) => s.hasRole);
   const canWrite =
-    permissions?.includes("products:write") ||
-    PRODUCT_WRITE_ROLES.has(role ?? "");
+    hasPermission("products:write") ||
+    hasRole("admin", "super-admin", "owner", "manager");
   const canDelete =
-    permissions?.includes("products:delete") ||
-    PRODUCT_DELETE_ROLES.has(role ?? "");
+    hasPermission("products:delete") ||
+    hasRole("admin", "super-admin", "owner");
 
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);

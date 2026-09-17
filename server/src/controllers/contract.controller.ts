@@ -26,6 +26,7 @@ import {
 import { inferContractType } from "../utils/contractTypes";
 import { applyContractRenewal } from "../services/invoice.service";
 import { normalizePhoneDigits } from "../utils/customerSites";
+import { isOrgAdminRole } from "../utils/roles";
 import {
   normalizeKindDiscount,
   normalizeProductDiscounts,
@@ -373,10 +374,8 @@ function parseDurationMonths(value: unknown): number | null {
   return parsed;
 }
 
-const ORIGINAL_DATE_EDIT_ROLES = new Set(["admin", "super-admin"]);
-
-function canEditOriginalContractDate(role: string | undefined): boolean {
-  return role != null && ORIGINAL_DATE_EDIT_ROLES.has(role);
+function canEditOriginalContractDate(user: Parameters<typeof isOrgAdminRole>[0]): boolean {
+  return isOrgAdminRole(user);
 }
 
 async function resolveTemplateAssignment(opts: {
@@ -640,7 +639,7 @@ export async function updateContract(
 
     if (
       originalContractDate !== undefined &&
-      !canEditOriginalContractDate(req.user?.role)
+      !canEditOriginalContractDate(req.user)
     ) {
       res.status(403).json({ message: "Only admins can change originalContractDate" });
       return;

@@ -1,4 +1,5 @@
 import type { NotificationEntityType, NotificationItem } from "@/lib/api";
+import { isCustomerRole } from "@/lib/dashboard-role";
 
 const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   customer: "Customer",
@@ -30,9 +31,9 @@ export function notificationEntityLabel(type: NotificationEntityType): string {
 
 export function notificationHref(
   item: NotificationItem,
-  role?: string,
+  role?: string | { role?: string; roles?: string[] },
 ): string | null {
-  if (role === "customer") {
+  if (isCustomerRole(role)) {
     if (item.entityType === "invoice") {
       return `/dashboard/orders/detail?id=${item.entityId}`;
     }

@@ -48,7 +48,7 @@ export async function getScheduleQueue(
     }
 
     const queue = await listScheduleQueue({
-      dispatcher: isDispatcherRole(req.user.role),
+      dispatcher: isDispatcherRole(req.user),
       userId: req.user.id,
       ...(from && to ? { from, to } : {}),
     });
@@ -143,7 +143,7 @@ export async function getScheduleStaff(
       return;
     }
 
-    const dispatcher = isDispatcherRole(req.user.role);
+    const dispatcher = isDispatcherRole(req.user);
     let staff;
     if (dispatcher) {
       staff = await listSchedulableStaff();
@@ -153,7 +153,7 @@ export async function getScheduleStaff(
         ...activeUserFilter,
       })
         .select(
-          "first_name last_name email role schedulable homeLocation weeklyHours scheduleExceptions",
+          "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions",
         )
         .lean();
       staff = me ? [me] : [];
@@ -188,7 +188,7 @@ export async function postScheduleSuggest(
   res: Response,
 ): Promise<void> {
   try {
-    if (!isDispatcherRole(req.user?.role)) {
+    if (!isDispatcherRole(req.user)) {
       res.status(403).json({ message: "Insufficient role" });
       return;
     }
@@ -236,7 +236,7 @@ export async function getScheduleRoute(
       return;
     }
 
-    if (!isDispatcherRole(req.user.role) && userId !== req.user.id) {
+    if (!isDispatcherRole(req.user) && userId !== req.user.id) {
       res.status(403).json({ message: "You can only view your own route" });
       return;
     }
@@ -267,7 +267,7 @@ export async function postScheduleGeocodeMissing(
       res.status(403).json({ message: "Missing permission: jobs:read" });
       return;
     }
-    if (!isDispatcherRole(req.user.role)) {
+    if (!isDispatcherRole(req.user)) {
       res.status(403).json({ message: "Only dispatchers can geocode map pins" });
       return;
     }

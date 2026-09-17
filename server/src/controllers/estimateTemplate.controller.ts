@@ -11,12 +11,7 @@ import {
   partsForTemplate,
   toPublicEstimateTemplate,
 } from "../services/estimateTemplate";
-
-const ADMIN_ROLES = new Set(["admin", "super-admin", "owner"]);
-
-function isAdminRole(role?: string): boolean {
-  return Boolean(role && ADMIN_ROLES.has(role));
-}
+import { isAdminRole } from "../utils/roles";
 
 async function findActiveTemplate(id: string) {
   if (!mongoose.Types.ObjectId.isValid(id)) return null;
@@ -141,7 +136,7 @@ export async function setEstimateTemplateDefault(
       res.status(401).json({ message: "Unauthorized" });
       return;
     }
-    if (!isAdminRole(req.user.role)) {
+    if (!isAdminRole(req.user)) {
       res.status(403).json({
         message: "Only admins can set the default estimate template",
       });

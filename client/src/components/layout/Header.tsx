@@ -70,11 +70,11 @@ export default function Header() {
   // ── Dashboard header ──────────────────────────────────────────────────────
   if (isDashboard) {
     // Avoid a dark-header flash while auth rehydrates; staff chrome is in-shell.
-    if (!hydrated || isStaffRole(user?.role)) {
+    if (!hydrated || isStaffRole(user)) {
       return null;
     }
 
-    const visibleSections = getVisibleNavSections(user?.role);
+    const visibleSections = getVisibleNavSections(user);
     const settingsActive = pathname.startsWith("/dashboard/settings");
 
     return (
