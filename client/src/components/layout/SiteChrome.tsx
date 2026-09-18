@@ -14,9 +14,20 @@ function normalizePath(pathname: string) {
   return pathname;
 }
 
+const BARE_PATHS = new Set(["/sms-program", "/sms-opt-in"]);
+
+const NO_COOKIE_BANNER_PATHS = new Set([
+  "/sms-program",
+  "/sms-opt-in",
+  "/privacy",
+  "/terms",
+  "/auth/signup",
+]);
+
 export default function SiteChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const bare = normalizePath(pathname) === "/sms-program";
+  const path = normalizePath(pathname);
+  const bare = BARE_PATHS.has(path);
 
   if (bare) {
     return <main className="flex-1">{children}</main>;
@@ -27,7 +38,7 @@ export default function SiteChrome({ children }: { children: ReactNode }) {
       <Header />
       <main className="flex-1">{children}</main>
       <Footer />
-      <CookieConsentBanner />
+      {!NO_COOKIE_BANNER_PATHS.has(path) ? <CookieConsentBanner /> : null}
       <ScrollToTopButton />
     </>
   );

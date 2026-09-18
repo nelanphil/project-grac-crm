@@ -11,6 +11,7 @@ import {
 
 const HIDDEN_BANNER_PATHS = new Set([
   "/sms-program",
+  "/sms-opt-in",
   "/privacy",
   "/terms",
   "/auth/signup",
