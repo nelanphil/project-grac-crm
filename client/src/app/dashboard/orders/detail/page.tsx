@@ -37,7 +37,7 @@ function InvoiceDetailContent() {
   const user = useAuthStore((s) => s.user);
   const hasRole = useAuthStore((s) => s.hasRole);
   const isCustomer = isCustomerRole(user);
-  const canEmail = hasRole("admin", "super-admin", "owner");
+  const canEmail = hasRole("admin", "super-admin");
 
   const [invoice, setInvoice] = useState<InvoiceItem | null>(null);
   const [loading, setLoading] = useState(true);

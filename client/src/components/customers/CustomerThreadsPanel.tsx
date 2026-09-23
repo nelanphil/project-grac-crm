@@ -31,7 +31,7 @@ export default function CustomerThreadsPanel({
   channelFilter = "all",
 }: CustomerThreadsPanelProps) {
   const isAdmin = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin", "owner"),
+    s.hasRole("admin", "super-admin"),
   );
 
   const [threads, setThreads] = useState<MessageThreadItem[]>([]);

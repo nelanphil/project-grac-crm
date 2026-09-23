@@ -1,9 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import DashboardNav from "@/components/dashboard/DashboardNav";
 import StaffDashboardShell from "@/components/dashboard/staff/StaffDashboardShell";
 import { isJobTerminalPopoutPath } from "@/utils/jobTerminalWindow";
+import { authGetMe } from "@/lib/api";
 import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
@@ -16,9 +18,31 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const hydrated = useHasHydrated();
   const user = useAuthStore((s) => s.user);
+  const token = useAuthStore((s) => s.token);
+  const login = useAuthStore((s) => s.login);
+  const [syncedToken, setSyncedToken] = useState<string | null>(null);
   const isTerminalPopout = isJobTerminalPopoutPath(pathname);
+  const synced = !token || syncedToken === token;
 
-  if (!hydrated) {
+  useEffect(() => {
+    if (!hydrated || !token) return;
+    let cancelled = false;
+    authGetMe(token)
+      .then(({ user: fresh }) => {
+        if (!cancelled) login(token, fresh);
+      })
+      .catch(() => {
+        // Keep the stored session if the refresh fails.
+      })
+      .finally(() => {
+        if (!cancelled) setSyncedToken(token);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, token, login]);
+
+  if (!hydrated || !synced) {
     if (isTerminalPopout) {
       return (
         <div className="h-dvh w-full bg-neutral-950" aria-busy="true">

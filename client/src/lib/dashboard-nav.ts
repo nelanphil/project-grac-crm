@@ -11,6 +11,7 @@ import {
   Map,
   ShieldCheck,
   KeyRound,
+  Briefcase,
   Package,
   TicketPercent,
   Landmark,
@@ -59,13 +60,13 @@ export const NAV_SECTIONS: NavSection[] = [
         href: "/dashboard/messaging",
         label: "Messages",
         icon: MessageSquare,
-        includeRoles: ["admin", "super-admin", "owner"],
+        includeRoles: ["admin", "super-admin"],
       },
       {
         href: "/dashboard/control-panel",
         label: "Control Panel",
         icon: Settings2,
-        includeRoles: ["admin", "super-admin", "owner"],
+        includeRoles: ["admin", "super-admin"],
         children: [
           {
             href: "/dashboard/customers",
@@ -101,7 +102,7 @@ export const NAV_SECTIONS: NavSection[] = [
             href: "/dashboard/territory",
             label: "Territory",
             icon: Map,
-            includeRoles: ["admin", "super-admin", "owner"],
+            includeRoles: ["admin", "super-admin"],
           },
         ],
       },
@@ -109,13 +110,19 @@ export const NAV_SECTIONS: NavSection[] = [
         href: "/dashboard/users",
         label: "Users",
         icon: UserCog,
-        includeRoles: ["admin", "super-admin", "owner"],
+        includeRoles: ["admin", "super-admin"],
         children: [
           {
             href: "/dashboard/users/roles",
             label: "Roles & Permissions",
             icon: KeyRound,
             includeRoles: ["super-admin"],
+          },
+          {
+            href: "/dashboard/users/job-roles",
+            label: "Job Roles",
+            icon: Briefcase,
+            includeRoles: ["admin", "super-admin"],
           },
         ],
       },
@@ -147,7 +154,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: "Financials",
         icon: Landmark,
         excludeRoles: ["customer"],
-        includeRoles: ["admin", "super-admin", "owner", "manager"],
+        includeRoles: ["admin", "super-admin", "manager"],
         children: [
           { href: "/dashboard/orders", label: "Invoices", icon: ShoppingCart },
           {

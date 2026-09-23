@@ -67,7 +67,7 @@ function ControlPanelContent() {
   const user = useAuthStore((s) => s.user);
 
   const isAdmin = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin", "owner"),
+    s.hasRole("admin", "super-admin"),
   );
   const activeTab = parseTab(
     searchParams.get("tab"),

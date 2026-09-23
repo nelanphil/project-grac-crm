@@ -50,10 +50,12 @@ import {
   renameEmailPreferences,
   setEmailPreferences,
 } from "../utils/emailPreferences";
+import { capabilitiesForJobRoleIds } from "../utils/jobRoles";
 import {
   isCustomerRole,
   normalizeRoles,
   primaryRole,
+  type UserType,
 } from "../utils/roles";
 
 function toIsoOrNull(value: Date | string | null | undefined): string | null {
@@ -69,6 +71,9 @@ function buildUserPayload(user: {
   last_name: string;
   role: UserRole;
   roles?: UserRole[];
+  userType?: UserType | null;
+  jobRoles?: unknown[] | null;
+  capabilities?: { schedulable: boolean; territoryOwner: boolean };
   username?: string | null;
   usernameKey?: string | null;
   termsAcceptedAt?: Date | string | null;
@@ -87,13 +92,22 @@ function buildUserPayload(user: {
 }) {
   const termsAcceptedAt = toIsoOrNull(user.termsAcceptedAt);
   const roles = normalizeRoles(user);
+  const userType: UserType =
+    user.userType === "customer" || isCustomerRole(roles) ? "customer" : "staff";
+  const jobRoles = (user.jobRoles ?? []).map((id) => String(id));
   return {
     id: String(user._id),
     email: user.email,
     first_name: user.first_name,
     last_name: user.last_name,
-    role: primaryRole(roles) ?? user.role,
-    roles,
+    role: userType === "customer" ? "customer" : (primaryRole(roles) ?? user.role),
+    roles: userType === "customer" ? ["customer"] : roles,
+    userType,
+    jobRoles: userType === "customer" ? [] : jobRoles,
+    capabilities: user.capabilities ?? {
+      schedulable: false,
+      territoryOwner: false,
+    },
     username: user.username ?? null,
     usernameNumber: usernameNumberFromKey(user.username, user.usernameKey),
     permissions: user.permissions,
@@ -133,8 +147,10 @@ async function toUserPayload(
   const own = (user.phone ?? "").trim();
   const phone = own || (await lookupContactPhone(user.email));
   const prefs = await getEmailPreferences(user.email);
+  const jobRoles = (user.jobRoles ?? []).map((id) => String(id));
+  const capabilities = await capabilitiesForJobRoleIds(jobRoles);
   return {
-    ...buildUserPayload({ ...user, phone }),
+    ...buildUserPayload({ ...user, phone, jobRoles, capabilities }),
     generalNotifications: prefs.generalNotifications,
     billingAlerts: prefs.billingAlerts,
   };
@@ -210,7 +226,9 @@ export async function register(req: Request, res: Response): Promise<void> {
       softDeleted.password_hash = await bcrypt.hash(password, 10);
       softDeleted.first_name = first_name;
       softDeleted.last_name = last_name;
+      softDeleted.userType = "customer";
       softDeleted.role = role;
+      softDeleted.roles = ["customer"];
       softDeleted.deletedAt = null;
       applyLegalConsent(softDeleted, smsOptIn);
       if (phone) softDeleted.phone = phone;
@@ -244,6 +262,8 @@ export async function register(req: Request, res: Response): Promise<void> {
       first_name,
       last_name,
       role,
+      roles: ["customer"],
+      userType: "customer",
       termsAcceptedAt: now,
       privacyAcceptedAt: now,
       legalDocsVersion: LEGAL_DOCS_VERSION,

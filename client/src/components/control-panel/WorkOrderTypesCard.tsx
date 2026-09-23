@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
-import { isTechnicianRole } from "@/lib/dashboard-role";
+import { userHasCapability } from "@/lib/dashboard-role";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import {
@@ -63,7 +63,7 @@ export default function WorkOrderTypesCard() {
       .then(([{ types: list }, { users }]) => {
         setTypes(list);
         setStaff(
-          users.filter((user) => isTechnicianRole(user)),
+          users.filter((user) => userHasCapability(user, "schedulable")),
         );
       })
       .catch((err) =>

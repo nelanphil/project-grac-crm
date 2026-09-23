@@ -52,7 +52,7 @@ export default function CommunicationHistoryPanel({
 }: CommunicationHistoryPanelProps) {
   const canWrite = useAuthStore((s) => s.hasPermission("messages:write"));
   const isAdmin = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin", "owner"),
+    s.hasRole("admin", "super-admin"),
   );
 
   const [channelState, setChannelState] = useState<ChannelFilter>("all");

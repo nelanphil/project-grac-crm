@@ -279,7 +279,7 @@ export default function StaffHomeDashboard() {
     s.hasPermission("contracts:write"),
   );
   const showRenewalsTable = useAuthStore((s) =>
-    s.hasRole("super-admin", "admin", "owner", "manager"),
+    s.hasRole("super-admin", "admin", "manager"),
   );
 
   const [invoices, setInvoices] = useState<InvoiceItem[]>([]);

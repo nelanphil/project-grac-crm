@@ -5,7 +5,7 @@ import {
   hasRole,
   isCustomerRole,
   isDispatcherRole,
-  isTechnicianRole,
+  isStaffUser,
   normalizeRoles,
   primaryRole,
   RoleAssignmentError,
@@ -30,8 +30,8 @@ describe("normalizeRoles", () => {
 
 describe("primaryRole", () => {
   it("picks the highest-ranked system role", () => {
-    assert.equal(primaryRole(["tech", "manager"]), "manager");
-    assert.equal(primaryRole(["admin", "tech"]), "admin");
+    assert.equal(primaryRole(["agent", "manager"]), "manager");
+    assert.equal(primaryRole(["admin", "agent"]), "admin");
     assert.equal(primaryRole(["custom", "agent"]), "agent");
     assert.equal(primaryRole(["lead-tech"]), "lead-tech");
   });
@@ -39,12 +39,14 @@ describe("primaryRole", () => {
 
 describe("hasRole helpers", () => {
   it("matches any assigned role", () => {
-    const user = { role: "manager", roles: ["manager", "tech"] };
-    assert.equal(hasRole(user, "tech"), true);
-    assert.equal(isTechnicianRole(user), true);
+    const user = { role: "manager", roles: ["manager", "agent"] };
+    assert.equal(hasRole(user, "agent"), true);
+    assert.equal(isStaffUser(user), true);
+    assert.equal(isStaffUser({ userType: "customer", roles: ["admin"] }), false);
     assert.equal(isDispatcherRole(user), false);
-    assert.equal(isDispatcherRole({ roles: ["admin", "tech"] }), true);
+    assert.equal(isDispatcherRole({ roles: ["admin", "agent"] }), true);
     assert.equal(isCustomerRole({ roles: ["customer"] }), true);
+    assert.equal(isCustomerRole({ userType: "staff", roles: ["customer"] }), false);
   });
 });
 

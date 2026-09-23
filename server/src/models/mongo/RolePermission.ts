@@ -32,6 +32,7 @@ const ALL_PERMISSIONS = [
   "reports:read",
   "integrations:read", "integrations:write", "integrations:delete",
   "messages:read", "messages:write",
+  "job-roles:manage",
 ];
 
 const DEFAULT_PERMISSIONS: [UserRole, string][] = [
@@ -72,9 +73,7 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "integrations:delete"],
   ["admin", "messages:read"],
   ["admin", "messages:write"],
-
-  // owner — same as admin but also permissions management
-  ...ALL_PERMISSIONS.map((p): [UserRole, string] => ["owner", p]),
+  ["admin", "job-roles:manage"],
 
   // manager — leads, accounts, customers, jobs; read users
   ["manager", "leads:read"],
@@ -96,18 +95,6 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["manager", "discounts:read"],
   ["manager", "discounts:write"],
   ["manager", "reports:read"],
-
-  // tech — read/write jobs and customers; read leads
-  ["tech", "leads:read"],
-  ["tech", "customers:read"],
-  ["tech", "contracts:read"],
-  ["tech", "contracts:write"],
-  ["tech", "jobs:read"],
-  ["tech", "jobs:write"],
-  ["tech", "estimates:read"],
-  ["tech", "estimates:write"],
-  ["tech", "products:read"],
-  ["tech", "discounts:read"],
 
   // agent — read-only leads, accounts, customers
   ["agent", "leads:read"],
@@ -160,13 +147,8 @@ const CONTRACT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "contracts:read"],
   ["admin", "contracts:write"],
   ["admin", "contracts:delete"],
-  ["owner", "contracts:read"],
-  ["owner", "contracts:write"],
-  ["owner", "contracts:delete"],
   ["manager", "contracts:read"],
   ["manager", "contracts:write"],
-  ["tech", "contracts:read"],
-  ["tech", "contracts:write"],
   ["agent", "contracts:read"],
 ];
 
@@ -188,9 +170,6 @@ const INTEGRATIONS_PERMISSIONS: [UserRole, string][] = [
   ["admin", "integrations:read"],
   ["admin", "integrations:write"],
   ["admin", "integrations:delete"],
-  ["owner", "integrations:read"],
-  ["owner", "integrations:write"],
-  ["owner", "integrations:delete"],
 ];
 
 /** Insert integrations permissions for existing deployments (idempotent). */
@@ -209,8 +188,6 @@ const MESSAGES_PERMISSIONS: [UserRole, string][] = [
   ["super-admin", "messages:write"],
   ["admin", "messages:read"],
   ["admin", "messages:write"],
-  ["owner", "messages:read"],
-  ["owner", "messages:write"],
 ];
 
 /** Insert messaging permissions for existing deployments (idempotent). */
@@ -231,13 +208,8 @@ const ESTIMATE_PERMISSIONS: [UserRole, string][] = [
   ["admin", "estimates:read"],
   ["admin", "estimates:write"],
   ["admin", "estimates:delete"],
-  ["owner", "estimates:read"],
-  ["owner", "estimates:write"],
-  ["owner", "estimates:delete"],
   ["manager", "estimates:read"],
   ["manager", "estimates:write"],
-  ["tech", "estimates:read"],
-  ["tech", "estimates:write"],
 ];
 
 export async function ensureEstimatePermissions(): Promise<void> {
@@ -257,12 +229,8 @@ const PRODUCT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "products:read"],
   ["admin", "products:write"],
   ["admin", "products:delete"],
-  ["owner", "products:read"],
-  ["owner", "products:write"],
-  ["owner", "products:delete"],
   ["manager", "products:read"],
   ["manager", "products:write"],
-  ["tech", "products:read"],
 ];
 
 export async function ensureProductPermissions(): Promise<void> {
@@ -282,16 +250,28 @@ const DISCOUNT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "discounts:read"],
   ["admin", "discounts:write"],
   ["admin", "discounts:delete"],
-  ["owner", "discounts:read"],
-  ["owner", "discounts:write"],
-  ["owner", "discounts:delete"],
   ["manager", "discounts:read"],
   ["manager", "discounts:write"],
-  ["tech", "discounts:read"],
 ];
 
 export async function ensureDiscountPermissions(): Promise<void> {
   for (const [role, permission] of DISCOUNT_PERMISSIONS) {
+    await RolePermission.updateOne(
+      { role, permission },
+      { $setOnInsert: { role, permission } },
+      { upsert: true },
+    );
+  }
+}
+
+const JOB_ROLE_PERMISSIONS: [UserRole, string][] = [
+  ["super-admin", "job-roles:manage"],
+  ["admin", "job-roles:manage"],
+];
+
+/** Insert job-role management for existing deployments (idempotent). */
+export async function ensureJobRolePermissions(): Promise<void> {
+  for (const [role, permission] of JOB_ROLE_PERMISSIONS) {
     await RolePermission.updateOne(
       { role, permission },
       { $setOnInsert: { role, permission } },

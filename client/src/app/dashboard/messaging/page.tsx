@@ -18,7 +18,7 @@ function MessagingPageContent() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const isAdmin = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin", "owner"),
+    s.hasRole("admin", "super-admin"),
   );
 
   useEffect(() => {

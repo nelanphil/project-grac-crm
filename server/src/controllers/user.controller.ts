@@ -1,6 +1,7 @@
 import { Response } from "express";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import {
   User,
@@ -11,6 +12,7 @@ import {
   IScheduleException,
 } from "../models/mongo/User";
 import { Role } from "../models/mongo/Role";
+import { JobRole } from "../models/mongo/JobRole";
 import { createUserSchema, updateUserSchema } from "../schemas/user.schema";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
 import { updateRoleSchema } from "../schemas/auth.schema";
@@ -37,10 +39,15 @@ import {
 import { syncCustomersToUserEmail } from "../utils/ensureCustomerLogin";
 import { renameEmailPreferences } from "../utils/emailPreferences";
 import {
+  capabilitiesFromIds,
+  getCapabilitySets,
+  JobRoleDataError,
+  userHasCapability,
+  validateJobRoleData,
+} from "../utils/jobRoles";
+import {
   isCustomerRole,
-  isOwnerRole,
   isSuperAdminRole,
-  isTechnicianRole,
   RoleAssignmentError,
   rolesFromPayload,
   syncRoleFields,
@@ -139,31 +146,45 @@ async function geocodeHomeLocation(input: {
   };
 }
 
-function formatUser(user: {
-  _id: unknown;
-  email: string;
-  first_name: string;
-  last_name: string;
-  role: string;
-  roles?: string[];
-  username?: string | null;
-  usernameKey?: string | null;
-  territories?: IUserTerritories | null;
-  schedulable?: boolean;
-  homeLocation?: IUserHomeLocation | null;
-  weeklyHours?: IWeeklyHours | null;
-  scheduleExceptions?: IScheduleException[] | null;
-  createdAt: Date;
-  updatedAt?: Date;
-}) {
+function formatUser(
+  user: {
+    _id: unknown;
+    email: string;
+    first_name: string;
+    last_name: string;
+    role: string;
+    roles?: string[];
+    userType?: string | null;
+    jobRoles?: unknown[] | null;
+    jobRoleData?: Record<string, Record<string, unknown>> | null;
+    username?: string | null;
+    usernameKey?: string | null;
+    territories?: IUserTerritories | null;
+    schedulable?: boolean;
+    homeLocation?: IUserHomeLocation | null;
+    weeklyHours?: IWeeklyHours | null;
+    scheduleExceptions?: IScheduleException[] | null;
+    createdAt: Date;
+    updatedAt?: Date;
+  },
+  sets: { schedulable: Set<string>; territoryOwner: Set<string> },
+) {
   const synced = syncRoleFields(user);
+  const jobRoles = (user.jobRoles ?? []).map((id) => String(id));
+  const capabilities = capabilitiesFromIds(jobRoles, sets);
+  const userType = user.userType === "customer" ? "customer" : "staff";
   return {
     _id: String(user._id),
     email: user.email,
     first_name: user.first_name,
     last_name: user.last_name,
-    role: synced.role,
-    roles: synced.roles,
+    role: userType === "customer" ? "customer" : synced.role,
+    roles: userType === "customer" ? ["customer"] : synced.roles,
+    userType,
+    jobRoles: userType === "customer" ? [] : jobRoles,
+    jobRoleData: userType === "customer" ? {} : (user.jobRoleData ?? {}),
+    capabilities,
+    schedulable: capabilities.schedulable,
     username: user.username ?? null,
     usernameNumber: usernameNumberFromKey(user.username, user.usernameKey),
     territories: formatTerritories(user.territories),
@@ -173,6 +194,13 @@ function formatUser(user: {
     createdAt: user.createdAt,
     ...(user.updatedAt ? { updatedAt: user.updatedAt } : {}),
   };
+}
+
+async function presentUsers<T extends Parameters<typeof formatUser>[0]>(
+  users: T[],
+) {
+  const sets = await getCapabilitySets();
+  return users.map((user) => formatUser(user, sets));
 }
 
 async function assertRolesExist(slugs: string[]): Promise<boolean> {
@@ -203,6 +231,46 @@ async function resolveAssignedRoles(input: {
   }
 }
 
+async function resolveJobRoles(
+  ids: string[] | undefined,
+  userType: "staff" | "customer",
+): Promise<
+  | {
+      ok: true;
+      ids: Types.ObjectId[];
+      docs: Array<{
+        _id: Types.ObjectId;
+        label: string;
+        fields?: Parameters<typeof validateJobRoleData>[0][number]["fields"];
+      }>;
+    }
+  | { ok: false; message: string }
+> {
+  if (userType === "customer" || !ids || ids.length === 0) {
+    return { ok: true, ids: [], docs: [] };
+  }
+  const unique = [...new Set(ids)];
+  if (unique.some((id) => !Types.ObjectId.isValid(id))) {
+    return { ok: false, message: "Invalid job role" };
+  }
+  const docs = await JobRole.find({
+    _id: { $in: unique },
+    deletedAt: null,
+  }).lean();
+  if (docs.length !== unique.length) {
+    return { ok: false, message: "Invalid or deleted job role" };
+  }
+  return {
+    ok: true,
+    ids: docs.map((doc) => doc._id as Types.ObjectId),
+    docs: docs.map((doc) => ({
+      _id: doc._id as Types.ObjectId,
+      label: doc.label,
+      fields: doc.fields,
+    })),
+  };
+}
+
 function formatConflictMessage(
   conflicts: Awaited<ReturnType<typeof findTerritoryConflicts>>,
 ): string {
@@ -220,7 +288,7 @@ export async function listUsers(req: AuthRequest, res: Response): Promise<void> 
       .lean()
       .sort({ createdAt: -1 });
     res.status(200).json({
-      users: users.map((u) => formatUser(u)),
+      users: await presentUsers(users),
     });
   } catch (err) {
     console.error("GET /users error:", err);
@@ -248,10 +316,38 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       res.status(400).json({ message: assigned.message });
       return;
     }
-    const { roles, role } = assigned;
-    const isCustomer = isCustomerRole(roles);
-    const isOwner = isOwnerRole(roles);
-    const isTech = isTechnicianRole(roles);
+    const userType =
+      parsed.data.userType ??
+      (isCustomerRole(assigned.roles) ? "customer" : "staff");
+    const roles =
+      userType === "customer" ? ["customer"] : assigned.roles;
+    const role = userType === "customer" ? "customer" : assigned.role;
+    if (userType === "staff" && isCustomerRole(roles)) {
+      res.status(400).json({ message: "Staff users cannot have the customer role" });
+      return;
+    }
+    const isCustomer = userType === "customer";
+
+    const jobs = await resolveJobRoles(parsed.data.jobRoles, userType);
+    if (!jobs.ok) {
+      res.status(400).json({ message: jobs.message });
+      return;
+    }
+    let jobRoleData: Record<string, Record<string, unknown>> = {};
+    if (!isCustomer) {
+      try {
+        jobRoleData = validateJobRoleData(jobs.docs, parsed.data.jobRoleData);
+      } catch (err) {
+        if (err instanceof JobRoleDataError) {
+          res.status(400).json({ message: err.message });
+          return;
+        }
+        throw err;
+      }
+    }
+    const caps = capabilitiesFromIds(jobs.ids, await getCapabilitySets());
+    const isOwner = caps.territoryOwner;
+    const isTech = caps.schedulable;
 
     const territories =
       isOwner && parsed.data.territories
@@ -310,6 +406,10 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       softDeleted.last_name = last_name;
       softDeleted.roles = roles;
       softDeleted.role = role;
+      softDeleted.userType = userType;
+      softDeleted.jobRoles = jobs.ids;
+      softDeleted.jobRoleData = jobRoleData;
+      softDeleted.markModified("jobRoleData");
       softDeleted.territories = territories;
       softDeleted.weeklyHours = weeklyHours;
       softDeleted.homeLocation = homeLocation;
@@ -336,6 +436,9 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
         last_name,
         role,
         roles,
+        userType,
+        jobRoles: jobs.ids,
+        jobRoleData,
         territories,
         weeklyHours,
         homeLocation,
@@ -371,7 +474,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
     }
 
     res.status(201).json({
-      user: formatUser(user),
+      user: (await presentUsers([user]))[0],
       ...(passwordWasGenerated ? { temporaryPassword: plainPassword } : {}),
     });
 
@@ -425,9 +528,9 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    const wasOwner = isOwnerRole(user);
-    const wasCustomer = isCustomerRole(user);
-    const wasTech = isTechnicianRole(user);
+    const wasOwner = await userHasCapability(user, "territoryOwner");
+    const wasCustomer = user.userType === "customer" || isCustomerRole(user);
+    const wasTech = Boolean(user.schedulable);
     const previousTerritories = formatTerritories(user.territories);
     const previousEmail = user.email;
 
@@ -448,14 +551,77 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     }
     if (first_name !== undefined) user.first_name = first_name;
     if (last_name !== undefined) user.last_name = last_name;
-    if (assigned) {
+    const nextUserType =
+      parsed.data.userType ??
+      (assigned
+        ? isCustomerRole(assigned.roles)
+          ? "customer"
+          : "staff"
+        : user.userType === "customer"
+          ? "customer"
+          : "staff");
+
+    if (nextUserType === "staff" && assigned && isCustomerRole(assigned.roles)) {
+      res.status(400).json({ message: "Staff users cannot have the customer role" });
+      return;
+    }
+
+    if (assigned && nextUserType === "staff") {
       user.roles = assigned.roles;
       user.role = assigned.role;
     }
+    user.userType = nextUserType;
 
-    const nextIsOwner = isOwnerRole(user);
-    const nextIsCustomer = isCustomerRole(user);
-    const nextIsTech = isTechnicianRole(user);
+    const jobs =
+      parsed.data.jobRoles !== undefined
+        ? await resolveJobRoles(parsed.data.jobRoles, nextUserType)
+        : null;
+    if (jobs && !jobs.ok) {
+      res.status(400).json({ message: jobs.message });
+      return;
+    }
+    if (nextUserType === "customer") {
+      user.jobRoles = [];
+      user.jobRoleData = {};
+      user.markModified("jobRoleData");
+    } else if (jobs) {
+      user.jobRoles = jobs.ids;
+    }
+
+    if (nextUserType === "staff" && (jobs || parsed.data.jobRoleData !== undefined)) {
+      const docs = jobs
+        ? jobs.docs
+        : (
+            await JobRole.find({
+              _id: { $in: user.jobRoles },
+              deletedAt: null,
+            }).lean()
+          ).map((doc) => ({
+            _id: doc._id,
+            label: doc.label,
+            fields: doc.fields,
+          }));
+      try {
+        user.jobRoleData = validateJobRoleData(
+          docs,
+          parsed.data.jobRoleData !== undefined
+            ? parsed.data.jobRoleData
+            : user.jobRoleData,
+        );
+        user.markModified("jobRoleData");
+      } catch (err) {
+        if (err instanceof JobRoleDataError) {
+          res.status(400).json({ message: err.message });
+          return;
+        }
+        throw err;
+      }
+    }
+
+    const nextCaps = capabilitiesFromIds(user.jobRoles, await getCapabilitySets());
+    const nextIsOwner = nextUserType === "staff" && nextCaps.territoryOwner;
+    const nextIsCustomer = nextUserType === "customer";
+    const nextIsTech = nextUserType === "staff" && nextCaps.schedulable;
     if (!nextIsOwner) {
       user.territories = emptyTerritories();
     } else if (parsed.data.territories !== undefined) {
@@ -541,7 +707,7 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
       ...actorFromRequest(req.user),
     });
 
-    res.status(200).json({ user: formatUser(fresh ?? user) });
+    res.status(200).json({ user: (await presentUsers([fresh ?? user]))[0] });
   } catch (err) {
     console.error("PATCH /users/:id error:", err);
     res.status(500).json({ message: "Internal server error" });
@@ -574,21 +740,15 @@ export async function updateUserRole(
       return;
     }
 
-    const wasOwner = isOwnerRole(user);
-    const wasTech = isTechnicianRole(user);
+    if (user.userType === "customer" || isCustomerRole(assigned.roles)) {
+      res.status(400).json({
+        message: "Customer accounts use the customer role. Change account type instead.",
+      });
+      return;
+    }
     user.roles = assigned.roles;
     user.role = assigned.role;
-    if (!isOwnerRole(user)) {
-      user.territories = emptyTerritories();
-    }
-    if (!wasTech && isTechnicianRole(user) && weeklyHoursNeverEnabled(user.weeklyHours)) {
-      user.weeklyHours = defaultWeeklyHours(true);
-    }
     await user.save();
-
-    if (wasOwner || isOwnerRole(user)) {
-      scheduleOwnerReassignment(`user-role=${String(user._id)}`);
-    }
 
     const fresh = await User.findById(user._id).lean();
 
@@ -601,7 +761,7 @@ export async function updateUserRole(
       ...actorFromRequest(req.user),
     });
 
-    res.status(200).json({ user: formatUser(fresh ?? user) });
+    res.status(200).json({ user: (await presentUsers([fresh ?? user]))[0] });
   } catch (err) {
     console.error("PATCH /users/:id/role error:", err);
     res.status(500).json({ message: "Internal server error" });
@@ -630,8 +790,7 @@ export async function softDeleteUser(
     }
 
     const previousUsername = user.username;
-    const wasOwner = isOwnerRole(user);
-    const previousTerritories = formatTerritories(user.territories);
+    const wasOwner = await userHasCapability(user, "territoryOwner");
     user.deletedAt = new Date();
     // Free unique usernameKey so active users can claim the bare name
     user.usernameKey = null;
@@ -666,7 +825,10 @@ export async function softDeleteUser(
       ...actorFromRequest(req.user),
     });
 
-    res.status(200).json({ message: "User deleted", user: formatUser(user) });
+    res.status(200).json({
+      message: "User deleted",
+      user: (await presentUsers([user]))[0],
+    });
   } catch (err) {
     console.error("DELETE /users/:id error:", err);
     res.status(500).json({ message: "Internal server error" });

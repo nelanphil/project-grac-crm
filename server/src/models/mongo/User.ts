@@ -1,11 +1,12 @@
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, { Schema, Document, Types } from "mongoose";
 import {
   defaultWeeklyHours,
   type HomeLocation,
   type ScheduleException,
   type WeeklyHours,
 } from "../../utils/scheduleTime";
-import { isTechnicianRole, syncRoleFields } from "../../utils/roles";
+import { rolesAreSchedulable } from "../../utils/jobRoles";
+import { CUSTOMER_ROLE, syncRoleFields, type UserType } from "../../utils/roles";
 
 // UserRole is now an open string to support dynamic roles
 export type UserRole = string;
@@ -26,19 +27,25 @@ export interface IUser extends Document {
   password_hash: string;
   first_name: string;
   last_name: string;
-  /** Highest-ranked assigned role. Always derived from `roles`. */
+  /** Highest-ranked assigned security role. Always derived from `roles`. */
   role: UserRole;
-  /** All assigned role slugs. Source of truth for permissions and scheduling. */
+  /** Security role slugs. Source of truth for application permissions. */
   roles: UserRole[];
+  /** Staff can use job roles and the CRM. Customers are portal logins. */
+  userType: UserType;
+  /** Job roles describing what a staff member does. Staff only. */
+  jobRoles: Types.ObjectId[];
+  /** Values for each job role's form-builder fields, keyed by job role id. */
+  jobRoleData: Record<string, Record<string, unknown>>;
   /** Display / login handle (not unique). Never includes numeric suffix. */
   username: string | null;
   /** Unique backend key, e.g. doc1 / doc2. Never exposed to clients. */
   usernameKey: string | null;
-  /** Geographic territories for owner-role users. */
+  /** Geographic territories for staff with a territory-owner job role. */
   territories: IUserTerritories;
   /**
-   * Legacy flag kept in sync with the Technician role.
-   * Scheduling should key off `roles` including `tech`.
+   * Denormalized from job-role capabilities so schedule queries stay indexed.
+   * True when any assigned job role is schedulable.
    */
   schedulable: boolean;
   homeLocation: IUserHomeLocation;
@@ -159,6 +166,13 @@ const userSchema = new Schema<IUser>(
     last_name: { type: String, required: true, trim: true },
     role: { type: String, default: "agent", required: true },
     roles: { type: [String], default: [] },
+    userType: {
+      type: String,
+      enum: ["staff", "customer"],
+      index: true,
+    },
+    jobRoles: { type: [{ type: Schema.Types.ObjectId, ref: "JobRole" }], default: [] },
+    jobRoleData: { type: Schema.Types.Mixed, default: () => ({}) },
     username: {
       type: String,
       default: null,
@@ -204,6 +218,7 @@ const userSchema = new Schema<IUser>(
 );
 
 userSchema.index({ roles: 1 });
+userSchema.index({ jobRoles: 1 });
 
 userSchema.index(
   { usernameKey: 1 },
@@ -213,15 +228,33 @@ userSchema.index(
   },
 );
 
-userSchema.pre("save", function syncRoles(next) {
+userSchema.pre("save", async function syncRoles() {
+  const incomingRoles = Array.isArray(this.roles) ? this.roles : [];
+  const looksLikeCustomer =
+    this.userType === "customer" ||
+    (!this.userType &&
+      (incomingRoles.includes(CUSTOMER_ROLE) || this.role === CUSTOMER_ROLE));
+
+  if (looksLikeCustomer) {
+    this.userType = "customer";
+    this.roles = [CUSTOMER_ROLE];
+    this.role = CUSTOMER_ROLE;
+    this.jobRoles = [];
+    this.jobRoleData = {};
+    this.markModified("jobRoleData");
+    this.territories = { counties: [], zips: [] };
+    this.schedulable = false;
+    return;
+  }
+
+  this.userType = "staff";
   const synced = syncRoleFields({
     role: this.role,
-    roles: Array.isArray(this.roles) ? this.roles : [],
+    roles: incomingRoles.filter((slug) => slug !== CUSTOMER_ROLE),
   });
   this.roles = synced.roles;
   this.role = synced.role;
-  this.schedulable = isTechnicianRole(synced);
-  next();
+  this.schedulable = await rolesAreSchedulable(this.jobRoles ?? []);
 });
 
 export const User = mongoose.model<IUser>("User", userSchema);

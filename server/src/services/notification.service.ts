@@ -11,11 +11,8 @@ import {
 import { NotificationRead } from "../models/mongo/NotificationRead";
 import { User } from "../models/mongo/User";
 import { resolveCustomerRefsForUser } from "../utils/resolveCustomerLogin";
-import {
-  isCustomerRole,
-  isOrgAdminRole,
-  isOwnerRole,
-} from "../utils/roles";
+import { userHasCapability } from "../utils/jobRoles";
+import { isCustomerRole, isOrgAdminRole } from "../utils/roles";
 
 export interface LogNotificationInput {
   entityType: NotificationEntityType;
@@ -48,6 +45,8 @@ export interface AuthUserLike {
   id: string;
   role: string;
   roles?: string[];
+  jobRoles?: string[];
+  userType?: string;
 }
 
 export function actorFromRequest(user?: { id: string } | null): {
@@ -141,7 +140,7 @@ export async function buildVisibilityFilter(
     return {};
   }
 
-  if (isOwnerRole(user)) {
+  if (await userHasCapability(user, "territoryOwner")) {
     const refs = await resolveOwnerCustomerRefs(user.id);
     if (refs.length === 0) {
       return { _id: { $in: [] } };

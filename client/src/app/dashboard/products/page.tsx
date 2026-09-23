@@ -98,10 +98,10 @@ function ProductsContent() {
   const hasRole = useAuthStore((s) => s.hasRole);
   const canWrite =
     hasPermission("products:write") ||
-    hasRole("admin", "super-admin", "owner", "manager");
+    hasRole("admin", "super-admin", "manager");
   const canDelete =
     hasPermission("products:delete") ||
-    hasRole("admin", "super-admin", "owner");
+    hasRole("admin", "super-admin");
 
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);

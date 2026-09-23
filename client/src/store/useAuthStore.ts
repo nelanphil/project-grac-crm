@@ -21,6 +21,12 @@ export interface AuthUser {
   email: string;
   role: UserRole;
   roles?: UserRole[];
+  userType?: "staff" | "customer";
+  jobRoles?: string[];
+  capabilities?: {
+    schedulable: boolean;
+    territoryOwner: boolean;
+  };
   permissions: string[];
   first_name: string;
   last_name: string;

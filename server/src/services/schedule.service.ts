@@ -25,8 +25,6 @@ import {
   type LatLng,
 } from "../utils/googleRoutes";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
-import { TECH_ROLE, isTechnicianRole } from "../utils/roles";
-
 export { DISPATCHER_ROLES, isDispatcherRole } from "../utils/roles";
 
 export function staffDisplayName(user: {
@@ -93,7 +91,7 @@ export function toPublicStaff(user: LeanUser): PublicStaff {
     email: user.email,
     role: user.role,
     roles: Array.isArray(user.roles) && user.roles.length > 0 ? user.roles : [user.role],
-    schedulable: isTechnicianRole(user),
+    schedulable: Boolean(user.schedulable),
     homeLocation: {
       address: user.homeLocation?.address ?? "",
       city: user.homeLocation?.city ?? "",
@@ -102,7 +100,7 @@ export function toPublicStaff(user: LeanUser): PublicStaff {
       lat: user.homeLocation?.lat ?? null,
       lng: user.homeLocation?.lng ?? null,
     },
-    weeklyHours: user.weeklyHours ?? defaultWeeklyHours(isTechnicianRole(user)),
+    weeklyHours: user.weeklyHours ?? defaultWeeklyHours(Boolean(user.schedulable)),
     scheduleExceptions: user.scheduleExceptions ?? [],
   };
 }
@@ -327,7 +325,8 @@ export async function enrichScheduleWorkOrders(
 export async function listSchedulableStaff(): Promise<LeanUser[]> {
   return User.find({
     ...activeUserFilter,
-    roles: TECH_ROLE,
+    userType: "staff",
+    schedulable: true,
   })
     .select(
       "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions",
@@ -1134,7 +1133,7 @@ export async function listNextAvailableSlots(opts?: {
     const windows = staff
       .map((s) => {
         const window = resolveDayWindow(
-          s.weeklyHours ?? defaultWeeklyHours(isTechnicianRole(s)),
+          s.weeklyHours ?? defaultWeeklyHours(Boolean(s.schedulable)),
           s.scheduleExceptions,
           localDate,
         );

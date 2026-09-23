@@ -77,6 +77,10 @@ const scheduleExceptionSchema = z.object({
 
 const rolesField = z.array(z.string().min(1)).min(1).optional();
 
+const jobRoleDataSchema = z
+  .record(z.string(), z.record(z.string(), z.unknown()))
+  .optional();
+
 export const createUserSchema = z
   .object({
     email: z.string().email("Invalid email address"),
@@ -89,6 +93,9 @@ export const createUserSchema = z
     last_name: z.string().min(1, "Last name is required").max(100),
     role: z.string().min(1).optional(),
     roles: rolesField,
+    userType: z.enum(["staff", "customer"]).optional(),
+    jobRoles: z.array(z.string().min(1)).optional(),
+    jobRoleData: jobRoleDataSchema,
     username: usernameField,
     territories: territoriesSchema,
     schedulable: z.boolean().optional(),
@@ -107,6 +114,9 @@ export const updateUserSchema = z.object({
   last_name: z.string().min(1).max(100).optional(),
   role: z.string().min(1).optional(),
   roles: rolesField,
+  userType: z.enum(["staff", "customer"]).optional(),
+  jobRoles: z.array(z.string().min(1)).optional(),
+  jobRoleData: jobRoleDataSchema,
   username: usernameField,
   password: z
     .string()

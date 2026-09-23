@@ -76,8 +76,8 @@ export async function ensureCustomerLoginForPrimaryEmail(
   if (previousEmail && previousEmail !== email) {
     const previous = await User.findOne({
       email: previousEmail,
-      role: "customer",
       ...activeUserFilter,
+      $or: [{ userType: "customer" }, { roles: "customer" }, { role: "customer" }],
     });
     if (previous) {
       previous.email = email;
@@ -120,6 +120,8 @@ export async function ensureCustomerLoginForPrimaryEmail(
       first_name,
       last_name,
       role: "customer",
+      roles: ["customer"],
+      userType: "customer",
     });
     return { status: "created", userId: user._id as Types.ObjectId };
   } catch (err) {

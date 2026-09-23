@@ -15,21 +15,21 @@ const router = Router();
 router.get(
   "/",
   authenticate,
-  requireRole("owner", "admin", "super-admin"),
+  requireRole("admin", "super-admin"),
   (req, res: Response) => listTerritories(req as AuthRequest, res),
 );
 
 router.post(
   "/recalculate",
   authenticate,
-  requireRole("owner", "admin", "super-admin"),
+  requireRole("admin", "super-admin"),
   (req, res: Response) => recalculateTerritories(req as AuthRequest, res),
 );
 
 router.patch(
   "/:userId",
   authenticate,
-  requireRole("owner", "admin", "super-admin"),
+  requireRole("admin", "super-admin"),
   (req, res: Response) => updateTerritories(req as AuthRequest, res),
 );
 

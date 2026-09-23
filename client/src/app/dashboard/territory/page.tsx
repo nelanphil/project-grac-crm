@@ -16,7 +16,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import {
   isDispatcherRole,
   isOrgAdminRole,
-  isOwnerRole,
+  userHasCapability,
 } from "@/lib/dashboard-role";
 
 export default function TerritoryPage() {
@@ -33,6 +33,8 @@ function TerritoryPageContent() {
   const user = useAuthStore((s) => s.user);
   const isAllowed = isDispatcherRole(user);
   const isOrgAdmin = isOrgAdminRole(user);
+  const editingOwn =
+    !isOrgAdmin && userHasCapability(user, "territoryOwner");
 
   const [owners, setOwners] = useState<TerritoryOwner[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,7 +60,7 @@ function TerritoryPageContent() {
       setOwners(list);
       setSelectedId((prev) => {
         if (prev && list.some((o) => o._id === prev)) return prev;
-        if (user && isOwnerRole(user)) {
+        if (user && editingOwn) {
           return (
             list.find((o) => o._id === user.id)?._id ?? list[0]?._id ?? null
           );
@@ -72,7 +74,7 @@ function TerritoryPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [token, user]);
+  }, [token, user, editingOwn]);
 
   useEffect(() => {
     if (isAllowed && token) {
@@ -138,9 +140,9 @@ function TerritoryPageContent() {
         <div>
           <h1 className="text-2xl font-bold text-brand-dark">Territory</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            {isOwnerRole(user)
+            {editingOwn
               ? "Assign the Florida counties and ZIP carve-outs you cover. Customers in your territory are assigned to you automatically."
-              : "Manage owner territories by county and ZIP. ZIP claims override county ownership when owners share a county."}
+              : "Manage territories for staff with a territory-owner job role. ZIP claims override county ownership when people share a county."}
           </p>
         </div>
         <button
@@ -173,8 +175,8 @@ function TerritoryPageContent() {
       ) : owners.length === 0 ? (
         <div className="rounded-xl border border-neutral-200 bg-white px-6 py-10 text-center text-sm text-neutral-500 shadow-sm">
           {isOrgAdmin
-            ? "No users with the Owner role yet. Create an owner in Users, then assign their territory here."
-            : "Your account is not set up as an owner."}
+            ? "No staff with a territory-owner job role yet. Assign that job role in Users, then set their territory here."
+            : "Your account does not have a territory-owner job role."}
         </div>
       ) : (
         <div
@@ -262,7 +264,7 @@ function TerritoryPageContent() {
                 otherOwners={owners.filter((o) => o._id !== selected._id)}
                 onSave={(territories) => handleSave(selected._id, territories)}
                 submitLabel={
-                  isOwnerRole(user) ? "Save my territory" : "Save territory"
+                  editingOwn ? "Save my territory" : "Save territory"
                 }
               />
             </div>

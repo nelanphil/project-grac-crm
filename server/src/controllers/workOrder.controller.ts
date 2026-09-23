@@ -34,6 +34,34 @@ import { findWorkOrderIdsMatchingNoteSearch } from "./workOrderNote.controller";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 
+async function loadSchedulableAssignee(id: string): Promise<
+  | {
+      ok: true;
+      user: {
+        first_name: string;
+        last_name: string;
+        weeklyHours?: unknown;
+        scheduleExceptions?: unknown;
+      };
+    }
+  | { ok: false; message: string }
+> {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return { ok: false, message: "Invalid assignedUserRef" };
+  }
+  const user = await User.findOne({ _id: id, ...activeUserFilter })
+    .select("first_name last_name schedulable weeklyHours scheduleExceptions")
+    .lean();
+  if (!user) return { ok: false, message: "Assigned user not found" };
+  if (!user.schedulable) {
+    return {
+      ok: false,
+      message: "Assigned user cannot be scheduled for work orders",
+    };
+  }
+  return { ok: true, user };
+}
+
 async function enrichWithAddress(
   workOrders: Array<Record<string, unknown>>,
 ): Promise<Array<Record<string, unknown>>> {
@@ -381,8 +409,9 @@ export async function createWorkOrder(
     }
 
     if (data.assignedUserRef) {
-      if (!mongoose.Types.ObjectId.isValid(data.assignedUserRef)) {
-        res.status(400).json({ message: "Invalid assignedUserRef" });
+      const assignee = await loadSchedulableAssignee(data.assignedUserRef);
+      if (!assignee.ok) {
+        res.status(400).json({ message: assignee.message });
         return;
       }
       workOrder.assignedUserRef = new mongoose.Types.ObjectId(
@@ -554,17 +583,31 @@ export async function updateWorkOrder(
 
     let assignee: { first_name: string; last_name: string } | null = null;
     if (workOrder.assignedUserRef) {
-      const user = await User.findOne({
-        _id: workOrder.assignedUserRef,
-        ...activeUserFilter,
-      })
-        .select("first_name last_name weeklyHours scheduleExceptions")
-        .lean();
-      if (!user) {
-        res.status(400).json({ message: "Assigned user not found" });
-        return;
+      const assigning =
+        typeof parsed.data.assignedUserRef === "string" &&
+        parsed.data.assignedUserRef !== "";
+      if (assigning) {
+        const loaded = await loadSchedulableAssignee(
+          String(workOrder.assignedUserRef),
+        );
+        if (!loaded.ok) {
+          res.status(400).json({ message: loaded.message });
+          return;
+        }
+        assignee = loaded.user;
+      } else {
+        const user = await User.findOne({
+          _id: workOrder.assignedUserRef,
+          ...activeUserFilter,
+        })
+          .select("first_name last_name weeklyHours scheduleExceptions")
+          .lean();
+        if (!user) {
+          res.status(400).json({ message: "Assigned user not found" });
+          return;
+        }
+        assignee = user;
       }
-      assignee = user;
 
       if (workOrder.scheduledStart && workOrder.scheduledEnd) {
         const overlap = await findOverlappingJob({

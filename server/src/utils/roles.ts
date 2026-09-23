@@ -1,18 +1,17 @@
 export const CUSTOMER_ROLE = "customer";
-export const TECH_ROLE = "tech";
 
 export const ROLE_RANK = [
   "super-admin",
   "admin",
-  "owner",
   "manager",
-  "tech",
   "agent",
   "customer",
 ] as const;
 
-export const DISPATCHER_ROLES = ["super-admin", "admin", "owner"] as const;
+export const DISPATCHER_ROLES = ["super-admin", "admin"] as const;
 export const ORG_ADMIN_ROLES = ["super-admin", "admin"] as const;
+
+export type UserType = "staff" | "customer";
 
 export type RoleLike =
   | string
@@ -22,6 +21,7 @@ export type RoleLike =
   | {
       role?: string | null;
       roles?: string[] | null;
+      userType?: string | null;
     };
 
 export class RoleAssignmentError extends Error {
@@ -68,12 +68,25 @@ export function hasRole(input: RoleLike, ...slugs: string[]): boolean {
 }
 
 export function isCustomerRole(input: RoleLike): boolean {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    if (input.userType === "customer") return true;
+    if (input.userType === "staff") return false;
+  }
   return hasRole(input, CUSTOMER_ROLE);
 }
 
-export function isStaffRole(input: RoleLike): boolean {
+/** Staff vs customer comes from `userType` when it is set. */
+export function isStaffUser(input: RoleLike): boolean {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    if (input.userType === "staff") return true;
+    if (input.userType === "customer") return false;
+  }
   const roles = normalizeRoles(input);
-  return roles.length > 0 && !isCustomerRole(roles);
+  return roles.length > 0 && !hasRole(roles, CUSTOMER_ROLE);
+}
+
+export function isStaffRole(input: RoleLike): boolean {
+  return isStaffUser(input);
 }
 
 export function isDispatcherRole(input: RoleLike): boolean {
@@ -88,16 +101,8 @@ export function isAdminRole(input: RoleLike): boolean {
   return hasRole(input, ...DISPATCHER_ROLES);
 }
 
-export function isOwnerRole(input: RoleLike): boolean {
-  return hasRole(input, "owner");
-}
-
 export function isSuperAdminRole(input: RoleLike): boolean {
   return hasRole(input, "super-admin");
-}
-
-export function isTechnicianRole(input: RoleLike): boolean {
-  return hasRole(input, TECH_ROLE);
 }
 
 export function assignableRoles(slugs: string[]): string[] {

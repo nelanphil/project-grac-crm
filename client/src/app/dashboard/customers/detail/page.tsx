@@ -106,7 +106,7 @@ function CustomerDetailContent() {
     s.hasPermission("contracts:write"),
   );
   const canManageCustomers = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin", "owner"),
+    s.hasRole("admin", "super-admin"),
   );
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);

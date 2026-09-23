@@ -2,19 +2,27 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { getPermissionsForRoles } from "../models/mongo/RolePermission";
+import { User, activeUserFilter } from "../models/mongo/User";
 import { verifyRecordingPlaybackToken } from "../utils/recordingPlayback";
-import { hasRole, normalizeRoles, primaryRole } from "../utils/roles";
+import { hasRole, normalizeRoles, primaryRole, type UserType } from "../utils/roles";
 
 export interface AuthTokenPayload {
   sub: string;
   email: string;
   role: string;
   roles?: string[];
+  userType?: UserType;
+  jobRoles?: string[];
   permissions: string[];
 }
 
 export interface AuthRequest extends Request {
-  user?: AuthTokenPayload & { id: string; roles: string[] };
+  user?: AuthTokenPayload & {
+    id: string;
+    roles: string[];
+    userType: UserType;
+    jobRoles: string[];
+  };
 }
 
 export async function authenticate(
@@ -32,15 +40,30 @@ export async function authenticate(
 
   try {
     const decoded = jwt.verify(token, env.jwt.secret) as unknown as AuthTokenPayload;
-    const roles = normalizeRoles(decoded);
-    // Always load current role permissions from DB so newly seeded grants
-    // (e.g. messages:*) apply without forcing users to log in again.
+    const dbUser = await User.findOne({
+      _id: decoded.sub,
+      ...activeUserFilter,
+    })
+      .select("email role roles userType jobRoles")
+      .lean();
+    if (!dbUser) {
+      res.status(401).json({ message: "Invalid or expired token" });
+      return;
+    }
+    const roles = normalizeRoles(dbUser);
+    const userType: UserType =
+      dbUser.userType === "customer" ? "customer" : "staff";
+    // Always load current roles and permissions from DB so job-role and
+    // permission changes apply without forcing users to log in again.
     const permissions = await getPermissionsForRoles(roles);
     req.user = {
       ...decoded,
       id: decoded.sub,
-      role: primaryRole(roles) ?? decoded.role,
+      email: dbUser.email,
+      role: primaryRole(roles) ?? dbUser.role,
       roles,
+      userType,
+      jobRoles: (dbUser.jobRoles ?? []).map((id) => String(id)),
       permissions,
     };
     next();
@@ -106,7 +129,7 @@ export async function authenticateRecordingPlayback(
   }
 
   await authenticate(req, res, () => {
-    requireRole("admin", "super-admin", "owner")(req, res, () => {
+    requireRole("admin", "super-admin")(req, res, () => {
       requirePermission("messages:read")(req, res, next);
     });
   });

@@ -76,7 +76,7 @@ function ContractsContent() {
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
   const isAdmin = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin", "owner"),
+    s.hasRole("admin", "super-admin"),
   );
 
   const typeTabs = useMemo(

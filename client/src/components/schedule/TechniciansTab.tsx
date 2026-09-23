@@ -17,10 +17,7 @@ import UsernameDisplay from "@/components/ui/UsernameDisplay";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import StaffWorkHoursForm from "@/components/schedule/StaffWorkHoursForm";
-import {
-  isTechnicianRole,
-  normalizeRoles,
-} from "@/lib/dashboard-role";
+import { normalizeRoles, userHasCapability } from "@/lib/dashboard-role";
 import {
   defaultWeeklyHours,
   emptyHomeLocation,
@@ -61,7 +58,7 @@ export default function TechniciansTab() {
 
   const technicians = useMemo(
     () =>
-      users.filter((user) => isTechnicianRole(user)),
+      users.filter((user) => userHasCapability(user, "schedulable")),
     [users],
   );
 

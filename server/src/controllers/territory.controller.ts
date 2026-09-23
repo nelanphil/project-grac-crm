@@ -12,11 +12,8 @@ import {
   reassignOwnersForTerritoryChange,
   scheduleOwnerReassignment,
 } from "../utils/ownerTerritory";
-import {
-  isDispatcherRole,
-  isOrgAdminRole,
-  isOwnerRole,
-} from "../utils/roles";
+import { territoryOwnerUserFilter, userHasCapability } from "../utils/jobRoles";
+import { isDispatcherRole, isOrgAdminRole } from "../utils/roles";
 
 function formatTerritories(
   territories?: IUserTerritories | null,
@@ -72,7 +69,7 @@ export async function listTerritories(
 
     const owners = await User.find({
       ...activeUserFilter,
-      roles: "owner",
+      ...(await territoryOwnerUserFilter()),
     })
       .select("-password_hash")
       .sort({ last_name: 1, first_name: 1 })
@@ -115,9 +112,13 @@ export async function updateTerritories(
     const isSelf = targetId === req.user.id;
     const isOrgAdmin = isOrgAdminRole(req.user);
 
-    if (isOwnerRole(req.user) && !isSelf) {
+    const requesterOwnsTerritory = await userHasCapability(
+      req.user,
+      "territoryOwner",
+    );
+    if (requesterOwnsTerritory && !isOrgAdmin && !isSelf) {
       res.status(403).json({
-        message: "Owners can only update their own territory",
+        message: "You can only update your own territory",
       });
       return;
     }
@@ -133,9 +134,10 @@ export async function updateTerritories(
       return;
     }
 
-    if (!isOwnerRole(user)) {
+    if (!(await userHasCapability(user, "territoryOwner"))) {
       res.status(400).json({
-        message: "Territories can only be assigned to owner-role users",
+        message:
+          "Territories can only be assigned to staff with a territory-owner job role",
       });
       return;
     }

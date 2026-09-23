@@ -1,18 +1,19 @@
 export const CUSTOMER_ROLE = "customer";
-export const TECH_ROLE = "tech";
 
 export const ROLE_RANK = [
   "super-admin",
   "admin",
-  "owner",
   "manager",
-  "tech",
   "agent",
   "customer",
 ] as const;
 
-export const DISPATCHER_ROLES = ["super-admin", "admin", "owner"] as const;
+export const DISPATCHER_ROLES = ["super-admin", "admin"] as const;
 export const ORG_ADMIN_ROLES = ["super-admin", "admin"] as const;
+
+export type UserType = "staff" | "customer";
+
+export type JobRoleCapability = "schedulable" | "territoryOwner";
 
 export type RoleLike =
   | string
@@ -22,6 +23,7 @@ export type RoleLike =
   | {
       role?: string | null;
       roles?: string[] | null;
+      userType?: string | null;
     };
 
 function uniqueNonEmpty(slugs: Array<string | null | undefined>): string[] {
@@ -60,14 +62,26 @@ export function hasRole(input: RoleLike, ...slugs: string[]): boolean {
   return slugs.some((slug) => roles.includes(slug));
 }
 
-/** Staff = every authenticated role except customer. */
+/** Staff vs customer comes from `userType` when it is set. */
 export function isCustomerRole(role: RoleLike): boolean {
+  if (role && typeof role === "object" && !Array.isArray(role)) {
+    if (role.userType === "customer") return true;
+    if (role.userType === "staff") return false;
+  }
   return hasRole(role, CUSTOMER_ROLE);
 }
 
-export function isStaffRole(role: RoleLike): boolean {
+export function isStaffUser(role: RoleLike): boolean {
+  if (role && typeof role === "object" && !Array.isArray(role)) {
+    if (role.userType === "staff") return true;
+    if (role.userType === "customer") return false;
+  }
   const roles = normalizeRoles(role);
-  return roles.length > 0 && !isCustomerRole(roles);
+  return roles.length > 0 && !hasRole(roles, CUSTOMER_ROLE);
+}
+
+export function isStaffRole(role: RoleLike): boolean {
+  return isStaffUser(role);
 }
 
 export function isDispatcherRole(role: RoleLike): boolean {
@@ -86,10 +100,33 @@ export function isSuperAdminRole(role: RoleLike): boolean {
   return hasRole(role, "super-admin");
 }
 
-export function isOwnerRole(role: RoleLike): boolean {
-  return hasRole(role, "owner");
+export function hasJobRoleCapability(
+  jobRoleIds: string[] | null | undefined,
+  catalog: Array<{
+    _id: string;
+    capabilities?: { schedulable?: boolean; territoryOwner?: boolean } | null;
+  }>,
+  capability: JobRoleCapability,
+): boolean {
+  const selected = new Set(jobRoleIds ?? []);
+  return catalog.some(
+    (role) => selected.has(role._id) && Boolean(role.capabilities?.[capability]),
+  );
 }
 
-export function isTechnicianRole(role: RoleLike): boolean {
-  return hasRole(role, TECH_ROLE);
+export function userHasCapability(
+  user: {
+    jobRoles?: string[] | null;
+    capabilities?: { schedulable?: boolean; territoryOwner?: boolean } | null;
+    schedulable?: boolean;
+  } | null
+    | undefined,
+  capability: JobRoleCapability,
+): boolean {
+  if (!user) return false;
+  if (user.capabilities && typeof user.capabilities[capability] === "boolean") {
+    return Boolean(user.capabilities[capability]);
+  }
+  if (capability === "schedulable") return Boolean(user.schedulable);
+  return false;
 }

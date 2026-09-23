@@ -7,7 +7,7 @@ import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   isOrgAdminRole,
-  isOwnerRole,
+  userHasCapability,
   isSuperAdminRole,
 } from "@/lib/dashboard-role";
 import PasswordInput from "@/components/ui/PasswordInput";
@@ -86,7 +86,8 @@ export default function PaymentProvidersCard() {
   const user = useAuthStore((s) => s.user);
   const searchParams = useSearchParams();
   const isOrgAdmin = isOrgAdminRole(user);
-  const isOwner = isOwnerRole(user);
+  const isOwner =
+    !isOrgAdmin && userHasCapability(user, "territoryOwner");
   const isSuperAdmin = isSuperAdminRole(user);
 
   const [accounts, setAccounts] = useState<PaymentProviderAccountItem[]>([]);
@@ -201,7 +202,9 @@ export default function PaymentProvidersCard() {
         } else if (oauth.sandbox) {
           setOauthEnvironment("sandbox");
         }
-        setOwners(usersRes.users.filter((u) => isOwnerRole(u)));
+        setOwners(
+          usersRes.users.filter((u) => userHasCapability(u, "territoryOwner")),
+        );
       } catch (err) {
         setError(
           err instanceof ApiError

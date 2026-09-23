@@ -310,7 +310,13 @@ function formatContact(doc: {
 async function findActiveCustomerOr404(
   customerId: string,
   res: Response,
-  accessUser?: { id: string; role: string } | null,
+  accessUser?: {
+    id: string;
+    role: string;
+    roles?: string[];
+    jobRoles?: string[];
+    userType?: string;
+  } | null,
 ): Promise<{
   _id: mongoose.Types.ObjectId;
   legacyId: number;
@@ -491,7 +497,7 @@ export async function listCustomers(
       : "customer";
 
     const ownerScope = req.user
-      ? await buildOwnerCustomerFilter({ id: req.user.id, role: req.user.role })
+      ? await buildOwnerCustomerFilter(req.user)
       : null;
 
     const baseFilter: Record<string, unknown> = {
@@ -775,7 +781,7 @@ export async function listContacts(
     const sortKey = CONTACT_SORT_KEYS.has(sortKeyRaw) ? sortKeyRaw : "name";
 
     const ownerScope = req.user
-      ? await buildOwnerCustomerFilter({ id: req.user.id, role: req.user.role })
+      ? await buildOwnerCustomerFilter(req.user)
       : null;
 
     const customerMatch: Record<string, unknown> = {

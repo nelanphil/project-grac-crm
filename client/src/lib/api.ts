@@ -537,6 +537,11 @@ export interface ScheduleException {
   note?: string;
 }
 
+export interface UserCapabilities {
+  schedulable: boolean;
+  territoryOwner: boolean;
+}
+
 export interface UserListItem {
   _id: string;
   email: string;
@@ -544,6 +549,11 @@ export interface UserListItem {
   last_name: string;
   role: AuthUser["role"];
   roles: string[];
+  userType?: "staff" | "customer";
+  jobRoles?: string[];
+  jobRoleData?: Record<string, Record<string, unknown>>;
+  capabilities?: UserCapabilities;
+  schedulable?: boolean;
   username: string | null;
   usernameNumber: number | null;
   territories: UserTerritories;
@@ -572,6 +582,9 @@ export async function createUser(
     last_name: string;
     role?: string;
     roles?: string[];
+    userType?: "staff" | "customer";
+    jobRoles?: string[];
+    jobRoleData?: Record<string, Record<string, unknown>>;
     username?: string | null;
     territories?: UserTerritories;
     weeklyHours?: UserWeeklyHours;
@@ -598,6 +611,9 @@ export async function updateUser(
     last_name?: string;
     role?: string;
     roles?: string[];
+    userType?: "staff" | "customer";
+    jobRoles?: string[];
+    jobRoleData?: Record<string, Record<string, unknown>>;
     username?: string | null;
     password?: string;
     territories?: UserTerritories;
@@ -3357,6 +3373,95 @@ export async function updateRolePermissions(
       body: JSON.stringify({ permissions }),
     },
   );
+}
+
+export const JOB_ROLE_FIELD_TYPES = [
+  "text",
+  "textarea",
+  "number",
+  "date",
+  "select",
+  "multiselect",
+  "checkbox",
+  "phone",
+  "email",
+] as const;
+
+export type JobRoleFieldType = (typeof JOB_ROLE_FIELD_TYPES)[number];
+
+export interface JobRoleField {
+  key: string;
+  label: string;
+  type: JobRoleFieldType;
+  required: boolean;
+  options: string[];
+  helpText: string;
+  order: number;
+}
+
+export interface JobRoleItem {
+  _id: string;
+  slug: string;
+  label: string;
+  description: string;
+  color: string;
+  isSystem: boolean;
+  capabilities: UserCapabilities;
+  fields: JobRoleField[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type JobRoleWrite = {
+  label: string;
+  description?: string;
+  color?: string;
+  capabilities?: UserCapabilities;
+  fields?: JobRoleField[];
+};
+
+export async function getJobRoles(
+  token: string,
+): Promise<{ jobRoles: JobRoleItem[] }> {
+  return authRequest<{ jobRoles: JobRoleItem[] }>("/job-roles", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createJobRole(
+  token: string,
+  data: JobRoleWrite,
+): Promise<{ jobRole: JobRoleItem }> {
+  return authRequest<{ jobRole: JobRoleItem }>("/job-roles", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateJobRole(
+  token: string,
+  id: string,
+  data: Partial<JobRoleWrite>,
+): Promise<{ jobRole: JobRoleItem }> {
+  return authRequest<{ jobRole: JobRoleItem }>(`/job-roles/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteJobRole(
+  token: string,
+  id: string,
+  force = false,
+): Promise<{ message: string }> {
+  const query = force ? "?force=1" : "";
+  return authRequest<{ message: string }>(`/job-roles/${id}${query}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 // ---------------------------------------------------------------------------
