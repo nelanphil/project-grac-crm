@@ -116,6 +116,7 @@ const navOrderHrefList = z.array(z.string().max(200)).max(50);
 export const navOrderSchema = z.object({
   order: navOrderHrefList.default([]),
   children: z.record(z.string().max(200), navOrderHrefList).default({}),
+  hidden: navOrderHrefList.default([]),
 });
 
 export const updateNotificationsSchema = z

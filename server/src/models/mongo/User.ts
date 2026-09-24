@@ -75,6 +75,8 @@ export interface IUserNavOrder {
   order: string[];
   /** parentHref -> ordered child item hrefs within that parent. */
   children: Record<string, string[]>;
+  /** Hrefs the user removed from the nav. */
+  hidden: string[];
 }
 
 export interface IUserUiPreferences {
@@ -138,6 +140,7 @@ const navOrderSchema = new Schema<IUserNavOrder>(
   {
     order: { type: [String], default: [] },
     children: { type: Schema.Types.Mixed, default: () => ({}) },
+    hidden: { type: [String], default: [] },
   },
   { _id: false },
 );
@@ -146,7 +149,7 @@ const uiPreferencesSchema = new Schema<IUserUiPreferences>(
   {
     navOrder: {
       type: navOrderSchema,
-      default: () => ({ order: [], children: {} }),
+      default: () => ({ order: [], children: {}, hidden: [] }),
     },
   },
   { _id: false },
@@ -210,7 +213,7 @@ const userSchema = new Schema<IUser>(
     legalDocsVersion: { type: String, default: null },
     uiPreferences: {
       type: uiPreferencesSchema,
-      default: () => ({ navOrder: { order: [], children: {} } }),
+      default: () => ({ navOrder: { order: [], children: {}, hidden: [] } }),
     },
     deletedAt: { type: Date, default: null },
   },

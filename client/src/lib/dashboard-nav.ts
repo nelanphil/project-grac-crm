@@ -261,6 +261,8 @@ export interface NavOrder {
   order: string[];
   /** parentHref -> ordered child item hrefs within that parent. */
   children: Record<string, string[]>;
+  /** Hrefs removed from the nav. Omitted or empty means every visible item is shown. */
+  hidden?: string[];
 }
 
 function flattenCatalog(sections: NavSection[]): {
@@ -352,6 +354,10 @@ export function applyNavOrder(
     delete parentOf[href];
   }
 
+  const hiddenSet = new Set(
+    (navOrder?.hidden ?? []).filter((href) => catalog.has(href)),
+  );
+
   const nested = new Set(Object.values(childrenMap).flat());
   const catalogIds = [...catalog.keys()];
   const preferredDefault = [
@@ -359,30 +365,49 @@ export function applyNavOrder(
     ...catalogIds.filter((href) => !defaultOrder.includes(href)),
   ];
   const order = orderByHrefs(preferredDefault, navOrder?.order).filter(
-    (href) => catalog.has(href) && !nested.has(href),
+    (href) =>
+      catalog.has(href) && !nested.has(href) && !hiddenSet.has(href),
   );
 
   for (const href of catalog.keys()) {
+    if (hiddenSet.has(href)) continue;
     if (!order.includes(href) && !nested.has(href)) {
       order.push(href);
     }
   }
 
+  const childHrefs = (href: string): string[] =>
+    (childrenMap[href] ?? []).filter(
+      (childHref) => catalog.has(childHref) && childHref !== href,
+    );
+
   const build = (href: string, depth: number): NavItem => {
     const item = catalog.get(href)!;
     if (depth >= MAX_NAV_DEPTH) return { ...item, children: undefined };
-    const kids = (childrenMap[href] ?? []).filter(
-      (childHref) => catalog.has(childHref) && childHref !== href,
-    );
+    const kids = visibleItems(childHrefs(href), depth + 1);
     return {
       ...item,
-      children: kids.length
-        ? kids.map((childHref) => build(childHref, depth + 1))
-        : undefined,
+      children: kids.length ? kids : undefined,
     };
   };
 
-  return order.filter((href) => catalog.has(href)).map((href) => build(href, 0));
+  const visibleItems = (hrefs: string[], depth: number): NavItem[] => {
+    const out: NavItem[] = [];
+    for (const href of hrefs) {
+      if (!catalog.has(href)) continue;
+      if (hiddenSet.has(href)) {
+        out.push(...visibleItems(childHrefs(href), depth));
+        continue;
+      }
+      out.push(build(href, depth));
+    }
+    return out;
+  };
+
+  return visibleItems(
+    order.filter((href) => catalog.has(href)),
+    0,
+  );
 }
 
 function collectChildren(
@@ -395,10 +420,98 @@ function collectChildren(
   }
 }
 
-export function navItemsToOrder(items: NavItem[]): NavOrder {
+export function navItemsToOrder(
+  items: NavItem[],
+  hidden: string[] = [],
+): NavOrder {
   const children: Record<string, string[]> = {};
   collectChildren(items, children);
-  return { order: items.map((item) => item.href), children };
+  return {
+    order: items.map((item) => item.href),
+    children,
+    hidden: [...new Set(hidden)],
+  };
+}
+
+function promoteItem(items: NavItem[], href: string): NavItem[] {
+  const out: NavItem[] = [];
+  for (const item of items) {
+    const children = item.children?.length
+      ? promoteItem(item.children, href)
+      : undefined;
+    if (item.href === href) {
+      out.push(...(children ?? []));
+      continue;
+    }
+    out.push({
+      ...item,
+      children: children?.length ? children : undefined,
+    });
+  }
+  return out;
+}
+
+function detachHref(navOrder: NavOrder, href: string): NavOrder {
+  const children: Record<string, string[]> = {};
+  for (const [parent, kids] of Object.entries(navOrder.children)) {
+    children[parent] = kids.filter((id) => id !== href);
+  }
+  // An explicit empty list blocks the catalog default from nesting items back
+  // under a label that was removed.
+  children[href] = [];
+  return {
+    ...navOrder,
+    order: navOrder.order.filter((id) => id !== href),
+    children,
+  };
+}
+
+/** Remove a label from the visible tree. Its children take its place. */
+export function hideNavItem(
+  items: NavItem[],
+  href: string,
+  hidden: string[] = [],
+): NavOrder | null {
+  if (hidden.includes(href) || !findNode(items, href)) return null;
+  return detachHref(
+    navItemsToOrder(promoteItem(items, href), [...hidden, href]),
+    href,
+  );
+}
+
+/** Put a hidden label back at the bottom of the nav as a top-level item. */
+export function showNavItem(
+  items: NavItem[],
+  href: string,
+  hidden: string[] = [],
+): NavOrder | null {
+  if (!hidden.includes(href)) return null;
+  const next = detachHref(
+    navItemsToOrder(
+      items,
+      hidden.filter((id) => id !== href),
+    ),
+    href,
+  );
+  next.order.push(href);
+  return next;
+}
+
+/** Role-visible labels the user has removed, in the order they were hidden. */
+export function hiddenNavItems(
+  sections: NavSection[],
+  navOrder: NavOrder | undefined,
+): NavItem[] {
+  const { catalog } = flattenCatalog(sections);
+  const seen = new Set<string>();
+  const items: NavItem[] = [];
+  for (const href of navOrder?.hidden ?? []) {
+    if (seen.has(href)) continue;
+    seen.add(href);
+    const item = catalog.get(href);
+    if (item) items.push(item);
+  }
+  return items;
 }
 
 function findNode(items: NavItem[], href: string): NavItem | undefined {
@@ -501,6 +614,7 @@ export function moveNavItem(
   items: NavItem[],
   activeId: string,
   overId: string,
+  hidden: string[] = [],
 ): NavOrder | null {
   if (activeId === overId) return null;
 
@@ -509,7 +623,7 @@ export function moveNavItem(
   if (!from || !to) return null;
   if (to.parentHref === activeId) return null;
 
-  const snapshot = navItemsToOrder(items);
+  const snapshot = navItemsToOrder(items, hidden);
   let { order } = snapshot;
   const children: Record<string, string[]> = {};
   for (const [href, kids] of Object.entries(snapshot.children)) {
@@ -543,7 +657,7 @@ export function moveNavItem(
     } else {
       children[from.parentHref] = moved;
     }
-    return { order, children };
+    return { order, children, hidden: snapshot.hidden };
   }
 
   const fromList = listOf(from.parentHref);
@@ -571,7 +685,7 @@ export function moveNavItem(
     children[from.parentHref] = fromList;
   }
 
-  return { order, children };
+  return { order, children, hidden: snapshot.hidden };
 }
 
 /** Parent is active only on its exact path (children have their own links). */

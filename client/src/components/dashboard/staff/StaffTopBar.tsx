@@ -22,7 +22,11 @@ import {
 import {
   applyNavOrder,
   getVisibleNavSections,
+  hiddenNavItems,
+  hideNavItem,
   moveNavItem,
+  showNavItem,
+  type NavOrder,
 } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
 import { updateNavOrder } from "@/lib/api";
@@ -64,6 +68,10 @@ export default function StaffTopBar() {
     () => applyNavOrder(baseSections, navOrder),
     [baseSections, navOrder],
   );
+  const hiddenItems = useMemo(
+    () => hiddenNavItems(baseSections, navOrder),
+    [baseSections, navOrder],
+  );
   const sensors = useSensors(
     // Press and hold ~500ms to start wiggling; once wiggling, a small move re-grabs instantly.
     useSensor(PointerSensor, {
@@ -77,7 +85,7 @@ export default function StaffTopBar() {
     "U";
 
   const persistNavOrder = useCallback(
-    (next: { order: string[]; children: Record<string, string[]> }) => {
+    (next: NavOrder) => {
       setNavOrder(next);
       if (token) {
         updateNavOrder(token, next).catch((err) => {
@@ -86,6 +94,22 @@ export default function StaffTopBar() {
       }
     },
     [setNavOrder, token],
+  );
+
+  const handleHideItem = useCallback(
+    (href: string) => {
+      const next = hideNavItem(visibleItems, href, navOrder?.hidden ?? []);
+      if (next) persistNavOrder(next);
+    },
+    [visibleItems, navOrder?.hidden, persistNavOrder],
+  );
+
+  const handleShowItem = useCallback(
+    (href: string) => {
+      const next = showNavItem(visibleItems, href, navOrder?.hidden ?? []);
+      if (next) persistNavOrder(next);
+    },
+    [visibleItems, navOrder?.hidden, persistNavOrder],
   );
 
   const handleDragStart = useCallback(() => {
@@ -146,10 +170,15 @@ export default function StaffTopBar() {
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const next = moveNavItem(visibleItems, String(active.id), String(over.id));
+      const next = moveNavItem(
+        visibleItems,
+        String(active.id),
+        String(over.id),
+        navOrder?.hidden ?? [],
+      );
       if (next) persistNavOrder(next);
     },
-    [visibleItems, persistNavOrder],
+    [visibleItems, navOrder?.hidden, persistNavOrder],
   );
 
   function handleLogout() {
@@ -384,6 +413,7 @@ export default function StaffTopBar() {
                               onNavigate={closeMenus}
                               editable
                               editMode={editMode}
+                              onRemove={handleHideItem}
                             />
                           ))}
                         </SortableContext>
@@ -393,6 +423,29 @@ export default function StaffTopBar() {
                         />
                       </div>
                     </DndContext>
+                  ) : null}
+                  {editMode && hiddenItems.length ? (
+                    <div className="flex flex-col gap-1 border-t border-[var(--staff-border)] pt-3">
+                      <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Hidden
+                      </p>
+                      {hiddenItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            key={item.href}
+                            type="button"
+                            data-nav-allow-click
+                            onClick={() => handleShowItem(item.href)}
+                            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                          >
+                            <Plus className="h-4 w-4 shrink-0 text-[var(--staff-muted)]" />
+                            <Icon className="h-4 w-4 shrink-0" />
+                            <span className="truncate">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   ) : null}
                   <button
                     type="button"

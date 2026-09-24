@@ -86,6 +86,7 @@ function buildUserPayload(user: {
     navOrder?: {
       order: string[];
       children: Record<string, string[]>;
+      hidden?: string[];
     };
   };
   permissions: string[];
@@ -118,7 +119,11 @@ function buildUserPayload(user: {
     phone: (user.phone ?? "").trim() || null,
     legalDocsVersion: user.legalDocsVersion ?? null,
     uiPreferences: {
-      navOrder: user.uiPreferences?.navOrder ?? { order: [], children: {} },
+      navOrder: {
+        order: user.uiPreferences?.navOrder?.order ?? [],
+        children: user.uiPreferences?.navOrder?.children ?? {},
+        hidden: user.uiPreferences?.navOrder?.hidden ?? [],
+      },
     },
     needsLegalConsent: isCustomerRole(roles) && !termsAcceptedAt,
     generalNotifications: true,
@@ -737,7 +742,12 @@ export async function updateMyNavOrder(
 
     res
       .status(200)
-      .json({ navOrder: user.uiPreferences?.navOrder ?? parsed.data });
+      .json({
+        navOrder: user.uiPreferences?.navOrder ?? {
+          ...parsed.data,
+          hidden: parsed.data.hidden ?? [],
+        },
+      });
   } catch (err) {
     console.error("updateMyNavOrder error:", err);
     res.status(500).json({ message: "Internal server error" });

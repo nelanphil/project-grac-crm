@@ -14,6 +14,8 @@ export interface NavOrder {
   order: string[];
   /** parentHref -> ordered child item hrefs within that parent. */
   children: Record<string, string[]>;
+  /** Hrefs removed from the nav. Omitted or empty means every visible item is shown. */
+  hidden?: string[];
 }
 
 export interface AuthUser {
