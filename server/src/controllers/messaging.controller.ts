@@ -28,6 +28,7 @@ import {
   accountNameMap,
   toPublicCommunication,
 } from "../utils/communicationFormat";
+import { labelForNumber } from "../utils/twilioPhoneLines";
 import {
   checkOpenThreadConflict,
   closeThread,
@@ -562,7 +563,11 @@ export async function placeCall(
       });
 
       res.status(201).json({
-        communication: toPublicCommunication(doc, account.friendlyName),
+        communication: toPublicCommunication(doc, {
+          friendlyName: account.friendlyName,
+          accountSid: account.accountSid,
+          phoneNumbers: account.phoneNumbers,
+        }),
       });
     } catch (err) {
       const errorMessage =
@@ -678,10 +683,7 @@ export async function listCommunications(
 
     res.json({
       communications: rows.map((r) =>
-        toPublicCommunication(
-          r,
-          names.get(String(r.twilioAccountRef))?.friendlyName,
-        ),
+        toPublicCommunication(r, names.get(String(r.twilioAccountRef))),
       ),
       total,
       page,
@@ -696,7 +698,10 @@ export async function listCommunications(
 type ThreadLookups = {
   contactById: Map<string, Record<string, unknown>>;
   customerById: Map<string, Record<string, unknown>>;
-  names: Map<string, { friendlyName: string; accountSid: string }>;
+  names: Map<
+    string,
+    { friendlyName: string; accountSid: string; phoneNumbers: unknown }
+  >;
 };
 
 async function buildThreadLookups(
@@ -749,8 +754,9 @@ function toPublicThread(
     : contact
       ? lookups.customerById.get(String(contact.customerRef))
       : undefined;
-  const accountFriendlyName =
-    lookups.names.get(String(thread.twilioAccountRef))?.friendlyName ?? null;
+  const accountLabels = lookups.names.get(String(thread.twilioAccountRef));
+  const accountFriendlyName = accountLabels?.friendlyName ?? null;
+  const ourNumber = String(thread.ourNumber ?? "");
 
   return {
     _id: String(thread._id),
@@ -759,7 +765,8 @@ function toPublicThread(
     twilioAccountRef: String(thread.twilioAccountRef),
     accountSid: thread.accountSid ?? "",
     accountFriendlyName,
-    ourNumber: thread.ourNumber ?? "",
+    ourNumber,
+    ourNumberLabel: labelForNumber(accountLabels?.phoneNumbers, ourNumber),
     contactPhoneSnapshot: thread.contactPhoneSnapshot ?? "",
     status: thread.status,
     startedByUserRef: thread.startedByUserRef
@@ -1011,10 +1018,7 @@ export async function getThreadDetail(
     res.json({
       thread: toPublicThread(thread, lookups),
       messages: rows.map((r) =>
-        toPublicCommunication(
-          r,
-          names.get(String(r.twilioAccountRef))?.friendlyName,
-        ),
+        toPublicCommunication(r, names.get(String(r.twilioAccountRef))),
       ),
     });
   } catch (err) {

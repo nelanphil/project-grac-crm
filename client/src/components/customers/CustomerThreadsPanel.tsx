@@ -8,6 +8,7 @@ import {
   CommunicationChannel,
   CustomerContact,
   MessageThreadItem,
+  formatTwilioLine,
   getMessagingThreads,
 } from "@/lib/api";
 import { formatCustomerName, toProperCase } from "@/lib/formatName";
@@ -154,7 +155,7 @@ export default function CustomerThreadsPanel({
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-medium text-neutral-500">
-                          {t.ourNumber}
+                          {formatTwilioLine(t.ourNumberLabel, t.ourNumber)}
                           {t.accountFriendlyName
                             ? ` · ${toProperCase(t.accountFriendlyName)}`
                             : ""}

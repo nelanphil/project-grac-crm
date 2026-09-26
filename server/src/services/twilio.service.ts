@@ -6,6 +6,15 @@ import { describeTwilioError } from "../utils/twilioErrorCodes";
 import { resolvePublicApiBase } from "../utils/publicUrl";
 import { buildOutboundSayTwiml } from "../utils/twilioVoiceTwiml";
 import { isTwilioApiUrl } from "../utils/recordingPlayback";
+import {
+  applySubmittedLabels,
+  listedPhoneNumbers,
+  mergePhoneLines,
+  normalizePhoneLines,
+  phoneLinesMatch,
+  TwilioIncomingNumber,
+  TwilioPhoneLineLabelInput,
+} from "../utils/twilioPhoneLines";
 
 export class TwilioServiceError extends Error {
   constructor(message: string) {
@@ -85,7 +94,7 @@ export function resolveFromNumber(
   account: ITwilioAccount,
   fromNumber?: string,
 ): string {
-  const numbers = account.phoneNumbers ?? [];
+  const numbers = listedPhoneNumbers(account.phoneNumbers);
   if (numbers.length === 0) {
     throw new TwilioServiceError(
       "Twilio account has no phone numbers configured",
@@ -93,11 +102,7 @@ export function resolveFromNumber(
   }
 
   if (fromNumber) {
-    const match = numbers.find(
-      (n) =>
-        n.trim() === fromNumber.trim() ||
-        n.replace(/\D/g, "") === fromNumber.replace(/\D/g, ""),
-    );
+    const match = numbers.find((n) => phoneLinesMatch(n, fromNumber));
     if (!match) {
       throw new TwilioServiceError(
         "fromNumber is not registered on the selected Twilio account",
@@ -353,6 +358,64 @@ export async function fetchRecordingTranscript(
   }
 }
 
+function safeTwilioMessage(err: unknown, secret?: string): string {
+  const raw =
+    err instanceof Error ? err.message : "Failed to load phone numbers from Twilio";
+  if (secret && secret.length > 4) return raw.split(secret).join("[redacted]");
+  return raw;
+}
+
+export async function listIncomingPhoneNumbers(
+  accountSid: string,
+  authToken: string,
+): Promise<TwilioIncomingNumber[]> {
+  const client = twilio(accountSid, authToken);
+  try {
+    const incoming = await client.incomingPhoneNumbers.list({ limit: 1000 });
+    return incoming
+      .map((number) => ({
+        phoneNumber: number.phoneNumber || "",
+        friendlyName: number.friendlyName || "",
+        sid: number.sid || "",
+        sms: Boolean(number.capabilities?.sms),
+        mms: Boolean(number.capabilities?.mms),
+        voice: Boolean(number.capabilities?.voice),
+      }))
+      .filter((number) => number.phoneNumber);
+  } catch (err) {
+    throw new TwilioServiceError(safeTwilioMessage(err, authToken));
+  }
+}
+
+export async function syncAccountPhoneLines(
+  account: ITwilioAccount,
+  submitted?: TwilioPhoneLineLabelInput[],
+): Promise<{ error: string | null }> {
+  let authToken = "";
+  try {
+    const credentials = resolveCredentials(account);
+    authToken = credentials.authToken;
+    const incoming = await listIncomingPhoneNumbers(
+      credentials.accountSid,
+      credentials.authToken,
+    );
+    account.phoneNumbers = mergePhoneLines(
+      account.phoneNumbers,
+      incoming,
+      submitted,
+    );
+    return { error: null };
+  } catch (err) {
+    if (submitted?.length) {
+      account.phoneNumbers = applySubmittedLabels(
+        account.phoneNumbers,
+        submitted,
+      );
+    }
+    return { error: safeTwilioMessage(err, authToken) };
+  }
+}
+
 /**
  * Point each configured incoming number at our Voice, SMS, and status URLs.
  * Uses live Account SID + Auth Token. Best-effort: missing numbers are skipped.
@@ -361,26 +424,23 @@ export async function configureIncomingNumbersWebhooks(
   account: ITwilioAccount,
   urls: { voiceUrl: string; smsUrl: string; statusCallbackUrl: string },
 ): Promise<void> {
-  const wanted = account.phoneNumbers ?? [];
+  const wanted = normalizePhoneLines(account.phoneNumbers);
   if (wanted.length === 0) return;
 
   const { accountSid, authToken } = liveCredentials(account);
   const client = twilio(accountSid, authToken);
-  const incoming = await client.incomingPhoneNumbers.list({ limit: 200 });
+  const needsLookup = wanted.some((line) => !line.incomingSid);
+  const incoming = needsLookup
+    ? await client.incomingPhoneNumbers.list({ limit: 1000 })
+    : [];
 
-  for (const raw of wanted) {
-    const digits = raw.replace(/\D/g, "");
-    if (!digits) continue;
-    const match = incoming.find((n) => {
-      const d = (n.phoneNumber || "").replace(/\D/g, "");
-      return (
-        d === digits ||
-        (d.length >= 7 && digits.length >= 7 && (d.endsWith(digits) || digits.endsWith(d)))
-      );
-    });
-    if (!match) {
+  for (const line of wanted) {
+    const match = line.incomingSid
+      ? { sid: line.incomingSid }
+      : incoming.find((n) => phoneLinesMatch(n.phoneNumber || "", line.phoneNumber));
+    if (!match?.sid) {
       console.warn(
-        `[twilio] Incoming number ${raw} not found on account ${account.accountSid}; skipped webhook URL update`,
+        `[twilio] Incoming number ${line.phoneNumber} not found on account ${account.accountSid}; skipped webhook URL update`,
       );
       continue;
     }
@@ -395,7 +455,7 @@ export async function configureIncomingNumbersWebhooks(
       });
     } catch (err) {
       console.error(
-        `[twilio] Failed to set webhook URLs on ${raw} (${match.sid}):`,
+        `[twilio] Failed to set webhook URLs on ${line.phoneNumber} (${match.sid}):`,
         err,
       );
     }

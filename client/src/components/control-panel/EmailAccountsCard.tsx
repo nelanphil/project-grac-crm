@@ -14,6 +14,7 @@ import {
   EmailAccountRole,
   getEmailAccounts,
   testEmailAccount,
+  testEmailAccountImap,
   updateEmailAccount,
 } from "@/lib/api";
 
@@ -26,6 +27,9 @@ type FormState = {
   password: string;
   fromName: string;
   fromEmail: string;
+  imapHost: string;
+  imapPort: string;
+  imapSecure: boolean;
   isActive: boolean;
   roles: EmailAccountRole[];
 };
@@ -39,6 +43,9 @@ const EMPTY_FORM: FormState = {
   password: "",
   fromName: "",
   fromEmail: "",
+  imapHost: "",
+  imapPort: "993",
+  imapSecure: true,
   isActive: true,
   // Default so forgot-password / signup mail works after first save.
   roles: ["general_notifications"],
@@ -83,6 +90,11 @@ export default function EmailAccountsCard() {
     ok: boolean;
     text: string;
   } | null>(null);
+  const [testingImap, setTestingImap] = useState(false);
+  const [imapFeedback, setImapFeedback] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -106,6 +118,7 @@ export default function EmailAccountsCard() {
     setEditingAccount(null);
     setForm(EMPTY_FORM);
     setSaveError(null);
+    setImapFeedback(null);
     setFormOpen(true);
   }
 
@@ -121,10 +134,14 @@ export default function EmailAccountsCard() {
       password: "",
       fromName: account.fromName,
       fromEmail: account.fromEmail,
+      imapHost: account.imapHost || "",
+      imapPort: String(account.imapPort || 993),
+      imapSecure: account.imapSecure !== false,
       isActive: account.isActive,
       roles: [...account.roles],
     });
     setSaveError(null);
+    setImapFeedback(null);
     setFormOpen(true);
   }
 
@@ -134,6 +151,7 @@ export default function EmailAccountsCard() {
     setEditingAccount(null);
     setForm(EMPTY_FORM);
     setSaveError(null);
+    setImapFeedback(null);
   }
 
   function toggleRole(role: EmailAccountRole) {
@@ -174,6 +192,18 @@ export default function EmailAccountsCard() {
       return;
     }
 
+    const imapPortParsed = parseInt(form.imapPort, 10);
+    const imapPortValid =
+      Number.isFinite(imapPortParsed) &&
+      imapPortParsed >= 1 &&
+      imapPortParsed <= 65535;
+    if (form.imapHost.trim() && !imapPortValid) {
+      setSaveError("IMAP port must be a number between 1 and 65535.");
+      setSaving(false);
+      return;
+    }
+    const imapPort = imapPortValid ? imapPortParsed : 993;
+
     if (form.roles.length === 0) {
       const ok = window.confirm(
         "No notification roles are selected. Forgot password and signup emails will not use this account until you assign General notifications. Save anyway?",
@@ -193,6 +223,9 @@ export default function EmailAccountsCard() {
       password: form.password.trim() || undefined,
       fromName: form.fromName.trim(),
       fromEmail: form.fromEmail.trim(),
+      imapHost: form.imapHost.trim(),
+      imapPort,
+      imapSecure: form.imapSecure,
       isActive: form.isActive,
       roles: form.roles,
     };
@@ -288,6 +321,45 @@ export default function EmailAccountsCard() {
     }
   }
 
+  async function handleTestImap() {
+    if (!token || !editingId || !editingAccount) return;
+    const host = form.imapHost.trim();
+    if (!host) {
+      setImapFeedback({
+        ok: false,
+        text: "Enter an IMAP host and save the account before testing.",
+      });
+      return;
+    }
+    const port = parseInt(form.imapPort, 10);
+    const dirty =
+      host !== (editingAccount.imapHost || "") ||
+      port !== (editingAccount.imapPort || 993) ||
+      form.imapSecure !== (editingAccount.imapSecure !== false);
+    if (dirty) {
+      setImapFeedback({
+        ok: false,
+        text: "Save the account before testing the mailbox.",
+      });
+      return;
+    }
+
+    setTestingImap(true);
+    setImapFeedback(null);
+    try {
+      const { message } = await testEmailAccountImap(token, editingId);
+      setImapFeedback({ ok: true, text: message });
+    } catch (err) {
+      setImapFeedback({
+        ok: false,
+        text:
+          err instanceof ApiError ? err.message : "Mailbox test failed.",
+      });
+    } finally {
+      setTestingImap(false);
+    }
+  }
+
   function field(key: keyof FormState, value: string | boolean) {
     setForm((prev) => {
       const next = { ...prev, [key]: value };
@@ -296,6 +368,11 @@ export default function EmailAccountsCard() {
         const port = parseInt(value, 10);
         if (port === 465) next.secure = true;
         if (port === 587) next.secure = false;
+      }
+      if (key === "imapPort" && typeof value === "string") {
+        const imapPort = parseInt(value, 10);
+        if (imapPort === 993) next.imapSecure = true;
+        if (imapPort === 143) next.imapSecure = false;
       }
       return next;
     });
@@ -319,10 +396,11 @@ export default function EmailAccountsCard() {
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">Email</h2>
           <p className="text-sm text-neutral-500 mt-0.5">
-            Configure SMTP accounts for outbound email. Assign roles so forgot
-            password and signup confirmation use General notifications, and
-            future billing mail uses Billing notifications. Each role can be
-            assigned to only one account.
+            Configure SMTP accounts for outbound email, and optional IMAP
+            settings so Messages → Inbox → Email can read that mailbox. Assign
+            roles so forgot password and signup confirmation use General
+            notifications, and future billing mail uses Billing notifications.
+            Each role can be assigned to only one account.
           </p>
         </div>
         {!formOpen && (
@@ -494,6 +572,83 @@ export default function EmailAccountsCard() {
               </span>
             </label>
 
+            <div className="sm:col-span-2 border-t border-neutral-100 pt-4">
+              <h4 className="text-sm font-semibold text-brand-dark">
+                Mailbox (IMAP)
+              </h4>
+              <p className="mt-0.5 text-[11px] text-neutral-500">
+                Optional. Uses the same username and password as SMTP. Leave
+                the host blank to skip inbox reading.
+              </p>
+            </div>
+
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-600">
+                IMAP host
+              </span>
+              <input
+                value={form.imapHost}
+                onChange={(e) => field("imapHost", e.target.value)}
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                placeholder="imap.example.com"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-xs font-medium text-neutral-600">
+                IMAP port
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={form.imapPort}
+                onChange={(e) => field("imapPort", e.target.value)}
+                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                placeholder="993"
+              />
+            </label>
+
+            <label className="flex items-center gap-2 sm:col-span-2">
+              <input
+                type="checkbox"
+                checked={form.imapSecure}
+                onChange={(e) => field("imapSecure", e.target.checked)}
+                className="h-4 w-4 rounded border-neutral-300 text-brand-dark focus:ring-brand-dark"
+              />
+              <span className="text-sm text-neutral-700">
+                Use TLS/SSL for IMAP — typically for port 993
+              </span>
+            </label>
+
+            {editingId ? (
+              <div className="sm:col-span-2 space-y-2">
+                <button
+                  type="button"
+                  onClick={handleTestImap}
+                  disabled={testingImap || !form.imapHost.trim()}
+                  className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
+                >
+                  {testingImap ? "Testing mailbox…" : "Test mailbox"}
+                </button>
+                {imapFeedback ? (
+                  <div
+                    className={`rounded-md border px-3 py-2 text-sm ${
+                      imapFeedback.ok
+                        ? "border-green-200 bg-green-50 text-green-800"
+                        : "border-red-200 bg-red-50 text-red-700"
+                    }`}
+                  >
+                    {imapFeedback.text}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="sm:col-span-2 text-[11px] text-neutral-500">
+                Save the account before testing the mailbox connection.
+              </p>
+            )}
+
             <label className="flex items-center gap-2 sm:col-span-2">
               <input
                 type="checkbox"
@@ -610,7 +765,19 @@ export default function EmailAccountsCard() {
                     />
                     <DataField
                       label="Host"
-                      value={`${account.host}:${account.port}${account.secure ? " (TLS)" : ""}`}
+                      value={
+                        <>
+                          <span className="block">
+                            {account.host}:{account.port}
+                            {account.secure ? " (TLS)" : ""}
+                          </span>
+                          <span className="text-xs text-neutral-500">
+                            {account.imapHost
+                              ? `IMAP ${account.imapHost}:${account.imapPort || 993}`
+                              : "No mailbox"}
+                          </span>
+                        </>
+                      }
                       className="col-span-2"
                     />
                   </>
@@ -695,8 +862,15 @@ export default function EmailAccountsCard() {
                           </div>
                         </td>
                         <td className="px-6 py-4 font-mono text-neutral-600 whitespace-nowrap">
-                          {account.host}:{account.port}
-                          {account.secure ? " (TLS)" : ""}
+                          <div>
+                            {account.host}:{account.port}
+                            {account.secure ? " (TLS)" : ""}
+                          </div>
+                          <div className="text-xs font-sans text-neutral-400">
+                            {account.imapHost
+                              ? `IMAP ${account.imapHost}:${account.imapPort || 993}`
+                              : "No mailbox"}
+                          </div>
                         </td>
                         <td className="px-6 py-4">
                           {account.roles.length === 0 ? (

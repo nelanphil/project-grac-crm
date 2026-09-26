@@ -14,6 +14,7 @@ import {
   getEmailSendAccounts,
   getMessagingCommunications,
   getSentEmails,
+  formatTwilioLine,
   getTwilioAccounts,
   placeMessagingCall,
 } from "@/lib/api";
@@ -160,7 +161,7 @@ export default function CommunicationHistoryPanel({
       setError("Configure an active Twilio account first.");
       return;
     }
-    const from = account.phoneNumbers[0];
+    const from = account.phoneNumbers[0]?.phoneNumber;
     if (!from) {
       setError("Selected Twilio account has no phone numbers.");
       return;
@@ -351,6 +352,14 @@ export default function CommunicationHistoryPanel({
                       title={row.accountSid}
                     >
                       {row.accountFriendlyName || truncateSid(row.accountSid)}
+                    </span>
+                    <span className="rounded bg-neutral-50 px-1.5 py-0.5">
+                      {formatTwilioLine(
+                        row.ourNumberLabel,
+                        row.direction === "outbound"
+                          ? row.fromNumber
+                          : row.toNumber,
+                      )}
                     </span>
                     {row.contactRef ? (
                       <span>

@@ -12,6 +12,9 @@ export const createEmailAccountSchema = z.object({
   password: z.string().min(1, "SMTP password is required"),
   fromName: z.string().trim().min(1, "From name is required").max(120),
   fromEmail: z.string().trim().email("Invalid from email").max(255),
+  imapHost: z.string().trim().max(255).optional().default(""),
+  imapPort: z.coerce.number().int().min(1).max(65535).optional().default(993),
+  imapSecure: z.boolean().optional().default(true),
   isActive: z.boolean().optional().default(true),
   roles: z.array(emailAccountRoleSchema).optional().default([]),
 });
@@ -26,6 +29,9 @@ export const updateEmailAccountSchema = z.object({
   password: z.string().min(1).optional(),
   fromName: z.string().trim().min(1).max(120).optional(),
   fromEmail: z.string().trim().email().max(255).optional(),
+  imapHost: z.string().trim().max(255).optional(),
+  imapPort: z.coerce.number().int().min(1).max(65535).optional(),
+  imapSecure: z.boolean().optional(),
   isActive: z.boolean().optional(),
   roles: z.array(emailAccountRoleSchema).optional(),
 });

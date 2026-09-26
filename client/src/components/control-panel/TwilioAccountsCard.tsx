@@ -10,10 +10,14 @@ import {
   ApiError,
   createTwilioAccount,
   deleteTwilioAccount,
+  formatTwilioLine,
   getMessagingWebhookInfo,
   getTwilioAccounts,
   MessagingWebhookInfo,
+  previewTwilioNumbers,
+  syncTwilioAccountNumbers,
   TwilioAccountItem,
+  TwilioPhoneLine,
   TwilioRuntimeEnvironment,
   updateTwilioAccount,
 } from "@/lib/api";
@@ -25,7 +29,7 @@ type FormState = {
   testAccountSid: string;
   testAuthToken: string;
   clearTestAuthToken: boolean;
-  phoneNumbers: string;
+  phoneLines: TwilioPhoneLine[];
   isActive: boolean;
   sayVoice: string;
 };
@@ -49,7 +53,7 @@ const EMPTY_FORM: FormState = {
   testAccountSid: "",
   testAuthToken: "",
   clearTestAuthToken: false,
-  phoneNumbers: "",
+  phoneLines: [],
   isActive: true,
   sayVoice: DEFAULT_SAY_VOICE,
 };
@@ -57,13 +61,6 @@ const EMPTY_FORM: FormState = {
 function maskSid(sid: string): string {
   if (sid.length <= 8) return sid;
   return `${sid.slice(0, 4)}…${sid.slice(-4)}`;
-}
-
-function parsePhoneNumbers(raw: string): string[] {
-  return raw
-    .split(/[\n,]+/)
-    .map((p) => p.trim())
-    .filter(Boolean);
 }
 
 function environmentLabel(environment: TwilioRuntimeEnvironment): string {
@@ -118,6 +115,28 @@ function ActiveBadge({ isActive }: { isActive: boolean }) {
   );
 }
 
+function capabilityFlags(line: TwilioPhoneLine): string {
+  return [
+    line.sms ? "SMS" : "",
+    line.mms ? "MMS" : "",
+    line.voice ? "Voice" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function mergeLineLabels(
+  incoming: TwilioPhoneLine[],
+  current: TwilioPhoneLine[],
+): TwilioPhoneLine[] {
+  return incoming.map((line) => {
+    const prev = current.find(
+      (item) => item.phoneNumber === line.phoneNumber,
+    );
+    return prev?.label ? { ...line, label: prev.label } : line;
+  });
+}
+
 function AccountStatusBadges({ account }: { account: TwilioAccountItem }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
@@ -144,6 +163,7 @@ export default function TwilioAccountsCard() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [loadingNumbers, setLoadingNumbers] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -184,7 +204,7 @@ export default function TwilioAccountsCard() {
       testAccountSid: account.testAccountSid ?? "",
       testAuthToken: "",
       clearTestAuthToken: false,
-      phoneNumbers: account.phoneNumbers.join(", "),
+      phoneLines: account.phoneNumbers,
       isActive: account.isActive,
       sayVoice: account.sayVoice || DEFAULT_SAY_VOICE,
     });
@@ -215,18 +235,30 @@ export default function TwilioAccountsCard() {
       testAuthToken: form.clearTestAuthToken
         ? null
         : form.testAuthToken.trim() || undefined,
-      phoneNumbers: parsePhoneNumbers(form.phoneNumbers),
+      phoneNumbers: form.phoneLines.map((line) => ({
+        phoneNumber: line.phoneNumber,
+        label: line.label.trim(),
+      })),
       isActive: form.isActive,
       sayVoice: form.sayVoice,
     };
 
     try {
       if (editingId) {
-        const { account } = await updateTwilioAccount(
+        const { account, numbersSyncError } = await updateTwilioAccount(
           token,
           editingId,
           payload,
         );
+        if (numbersSyncError) {
+          setSaveError(numbersSyncError);
+          setForm((prev) => ({ ...prev, phoneLines: account.phoneNumbers }));
+          setAccounts((prev) =>
+            prev.map((a) => (a._id === editingId ? account : a)),
+          );
+          setSaving(false);
+          return;
+        }
         setAccounts((prev) =>
           prev.map((a) => (a._id === editingId ? account : a)),
         );
@@ -236,10 +268,23 @@ export default function TwilioAccountsCard() {
           setSaving(false);
           return;
         }
-        const { account } = await createTwilioAccount(token, {
+        const { account, numbersSyncError } = await createTwilioAccount(token, {
           ...payload,
           authToken: payload.authToken,
         });
+        if (numbersSyncError) {
+          setSaveError(numbersSyncError);
+          setEditingId(account._id);
+          setEditingAccount(account);
+          setForm((prev) => ({ ...prev, phoneLines: account.phoneNumbers }));
+          setAccounts((prev) =>
+            [...prev, account].sort((a, b) =>
+              a.friendlyName.localeCompare(b.friendlyName),
+            ),
+          );
+          setSaving(false);
+          return;
+        }
         setAccounts((prev) =>
           [...prev, account].sort((a, b) =>
             a.friendlyName.localeCompare(b.friendlyName),
@@ -276,6 +321,50 @@ export default function TwilioAccountsCard() {
       );
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function loadNumbers() {
+    if (!token) return;
+    setLoadingNumbers(true);
+    setSaveError(null);
+    try {
+      if (editingId && !form.authToken.trim()) {
+        const { account, numbersSyncError } = await syncTwilioAccountNumbers(
+          token,
+          editingId,
+        );
+        setAccounts((prev) =>
+          prev.map((item) => (item._id === editingId ? account : item)),
+        );
+        setEditingAccount(account);
+        setForm((prev) => ({
+          ...prev,
+          phoneLines: mergeLineLabels(account.phoneNumbers, prev.phoneLines),
+        }));
+        if (numbersSyncError) setSaveError(numbersSyncError);
+      } else {
+        if (!form.accountSid.trim() || !form.authToken.trim()) {
+          setSaveError("Account SID and auth token are required to load numbers.");
+          return;
+        }
+        const { phoneNumbers } = await previewTwilioNumbers(token, {
+          accountSid: form.accountSid.trim(),
+          authToken: form.authToken.trim(),
+        });
+        setForm((prev) => ({
+          ...prev,
+          phoneLines: mergeLineLabels(phoneNumbers, prev.phoneLines),
+        }));
+      }
+    } catch (err) {
+      setSaveError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to load phone numbers from Twilio.",
+      );
+    } finally {
+      setLoadingNumbers(false);
     }
   }
 
@@ -428,7 +517,7 @@ export default function TwilioAccountsCard() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block sm:col-span-2">
               <span className="text-xs font-medium text-neutral-600">
-                Account name
+                Account label
               </span>
               <input
                 required
@@ -437,6 +526,10 @@ export default function TwilioAccountsCard() {
                 className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
                 placeholder="Main production account"
               />
+              <span className="mt-1 block text-[11px] text-neutral-500">
+                Names this Account SID everywhere the app shows which Twilio
+                account was used.
+              </span>
             </label>
 
             <label className="block sm:col-span-2">
@@ -544,18 +637,76 @@ export default function TwilioAccountsCard() {
               )}
             </label>
 
-            <label className="block sm:col-span-2">
-              <span className="text-xs font-medium text-neutral-600">
-                Twilio phone numbers (comma or newline separated)
-              </span>
-              <textarea
-                value={form.phoneNumbers}
-                onChange={(e) => field("phoneNumbers", e.target.value)}
-                rows={2}
-                className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-mono focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
-                placeholder="+15551234567, +15559876543"
-              />
-            </label>
+            <div className="sm:col-span-2 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-neutral-600">
+                  Phone lines on this SID
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void loadNumbers()}
+                  disabled={loadingNumbers}
+                  className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
+                >
+                  {loadingNumbers
+                    ? "Loading…"
+                    : editingId
+                      ? "Refresh numbers"
+                      : "Load numbers"}
+                </button>
+              </div>
+              <p className="text-[11px] text-neutral-500">
+                Loads every incoming number on this Account SID. Label each
+                line so the app can show which number sent or received a
+                message. Save to keep the labels.
+              </p>
+              {form.phoneLines.length === 0 ? (
+                <p className="text-sm text-neutral-500">
+                  No numbers loaded yet.
+                </p>
+              ) : (
+                <ul className="divide-y divide-neutral-100 rounded-md border border-neutral-200">
+                  {form.phoneLines.map((line, index) => (
+                    <li
+                      key={line.incomingSid || line.phoneNumber}
+                      className="grid gap-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-mono text-sm text-brand-dark">
+                          {line.phoneNumber}
+                        </p>
+                        <p className="truncate text-[11px] text-neutral-500">
+                          {line.twilioFriendlyName || "No Twilio name"}
+                          {capabilityFlags(line)
+                            ? ` · ${capabilityFlags(line)}`
+                            : ""}
+                        </p>
+                      </div>
+                      <label className="block">
+                        <span className="text-[11px] font-medium text-neutral-600">
+                          Line label
+                        </span>
+                        <input
+                          value={line.label}
+                          onChange={(e) => {
+                            const label = e.target.value;
+                            setForm((prev) => ({
+                              ...prev,
+                              phoneLines: prev.phoneLines.map((item, i) =>
+                                i === index ? { ...item, label } : item,
+                              ),
+                            }));
+                          }}
+                          maxLength={80}
+                          className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                          placeholder="Main office"
+                        />
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
 
             <label className="block sm:col-span-2">
               <span className="text-xs font-medium text-neutral-600">
@@ -647,7 +798,11 @@ export default function TwilioAccountsCard() {
                       label="Phones"
                       value={
                         account.phoneNumbers.length > 0
-                          ? account.phoneNumbers.join(", ")
+                          ? account.phoneNumbers
+                              .map((line) =>
+                                formatTwilioLine(line.label, line.phoneNumber),
+                              )
+                              .join(", ")
                           : "—"
                       }
                       className="col-span-2"
@@ -716,7 +871,11 @@ export default function TwilioAccountsCard() {
                         </td>
                         <td className="px-6 py-4 text-neutral-600">
                           {account.phoneNumbers.length > 0
-                            ? account.phoneNumbers.join(", ")
+                            ? account.phoneNumbers
+                                .map((line) =>
+                                  formatTwilioLine(line.label, line.phoneNumber),
+                                )
+                                .join(", ")
                             : "—"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">

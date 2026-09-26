@@ -30,6 +30,7 @@ import {
 import { voiceConversationPreview } from "../utils/voiceActivity";
 import { buildSayHangupTwiml } from "../utils/twilioVoiceTwiml";
 import { resolveSayVoice } from "../utils/twilioVoices";
+import { listedPhoneNumbers } from "../utils/twilioPhoneLines";
 
 function asStringRecord(body: unknown): Record<string, string> {
   const out: Record<string, string> = {};
@@ -104,8 +105,9 @@ function phonesMatch(a: string, b: string): boolean {
 }
 
 function isOurNumber(account: ITwilioAccount, phone: string): boolean {
-  const numbers = account.phoneNumbers ?? [];
-  return numbers.some((n) => phonesMatch(n, phone));
+  return listedPhoneNumbers(account.phoneNumbers).some((n) =>
+    phonesMatch(n, phone),
+  );
 }
 
 const EMPTY_TWIML =

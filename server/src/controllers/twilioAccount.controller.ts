@@ -1,8 +1,13 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { TwilioAccount, ITwilioAccount } from "../models/mongo/TwilioAccount";
+import {
+  ensureTwilioPhoneLineShape,
+  ITwilioAccount,
+  TwilioAccount,
+} from "../models/mongo/TwilioAccount";
 import {
   createTwilioAccountSchema,
+  previewTwilioNumbersSchema,
   updateTwilioAccountSchema,
 } from "../schemas/twilioAccount.schema";
 import { encryptCredential } from "../utils/credentialsCrypto";
@@ -14,15 +19,22 @@ import {
   configureIncomingNumbersWebhooks,
   getTwilioCredentialPair,
   getTwilioRuntimeEnvironment,
+  listIncomingPhoneNumbers,
   messageWebhookAbsoluteUrl,
   statusWebhookAbsoluteUrl,
+  syncAccountPhoneLines,
   voiceWebhookAbsoluteUrl,
 } from "../services/twilio.service";
 import { isPubliclyReachableApiHost } from "../utils/publicUrl";
 import { DEFAULT_SAY_VOICE, resolveSayVoice } from "../utils/twilioVoices";
+import {
+  applySubmittedLabels,
+  normalizePhoneLines,
+  TwilioPhoneLineLabelInput,
+} from "../utils/twilioPhoneLines";
 
 async function applyNumberWebhooks(account: ITwilioAccount): Promise<void> {
-  if (!account.phoneNumbers?.length) return;
+  if (!normalizePhoneLines(account.phoneNumbers).length) return;
 
   const voiceUrl = voiceWebhookAbsoluteUrl(account.accountSid);
   if (!isPubliclyReachableApiHost(voiceUrl)) {
@@ -63,7 +75,7 @@ function toPublic(doc: ITwilioAccount | Record<string, unknown>) {
     _id: d._id,
     accountSid: d.accountSid,
     friendlyName: d.friendlyName,
-    phoneNumbers: d.phoneNumbers ?? [],
+    phoneNumbers: normalizePhoneLines(d.phoneNumbers),
     isActive: d.isActive ?? true,
     sayVoice: resolveSayVoice(
       typeof d.sayVoice === "string" ? d.sayVoice : DEFAULT_SAY_VOICE,
@@ -82,14 +94,55 @@ export async function getTwilioAccounts(
   _req: AuthRequest,
   res: Response,
 ): Promise<void> {
+  await ensureTwilioPhoneLineShape();
   const accounts = await TwilioAccount.find().sort({ friendlyName: 1 }).lean();
   res.json({ accounts: accounts.map(toPublic) });
+}
+
+export async function previewTwilioNumbers(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  const parsed = previewTwilioNumbersSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "Validation failed",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  try {
+    const incoming = await listIncomingPhoneNumbers(
+      parsed.data.accountSid,
+      parsed.data.authToken,
+    );
+    res.json({
+      phoneNumbers: incoming.map((number) => ({
+        phoneNumber: number.phoneNumber,
+        label: "",
+        twilioFriendlyName: number.friendlyName,
+        incomingSid: number.sid,
+        sms: number.sms,
+        mms: number.mms,
+        voice: number.voice,
+      })),
+    });
+  } catch (err) {
+    res.status(400).json({
+      message:
+        err instanceof Error
+          ? err.message
+          : "Failed to load phone numbers from Twilio",
+    });
+  }
 }
 
 export async function createTwilioAccount(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
+  await ensureTwilioPhoneLineShape();
   const parsed = createTwilioAccountSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -119,10 +172,13 @@ export async function createTwilioAccount(
     testAuthTokenEncrypted: testAuthToken
       ? encryptCredential(testAuthToken)
       : undefined,
-    phoneNumbers: data.phoneNumbers ?? [],
+    phoneNumbers: [],
     isActive: data.isActive ?? true,
     sayVoice: resolveSayVoice(data.sayVoice),
   });
+
+  const sync = await syncAccountPhoneLines(account, data.phoneNumbers);
+  await account.save();
 
   logNotificationAsync({
     entityType: "twilio_account",
@@ -133,15 +189,19 @@ export async function createTwilioAccount(
     ...actorFromRequest(req.user),
   });
 
-  await applyNumberWebhooks(account);
+  if (!sync.error) await applyNumberWebhooks(account);
 
-  res.status(201).json({ account: toPublic(account) });
+  res.status(201).json({
+    account: toPublic(account),
+    numbersSyncError: sync.error,
+  });
 }
 
 export async function updateTwilioAccount(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
+  await ensureTwilioPhoneLineShape();
   const parsed = updateTwilioAccountSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -158,6 +218,10 @@ export async function updateTwilioAccount(
   }
 
   const data = parsed.data;
+  const credentialsChanged = Boolean(
+    emptyToUndefined(data.authToken) ||
+      (data.accountSid && data.accountSid !== account.accountSid),
+  );
 
   if (data.accountSid && data.accountSid !== account.accountSid) {
     const conflict = await TwilioAccount.findOne({
@@ -198,8 +262,11 @@ export async function updateTwilioAccount(
     account.testAccountSid = emptyToUndefined(data.testAccountSid);
   }
 
-  if (data.phoneNumbers !== undefined) {
-    account.phoneNumbers = data.phoneNumbers;
+  if (data.phoneNumbers !== undefined && !credentialsChanged) {
+    account.phoneNumbers = applySubmittedLabels(
+      account.phoneNumbers,
+      data.phoneNumbers,
+    );
   }
 
   if (data.isActive !== undefined) {
@@ -210,9 +277,18 @@ export async function updateTwilioAccount(
     account.sayVoice = resolveSayVoice(data.sayVoice);
   }
 
+  let numbersSyncError: string | null = null;
+  if (credentialsChanged) {
+    const sync = await syncAccountPhoneLines(
+      account,
+      data.phoneNumbers as TwilioPhoneLineLabelInput[] | undefined,
+    );
+    numbersSyncError = sync.error;
+  }
+
   await account.save();
 
-  if (data.phoneNumbers !== undefined) {
+  if (credentialsChanged && !numbersSyncError) {
     await applyNumberWebhooks(account);
   }
 
@@ -225,7 +301,25 @@ export async function updateTwilioAccount(
     ...actorFromRequest(req.user),
   });
 
-  res.json({ account: toPublic(account) });
+  res.json({ account: toPublic(account), numbersSyncError });
+}
+
+export async function syncTwilioAccountNumbers(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  await ensureTwilioPhoneLineShape();
+  const account = await TwilioAccount.findById(req.params.id);
+  if (!account) {
+    res.status(404).json({ message: "Twilio account not found" });
+    return;
+  }
+
+  const sync = await syncAccountPhoneLines(account);
+  await account.save();
+  if (!sync.error) await applyNumberWebhooks(account);
+
+  res.json({ account: toPublic(account), numbersSyncError: sync.error });
 }
 
 export async function deleteTwilioAccount(

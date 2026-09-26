@@ -9,6 +9,11 @@ import { CustomerContact } from "../models/mongo/CustomerContact";
 import { normalizePhoneDigits } from "./customerSites";
 import { publicMediaUrls } from "./recordingPlayback";
 import { toTranscriptLines } from "./voiceActivity";
+import {
+  labelForNumber,
+  normalizePhoneLines,
+  TwilioPhoneLine,
+} from "./twilioPhoneLines";
 
 export function mapTwilioMessageStatus(
   status: string | undefined | null,
@@ -146,39 +151,66 @@ export async function findContactByPhone(phone: string): Promise<{
   };
 }
 
+export type TwilioAccountLabel = {
+  friendlyName: string;
+  accountSid: string;
+  phoneNumbers: TwilioPhoneLine[];
+};
+
 export async function accountNameMap(
   accountIds: string[],
-): Promise<Map<string, { friendlyName: string; accountSid: string }>> {
+): Promise<Map<string, TwilioAccountLabel>> {
   const unique = [...new Set(accountIds.filter(Boolean))];
   if (unique.length === 0) return new Map();
   const accounts = await TwilioAccount.find({
     _id: { $in: unique.filter((id) => Types.ObjectId.isValid(id)) },
   })
-    .select("_id friendlyName accountSid")
+    .select("_id friendlyName accountSid phoneNumbers")
     .lean();
 
   return new Map(
     accounts.map((a) => [
       String(a._id),
-      { friendlyName: a.friendlyName, accountSid: a.accountSid },
+      {
+        friendlyName: a.friendlyName,
+        accountSid: a.accountSid,
+        phoneNumbers: normalizePhoneLines(a.phoneNumbers),
+      },
     ]),
   );
 }
 
+function accountContext(
+  account?: string | null | TwilioAccountLabel,
+): { friendlyName: string | null; phoneNumbers: TwilioPhoneLine[] } {
+  if (!account) return { friendlyName: null, phoneNumbers: [] };
+  if (typeof account === "string") {
+    return { friendlyName: account, phoneNumbers: [] };
+  }
+  return {
+    friendlyName: account.friendlyName ?? null,
+    phoneNumbers: account.phoneNumbers ?? [],
+  };
+}
+
 export function toPublicCommunication(
   doc: ITwilioCommunication | Record<string, unknown>,
-  accountFriendlyName?: string | null,
+  account?: string | null | TwilioAccountLabel,
 ) {
   const d =
     "toObject" in doc && typeof (doc as ITwilioCommunication).toObject === "function"
       ? (doc as ITwilioCommunication).toObject()
       : (doc as Record<string, unknown>);
+  const labels = accountContext(account);
+  const ourNumber =
+    d.direction === "outbound" ? String(d.fromNumber ?? "") : String(d.toNumber ?? "");
 
   return {
     _id: String(d._id),
     twilioAccountRef: d.twilioAccountRef ? String(d.twilioAccountRef) : null,
     accountSid: d.accountSid ?? "",
-    accountFriendlyName: accountFriendlyName ?? null,
+    accountFriendlyName: labels.friendlyName,
+    ourNumberLabel: labelForNumber(labels.phoneNumbers, ourNumber),
     channel: d.channel,
     direction: d.direction,
     status: d.status,

@@ -19,6 +19,7 @@ import {
   ThreadConflictCheck,
   TwilioAccountItem,
   checkMessagingThreadConflict,
+  formatTwilioLine,
 } from "@/lib/api";
 import {
   formatCustomerName,
@@ -694,7 +695,13 @@ export default function CreatePanel({
                 ) : (
                   fromOptions.map((n) => (
                     <option key={n} value={n}>
-                      {n}
+                      {formatTwilioLine(
+                        accounts
+                          .find((a) => a._id === accountId)
+                          ?.phoneNumbers.find((line) => line.phoneNumber === n)
+                          ?.label,
+                        n,
+                      )}
                     </option>
                   ))
                 )}
@@ -722,7 +729,11 @@ export default function CreatePanel({
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
                   This contact already has an open thread on{" "}
-                  {conflict.openThread.ourNumber} (last message{" "}
+                  {formatTwilioLine(
+                    conflict.openThread.ourNumberLabel,
+                    conflict.openThread.ourNumber,
+                  )}{" "}
+                  (last message{" "}
                   {formatTime(conflict.openThread.lastMessageAt) || "—"}) —
                   sending will continue that thread instead of starting a new
                   one.

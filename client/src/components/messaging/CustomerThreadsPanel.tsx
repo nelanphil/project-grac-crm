@@ -8,6 +8,7 @@ import {
   MessageThreadItem,
   closeMessagingThread,
   getMessagingThreadDetail,
+  formatTwilioLine,
   placeMessagingCall,
   sendMessagingMessages,
 } from "@/lib/api";
@@ -278,7 +279,9 @@ export default function CustomerThreadsPanel({
                           {formatPhone(t.contactPhoneSnapshot) || t.ourNumber}
                         </span>
                         <span>·</span>
-                        <span className="truncate">{t.ourNumber}</span>
+                        <span className="truncate">
+                          {formatTwilioLine(t.ourNumberLabel, t.ourNumber)}
+                        </span>
                       </div>
                       <div className="text-[10px] text-neutral-400">
                         {formatRelativeTime(t.lastMessageAt)}
@@ -358,7 +361,11 @@ export default function CustomerThreadsPanel({
                   threadDetail.thread.accountSid}
               </span>
               <span className="truncate">
-                via {threadDetail.thread.ourNumber}
+                via{" "}
+                {formatTwilioLine(
+                  threadDetail.thread.ourNumberLabel,
+                  threadDetail.thread.ourNumber,
+                )}
               </span>
             </div>
           ) : null}

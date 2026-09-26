@@ -10,6 +10,7 @@ import {
   updateEmailAccount,
   deleteEmailAccount,
   testEmailAccount,
+  testEmailAccountImap,
 } from "../controllers/emailAccount.controller";
 
 const router = Router();
@@ -25,6 +26,11 @@ router.post(
   "/:id/test",
   requirePermission("integrations:write"),
   testEmailAccount
+);
+router.post(
+  "/:id/imap-test",
+  requirePermission("integrations:write"),
+  testEmailAccountImap
 );
 router.patch(
   "/:id",

@@ -3471,11 +3471,30 @@ export async function deleteJobRole(
 export type TwilioRuntimeEnvironment = "development" | "production";
 export type TwilioCredentialPair = "live" | "test";
 
+export interface TwilioPhoneLine {
+  phoneNumber: string;
+  label: string;
+  twilioFriendlyName: string;
+  incomingSid: string;
+  sms: boolean;
+  mms: boolean;
+  voice: boolean;
+}
+
+export function formatTwilioLine(
+  label: string | null | undefined,
+  phone: string,
+): string {
+  const trimmed = label?.trim() ?? "";
+  if (trimmed && phone) return `${trimmed} · ${phone}`;
+  return phone || trimmed;
+}
+
 export interface TwilioAccountItem {
   _id: string;
   accountSid: string;
   friendlyName: string;
-  phoneNumbers: string[];
+  phoneNumbers: TwilioPhoneLine[];
   isActive: boolean;
   sayVoice: string;
   environment: TwilioRuntimeEnvironment;
@@ -3494,7 +3513,7 @@ export interface TwilioAccountInput {
   // string = set new value, null = explicitly clear, omit = leave unchanged
   testAccountSid?: string | null;
   testAuthToken?: string | null;
-  phoneNumbers?: string[];
+  phoneNumbers?: { phoneNumber: string; label?: string }[];
   isActive?: boolean;
   sayVoice?: string;
 }
@@ -3508,11 +3527,41 @@ export async function getTwilioAccounts(
   });
 }
 
+export async function previewTwilioNumbers(
+  token: string,
+  data: { accountSid: string; authToken: string },
+): Promise<{ phoneNumbers: TwilioPhoneLine[] }> {
+  return authRequest<{ phoneNumbers: TwilioPhoneLine[] }>(
+    "/twilio-accounts/preview-numbers",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function syncTwilioAccountNumbers(
+  token: string,
+  id: string,
+): Promise<{ account: TwilioAccountItem; numbersSyncError: string | null }> {
+  return authRequest<{
+    account: TwilioAccountItem;
+    numbersSyncError: string | null;
+  }>(`/twilio-accounts/${id}/sync-numbers`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export async function createTwilioAccount(
   token: string,
   data: TwilioAccountInput,
-): Promise<{ account: TwilioAccountItem }> {
-  return authRequest<{ account: TwilioAccountItem }>("/twilio-accounts", {
+): Promise<{ account: TwilioAccountItem; numbersSyncError?: string | null }> {
+  return authRequest<{
+    account: TwilioAccountItem;
+    numbersSyncError?: string | null;
+  }>("/twilio-accounts", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
@@ -3523,8 +3572,11 @@ export async function updateTwilioAccount(
   token: string,
   id: string,
   data: Partial<TwilioAccountInput>,
-): Promise<{ account: TwilioAccountItem }> {
-  return authRequest<{ account: TwilioAccountItem }>(`/twilio-accounts/${id}`, {
+): Promise<{ account: TwilioAccountItem; numbersSyncError?: string | null }> {
+  return authRequest<{
+    account: TwilioAccountItem;
+    numbersSyncError?: string | null;
+  }>(`/twilio-accounts/${id}`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
@@ -3558,6 +3610,9 @@ export interface EmailAccountItem {
   username: string;
   fromName: string;
   fromEmail: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: boolean;
   isActive: boolean;
   roles: EmailAccountRole[];
   hasPassword: boolean;
@@ -3574,6 +3629,9 @@ export interface EmailAccountInput {
   password?: string;
   fromName: string;
   fromEmail: string;
+  imapHost?: string;
+  imapPort?: number;
+  imapSecure?: boolean;
   isActive?: boolean;
   roles?: EmailAccountRole[];
 }
@@ -3643,6 +3701,83 @@ export async function testEmailAccount(
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ to }),
+    },
+  );
+}
+
+export async function testEmailAccountImap(
+  token: string,
+  id: string,
+): Promise<{ message: string; mailbox: string }> {
+  return authRequest<{ message: string; mailbox: string }>(
+    `/email-accounts/${id}/imap-test`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export type MailboxFolder = "inbox" | "sent";
+
+export interface MailboxAddress {
+  name: string;
+  address: string;
+}
+
+export interface MailboxMessageSummary {
+  uid: number;
+  subject: string;
+  from: MailboxAddress[];
+  to: MailboxAddress[];
+  date: string | null;
+  seen: boolean;
+  snippet: string;
+}
+
+export interface MailboxAttachmentMeta {
+  filename: string;
+  size: number;
+  contentType: string;
+}
+
+export interface MailboxMessageDetail extends MailboxMessageSummary {
+  text: string;
+  html: string;
+  attachments: MailboxAttachmentMeta[];
+}
+
+export async function getMailboxMessages(
+  token: string,
+  accountId: string,
+  folder: MailboxFolder,
+  limit = 50,
+): Promise<{ folder: MailboxFolder; messages: MailboxMessageSummary[] }> {
+  const params = new URLSearchParams({
+    folder,
+    limit: String(limit),
+  });
+  return authRequest<{ folder: MailboxFolder; messages: MailboxMessageSummary[] }>(
+    `/email-mailbox/${accountId}/messages?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function getMailboxMessage(
+  token: string,
+  accountId: string,
+  uid: number,
+  folder: MailboxFolder,
+): Promise<{ folder: MailboxFolder; message: MailboxMessageDetail }> {
+  const params = new URLSearchParams({ folder });
+  return authRequest<{ folder: MailboxFolder; message: MailboxMessageDetail }>(
+    `/email-mailbox/${accountId}/messages/${uid}?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
     },
   );
 }
@@ -4245,6 +4380,7 @@ export interface TwilioCommunicationItem {
   twilioAccountRef: string | null;
   accountSid: string;
   accountFriendlyName: string | null;
+  ourNumberLabel: string | null;
   channel: CommunicationChannel;
   direction: CommunicationDirection;
   status: string;
@@ -4276,6 +4412,7 @@ export interface MessageThreadItem {
   accountSid: string;
   accountFriendlyName: string | null;
   ourNumber: string;
+  ourNumberLabel: string | null;
   contactPhoneSnapshot: string;
   status: MessageThreadStatus;
   startedByUserRef: string | null;

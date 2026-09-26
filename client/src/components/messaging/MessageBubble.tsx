@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, Phone, X } from "lucide-react";
-import { TwilioCommunicationItem } from "@/lib/api";
+import { formatTwilioLine, TwilioCommunicationItem } from "@/lib/api";
 import {
   crmPlaybackSrc,
   formatDuration,
@@ -52,20 +52,22 @@ export function NumberBadge({
   outbound,
   fromNumber,
   toNumber,
+  ourNumberLabel,
 }: {
   outbound: boolean;
   fromNumber: string;
   toNumber: string;
+  ourNumberLabel?: string | null;
 }) {
   const number = outbound ? fromNumber : toNumber;
   if (!number) return null;
   return (
     <span
-      className="inline-flex max-w-30 truncate rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600"
+      className="inline-flex max-w-40 truncate rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600"
       title={`From ${fromNumber || "?"} · To ${toNumber || "?"}`}
     >
       {outbound ? "from " : "to "}
-      {number}
+      {formatTwilioLine(ourNumberLabel, number)}
     </span>
   );
 }
@@ -214,6 +216,7 @@ export default function MessageBubble({
             outbound={outbound}
             fromNumber={msg.fromNumber}
             toNumber={msg.toNumber}
+            ourNumberLabel={msg.ourNumberLabel}
           />
           {outbound && (
             <StatusBadge status={msg.status} errorMessage={msg.errorMessage} />

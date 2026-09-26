@@ -16,6 +16,9 @@ export interface IEmailAccount extends Document {
   passwordEncrypted: string;
   fromName: string;
   fromEmail: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: boolean;
   isActive: boolean;
   roles: EmailAccountRole[];
   createdAt: Date;
@@ -63,6 +66,19 @@ const emailAccountSchema = new Schema<IEmailAccount>(
       required: true,
       trim: true,
       lowercase: true,
+    },
+    imapHost: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    imapPort: {
+      type: Number,
+      default: 993,
+    },
+    imapSecure: {
+      type: Boolean,
+      default: true,
     },
     isActive: {
       type: Boolean,

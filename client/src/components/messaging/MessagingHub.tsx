@@ -55,7 +55,7 @@ import { EmailBodyEditorHandle } from "./EmailBodyEditor";
 import ScheduledEmailsPanel from "./ScheduledEmailsPanel";
 import SentEmailsPanel from "./SentEmailsPanel";
 import TemplatesPanel from "./TemplatesPanel";
-import ThreadsPanel from "./ThreadsPanel";
+import InboxPanel from "./InboxPanel";
 
 const MAX_SEND = 200;
 
@@ -76,21 +76,30 @@ function templateTypeOf(template: MessageTemplateItem): MessageTemplateType {
   return template.templateType === "email" ? "email" : "sms";
 }
 
+function messagingTabFromQuery(tab: string | null): MessagingTab {
+  if (tab === "inbox" || tab === "threads") return "threads";
+  if (
+    tab === "create" ||
+    tab === "email" ||
+    tab === "sent-emails" ||
+    tab === "scheduled-emails"
+  ) {
+    return tab;
+  }
+  return "templates";
+}
+
 export default function MessagingHub() {
   const token = useAuthStore((s) => s.token);
   const searchParams = useSearchParams();
   const initialContactId = searchParams.get("contactId");
   const initialInvoiceId = searchParams.get("invoiceId");
   const initialTab = searchParams.get("tab");
+  const initialInboxView =
+    searchParams.get("view") === "email" ? "email" : "text";
 
   const [activeTab, setActiveTab] = useState<MessagingTab>(
-    initialTab === "threads" ||
-      initialTab === "create" ||
-      initialTab === "email" ||
-      initialTab === "sent-emails" ||
-      initialTab === "scheduled-emails"
-      ? initialTab
-      : "templates",
+    messagingTabFromQuery(initialTab),
   );
 
   const [templates, setTemplates] = useState<MessageTemplateItem[]>([]);
@@ -217,7 +226,8 @@ export default function MessagingHub() {
   const emailSubjectRef = useRef<HTMLInputElement>(null);
 
   const selectedAccount = accounts.find((a) => a._id === accountId);
-  const fromOptions = selectedAccount?.phoneNumbers ?? [];
+  const fromOptions =
+    selectedAccount?.phoneNumbers.map((line) => line.phoneNumber) ?? [];
   const selectedContacts = useMemo(
     () =>
       [...selectedIds]
@@ -365,7 +375,7 @@ export default function MessagingHub() {
         setAccounts(active);
         if (active.length > 0) {
           setAccountId((prev) => prev || active[0]._id);
-          const nums = active[0].phoneNumbers ?? [];
+          const nums = active[0].phoneNumbers.map((line) => line.phoneNumber);
           if (nums.length > 0) {
             setFromNumber((prev) => prev || nums[0]);
           }
@@ -1086,7 +1096,7 @@ export default function MessagingHub() {
         {(
           [
             ["templates", "Templates"],
-            ["threads", "Threads"],
+            ["threads", "Inbox"],
             ["create", "Message Wizard"],
             ["email", "Email Wizard"],
             ["scheduled-emails", "Scheduled Emails"],
@@ -1413,7 +1423,11 @@ export default function MessagingHub() {
       ) : activeTab === "sent-emails" ? (
         <SentEmailsPanel token={token} />
       ) : (
-        <ThreadsPanel token={token} accounts={accounts} />
+        <InboxPanel
+          token={token}
+          accounts={accounts}
+          initialView={initialInboxView}
+        />
       )}
     </div>
   );

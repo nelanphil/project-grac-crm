@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
+import { formatTwilioLine } from "@/lib/api";
 import {
   VoiceContactGroup,
   VoiceCustomerGroup,
@@ -127,7 +128,12 @@ export default function VoiceCustomerPanel({
                         {contact.ourNumber ? (
                           <>
                             <span>·</span>
-                            <span className="truncate">{contact.ourNumber}</span>
+                            <span className="truncate">
+                              {formatTwilioLine(
+                                contact.ourNumberLabel,
+                                contact.ourNumber,
+                              )}
+                            </span>
                           </>
                         ) : null}
                       </div>
