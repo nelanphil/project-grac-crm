@@ -51,19 +51,48 @@ const MAX_LIST = 50;
 const SOURCE_PREVIEW_BYTES = 2500;
 const MAX_TEXT = 200_000;
 const MAX_HTML = 500_000;
+const TEMPORARY_AUTH_EXTRA_ATTEMPTS = 2;
+const TEMPORARY_AUTH_RETRY_DELAY_MS = 1500;
 
-function toMailboxError(err: unknown): MailboxError {
+export const MAILBOX_CREDENTIAL_MESSAGE =
+  "Mailbox login failed. Check the username and password.";
+
+export const MAILBOX_TEMPORARY_LOGIN_MESSAGE =
+  "The mail server temporarily refused login. Wait a minute and reload. If it keeps failing, reset the mailbox password in Namecheap Private Email and save it again in Control Panel.";
+
+type ImapFailure = {
+  authenticationFailed?: boolean;
+  mailboxMissing?: boolean;
+  message?: string;
+  serverResponseCode?: string;
+  response?: string;
+};
+
+function asImapFailure(err: unknown): ImapFailure {
+  if (!err || typeof err !== "object") return {};
+  return err as ImapFailure;
+}
+
+/** Namecheap/Dovecot uses UNAVAILABLE for a temporary refusal. A permanent
+ * AUTHENTICATIONFAILED stays a credential error even if the text mentions
+ * a temporary failure. */
+export function isTemporaryImapAuthFailure(err: unknown): boolean {
+  const imap = asImapFailure(err);
+  const code = (imap.serverResponseCode || "").toUpperCase();
+  if (code === "AUTHENTICATIONFAILED") return false;
+  if (code === "UNAVAILABLE") return true;
+  const text = `${imap.response || ""} ${imap.message || ""}`;
+  return /temporary authentication failure/i.test(text);
+}
+
+export function toMailboxError(err: unknown): MailboxError {
   if (err instanceof MailboxError) return err;
-  const imap = err as {
-    authenticationFailed?: boolean;
-    mailboxMissing?: boolean;
-    message?: string;
-  };
-  if (imap.authenticationFailed) {
-    return new MailboxError(
-      "Mailbox login failed. Check the username and password.",
-      401,
-    );
+  const imap = asImapFailure(err);
+  if (imap.authenticationFailed || isTemporaryImapAuthFailure(err)) {
+    if (isTemporaryImapAuthFailure(err)) {
+      return new MailboxError(MAILBOX_TEMPORARY_LOGIN_MESSAGE, 503);
+    }
+    return new MailboxError(MAILBOX_CREDENTIAL_MESSAGE, 401);
   }
   if (imap.mailboxMissing) {
     return new MailboxError("Mailbox folder was not found.", 404);
@@ -77,6 +106,19 @@ function toMailboxError(err: unknown): MailboxError {
     return new MailboxError(`Could not connect to the mailbox. ${message}`, 502);
   }
   return new MailboxError(message, 502);
+}
+
+function logImapAuthFailure(err: unknown, retrying: boolean): void {
+  const imap = asImapFailure(err);
+  console.error("[mailbox] IMAP login failed:", {
+    code: imap.serverResponseCode || "",
+    response: imap.response || imap.message || "",
+    retrying,
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function addresses(
@@ -148,12 +190,12 @@ function assertImapReady(account: IEmailAccount): { host: string; password: stri
   return { host, password };
 }
 
-async function withMailboxClient<T>(
+function openMailboxClient(
   account: IEmailAccount,
-  fn: (client: ImapFlow) => Promise<T>,
-): Promise<T> {
-  const { host, password } = assertImapReady(account);
-  const client = new ImapFlow({
+  host: string,
+  password: string,
+): ImapFlow {
+  return new ImapFlow({
     host,
     port: account.imapPort || 993,
     secure: account.imapSecure !== false,
@@ -161,19 +203,50 @@ async function withMailboxClient<T>(
     logger: false,
     connectionTimeout: 15_000,
   });
+}
 
-  try {
-    await client.connect();
-    return await fn(client);
-  } catch (err) {
-    throw toMailboxError(err);
-  } finally {
+async function withMailboxClient<T>(
+  account: IEmailAccount,
+  fn: (client: ImapFlow) => Promise<T>,
+): Promise<T> {
+  const { host, password } = assertImapReady(account);
+  const maxAttempts = 1 + TEMPORARY_AUTH_EXTRA_ATTEMPTS;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (attempt > 1) {
+      await sleep(TEMPORARY_AUTH_RETRY_DELAY_MS);
+    }
+    const client = openMailboxClient(account, host, password);
+    let connected = false;
     try {
-      await client.logout();
-    } catch {
-      client.close();
+      await client.connect();
+      connected = true;
+      return await fn(client);
+    } catch (err) {
+      lastError = err;
+      const retry = attempt < maxAttempts && isTemporaryImapAuthFailure(err);
+      const imap = asImapFailure(err);
+      if (imap.authenticationFailed || isTemporaryImapAuthFailure(err)) {
+        logImapAuthFailure(err, retry);
+      }
+      if (!retry) {
+        throw toMailboxError(err);
+      }
+    } finally {
+      if (connected) {
+        try {
+          await client.logout();
+        } catch {
+          client.close();
+        }
+      } else {
+        client.close();
+      }
     }
   }
+
+  throw toMailboxError(lastError);
 }
 
 async function resolveFolderPath(

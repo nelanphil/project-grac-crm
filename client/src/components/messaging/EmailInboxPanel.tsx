@@ -41,6 +41,15 @@ function formatWhen(value: string | null): string {
   });
 }
 
+function formatDisconnectedNames(
+  accounts: { friendlyName: string }[],
+): string {
+  const names = accounts.map((account) => account.friendlyName);
+  if (names.length <= 1) return names[0] ?? "This account";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
@@ -59,6 +68,7 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
   const [detail, setDetail] = useState<MailboxMessageDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [listAttempt, setListAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,7 +132,7 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [token, accountId, folder, mailboxReady]);
+  }, [token, accountId, folder, mailboxReady, listAttempt]);
 
   useEffect(() => {
     if (!mailboxReady || !accountId || selectedUid == null) {
@@ -222,9 +232,9 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
         <>
           {disconnected.length > 0 ? (
             <p className="border-b border-[var(--staff-border)] px-3 py-2 text-[11px] text-neutral-500">
-              {disconnected.length} account
-              {disconnected.length === 1 ? "" : "s"} not connected. Add an IMAP
-              host in{" "}
+              {formatDisconnectedNames(disconnected)}{" "}
+              {disconnected.length === 1 ? "is" : "are"} not connected. Add an
+              IMAP host in{" "}
               <Link
                 href="/dashboard/control-panel"
                 className="text-brand-dark underline"
@@ -246,7 +256,16 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
                   Loading…
                 </div>
               ) : listError ? (
-                <p className="p-3 text-xs text-red-700">{listError}</p>
+                <div className="space-y-2 p-3">
+                  <p className="text-xs text-red-700">{listError}</p>
+                  <button
+                    type="button"
+                    onClick={() => setListAttempt((attempt) => attempt + 1)}
+                    className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-white"
+                  >
+                    Retry
+                  </button>
+                </div>
               ) : messages.length === 0 ? (
                 <p className="p-3 text-xs text-neutral-500">
                   {folder === "inbox" ? "Inbox is empty." : "No sent mail in this folder."}
