@@ -78,6 +78,25 @@ function templateTypeOf(template: MessageTemplateItem): MessageTemplateType {
   return template.templateType === "email" ? "email" : "sms";
 }
 
+const SMS_PAYMENT_LINK_FIELD: MergeFieldItem = {
+  key: "payment_link",
+  label: "Payment link",
+  description:
+    "Short pay link covering every open invoice and unpaid work order. Included only when the customer has something to pay.",
+};
+
+/** SMS always offers {{payment_link}}, even if an older API still marks it email-only. */
+function smsMergeFieldsFrom(fields: MergeFieldItem[]): MergeFieldItem[] {
+  const visible = fields.filter(
+    (field) =>
+      field.key === "payment_link" ||
+      !field.templateTypes ||
+      field.templateTypes.includes("sms"),
+  );
+  if (visible.some((field) => field.key === "payment_link")) return visible;
+  return [...visible, SMS_PAYMENT_LINK_FIELD];
+}
+
 function messagingTabFromQuery(tab: string | null): MessagingTab {
   if (tab === "inbox" || tab === "threads") return "threads";
   if (
@@ -295,10 +314,7 @@ export default function MessagingHub() {
   const editorTemplates =
     templateEditorType === "email" ? emailTemplates : smsTemplates;
   const smsMergeFields = useMemo(
-    () =>
-      mergeFields.filter(
-        (f) => !f.templateTypes || f.templateTypes.includes("sms"),
-      ),
+    () => smsMergeFieldsFrom(mergeFields),
     [mergeFields],
   );
   const emailMergeFields = useMemo(

@@ -41,7 +41,6 @@ export const MERGE_FIELDS: MergeFieldDef[] = [
     label: "Payment link",
     description:
       "Short pay link in a text, or a Pay securely button in email, covering every open invoice and unpaid work order. Included only when the customer has something to pay.",
-    templateTypes: ["sms", "email"],
   },
 ];
 
