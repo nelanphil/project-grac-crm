@@ -50,6 +50,10 @@ type TemplatesPanelProps = {
   previewContactLabel?: string;
   previewSample: boolean;
 
+  contractTemplates?: { _id: string; label: string; cost: number }[];
+  offerContractTemplateId?: string | null;
+  onOfferContractTemplateIdChange?: (value: string | null) => void;
+
   error: string | null;
 };
 
@@ -84,6 +88,9 @@ export default function TemplatesPanel({
   previewToLabel,
   previewContactLabel,
   previewSample,
+  contractTemplates,
+  offerContractTemplateId,
+  onOfferContractTemplateIdChange,
   error,
 }: TemplatesPanelProps) {
   const isEmail = templateType === "email";
@@ -140,6 +147,9 @@ export default function TemplatesPanel({
           previewFromLabel={previewFromLabel}
           previewToLabel={previewToLabel}
           previewSample={previewSample}
+          contractTemplates={contractTemplates}
+          offerContractTemplateId={offerContractTemplateId}
+          onOfferContractTemplateIdChange={onOfferContractTemplateIdChange}
         />
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)_300px]">

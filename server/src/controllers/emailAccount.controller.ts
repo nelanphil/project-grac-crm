@@ -40,6 +40,7 @@ function toPublic(doc: IEmailAccount | Record<string, unknown>) {
     imapPort: typeof d.imapPort === "number" ? d.imapPort : 993,
     imapSecure: d.imapSecure !== false,
     isActive: d.isActive ?? true,
+    autoAcknowledge: d.autoAcknowledge === true,
     roles: d.roles ?? [],
     hasPassword: Boolean(d.passwordEncrypted),
     createdAt: d.createdAt,
@@ -185,6 +186,12 @@ export async function updateEmailAccount(
   if (data.imapSecure !== undefined) account.imapSecure = data.imapSecure;
   account.imapSecure = applyImapSecure(account.imapPort, account.imapSecure);
   if (data.isActive !== undefined) account.isActive = data.isActive;
+  if (data.autoAcknowledge !== undefined) {
+    const turningOn = data.autoAcknowledge && !account.autoAcknowledge;
+    account.autoAcknowledge = data.autoAcknowledge;
+    if (turningOn) account.autoAcknowledgeEnabledAt = new Date();
+    if (!data.autoAcknowledge) account.autoAcknowledgeEnabledAt = null;
+  }
 
   if (data.password !== undefined && data.password.trim() !== "") {
     account.passwordEncrypted = encryptCredential(data.password);

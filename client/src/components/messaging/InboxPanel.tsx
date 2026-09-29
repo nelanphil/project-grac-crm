@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { TwilioAccountItem } from "@/lib/api";
+import { MailboxFolder, TwilioAccountItem } from "@/lib/api";
 import EmailInboxPanel from "./EmailInboxPanel";
 import ThreadsPanel from "./ThreadsPanel";
 
@@ -11,6 +11,9 @@ type InboxPanelProps = {
   token: string;
   accounts: TwilioAccountItem[];
   initialView: InboxView;
+  initialEmailAccountId?: string;
+  initialEmailFolder?: MailboxFolder;
+  initialEmailUid?: number | null;
 };
 
 const VIEWS: { id: InboxView; label: string }[] = [
@@ -22,8 +25,20 @@ export default function InboxPanel({
   token,
   accounts,
   initialView,
+  initialEmailAccountId,
+  initialEmailFolder,
+  initialEmailUid,
 }: InboxPanelProps) {
   const [view, setView] = useState<InboxView>(initialView);
+  const incomingEmailLink =
+    initialEmailAccountId && initialEmailUid
+      ? `${initialEmailAccountId}:${initialEmailFolder ?? "inbox"}:${initialEmailUid}`
+      : "";
+  const [appliedEmailLink, setAppliedEmailLink] = useState(incomingEmailLink);
+  if (incomingEmailLink && incomingEmailLink !== appliedEmailLink) {
+    setAppliedEmailLink(incomingEmailLink);
+    setView("email");
+  }
 
   return (
     <div className="space-y-4">
@@ -48,7 +63,12 @@ export default function InboxPanel({
       </div>
 
       {view === "email" ? (
-        <EmailInboxPanel token={token} />
+        <EmailInboxPanel
+          token={token}
+          initialAccountId={initialEmailAccountId}
+          initialFolder={initialEmailFolder}
+          initialUid={initialEmailUid}
+        />
       ) : (
         <ThreadsPanel token={token} accounts={accounts} />
       )}

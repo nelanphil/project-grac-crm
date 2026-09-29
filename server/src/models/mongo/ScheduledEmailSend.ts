@@ -31,6 +31,11 @@ export interface IScheduledEmailSend extends Document {
   renewalYear?: number | null;
   renewalMonth?: number | null;
   includePaymentLink: boolean;
+  offerContractTemplateId?: Types.ObjectId | null;
+  offerContractOverrides: {
+    contactId: string;
+    contractTemplateId: Types.ObjectId | null;
+  }[];
   scheduledAt: Date;
   status: ScheduledEmailStatus;
   createdByUserRef?: Types.ObjectId | null;
@@ -71,6 +76,24 @@ const scheduledEmailSendSchema = new Schema<IScheduledEmailSend>(
     renewalYear: { type: Number, default: null },
     renewalMonth: { type: Number, default: null },
     includePaymentLink: { type: Boolean, default: false },
+    offerContractTemplateId: {
+      type: Schema.Types.ObjectId,
+      ref: "ContractTemplate",
+      default: null,
+    },
+    offerContractOverrides: {
+      type: [
+        {
+          contactId: { type: String, required: true },
+          contractTemplateId: {
+            type: Schema.Types.ObjectId,
+            ref: "ContractTemplate",
+            default: null,
+          },
+        },
+      ],
+      default: [],
+    },
     scheduledAt: { type: Date, required: true },
     status: {
       type: String,

@@ -212,7 +212,10 @@ async function loadPortalContracts(
   if (legacyIds.length > 0) {
     or.push({ customerId: { $in: legacyIds } });
   }
-  const contracts = await Contract.find({ $or: or })
+  const contracts = await Contract.find({
+    $or: or,
+    temporary: { $ne: true },
+  })
     .sort({ renewalDueDate: 1 })
     .select(
       "templateId contractType renewalDueDate durationMonths addressRef",

@@ -28,6 +28,7 @@ export async function customerRefsWithRenewalsInMonth(
   const rows = await Contract.find({
     ...renewalDueDateFilterForMonth(scope.year, scope.month),
     customerRef: { $exists: true, $ne: null },
+    temporary: { $ne: true },
   })
     .select("customerRef")
     .lean();
@@ -64,6 +65,7 @@ export async function resolveRenewalsForCustomers(
   const objectIds = unique.map((id) => new Types.ObjectId(id));
   const filter: Record<string, unknown> = {
     customerRef: { $in: objectIds },
+    temporary: { $ne: true },
   };
 
   if (scope) {
@@ -118,6 +120,7 @@ export async function resolveRenewalsForCustomers(
       const fallback = await Contract.find({
         customerRef: { $in: missing.map((id) => new Types.ObjectId(id)) },
         renewalDueDate: { $ne: null },
+        temporary: { $ne: true },
       })
         .sort({ renewalDueDate: 1 })
         .select("customerRef renewalDueDate contractType templateId")

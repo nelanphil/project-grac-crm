@@ -12,8 +12,10 @@ import {
   MessagingSendResponse,
   ScheduledEmailItem,
   TwilioAccountItem,
+  ContractTemplateItem,
   createMessageTemplate,
   deleteMessageTemplate,
+  getContractTemplates,
   getCustomerContacts,
   getEmailPaymentLinkAvailability,
   getEmailSendAccounts,
@@ -101,6 +103,17 @@ export default function MessagingHub() {
   const [activeTab, setActiveTab] = useState<MessagingTab>(
     messagingTabFromQuery(initialTab),
   );
+  const mailboxLink =
+    searchParams.get("view") === "email" &&
+    searchParams.get("accountId") &&
+    searchParams.get("uid")
+      ? searchParams.toString()
+      : "";
+  const [appliedMailboxLink, setAppliedMailboxLink] = useState(mailboxLink);
+  if (mailboxLink && mailboxLink !== appliedMailboxLink) {
+    setAppliedMailboxLink(mailboxLink);
+    setActiveTab("threads");
+  }
 
   const [templates, setTemplates] = useState<MessageTemplateItem[]>([]);
   const [mergeFields, setMergeFields] = useState<MergeFieldItem[]>([]);
@@ -126,6 +139,15 @@ export default function MessagingHub() {
   const [emailBody, setEmailBody] = useState(DEFAULT_EMAIL_BODY);
   const [emailChrome, setEmailChrome] = useState(DEFAULT_EMAIL_CHROME);
   const [includePaymentLink, setIncludePaymentLink] = useState(false);
+  const [offerContractTemplateId, setOfferContractTemplateId] = useState<
+    string | null
+  >(null);
+  const [offerContractOverrides, setOfferContractOverrides] = useState<
+    Record<string, string | null>
+  >({});
+  const [contractTemplates, setContractTemplates] = useState<
+    ContractTemplateItem[]
+  >([]);
 
   const [previewText, setPreviewText] = useState("");
   const [previewSample, setPreviewSample] = useState(true);
@@ -633,6 +655,14 @@ export default function MessagingHub() {
     let cancelled = false;
     const previewContactId =
       emailSelectedIds.size === 1 ? [...emailSelectedIds][0] : undefined;
+    const previewOffer =
+      previewContactId &&
+      Object.prototype.hasOwnProperty.call(
+        offerContractOverrides,
+        previewContactId,
+      )
+        ? offerContractOverrides[previewContactId]
+        : offerContractTemplateId;
 
     const timer = setTimeout(() => {
       previewEmailMessage(token, {
@@ -643,6 +673,7 @@ export default function MessagingHub() {
         renewalYear: emailUseRenewalsFilter ? emailViewYear : undefined,
         renewalMonth: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
         includePaymentLink,
+        offerContractTemplateId: previewOffer,
       })
         .then((res) => {
           if (cancelled) return;
@@ -686,7 +717,33 @@ export default function MessagingHub() {
     emailViewYear,
     emailViewMonth,
     includePaymentLink,
+    offerContractTemplateId,
+    offerContractOverrides,
   ]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (
+      activeTab !== "email" &&
+      !(activeTab === "templates" && templateEditorType === "email")
+    ) {
+      return;
+    }
+    let cancelled = false;
+    getContractTemplates(token)
+      .then((res) => {
+        if (cancelled) return;
+        setContractTemplates(
+          res.templates.filter((template) => template.cost > 0 && !template.deletedAt),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setContractTemplates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeTab, templateEditorType]);
 
   function selectSmsTemplate(template: MessageTemplateItem) {
     setSelectedTemplateId(template._id);
@@ -706,6 +763,8 @@ export default function MessagingHub() {
     setEmailSubject(template.subject || DEFAULT_EMAIL_SUBJECT);
     setEmailBody(template.body ?? "");
     setEmailChrome(mergeEmailChrome(template.emailChrome));
+    setOfferContractTemplateId(template.offerContractTemplateId ?? null);
+    setOfferContractOverrides({});
   }
 
   function startNewEmailTemplate() {
@@ -714,6 +773,30 @@ export default function MessagingHub() {
     setEmailSubject(DEFAULT_EMAIL_SUBJECT);
     setEmailBody(DEFAULT_EMAIL_BODY);
     setEmailChrome(DEFAULT_EMAIL_CHROME);
+    setOfferContractTemplateId(null);
+    setOfferContractOverrides({});
+  }
+
+  function setOfferOverride(contactId: string, value: string) {
+    setOfferContractOverrides((prev) => {
+      const next = { ...prev };
+      if (value === "") delete next[contactId];
+      else if (value === "none") next[contactId] = null;
+      else next[contactId] = value;
+      return next;
+    });
+  }
+
+  function applyOfferOverrides(contactIds: string[], value: string) {
+    setOfferContractOverrides((prev) => {
+      const next = { ...prev };
+      for (const id of contactIds) {
+        if (value === "") delete next[id];
+        else if (value === "none") next[id] = null;
+        else next[id] = value;
+      }
+      return next;
+    });
   }
 
   function insertAtCursor(
@@ -772,6 +855,7 @@ export default function MessagingHub() {
           subject: isEmail ? emailSubject : "",
           templateType: type,
           emailChrome: isEmail ? mergeEmailChrome(emailChrome) : undefined,
+          offerContractTemplateId: isEmail ? offerContractTemplateId : null,
         });
         setTemplates((prev) =>
           prev.map((t) => (t._id === template._id ? template : t)),
@@ -783,6 +867,7 @@ export default function MessagingHub() {
           subject: isEmail ? emailSubject : undefined,
           templateType: type,
           emailChrome: isEmail ? mergeEmailChrome(emailChrome) : undefined,
+          offerContractTemplateId: isEmail ? offerContractTemplateId : null,
         });
         setTemplates((prev) =>
           [...prev, template].sort((a, b) => a.name.localeCompare(b.name)),
@@ -901,6 +986,8 @@ export default function MessagingHub() {
     setEmailBody(DEFAULT_EMAIL_BODY);
     setEmailChrome(DEFAULT_EMAIL_CHROME);
     setIncludePaymentLink(false);
+    setOfferContractTemplateId(null);
+    setOfferContractOverrides({});
     setEmailFromNickname(selectedEmailAccount?.fromName ?? "");
     setEmailReplyTo("");
     setEmailEmailsPerSecond(2);
@@ -1075,6 +1162,13 @@ export default function MessagingHub() {
         renewalYear: emailUseRenewalsFilter ? emailViewYear : undefined,
         renewalMonth: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
         includePaymentLink,
+        offerContractTemplateId,
+        offerContractOverrides: Object.entries(offerContractOverrides).map(
+          ([contactId, contractTemplateId]) => ({
+            contactId,
+            contractTemplateId,
+          }),
+        ),
         scheduledAt,
       });
       setEmailScheduleResult(result.scheduled);
@@ -1176,6 +1270,9 @@ export default function MessagingHub() {
           previewSample={
             templateEditorType === "email" ? emailPreviewSample : previewSample
           }
+          contractTemplates={contractTemplates}
+          offerContractTemplateId={offerContractTemplateId}
+          onOfferContractTemplateIdChange={setOfferContractTemplateId}
           error={error}
         />
       ) : activeTab === "create" ? (
@@ -1410,6 +1507,12 @@ export default function MessagingHub() {
           showPaymentLinkColumn={emailUsesPaymentLink}
           includePaymentLink={includePaymentLink}
           onIncludePaymentLinkChange={setIncludePaymentLink}
+          contractTemplates={contractTemplates}
+          offerContractTemplateId={offerContractTemplateId}
+          offerOverrides={offerContractOverrides}
+          onOfferContractTemplateIdChange={setOfferContractTemplateId}
+          onOfferOverrideChange={setOfferOverride}
+          onApplyOfferOverrides={applyOfferOverrides}
           error={error}
           scheduleResult={emailScheduleResult}
           onDismissScheduleResult={() => setEmailScheduleResult(null)}
@@ -1427,6 +1530,11 @@ export default function MessagingHub() {
           token={token}
           accounts={accounts}
           initialView={initialInboxView}
+          initialEmailAccountId={searchParams.get("accountId") ?? ""}
+          initialEmailFolder={
+            searchParams.get("folder") === "sent" ? "sent" : "inbox"
+          }
+          initialEmailUid={Number(searchParams.get("uid")) || null}
         />
       )}
     </div>

@@ -130,6 +130,22 @@ function toPublicScheduledEmail(
     accountFriendlyName: accountFriendlyName ?? null,
     emailsPerSecond: record.emailsPerSecond ?? 2,
     includePaymentLink: Boolean(record.includePaymentLink),
+    offerContractTemplateId: record.offerContractTemplateId
+      ? String(record.offerContractTemplateId)
+      : null,
+    offerContractOverrides: Array.isArray(record.offerContractOverrides)
+      ? (
+          record.offerContractOverrides as {
+            contactId?: unknown;
+            contractTemplateId?: unknown;
+          }[]
+        ).map((row) => ({
+          contactId: String(row.contactId ?? ""),
+          contractTemplateId: row.contractTemplateId
+            ? String(row.contractTemplateId)
+            : null,
+        }))
+      : [],
     scheduledAt: record.scheduledAt,
     status: record.status,
     summary: record.summary ?? null,
@@ -272,11 +288,13 @@ export async function previewEmailMessage(
       );
     let paymentUrl: string | undefined;
     if (wantsPayLink) {
+      const offerId = parsed.data.offerContractTemplateId ?? null;
       const showButton = sample
         ? true
         : customerRef
-          ? await customerHasPayableInvoice(customerRef, scope)
-          : false;
+          ? (await customerHasPayableInvoice(customerRef, scope)) ||
+            Boolean(offerId)
+          : Boolean(offerId);
       if (showButton) {
         paymentUrl = samplePayUrl();
         context = { ...context, payment_link: paymentUrl };
@@ -340,6 +358,11 @@ export async function sendEmailMessages(
       renewalYear: data.renewalYear,
       renewalMonth: data.renewalMonth,
       includePaymentLink: data.includePaymentLink,
+      offerContractTemplateId:
+        data.offerContractTemplateId !== undefined
+          ? data.offerContractTemplateId
+          : content.offerContractTemplateId,
+      offerContractOverrides: data.offerContractOverrides,
       createdByUserId: req.user?.id ?? null,
     });
     res.json(result);
@@ -387,6 +410,22 @@ export async function scheduleEmailMessages(
       renewalYear: data.renewalYear ?? null,
       renewalMonth: data.renewalMonth ?? null,
       includePaymentLink: data.includePaymentLink === true,
+      offerContractTemplateId:
+        data.offerContractTemplateId !== undefined
+          ? data.offerContractTemplateId
+            ? new Types.ObjectId(data.offerContractTemplateId)
+            : null
+          : content.offerContractTemplateId
+            ? new Types.ObjectId(content.offerContractTemplateId)
+            : null,
+      offerContractOverrides: (data.offerContractOverrides ?? []).map(
+        (row) => ({
+          contactId: row.contactId,
+          contractTemplateId: row.contractTemplateId
+            ? new Types.ObjectId(row.contractTemplateId)
+            : null,
+        }),
+      ),
       scheduledAt,
       status: "scheduled",
       createdByUserRef: userId,

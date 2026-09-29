@@ -23,6 +23,7 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   product: "Product",
   estimate: "Estimate",
   discount_code: "Discount code",
+  mailbox_message: "Email",
 };
 
 export function notificationEntityLabel(type: NotificationEntityType): string {
@@ -73,6 +74,22 @@ export function notificationHref(
       return "/dashboard/estimates";
     case "lead":
       return "/dashboard";
+    case "mailbox_message": {
+      const accountId = String(item.metadata.accountId ?? "");
+      const folder = item.metadata.folder === "sent" ? "sent" : "inbox";
+      const uid = Number(item.metadata.uid);
+      if (!accountId || !Number.isInteger(uid) || uid < 1) {
+        return "/dashboard/messaging?tab=threads&view=email";
+      }
+      const params = new URLSearchParams({
+        tab: "threads",
+        view: "email",
+        accountId,
+        folder,
+        uid: String(uid),
+      });
+      return `/dashboard/messaging?${params.toString()}`;
+    }
     default:
       return null;
   }

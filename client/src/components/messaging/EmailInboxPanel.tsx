@@ -1,33 +1,34 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
+import EmailReplyComposer from "@/components/messaging/EmailReplyComposer";
+import EmailStaffTags from "@/components/messaging/EmailStaffTags";
 import {
   ApiError,
   EmailAccountItem,
   MailboxFolder,
   MailboxMessageDetail,
   MailboxMessageSummary,
+  MailboxReplyMode,
+  UserListItem,
   getEmailAccounts,
   getMailboxMessage,
   getMailboxMessages,
+  getUsers,
+  replyToMailboxMessage,
+  setMailboxAssignees,
+  updateEmailAccount,
 } from "@/lib/api";
+import { formatAddressList } from "@/lib/mailboxReply";
 
 type EmailInboxPanelProps = {
   token: string;
+  initialAccountId?: string;
+  initialFolder?: MailboxFolder;
+  initialUid?: number | null;
 };
-
-function formatAddress(
-  list: { name: string; address: string }[],
-): string {
-  if (list.length === 0) return "Unknown";
-  return list
-    .map((item) =>
-      item.name ? `${item.name} <${item.address}>` : item.address,
-    )
-    .join(", ");
-}
 
 function formatWhen(value: string | null): string {
   if (!value) return "";
@@ -56,11 +57,16 @@ function formatBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
+export default function EmailInboxPanel({
+  token,
+  initialAccountId = "",
+  initialFolder = "inbox",
+  initialUid = null,
+}: EmailInboxPanelProps) {
   const [accounts, setAccounts] = useState<EmailAccountItem[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [accountId, setAccountId] = useState("");
-  const [folder, setFolder] = useState<MailboxFolder>("inbox");
+  const [folder, setFolder] = useState<MailboxFolder>(initialFolder);
   const [messages, setMessages] = useState<MailboxMessageSummary[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -69,6 +75,38 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [listAttempt, setListAttempt] = useState(0);
+  const [staff, setStaff] = useState<UserListItem[]>([]);
+  const [taggingUid, setTaggingUid] = useState<number | null>(null);
+  const [savingAssigneeUid, setSavingAssigneeUid] = useState<number | null>(null);
+  const [assigneeError, setAssigneeError] = useState<string | null>(null);
+  const [composeMode, setComposeMode] = useState<MailboxReplyMode | null>(null);
+  const [sendingReply, setSendingReply] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [replyNotice, setReplyNotice] = useState<string | null>(null);
+  const [savingAutoReply, setSavingAutoReply] = useState(false);
+  const [autoReplyError, setAutoReplyError] = useState<string | null>(null);
+  const deepLinkRef = useRef({
+    accountId: initialAccountId,
+    folder: initialFolder,
+    uid: initialUid && initialUid > 0 ? initialUid : null,
+    done: !(initialUid && initialUid > 0 && initialAccountId),
+  });
+  const incomingLink =
+    initialAccountId && initialUid && initialUid > 0
+      ? `${initialAccountId}:${initialFolder}:${initialUid}`
+      : "";
+  const [appliedLink, setAppliedLink] = useState(incomingLink);
+  if (incomingLink && incomingLink !== appliedLink) {
+    setAppliedLink(incomingLink);
+    setAccountId(initialAccountId);
+    setFolder(initialFolder);
+    deepLinkRef.current = {
+      accountId: initialAccountId,
+      folder: initialFolder,
+      uid: initialUid,
+      done: false,
+    };
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -78,14 +116,33 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
         if (cancelled) return;
         const active = list.filter((account) => account.isActive);
         setAccounts(active);
+        const preferred = active.find(
+          (account) =>
+            account._id === initialAccountId && account.imapHost?.trim(),
+        );
         const firstConnected = active.find((account) => account.imapHost?.trim());
-        setAccountId(firstConnected?._id ?? active[0]?._id ?? "");
+        setAccountId(preferred?._id ?? firstConnected?._id ?? active[0]?._id ?? "");
       })
       .catch(() => {
         if (!cancelled) setAccounts([]);
       })
       .finally(() => {
         if (!cancelled) setLoadingAccounts(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, initialAccountId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getUsers(token)
+      .then(({ users }) => {
+        if (cancelled) return;
+        setStaff(users.filter((user) => user.userType !== "customer"));
+      })
+      .catch(() => {
+        if (!cancelled) setStaff([]);
       });
     return () => {
       cancelled = true;
@@ -113,9 +170,25 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
     setSelectedUid(null);
     setDetail(null);
     setDetailError(null);
+    setComposeMode(null);
+    setReplyNotice(null);
+    setTaggingUid(null);
     getMailboxMessages(token, accountId, folder)
       .then(({ messages: list }) => {
-        if (!cancelled) setMessages(list);
+        if (cancelled) return;
+        setMessages(list);
+        const link = deepLinkRef.current;
+        if (
+          !link.done &&
+          link.uid &&
+          accountId === link.accountId &&
+          folder === link.folder
+        ) {
+          if (list.some((message) => message.uid === link.uid)) {
+            setSelectedUid(link.uid);
+          }
+          link.done = true;
+        }
       })
       .catch((err) => {
         if (cancelled) return;
@@ -143,6 +216,7 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
     let cancelled = false;
     setLoadingDetail(true);
     setDetailError(null);
+    setComposeMode(null);
     getMailboxMessage(token, accountId, selectedUid, folder)
       .then(({ message }) => {
         if (!cancelled) setDetail(message);
@@ -161,6 +235,87 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
       cancelled = true;
     };
   }, [token, accountId, folder, selectedUid, mailboxReady]);
+
+  async function handleAssignees(uid: number, userIds: string[]) {
+    setSavingAssigneeUid(uid);
+    setAssigneeError(null);
+    try {
+      const result = await setMailboxAssignees(token, accountId, uid, {
+        folder,
+        userIds,
+      });
+      setMessages((current) =>
+        current.map((message) =>
+          message.uid === uid
+            ? {
+                ...message,
+                assignees: result.assignees,
+                messageKey: result.messageKey,
+              }
+            : message,
+        ),
+      );
+    } catch (err) {
+      setAssigneeError(
+        err instanceof ApiError ? err.message : "Could not update staff tags.",
+      );
+    } finally {
+      setSavingAssigneeUid(null);
+    }
+  }
+
+  async function handleSendReply(input: {
+    to: string[];
+    cc: string[];
+    bcc: string[];
+    subject: string;
+    html: string;
+  }) {
+    if (selectedUid == null || !composeMode) return;
+    setSendingReply(true);
+    setReplyError(null);
+    try {
+      const result = await replyToMailboxMessage(token, accountId, selectedUid, {
+        folder,
+        mode: composeMode,
+        ...input,
+      });
+      setComposeMode(null);
+      setReplyNotice(
+        result.savedToSent
+          ? "Email sent."
+          : "Email sent, but it could not be saved to the Sent folder.",
+      );
+    } catch (err) {
+      setReplyError(
+        err instanceof ApiError ? err.message : "Could not send this email.",
+      );
+    } finally {
+      setSendingReply(false);
+    }
+  }
+
+  async function handleAutoAcknowledge(enabled: boolean) {
+    if (!selectedAccount) return;
+    setSavingAutoReply(true);
+    setAutoReplyError(null);
+    try {
+      const { account } = await updateEmailAccount(token, selectedAccount._id, {
+        autoAcknowledge: enabled,
+      });
+      setAccounts((current) =>
+        current.map((item) => (item._id === account._id ? account : item)),
+      );
+    } catch (err) {
+      setAutoReplyError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not update automatic reply.",
+      );
+    } finally {
+      setSavingAutoReply(false);
+    }
+  }
 
   const disconnected = accounts.filter((account) => !account.imapHost?.trim());
 
@@ -184,7 +339,22 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
                 {value === "inbox" ? "Inbox" : "Sent"}
               </button>
             );
-          })}
+            })}
+          <label
+            className="ml-1 flex items-center gap-1.5 text-[11px] text-neutral-600"
+            title="When this is on, new emails get a short note that we received them and someone will respond soon. Mail already in the inbox is left alone."
+          >
+            <input
+              type="checkbox"
+              className="accent-brand-orange"
+              checked={Boolean(selectedAccount?.autoAcknowledge)}
+              disabled={!selectedAccount?.imapHost?.trim() || savingAutoReply}
+              onChange={(event) =>
+                void handleAutoAcknowledge(event.target.checked)
+              }
+            />
+            Automatic reply
+          </label>
         </div>
         {accounts.length > 0 ? (
           <select
@@ -205,6 +375,11 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
           </select>
         ) : null}
       </div>
+      {autoReplyError ? (
+        <p className="border-b border-[var(--staff-border)] px-3 py-1.5 text-[11px] text-red-700">
+          {autoReplyError}
+        </p>
+      ) : null}
 
       {loadingAccounts ? (
         <div className="flex items-center gap-2 p-4 text-xs text-neutral-500">
@@ -246,7 +421,7 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
           ) : null}
           <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[280px_1fr]">
             <div
-              className={`max-h-[520px] overflow-y-auto border-[var(--staff-border)] md:border-r ${
+              className={`max-h-[640px] overflow-y-auto border-[var(--staff-border)] md:border-r ${
                 selectedUid != null ? "hidden md:block" : "block"
               }`}
             >
@@ -276,17 +451,22 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
                     const active = selectedUid === message.uid;
                     const who =
                       folder === "sent"
-                        ? formatAddress(message.to)
-                        : formatAddress(message.from);
+                        ? formatAddressList(message.to)
+                        : formatAddressList(message.from);
                     return (
-                      <li key={message.uid}>
+                      <li
+                        key={message.uid}
+                        className={`border-b border-[var(--staff-border)] ${
+                          active
+                            ? "border-l-2 border-l-brand-orange bg-orange-50"
+                            : ""
+                        }`}
+                      >
                         <button
                           type="button"
                           onClick={() => setSelectedUid(message.uid)}
-                          className={`w-full border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
-                            active
-                              ? "border-l-2 border-l-brand-orange bg-orange-50"
-                              : "hover:bg-white"
+                          className={`w-full px-3 pt-2.5 text-left ${
+                            active ? "" : "hover:bg-white"
                           }`}
                         >
                           <div className="flex items-baseline justify-between gap-2">
@@ -314,6 +494,21 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
                             </p>
                           ) : null}
                         </button>
+                        <EmailStaffTags
+                          staff={staff}
+                          assigneeIds={message.assignees ?? []}
+                          open={taggingUid === message.uid}
+                          saving={savingAssigneeUid === message.uid}
+                          error={taggingUid === message.uid ? assigneeError : null}
+                          onToggleOpen={() =>
+                            setTaggingUid((current) =>
+                              current === message.uid ? null : message.uid,
+                            )
+                          }
+                          onChange={(userIds) =>
+                            void handleAssignees(message.uid, userIds)
+                          }
+                        />
                       </li>
                     );
                   })}
@@ -322,7 +517,7 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
             </div>
 
             <div
-              className={`min-h-[280px] ${
+              className={`min-h-[280px] max-h-[640px] overflow-y-auto ${
                 selectedUid == null ? "hidden md:block" : "block"
               }`}
             >
@@ -351,11 +546,16 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
                       {detail.subject}
                     </h3>
                     <p className="mt-1 text-xs text-neutral-600">
-                      From {formatAddress(detail.from)}
+                      From {formatAddressList(detail.from)}
                     </p>
                     <p className="text-xs text-neutral-600">
-                      To {formatAddress(detail.to)}
+                      To {formatAddressList(detail.to)}
                     </p>
+                    {detail.cc?.length ? (
+                      <p className="text-xs text-neutral-600">
+                        Cc {formatAddressList(detail.cc)}
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-[11px] text-neutral-400">
                       {formatWhen(detail.date)}
                     </p>
@@ -376,7 +576,7 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
                         title={detail.subject || "Email"}
                         sandbox=""
                         srcDoc={detail.html}
-                        className="h-[480px] w-full border-0 bg-white"
+                        className="h-[360px] w-full border-0 bg-white"
                       />
                     ) : (
                       <pre className="whitespace-pre-wrap p-4 font-sans text-sm text-neutral-800">
@@ -384,6 +584,53 @@ export default function EmailInboxPanel({ token }: EmailInboxPanelProps) {
                       </pre>
                     )}
                   </div>
+                  {replyNotice ? (
+                    <p className="border-t border-[var(--staff-border)] px-4 py-2 text-xs text-neutral-600">
+                      {replyNotice}
+                    </p>
+                  ) : null}
+                  <div className="flex gap-2 border-t border-[var(--staff-border)] px-4 py-2">
+                    {(
+                      [
+                        ["reply", "Reply"],
+                        ["replyAll", "Reply all"],
+                        ["forward", "Forward"],
+                      ] as const
+                    ).map(([mode, label]) => {
+                      const active = composeMode === mode;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => {
+                            setReplyError(null);
+                            setReplyNotice(null);
+                            setComposeMode(active ? null : mode);
+                          }}
+                          className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+                            active
+                              ? "bg-brand-dark text-white"
+                              : "border border-[var(--staff-border)] text-neutral-700 hover:bg-white"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {composeMode ? (
+                    <EmailReplyComposer
+                      key={`${detail.uid}-${composeMode}`}
+                      mode={composeMode}
+                      folder={folder}
+                      detail={detail}
+                      ownAddress={selectedAccount?.fromEmail ?? ""}
+                      sending={sendingReply}
+                      error={replyError}
+                      onCancel={() => setComposeMode(null)}
+                      onSend={(input) => void handleSendReply(input)}
+                    />
+                  ) : null}
                 </article>
               ) : null}
             </div>

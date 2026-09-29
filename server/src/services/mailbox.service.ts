@@ -20,9 +20,11 @@ export type MailboxMessageSummary = {
   subject: string;
   from: MailboxAddress[];
   to: MailboxAddress[];
+  cc: MailboxAddress[];
   date: string | null;
   seen: boolean;
   snippet: string;
+  messageId: string;
 };
 
 export type MailboxAttachmentMeta = {
@@ -35,6 +37,8 @@ export type MailboxMessageDetail = MailboxMessageSummary & {
   text: string;
   html: string;
   attachments: MailboxAttachmentMeta[];
+  inReplyTo: string;
+  references: string[];
 };
 
 export class MailboxError extends Error {
@@ -273,8 +277,10 @@ function toSummary(msg: {
   flags?: Set<string>;
   envelope?: {
     subject?: string;
+    messageId?: string;
     from?: { name?: string; address?: string }[];
     to?: { name?: string; address?: string }[];
+    cc?: { name?: string; address?: string }[];
     date?: Date | string;
   };
   internalDate?: Date | string;
@@ -287,10 +293,29 @@ function toSummary(msg: {
     subject: envelope?.subject?.trim() || "(no subject)",
     from: addresses(envelope?.from),
     to: addresses(envelope?.to),
+    cc: addresses(envelope?.cc),
     date: messageDate(envelope?.date, msg.internalDate),
     seen: msg.flags?.has("\\Seen") ?? false,
     snippet: text,
+    messageId: envelope?.messageId?.trim() || "",
   };
+}
+
+function referenceList(value: string | string[] | undefined): string[] {
+  if (!value) return [];
+  const list = Array.isArray(value) ? value : [value];
+  return list.map((item) => item.trim()).filter(Boolean);
+}
+
+function parserAddresses(
+  value:
+    | { value?: { name?: string; address?: string }[] }
+    | { value?: { name?: string; address?: string }[] }[]
+    | undefined,
+): MailboxAddress[] {
+  if (!value) return [];
+  const objects = Array.isArray(value) ? value : [value];
+  return objects.flatMap((item) => addresses(item.value));
 }
 
 export async function testMailboxConnection(
@@ -335,6 +360,19 @@ export async function listMailboxMessages(
   });
 }
 
+export async function appendToSentFolder(
+  account: IEmailAccount,
+  raw: Buffer,
+): Promise<void> {
+  await withMailboxClient(account, async (client) => {
+    const path = await resolveFolderPath(client, "sent");
+    const appended = await client.append(path, raw, ["\\Seen"]);
+    if (!appended) {
+      throw new MailboxError("Could not save a copy to the Sent folder.", 502);
+    }
+  });
+}
+
 export async function getMailboxMessage(
   account: IEmailAccount,
   folder: MailboxFolder,
@@ -362,8 +400,13 @@ export async function getMailboxMessage(
       const summary = toSummary(msg);
       const text = (parsed.text || "").slice(0, MAX_TEXT);
       const rawHtml = typeof parsed.html === "string" ? parsed.html : "";
+      const parsedCc = parserAddresses(parsed.cc);
       return {
         ...summary,
+        cc: parsedCc.length > 0 ? parsedCc : summary.cc,
+        messageId: parsed.messageId?.trim() || summary.messageId,
+        inReplyTo: parsed.inReplyTo?.trim() || msg.envelope?.inReplyTo?.trim() || "",
+        references: referenceList(parsed.references),
         snippet: text.replace(/\s+/g, " ").trim().slice(0, 160) || summary.snippet,
         text,
         html: rawHtml

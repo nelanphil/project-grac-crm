@@ -33,6 +33,7 @@ export const updateEmailAccountSchema = z.object({
   imapPort: z.coerce.number().int().min(1).max(65535).optional(),
   imapSecure: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  autoAcknowledge: z.boolean().optional(),
   roles: z.array(emailAccountRoleSchema).optional(),
 });
 

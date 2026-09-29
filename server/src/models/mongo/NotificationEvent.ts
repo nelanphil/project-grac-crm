@@ -22,6 +22,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "product",
   "estimate",
   "discount_code",
+  "mailbox_message",
 ] as const;
 
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPES)[number];
@@ -43,6 +44,7 @@ export const NOTIFICATION_ACTIONS = [
   "deleted",
   "merged",
   "renewed",
+  "assigned",
 ] as const;
 
 export type NotificationAction = (typeof NOTIFICATION_ACTIONS)[number];
@@ -59,6 +61,7 @@ export interface INotificationEvent extends Document {
   entityId: string;
   summary: string;
   metadata: Record<string, unknown>;
+  recipientUserIds: Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -97,6 +100,11 @@ const notificationEventSchema = new Schema<INotificationEvent>(
     entityId: { type: String, required: true },
     summary: { type: String, required: true, trim: true },
     metadata: { type: Schema.Types.Mixed, default: {} },
+    recipientUserIds: {
+      type: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      default: [],
+      index: true,
+    },
   },
   { timestamps: true }
 );

@@ -23,6 +23,7 @@ export interface LogNotificationInput {
   actorType?: NotificationActorType;
   actorUserId?: string | null;
   actorName?: string | null;
+  recipientUserIds?: Array<Types.ObjectId | string>;
   metadata?: Record<string, unknown>;
 }
 
@@ -109,6 +110,9 @@ export async function logNotification(input: LogNotificationInput): Promise<void
       entityId: String(input.entityId),
       summary: input.summary.trim(),
       metadata: input.metadata ?? {},
+      recipientUserIds: (input.recipientUserIds ?? [])
+        .map((id) => toObjectId(id))
+        .filter((id): id is Types.ObjectId => id !== null),
     });
   } catch (err) {
     console.error("[notifications] failed to log event", err);
@@ -133,7 +137,7 @@ async function resolveOwnerCustomerRefs(
   return customers.map((c) => c._id as Types.ObjectId);
 }
 
-export async function buildVisibilityFilter(
+async function roleVisibilityFilter(
   user: AuthUserLike
 ): Promise<FilterQuery<INotificationEvent>> {
   if (isOrgAdminRole(user)) {
@@ -165,6 +169,16 @@ export async function buildVisibilityFilter(
 
   // manager, tech, agent, and unknown non-customer roles: operational CRM only
   return { entityType: { $in: OPERATIONAL_ENTITY_TYPES } };
+}
+
+export async function buildVisibilityFilter(
+  user: AuthUserLike
+): Promise<FilterQuery<INotificationEvent>> {
+  const base = await roleVisibilityFilter(user);
+  if (isOrgAdminRole(user)) return base;
+  const userId = toObjectId(user.id);
+  if (!userId) return base;
+  return { $or: [base, { recipientUserIds: userId }] };
 }
 
 function serializeEvent(

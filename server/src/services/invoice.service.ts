@@ -9,6 +9,7 @@ import {
   parseDateOnly,
   startOfDay,
 } from "../utils/contractDates";
+import { promoteTemporaryContract } from "../utils/temporaryContractOffer";
 import { SCHEDULE_TIMEZONE } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
 import { PaymentProviderName } from "../models/mongo/PaymentProviderAccount";
@@ -144,7 +145,10 @@ export async function markInvoicePaid(params: {
     invoice.contractRef
   ) {
     const contract = await Contract.findById(invoice.contractRef);
-    if (contract && invoice.sourceType === "contract_renewal") {
+    if (contract && invoice.sourceType === "contract_initial" && contract.temporary) {
+      promoteTemporaryContract(contract, invoice.paidAt ?? new Date());
+      await contract.save();
+    } else if (contract && invoice.sourceType === "contract_renewal") {
       const durationMonths =
         typeof invoice.metadata?.durationMonths === "number"
           ? invoice.metadata.durationMonths

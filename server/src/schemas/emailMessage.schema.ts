@@ -3,7 +3,13 @@ import {
   EMAIL_BODY_MAX,
   EMAIL_SUBJECT_MAX,
   emailChromeSchema,
+  offerContractTemplateIdSchema,
 } from "./messageTemplate.schema";
+
+const offerContractOverrideSchema = z.object({
+  contactId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/),
+  contractTemplateId: offerContractTemplateIdSchema,
+});
 
 export const emailPaymentLinkAvailabilitySchema = z.object({
   customerIds: z.array(z.string().trim().min(1)).min(1).max(200),
@@ -18,6 +24,7 @@ export const emailMessagePreviewSchema = z
     renewalYear: z.number().int().min(1970).max(2100).optional(),
     renewalMonth: z.number().int().min(1).max(12).optional(),
     includePaymentLink: z.boolean().optional(),
+    offerContractTemplateId: offerContractTemplateIdSchema.optional(),
   })
   .refine(
     (data) =>
@@ -45,6 +52,11 @@ const emailMessageSendFields = z.object({
   renewalYear: z.number().int().min(1970).max(2100).optional(),
   renewalMonth: z.number().int().min(1).max(12).optional(),
   includePaymentLink: z.boolean().optional(),
+  offerContractTemplateId: offerContractTemplateIdSchema.optional(),
+  offerContractOverrides: z
+    .array(offerContractOverrideSchema)
+    .max(200)
+    .optional(),
 });
 
 function refineSendContent(

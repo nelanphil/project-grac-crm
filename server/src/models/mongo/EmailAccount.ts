@@ -20,6 +20,10 @@ export interface IEmailAccount extends Document {
   imapPort: number;
   imapSecure: boolean;
   isActive: boolean;
+  /** When true, new inbox mail gets a short receipt reply. */
+  autoAcknowledge: boolean;
+  /** Receipts are only sent for mail that arrives after this time. */
+  autoAcknowledgeEnabledAt: Date | null;
   roles: EmailAccountRole[];
   createdAt: Date;
   updatedAt: Date;
@@ -84,6 +88,14 @@ const emailAccountSchema = new Schema<IEmailAccount>(
       type: Boolean,
       default: true,
       index: true,
+    },
+    autoAcknowledge: {
+      type: Boolean,
+      default: false,
+    },
+    autoAcknowledgeEnabledAt: {
+      type: Date,
+      default: null,
     },
     roles: {
       type: [String],

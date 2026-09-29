@@ -573,6 +573,7 @@ export async function listCustomers(
     if (legacyIds.length > 0) {
       const contracts = await Contract.find({
         customerId: { $in: legacyIds },
+        temporary: { $ne: true },
       })
         .select("customerId renewalDueDate templateId contractType")
         .lean();
@@ -1739,6 +1740,7 @@ export async function getCustomerById(
         await Contract.updateMany(
           {
             customerId: customer.legacyId,
+            temporary: { $ne: true },
             $or: [{ addressRef: null }, { addressRef: { $exists: false } }],
           },
           { $set: { addressRef: addressId, customerRef: customer._id } },
@@ -2788,12 +2790,18 @@ export async function getMergePreview(
       WorkOrder.find(customerOwnedFilter(source._id, source.legacyId))
         .select("_id addressRef")
         .lean(),
-      Contract.find(customerOwnedFilter(survivor._id, survivor.legacyId))
+      Contract.find({
+        ...customerOwnedFilter(survivor._id, survivor.legacyId),
+        temporary: { $ne: true },
+      })
         .select(
           "_id description contractType templateId renewalDueDate addressRef equipmentRef",
         )
         .lean(),
-      Contract.find(customerOwnedFilter(source._id, source.legacyId))
+      Contract.find({
+        ...customerOwnedFilter(source._id, source.legacyId),
+        temporary: { $ne: true },
+      })
         .select(
           "_id description contractType templateId renewalDueDate addressRef equipmentRef",
         )
@@ -3159,7 +3167,12 @@ export async function mergeCustomers(
         ],
       };
       await WorkOrder.updateMany(untaggedOnSource, { $set: tagFields });
-      await Contract.updateMany(untaggedOnSource, { $set: tagFields });
+      await Contract.updateMany(
+        {
+          $and: [...untaggedOnSource.$and, { temporary: { $ne: true } }],
+        },
+        { $set: tagFields },
+      );
     }
 
     // Source addresses become non-primary on survivor (survivor keeps its primary)

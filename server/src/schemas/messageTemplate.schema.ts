@@ -13,6 +13,12 @@ export const emailChromeSchema = z.object({
   unsubscribeNote: z.string().max(UNSUBSCRIBE_NOTE_MAX).optional(),
 });
 
+export const offerContractTemplateIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-fA-F0-9]{24}$/, "Invalid contract template")
+  .nullable();
+
 function refineBodyMax(
   data: { templateType?: "sms" | "email"; body?: string },
   ctx: z.RefinementCtx,
@@ -36,6 +42,7 @@ export const createMessageTemplateSchema = z
     subject: z.string().max(EMAIL_SUBJECT_MAX).optional().default(""),
     templateType: z.enum(MESSAGE_TEMPLATE_TYPES).optional().default("sms"),
     emailChrome: emailChromeSchema.optional(),
+    offerContractTemplateId: offerContractTemplateIdSchema.optional(),
     slug: z
       .string()
       .trim()
@@ -53,6 +60,7 @@ export const updateMessageTemplateSchema = z
     subject: z.string().max(EMAIL_SUBJECT_MAX).optional(),
     templateType: z.enum(MESSAGE_TEMPLATE_TYPES).optional(),
     emailChrome: emailChromeSchema.optional(),
+    offerContractTemplateId: offerContractTemplateIdSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (data.body === undefined) return;

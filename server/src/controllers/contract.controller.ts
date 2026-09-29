@@ -18,6 +18,7 @@ import {
   parseDateOnly,
   renewalDueDateFilterForMonth,
 } from "../utils/contractDates";
+import { visibleContractQuery } from "../utils/temporaryContractOffer";
 import {
   actorFromRequest,
   customerDisplayName,
@@ -429,7 +430,7 @@ export async function getContracts(
   res: Response,
 ): Promise<void> {
   try {
-    const filter: Record<string, unknown> = {};
+    const filter: Record<string, unknown> = visibleContractQuery();
 
     if (req.query.customerId) {
       const id = parseInt(req.query.customerId as string, 10);

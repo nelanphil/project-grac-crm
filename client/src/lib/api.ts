@@ -3614,6 +3614,7 @@ export interface EmailAccountItem {
   imapPort: number;
   imapSecure: boolean;
   isActive: boolean;
+  autoAcknowledge?: boolean;
   roles: EmailAccountRole[];
   hasPassword: boolean;
   createdAt: string;
@@ -3633,6 +3634,7 @@ export interface EmailAccountInput {
   imapPort?: number;
   imapSecure?: boolean;
   isActive?: boolean;
+  autoAcknowledge?: boolean;
   roles?: EmailAccountRole[];
 }
 
@@ -3730,9 +3732,13 @@ export interface MailboxMessageSummary {
   subject: string;
   from: MailboxAddress[];
   to: MailboxAddress[];
+  cc: MailboxAddress[];
   date: string | null;
   seen: boolean;
   snippet: string;
+  messageId: string;
+  messageKey: string;
+  assignees: string[];
 }
 
 export interface MailboxAttachmentMeta {
@@ -3741,10 +3747,14 @@ export interface MailboxAttachmentMeta {
   contentType: string;
 }
 
+export type MailboxReplyMode = "reply" | "replyAll" | "forward";
+
 export interface MailboxMessageDetail extends MailboxMessageSummary {
   text: string;
   html: string;
   attachments: MailboxAttachmentMeta[];
+  inReplyTo: string;
+  references: string[];
 }
 
 export async function getMailboxMessages(
@@ -3778,6 +3788,46 @@ export async function getMailboxMessage(
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function replyToMailboxMessage(
+  token: string,
+  accountId: string,
+  uid: number,
+  body: {
+    folder: MailboxFolder;
+    mode: MailboxReplyMode;
+    to: string[];
+    cc: string[];
+    bcc: string[];
+    subject: string;
+    html: string;
+  },
+): Promise<{ sent: true; savedToSent: boolean }> {
+  return authRequest<{ sent: true; savedToSent: boolean }>(
+    `/email-mailbox/${accountId}/messages/${uid}/reply`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function setMailboxAssignees(
+  token: string,
+  accountId: string,
+  uid: number,
+  body: { folder: MailboxFolder; userIds: string[] },
+): Promise<{ assignees: string[]; messageKey: string }> {
+  return authRequest<{ assignees: string[]; messageKey: string }>(
+    `/email-mailbox/${accountId}/messages/${uid}/assignees`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
     },
   );
 }
@@ -4303,6 +4353,7 @@ export interface MessageTemplateItem {
   subject: string;
   templateType: MessageTemplateType;
   emailChrome?: EmailChrome;
+  offerContractTemplateId?: string | null;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -4314,6 +4365,7 @@ export interface MessageTemplateInput {
   subject?: string;
   templateType?: MessageTemplateType;
   emailChrome?: EmailChrome;
+  offerContractTemplateId?: string | null;
   slug?: string;
 }
 
@@ -4957,14 +5009,16 @@ export type NotificationEntityType =
   | "invoice"
   | "product"
   | "estimate"
-  | "discount_code";
+  | "discount_code"
+  | "mailbox_message";
 
 export type NotificationAction =
   | "created"
   | "updated"
   | "deleted"
   | "merged"
-  | "renewed";
+  | "renewed"
+  | "assigned";
 
 export interface NotificationItem {
   id: string;
@@ -5152,6 +5206,7 @@ export async function previewEmailMessage(
     renewalYear?: number;
     renewalMonth?: number;
     includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
   },
 ): Promise<EmailPreviewResult> {
   return authRequest<EmailPreviewResult>("/email-messages/preview", {
@@ -5176,6 +5231,11 @@ export async function sendEmailMessages(
     renewalYear?: number;
     renewalMonth?: number;
     includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
+    offerContractOverrides?: {
+      contactId: string;
+      contractTemplateId: string | null;
+    }[];
   },
 ): Promise<EmailSendResponse> {
   return authRequest<EmailSendResponse>("/email-messages/send", {
@@ -5233,6 +5293,11 @@ export async function scheduleEmailMessages(
     renewalYear?: number;
     renewalMonth?: number;
     includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
+    offerContractOverrides?: {
+      contactId: string;
+      contractTemplateId: string | null;
+    }[];
     scheduledAt: string;
   },
 ): Promise<{ scheduled: ScheduledEmailItem }> {
