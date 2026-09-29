@@ -26,7 +26,9 @@ import {
   getScheduleQueue,
   getScheduleRoute,
   getScheduleStaff,
+  getScheduleStartOptions,
   placeScheduleWorkOrder,
+  ScheduleStartOptions,
   ScheduleStaffMember,
   ScheduleSuggestion,
   suggestScheduleAssignee,
@@ -41,6 +43,7 @@ import {
   daysInMonth,
   formatAddressLine,
   formatLocalDate,
+  formatLocalTime,
   formatMonthYear,
   formatPrettyDate,
   formatWeekdayDate,
@@ -79,6 +82,51 @@ function dropMinutes(event: DragEndEvent): number | null {
   const ratio = Math.max(0, Math.min(0.999, x / Math.max(1, over.rect.width)));
   const total = (BOARD_HOUR_END - BOARD_HOUR_START) * 60;
   return Math.round((BOARD_HOUR_START * 60 + ratio * total) / 15) * 15;
+}
+
+function startTimeHint(opts: ScheduleStartOptions): string | null {
+  if (opts.warning) return opts.warning;
+  if (opts.driveMinutes == null || !opts.driveFromLabel) return null;
+  return `${opts.driveMinutes} min from ${opts.driveFromLabel}`;
+}
+
+function laterStartChoices(opts: {
+  earliestIso: string;
+  durationMinutes: number;
+  windowEndIso: string | null;
+  date: string;
+  currentIso: string | null;
+}): string[] {
+  const earliest = new Date(opts.earliestIso);
+  if (Number.isNaN(earliest.getTime())) return [];
+  const durationMs = Math.max(15, opts.durationMinutes) * 60_000;
+  const fallbackEnd = localDateTimeToIso(
+    opts.date,
+    `${String(BOARD_HOUR_END).padStart(2, "0")}:00`,
+  );
+  const cap = new Date(opts.windowEndIso ?? fallbackEnd);
+  const capMs = Number.isNaN(cap.getTime())
+    ? Number.POSITIVE_INFINITY
+    : cap.getTime();
+  const times = [earliest.getTime()];
+  const quarter = 15 * 60_000;
+  let cursor = Math.ceil((earliest.getTime() + 1) / quarter) * quarter;
+  while (times.length < 96 && cursor + durationMs <= capMs) {
+    times.push(cursor);
+    cursor += quarter;
+  }
+  if (opts.currentIso) {
+    const current = new Date(opts.currentIso).getTime();
+    if (
+      !Number.isNaN(current) &&
+      current >= earliest.getTime() &&
+      !times.includes(current)
+    ) {
+      times.push(current);
+    }
+  }
+  times.sort((a, b) => a - b);
+  return times.map((ms) => new Date(ms).toISOString());
 }
 
 function uniqueJobs(...lists: WorkOrderListItem[][]): WorkOrderListItem[] {
@@ -538,6 +586,11 @@ export default function CalendarTab({
     useState<WorkOrderListItem | null>(null);
   const [editingJob, setEditingJob] = useState<WorkOrderListItem | null>(null);
   const [durationDraft, setDurationDraft] = useState(60);
+  const [startOptions, setStartOptions] = useState<ScheduleStartOptions | null>(
+    null,
+  );
+  const [startOptionsLoading, setStartOptionsLoading] = useState(false);
+  const [startDraft, setStartDraft] = useState("");
   const [saving, setSaving] = useState(false);
 
   const [suggestions, setSuggestions] = useState<ScheduleSuggestion[] | null>(
@@ -551,6 +604,78 @@ export default function CalendarTab({
   >(null);
   const [routePolyline, setRoutePolyline] = useState<string | undefined>();
   const [routeLoading, setRouteLoading] = useState(false);
+
+  const editingId = editingJob?._id ?? null;
+  const editingStart = editingJob?.scheduledStart ?? null;
+  const canEditStart = Boolean(
+    dispatcher &&
+      canWrite &&
+      editingId &&
+      editingStart &&
+      editingJob?.assignedUserRef,
+  );
+
+  useEffect(() => {
+    if (!token || !canEditStart || !editingId || !editingStart) {
+      setStartOptions(null);
+      setStartDraft("");
+      setStartOptionsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setStartOptionsLoading(true);
+    setStartOptions(null);
+    void getScheduleStartOptions(token, editingId)
+      .then((opts) => {
+        if (cancelled) return;
+        setStartOptions(opts);
+        if (opts.isFirst) {
+          setStartDraft(formatLocalTime(new Date(editingStart)));
+          return;
+        }
+        const current = new Date(editingStart);
+        const earliest = opts.earliestStart
+          ? new Date(opts.earliestStart)
+          : current;
+        setStartDraft(
+          !Number.isNaN(current.getTime()) &&
+            current.getTime() >= earliest.getTime()
+            ? current.toISOString()
+            : earliest.toISOString(),
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setStartOptions(null);
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Failed to load start times.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setStartOptionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, canEditStart, editingId, editingStart]);
+
+  const laterChoices = useMemo(() => {
+    if (!startOptions || startOptions.isFirst || !startOptions.earliestStart) {
+      return [];
+    }
+    return laterStartChoices({
+      earliestIso: startOptions.earliestStart,
+      durationMinutes: durationDraft,
+      windowEndIso: startOptions.windowEnd,
+      date: startOptions.date,
+      currentIso: editingStart,
+    });
+  }, [startOptions, durationDraft, editingStart]);
+  const selectedLaterStart = laterChoices.includes(startDraft)
+    ? startDraft
+    : (laterChoices[0] ?? "");
 
   const weekStart = startOfWeekSunday(anchorDate);
   const weekEnd = addDays(weekStart, 6);
@@ -856,11 +981,30 @@ export default function CalendarTab({
     if (!token || !editingJob) return;
     setSaving(true);
     setWarning(null);
+    setError(null);
     try {
-      const updated = await updateWorkOrder(token, editingJob._id, {
-        estimatedMinutes: durationDraft,
-      });
-      if (updated.warnings?.length) setWarning(updated.warnings.join(" "));
+      if (canEditStart && startOptions && editingJob.assignedUserRef) {
+        const scheduledStart = startOptions.isFirst
+          ? localDateTimeToIso(startOptions.date, startDraft)
+          : selectedLaterStart;
+        if (!scheduledStart) {
+          setError("Choose a start time.");
+          return;
+        }
+        const placed = await placeScheduleWorkOrder(token, {
+          workOrderId: editingJob._id,
+          assignedUserRef: editingJob.assignedUserRef,
+          date: startOptions.date,
+          scheduledStart,
+          estimatedMinutes: durationDraft,
+        });
+        if (placed.warnings?.length) setWarning(placed.warnings.join(" "));
+      } else {
+        const updated = await updateWorkOrder(token, editingJob._id, {
+          estimatedMinutes: durationDraft,
+        });
+        if (updated.warnings?.length) setWarning(updated.warnings.join(" "));
+      }
       setEditingJob(null);
       await load();
     } catch (err) {
@@ -1159,6 +1303,43 @@ export default function CalendarTab({
                 View
               </Link>
             ) : null}
+            {canEditStart && (
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-brand-dark">
+                  Start time
+                </label>
+                {startOptionsLoading ? (
+                  <p className="mt-1 text-sm text-neutral-400">
+                    Loading start times…
+                  </p>
+                ) : startOptions?.isFirst ? (
+                  <input
+                    type="time"
+                    step={900}
+                    value={startDraft}
+                    onChange={(e) => setStartDraft(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
+                  />
+                ) : startOptions ? (
+                  <select
+                    value={selectedLaterStart}
+                    onChange={(e) => setStartDraft(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
+                  >
+                    {laterChoices.map((iso) => (
+                      <option key={iso} value={iso}>
+                        {formatLocalTime(new Date(iso))}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                {startOptions && startTimeHint(startOptions) ? (
+                  <p className="mt-1 text-xs text-neutral-500">
+                    {startTimeHint(startOptions)}
+                  </p>
+                ) : null}
+              </div>
+            )}
             <label className="mt-4 block text-sm font-medium text-brand-dark">
               Estimated time (minutes)
             </label>
@@ -1191,7 +1372,15 @@ export default function CalendarTab({
               {canWrite && (
                 <button
                   type="button"
-                  disabled={saving}
+                  disabled={
+                    saving ||
+                    (canEditStart &&
+                      (startOptionsLoading ||
+                        !startOptions ||
+                        (startOptions.isFirst
+                          ? !startDraft
+                          : !selectedLaterStart)))
+                  }
                   onClick={() => void saveDuration()}
                   className="btn-primary px-4 py-1.5 text-sm disabled:opacity-60"
                 >

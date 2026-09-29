@@ -2012,6 +2012,29 @@ export async function suggestScheduleAssignee(
   });
 }
 
+export interface ScheduleStartOptions {
+  isFirst: boolean;
+  earliestStart: string | null;
+  driveMinutes: number | null;
+  driveFromLabel: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  warning: string | null;
+  date: string;
+  assignedUserRef: string;
+}
+
+export async function getScheduleStartOptions(
+  token: string,
+  workOrderId: string,
+): Promise<ScheduleStartOptions> {
+  const params = new URLSearchParams({ workOrderId });
+  return authRequest(`/schedule/start-options?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export async function placeScheduleWorkOrder(
   token: string,
   data: {
@@ -2019,6 +2042,7 @@ export async function placeScheduleWorkOrder(
     assignedUserRef: string;
     date: string;
     scheduledStart: string;
+    estimatedMinutes?: number;
   },
 ): Promise<{ workOrders: WorkOrderListItem[]; warnings: string[] }> {
   return authRequest(`/schedule/place`, {

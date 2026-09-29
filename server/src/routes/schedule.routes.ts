@@ -10,6 +10,7 @@ import {
   getScheduleTechnicians,
   postScheduleSuggest,
   postSchedulePlace,
+  getScheduleStartOptions,
   postScheduleGeocodeMissing,
   getScheduleRoute,
 } from "../controllers/schedule.controller";
@@ -36,6 +37,12 @@ router.post("/suggest", requirePermission("jobs:write"), (req, res: Response) =>
 
 router.post("/place", requirePermission("jobs:write"), (req, res: Response) =>
   postSchedulePlace(req as AuthRequest, res),
+);
+
+router.get(
+  "/start-options",
+  requirePermission("jobs:read"),
+  (req, res: Response) => getScheduleStartOptions(req as AuthRequest, res),
 );
 
 router.get("/route", requirePermission("jobs:read"), (req, res: Response) =>

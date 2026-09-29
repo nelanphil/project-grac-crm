@@ -12,6 +12,7 @@ import {
   staffDisplayName,
   suggestAssignees,
   placeWorkOrder,
+  startOptionsForWorkOrder,
   toPublicStaff,
   enrichScheduleWorkOrders,
   rangeUtc,
@@ -32,6 +33,7 @@ const placeSchema = z.object({
   assignedUserRef: z.string().min(1),
   date: z.string().regex(localDateRe),
   scheduledStart: z.string().min(1),
+  estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
 });
 
 export async function getScheduleQueue(
@@ -259,6 +261,7 @@ export async function postSchedulePlace(
       assignedUserRef: parsed.data.assignedUserRef,
       date: parsed.data.date,
       scheduledStart,
+      estimatedMinutes: parsed.data.estimatedMinutes,
     });
     res.json(result);
   } catch (err) {
@@ -269,6 +272,40 @@ export async function postSchedulePlace(
     }
     console.error("POST /schedule/place error:", err);
     res.status(500).json({ message: "Failed to place work order" });
+  }
+}
+
+export async function getScheduleStartOptions(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isDispatcherRole(req.user)) {
+      res.status(403).json({ message: "Insufficient role" });
+      return;
+    }
+    if (!req.user?.permissions.includes("jobs:read")) {
+      res.status(403).json({ message: "Missing permission: jobs:read" });
+      return;
+    }
+
+    const workOrderId =
+      typeof req.query.workOrderId === "string" ? req.query.workOrderId : "";
+    if (!workOrderId) {
+      res.status(400).json({ message: "workOrderId is required" });
+      return;
+    }
+
+    const result = await startOptionsForWorkOrder(workOrderId);
+    res.json(result);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    if (status !== 500) {
+      res.status(status).json({ message: (err as Error).message });
+      return;
+    }
+    console.error("GET /schedule/start-options error:", err);
+    res.status(500).json({ message: "Failed to load start times" });
   }
 }
 

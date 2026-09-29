@@ -989,11 +989,147 @@ async function coordsByAddressId(
   return coords;
 }
 
+export type ScheduleStartOptions = {
+  isFirst: boolean;
+  earliestStart: string | null;
+  driveMinutes: number | null;
+  driveFromLabel: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  warning: string | null;
+  date: string;
+  assignedUserRef: string;
+};
+
+export async function startOptionsForWorkOrder(
+  workOrderId: string,
+): Promise<ScheduleStartOptions> {
+  if (!mongoose.Types.ObjectId.isValid(workOrderId)) {
+    throw Object.assign(new Error("Invalid workOrderId"), { status: 400 });
+  }
+
+  const job = await WorkOrder.findById(workOrderId);
+  if (!job) {
+    throw Object.assign(new Error("Work order not found"), { status: 404 });
+  }
+  if (!job.scheduledStart) {
+    throw Object.assign(new Error("Work order is not scheduled"), { status: 400 });
+  }
+  if (!job.assignedUserRef) {
+    throw Object.assign(new Error("Work order is not assigned"), { status: 400 });
+  }
+
+  const assignee = await User.findOne({
+    _id: job.assignedUserRef,
+    ...activeUserFilter,
+  }).select("homeLocation weeklyHours scheduleExceptions");
+  if (!assignee) {
+    throw Object.assign(new Error("Assigned user not found"), { status: 400 });
+  }
+
+  const date = formatLocalDate(job.scheduledStart);
+  const dayStart = localDateToUtc(date, "00:00");
+  const dayEnd = localDateToUtc(date, "23:59");
+  const earlier = await WorkOrder.find({
+    assignedUserRef: assignee._id,
+    scheduledStart: { $gte: dayStart, $lt: job.scheduledStart },
+    _id: { $ne: job._id },
+  }).sort({ scheduledStart: -1 });
+  const previous = earlier[0] ?? null;
+
+  const dayWindow = resolveDayWindow(
+    assignee.weeklyHours,
+    assignee.scheduleExceptions,
+    date,
+  );
+  const workRange = windowToUtcRange(date, dayWindow);
+  const addressIds = [job.addressRef?.toString(), previous?.addressRef?.toString()].filter(
+    (id): id is string => Boolean(id),
+  );
+  const addressPoints = await coordsByAddressId([...new Set(addressIds)]);
+  const pointFor = (row: { addressRef?: { toString(): string } | null }): LatLng | null => {
+    const id = row.addressRef?.toString();
+    if (!id) return null;
+    return addressPoints.get(id) ?? null;
+  };
+
+  const geocodeCache = new Map<string, LatLng | null>();
+  let home = homeCoords(assignee.homeLocation);
+  if (!home && assignee.homeLocation?.address?.trim()) {
+    home = await geocodeToLatLng(assignee.homeLocation, geocodeCache);
+    if (home) {
+      await User.updateOne(
+        { _id: assignee._id },
+        { $set: { "homeLocation.lat": home.lat, "homeLocation.lng": home.lng } },
+      );
+    }
+  }
+
+  const base = {
+    date,
+    assignedUserRef: String(assignee._id),
+    windowStart: workRange?.start.toISOString() ?? null,
+    windowEnd: workRange?.end.toISOString() ?? null,
+  };
+
+  if (!previous) {
+    const dest = pointFor(job);
+    if (home && dest) {
+      const drive = await computeDriveMinutes(home, dest);
+      return {
+        ...base,
+        isFirst: true,
+        earliestStart: null,
+        driveMinutes: drive.minutes,
+        driveFromLabel: "home",
+        warning: null,
+      };
+    }
+    return {
+      ...base,
+      isFirst: true,
+      earliestStart: null,
+      driveMinutes: null,
+      driveFromLabel: null,
+      warning: null,
+    };
+  }
+
+  const previousDuration = estimatedMinutesForWorkOrder(previous);
+  const previousEnd =
+    previous.scheduledEnd ??
+    (previous.scheduledStart
+      ? addMinutes(previous.scheduledStart, previousDuration)
+      : job.scheduledStart);
+  const from = pointFor(previous);
+  const to = pointFor(job);
+  const fromLabel = placeJobLabel(previous);
+  const toLabel = placeJobLabel(job);
+  let driveMinutes = 0;
+  let warning: string | null = null;
+  if (!from || !to) {
+    warning = `Drive time from ${fromLabel} to ${toLabel} is unknown and was treated as 0 minutes.`;
+  } else {
+    const drive = await computeDriveMinutes(from, to);
+    driveMinutes = drive.minutes;
+  }
+
+  return {
+    ...base,
+    isFirst: false,
+    earliestStart: addMinutes(previousEnd, driveMinutes).toISOString(),
+    driveMinutes: warning ? null : driveMinutes,
+    driveFromLabel: fromLabel,
+    warning,
+  };
+}
+
 export async function placeWorkOrder(opts: {
   workOrderId: string;
   assignedUserRef: string;
   date: string;
   scheduledStart: Date;
+  estimatedMinutes?: number;
 }): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
   if (!mongoose.Types.ObjectId.isValid(opts.workOrderId)) {
     throw Object.assign(new Error("Invalid workOrderId"), { status: 400 });
@@ -1123,16 +1259,23 @@ export async function placeWorkOrder(opts: {
   if (!inserted) {
     throw Object.assign(new Error("Work order not found"), { status: 404 });
   }
+  if (typeof opts.estimatedMinutes === "number" && opts.estimatedMinutes > 0) {
+    inserted.estimatedMinutes = opts.estimatedMinutes;
+  }
   const insertedDuration = estimatedMinutesForWorkOrder(inserted);
-  const inboundDrive = await driveBetween(
-    previousPoint,
-    pointFor(inserted),
-    previousLabel,
-    placeJobLabel(inserted),
-  );
-  const earliestInserted = previousEnd
-    ? addMinutes(previousEnd, inboundDrive)
-    : opts.scheduledStart;
+  const isFirstStop = index === 0;
+  const inboundDrive = isFirstStop
+    ? 0
+    : await driveBetween(
+        previousPoint,
+        pointFor(inserted),
+        previousLabel,
+        placeJobLabel(inserted),
+      );
+  const earliestInserted =
+    !isFirstStop && previousEnd
+      ? addMinutes(previousEnd, inboundDrive)
+      : opts.scheduledStart;
   const insertedStart = new Date(
     Math.max(opts.scheduledStart.getTime(), earliestInserted.getTime()),
   );
