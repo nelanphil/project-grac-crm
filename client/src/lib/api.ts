@@ -1712,6 +1712,7 @@ export interface WorkOrderListItem {
   customerId?: number;
   assignee?: WorkOrderAssignee | null;
   warnings?: string[];
+  scheduleNote?: string | null;
 }
 
 export type ServiceTicketPayload = {
@@ -2059,6 +2060,8 @@ export interface ScheduleRouteStop {
   lng: number | null;
   workOrderId?: string;
   scheduledStart?: string | null;
+  arrival?: string | null;
+  departure?: string | null;
 }
 
 export interface ScheduleRouteLeg {
@@ -2087,6 +2090,56 @@ export async function getScheduleRoute(
   return authRequest(`/schedule/route?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export type RouteObjective = "time" | "distance";
+
+export interface PlannedRoute {
+  stops: ScheduleRouteStop[];
+  route: {
+    durationMinutes: number;
+    distanceMeters: number;
+    encodedPolyline?: string;
+    legs: ScheduleRouteLeg[];
+    source: "google" | "haversine";
+  } | null;
+  orderedWorkOrderIds: string[];
+  warnings: string[];
+}
+
+export async function planScheduleRoute(
+  token: string,
+  data: {
+    userId: string;
+    date: string;
+    workOrderIds: string[];
+    roundTrip: boolean;
+    objective: RouteObjective;
+    optimize: boolean;
+    lockedStops?: Array<{ workOrderId: string; arrival: string }>;
+  },
+): Promise<PlannedRoute> {
+  return authRequest(`/schedule/route/plan`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function applyScheduleRoute(
+  token: string,
+  data: {
+    userId: string;
+    date: string;
+    orderedWorkOrderIds: string[];
+    lockedStops?: Array<{ workOrderId: string; arrival: string }>;
+  },
+): Promise<{ workOrders: WorkOrderListItem[]; warnings: string[] }> {
+  return authRequest(`/schedule/route/apply`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
   });
 }
 

@@ -5,6 +5,8 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import {
   countTechnicianJobsOnDate,
   dayRouteForUser,
+  planRouteForUser,
+  applyPlannedRoute,
   hydrateMissingAddressCoordinates,
   isDispatcherRole,
   listSchedulableStaff,
@@ -342,6 +344,101 @@ export async function getScheduleRoute(
     }
     console.error("GET /schedule/route error:", err);
     res.status(500).json({ message: "Failed to load day route" });
+  }
+}
+
+const lockedStopSchema = z.object({
+  workOrderId: z.string().min(1),
+  arrival: z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: "Invalid lock time",
+  }),
+});
+
+const planRouteSchema = z.object({
+  userId: z.string().min(1),
+  date: z.string().regex(localDateRe),
+  workOrderIds: z.array(z.string().min(1)).max(100),
+  roundTrip: z.boolean(),
+  objective: z.enum(["time", "distance"]),
+  optimize: z.boolean(),
+  lockedStops: z.array(lockedStopSchema).max(100).optional(),
+});
+
+const applyRouteSchema = z.object({
+  userId: z.string().min(1),
+  date: z.string().regex(localDateRe),
+  orderedWorkOrderIds: z.array(z.string().min(1)).min(1).max(100),
+  lockedStops: z.array(lockedStopSchema).max(100).optional(),
+});
+
+export async function postScheduleRoutePlan(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!req.user?.permissions.includes("jobs:read")) {
+      res.status(403).json({ message: "Missing permission: jobs:read" });
+      return;
+    }
+
+    const parsed = planRouteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    if (!isDispatcherRole(req.user) && parsed.data.userId !== req.user.id) {
+      res.status(403).json({ message: "You can only view your own route" });
+      return;
+    }
+
+    const result = await planRouteForUser(parsed.data);
+    res.json(result);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    if (status !== 500) {
+      res.status(status).json({ message: (err as Error).message });
+      return;
+    }
+    console.error("POST /schedule/route/plan error:", err);
+    res.status(500).json({ message: "Failed to plan route" });
+  }
+}
+
+export async function postScheduleRouteApply(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isDispatcherRole(req.user)) {
+      res.status(403).json({ message: "Insufficient role" });
+      return;
+    }
+    if (!req.user?.permissions.includes("jobs:write")) {
+      res.status(403).json({ message: "Missing permission: jobs:write" });
+      return;
+    }
+
+    const parsed = applyRouteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const result = await applyPlannedRoute(parsed.data);
+    res.json(result);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    if (status !== 500) {
+      res.status(status).json({ message: (err as Error).message });
+      return;
+    }
+    console.error("POST /schedule/route/apply error:", err);
+    res.status(500).json({ message: "Failed to apply route" });
   }
 }
 

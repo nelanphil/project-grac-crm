@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { User, activeUserFilter, IUser } from "../models/mongo/User";
 import { WorkOrder } from "../models/mongo/WorkOrder";
+import { WorkOrderNote } from "../models/mongo/WorkOrderNote";
 import { WorkOrderType } from "../models/mongo/WorkOrderType";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
@@ -22,8 +23,19 @@ import {
 import {
   computeDayRoute,
   computeDriveMinutes,
+  computeDriveMinutesMatrix,
+  haversineDriveMinutes,
+  haversineMiles,
   type LatLng,
+  type RouteMatrixCell,
 } from "../utils/googleRoutes";
+import {
+  limitRouteJobs,
+  metricCost,
+  optimizeAroundLocks,
+  optimizeJobOrder,
+  type RouteObjective,
+} from "../utils/routeOrder";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
 export { DISPATCHER_ROLES, isDispatcherRole } from "../utils/roles";
 
@@ -178,7 +190,33 @@ export type EnrichedWorkOrder = Record<string, unknown> & {
   assignee: AssigneeSummary | null;
   workOrderTypeRef: string | null;
   workOrderType: { _id: string; label: string } | null;
+  scheduleNote: string | null;
 };
+
+async function latestScheduleNotes(
+  workOrderIds: string[],
+): Promise<Map<string, string>> {
+  const ids = workOrderIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+  if (ids.length === 0) return new Map();
+  const rows = await WorkOrderNote.aggregate<{
+    _id: mongoose.Types.ObjectId;
+    content: string;
+  }>([
+    {
+      $match: {
+        workOrderRef: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) },
+      },
+    },
+    { $sort: { createdAt: -1 } },
+    { $group: { _id: "$workOrderRef", content: { $first: "$content" } } },
+  ]);
+  const notes = new Map<string, string>();
+  for (const row of rows) {
+    const content = row.content.trim();
+    if (content) notes.set(String(row._id), content);
+  }
+  return notes;
+}
 
 export async function enrichScheduleWorkOrders(
   workOrders: Array<Record<string, unknown>>,
@@ -297,6 +335,10 @@ export async function enrichScheduleWorkOrders(
     ]),
   );
 
+  const noteByWorkOrder = await latestScheduleNotes(
+    workOrders.map((wo) => wo._id?.toString() ?? "").filter(Boolean),
+  );
+
   return workOrders.map((wo) => {
     const resolvedRef =
       wo.customerRef?.toString() ??
@@ -310,6 +352,9 @@ export async function enrichScheduleWorkOrders(
       typeof wo.customerName === "string" && wo.customerName.trim()
         ? wo.customerName.trim()
         : null;
+    const note = noteByWorkOrder.get(wo._id?.toString() ?? "") ?? "";
+    const description =
+      typeof wo.descPerform === "string" ? wo.descPerform.trim() : "";
     return {
       ...wo,
       customerRef: resolvedRef,
@@ -318,6 +363,7 @@ export async function enrichScheduleWorkOrders(
       address: addressById.get(wo.addressRef?.toString() ?? "") ?? null,
       customerName: lookedUpName ?? snapshotName,
       assignee: userById.get(wo.assignedUserRef?.toString() ?? "") ?? null,
+      scheduleNote: note || description || null,
     };
   });
 }
@@ -944,6 +990,519 @@ export async function dayRouteForUser(opts: {
   };
 }
 
+const ROUTE_MATRIX_ELEMENTS = 625;
+
+function routeError(message: string, status = 400): Error {
+  return Object.assign(new Error(message), { status });
+}
+
+async function fullDriveMatrix(points: LatLng[]): Promise<RouteMatrixCell[]> {
+  if (points.length === 0) return [];
+  const originBatch = Math.max(
+    1,
+    Math.floor(ROUTE_MATRIX_ELEMENTS / points.length),
+  );
+  const cells: RouteMatrixCell[] = [];
+  for (let offset = 0; offset < points.length; offset += originBatch) {
+    const origins = points.slice(offset, offset + originBatch);
+    const batch = await computeDriveMinutesMatrix(origins, points);
+    for (const cell of batch) {
+      cells.push({ ...cell, originIndex: cell.originIndex + offset });
+    }
+  }
+  return cells;
+}
+
+function denseRouteCost(
+  points: LatLng[],
+  cells: RouteMatrixCell[],
+  objective: RouteObjective,
+): number[][] {
+  const size = points.length;
+  const cost = Array.from({ length: size }, () => Array<number>(size).fill(0));
+  const seen = Array.from({ length: size }, () => Array<boolean>(size).fill(false));
+  for (const cell of cells) {
+    if (
+      cell.originIndex < 0 ||
+      cell.originIndex >= size ||
+      cell.destinationIndex < 0 ||
+      cell.destinationIndex >= size
+    ) {
+      continue;
+    }
+    cost[cell.originIndex]![cell.destinationIndex] = metricCost(cell, objective);
+    seen[cell.originIndex]![cell.destinationIndex] = true;
+  }
+  for (let from = 0; from < size; from += 1) {
+    for (let to = 0; to < size; to += 1) {
+      if (from === to || seen[from]![to]) continue;
+      const start = points[from]!;
+      const end = points[to]!;
+      cost[from]![to] =
+        objective === "time"
+          ? haversineDriveMinutes(start, end)
+          : Math.round(haversineMiles(start, end) * 1609.34);
+    }
+  }
+  return cost;
+}
+
+function denseDriveMinutes(
+  points: LatLng[],
+  cells: RouteMatrixCell[],
+): number[][] {
+  const size = points.length;
+  const minutes = Array.from({ length: size }, () => Array<number>(size).fill(0));
+  const seen = Array.from({ length: size }, () => Array<boolean>(size).fill(false));
+  for (const cell of cells) {
+    if (
+      cell.originIndex < 0 ||
+      cell.originIndex >= size ||
+      cell.destinationIndex < 0 ||
+      cell.destinationIndex >= size
+    ) {
+      continue;
+    }
+    minutes[cell.originIndex]![cell.destinationIndex] = cell.durationMinutes;
+    seen[cell.originIndex]![cell.destinationIndex] = true;
+  }
+  for (let from = 0; from < size; from += 1) {
+    for (let to = 0; to < size; to += 1) {
+      if (from === to || seen[from]![to]) continue;
+      minutes[from]![to] = haversineDriveMinutes(points[from]!, points[to]!);
+    }
+  }
+  return minutes;
+}
+
+function lockArrivalById(
+  locks: Array<{ workOrderId: string; arrival: string }> | undefined,
+): Map<string, Date> {
+  const byId = new Map<string, Date>();
+  for (const lock of locks ?? []) {
+    const arrival = new Date(lock.arrival);
+    if (Number.isNaN(arrival.getTime())) continue;
+    byId.set(lock.workOrderId, arrival);
+  }
+  return byId;
+}
+
+function formatRouteClock(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: SCHEDULE_TIMEZONE,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+async function loadRouteAssignee(userId: string) {
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    throw routeError("Invalid user.");
+  }
+  const user = await User.findOne({
+    _id: userId,
+    ...activeUserFilter,
+  }).select(
+    "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions",
+  );
+  if (!user) {
+    throw routeError("User not found", 404);
+  }
+  if (!user.schedulable) {
+    throw routeError("Assigned user cannot be scheduled for work orders.");
+  }
+  return user;
+}
+
+async function ensureRouteHome(user: {
+  _id: mongoose.Types.ObjectId;
+  homeLocation?: HomeLocation | null;
+}): Promise<LatLng> {
+  const geocodeCache = new Map<string, LatLng | null>();
+  let home = homeCoords(user.homeLocation);
+  if (!home && user.homeLocation?.address?.trim()) {
+    home = await geocodeToLatLng(user.homeLocation, geocodeCache);
+    if (home) {
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { "homeLocation.lat": home.lat, "homeLocation.lng": home.lng } },
+      );
+    }
+  }
+  if (!home) {
+    throw routeError(
+      "Add a home location for this technician before planning a route.",
+    );
+  }
+  return home;
+}
+
+async function loadOrderedWorkOrders(ids: string[]) {
+  if (new Set(ids).size !== ids.length) {
+    throw routeError("Duplicate work orders in the route.");
+  }
+  for (const id of ids) {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      throw routeError("Invalid work order.");
+    }
+  }
+  if (ids.length === 0) return [];
+  const docs = await WorkOrder.find({ _id: { $in: ids } });
+  const byId = new Map(docs.map((doc) => [String(doc._id), doc]));
+  return ids.map((id) => {
+    const doc = byId.get(id);
+    if (!doc) throw routeError("Work order not found.");
+    return doc;
+  });
+}
+
+function assertJobCanJoinRoute(
+  job: { completed?: boolean; scheduledStart?: Date | null; assignedUserRef?: { toString(): string } | null; customerName?: string | null },
+  userId: string,
+  date: string,
+): void {
+  if (job.completed) {
+    throw routeError("Completed work orders cannot be rescheduled.");
+  }
+  const assigneeId = job.assignedUserRef?.toString() ?? "";
+  if (assigneeId && assigneeId !== userId) {
+    throw routeError(
+      `${placeJobLabel(job)} is already assigned to another technician.`,
+    );
+  }
+  if (!job.scheduledStart) return;
+  if (formatLocalDate(job.scheduledStart) !== date) {
+    throw routeError(`${placeJobLabel(job)} is already scheduled on another day.`);
+  }
+}
+
+export type PlannedRouteStop = {
+  kind: "home" | "job";
+  label: string;
+  lat: number | null;
+  lng: number | null;
+  workOrderId?: string;
+  scheduledStart?: string | null;
+  arrival?: string | null;
+  departure?: string | null;
+};
+
+export type PlannedRoute = {
+  stops: PlannedRouteStop[];
+  route: Awaited<ReturnType<typeof computeDayRoute>>;
+  orderedWorkOrderIds: string[];
+  warnings: string[];
+};
+
+export async function planRouteForUser(opts: {
+  userId: string;
+  date: string;
+  workOrderIds: string[];
+  roundTrip: boolean;
+  objective: RouteObjective;
+  optimize: boolean;
+  lockedStops?: Array<{ workOrderId: string; arrival: string }>;
+}): Promise<PlannedRoute> {
+  const user = await loadRouteAssignee(opts.userId);
+  const home = await ensureRouteHome(user);
+  const jobs = await loadOrderedWorkOrders(opts.workOrderIds);
+  for (const job of jobs) {
+    assertJobCanJoinRoute(job, String(user._id), opts.date);
+  }
+
+  const warnings: string[] = [];
+  const addressIds = [
+    ...new Set(
+      jobs
+        .map((job) => job.addressRef?.toString())
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const addressPoints = await coordsByAddressId(addressIds);
+  const located: Array<{
+    job: (typeof jobs)[number];
+    coords: LatLng;
+  }> = [];
+  const missingLabels: string[] = [];
+  for (const job of jobs) {
+    const addressId = job.addressRef?.toString();
+    const coords = addressId ? (addressPoints.get(addressId) ?? null) : null;
+    if (!coords) {
+      missingLabels.push(placeJobLabel(job));
+      continue;
+    }
+    located.push({ job, coords });
+  }
+  if (missingLabels.length > 0) {
+    warnings.push(
+      `Some jobs have no map location and were left off the route: ${missingLabels.join(", ")}.`,
+    );
+  }
+
+  const limited = limitRouteJobs(located);
+  if (limited.truncated) {
+    warnings.push(
+      `Only the first ${limited.jobs.length} stops can be routed. Extra stops were left off the route.`,
+    );
+  }
+  let visit = limited.jobs;
+  const lockById = lockArrivalById(opts.lockedStops);
+  const dayWindow = resolveDayWindow(
+    user.weeklyHours,
+    user.scheduleExceptions,
+    opts.date,
+  );
+  const workRange = windowToUtcRange(opts.date, dayWindow);
+  if (opts.optimize && visit.length > 1) {
+    const points = [home, ...visit.map((row) => row.coords)];
+    const cells = await fullDriveMatrix(points);
+    const cost = denseRouteCost(points, cells, opts.objective);
+    const lockedHere = visit.some((row) => lockById.has(String(row.job._id)));
+    const order =
+      lockedHere && workRange
+        ? optimizeAroundLocks({
+            cost,
+            driveMinutes: denseDriveMinutes(points, cells),
+            serviceMinutes: [
+              0,
+              ...visit.map((row) => estimatedMinutesForWorkOrder(row.job)),
+            ],
+            lockedOffsetMinutes: [
+              null,
+              ...visit.map((row) => {
+                const locked = lockById.get(String(row.job._id));
+                if (!locked) return null;
+                return Math.round(
+                  (locked.getTime() - workRange.start.getTime()) / 60000,
+                );
+              }),
+            ],
+            roundTrip: opts.roundTrip,
+          })
+        : optimizeJobOrder({
+            cost,
+            jobCount: visit.length,
+            roundTrip: opts.roundTrip,
+          });
+    visit = order.map((index) => visit[index - 1]!);
+  }
+  const visitIds = new Set(visit.map((row) => String(row.job._id)));
+  for (const [workOrderId] of lockById) {
+    if (visitIds.has(workOrderId)) continue;
+    const job = jobs.find((row) => String(row._id) === workOrderId);
+    warnings.push(
+      `${job ? placeJobLabel(job) : "A locked stop"} is not on the route, so its time was not kept.`,
+    );
+  }
+
+  const stops: PlannedRouteStop[] = [
+    { kind: "home", label: "Home", lat: home.lat, lng: home.lng },
+  ];
+  for (const row of visit) {
+    stops.push({
+      kind: "job",
+      label: placeJobLabel(row.job),
+      lat: row.coords.lat,
+      lng: row.coords.lng,
+      workOrderId: String(row.job._id),
+      scheduledStart: row.job.scheduledStart
+        ? row.job.scheduledStart.toISOString()
+        : null,
+    });
+  }
+  if (opts.roundTrip) {
+    stops.push({
+      kind: "home",
+      label: "Home (return)",
+      lat: home.lat,
+      lng: home.lng,
+    });
+  }
+
+  const points = visit.map((row) => row.coords);
+  let route: PlannedRoute["route"] = null;
+  if (points.length > 0) {
+    route = opts.roundTrip
+      ? await computeDayRoute(home, home, points)
+      : points.length === 1
+        ? await computeDayRoute(home, points[0]!, [])
+        : await computeDayRoute(
+            home,
+            points[points.length - 1]!,
+            points.slice(0, -1),
+          );
+  }
+
+  if (workRange) {
+    const legs = route?.legs ?? [];
+    let cursorEnd = workRange.start;
+    visit.forEach((row, index) => {
+      const driveMinutes =
+        index === 0 ? 0 : (legs[index]?.durationMinutes ?? 0);
+      const earliest =
+        index === 0
+          ? new Date(workRange.start)
+          : addMinutes(cursorEnd, driveMinutes);
+      const locked = lockById.get(String(row.job._id)) ?? null;
+      const arrival = locked ?? earliest;
+      if (locked && locked.getTime() + 1000 < earliest.getTime()) {
+        warnings.push(
+          `${placeJobLabel(row.job)} stays at ${formatRouteClock(locked)}, which is earlier than the stop before it allows.`,
+        );
+      }
+      const departure = addMinutes(
+        arrival,
+        estimatedMinutesForWorkOrder(row.job),
+      );
+      cursorEnd = departure;
+      const stop = stops.find(
+        (item) => item.workOrderId === String(row.job._id),
+      );
+      if (!stop) return;
+      stop.arrival = arrival.toISOString();
+      stop.departure = departure.toISOString();
+    });
+  }
+
+  return {
+    stops,
+    route,
+    orderedWorkOrderIds: visit.map((row) => String(row.job._id)),
+    warnings,
+  };
+}
+
+export async function applyPlannedRoute(opts: {
+  userId: string;
+  date: string;
+  orderedWorkOrderIds: string[];
+  lockedStops?: Array<{ workOrderId: string; arrival: string }>;
+}): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
+  if (opts.orderedWorkOrderIds.length === 0) {
+    throw routeError("Choose at least one stop.");
+  }
+  const user = await loadRouteAssignee(opts.userId);
+  const dayWindow = resolveDayWindow(
+    user.weeklyHours,
+    user.scheduleExceptions,
+    opts.date,
+  );
+  const workRange = windowToUtcRange(opts.date, dayWindow);
+  if (!workRange) {
+    throw routeError("This day is marked unavailable for the assigned technician.");
+  }
+
+  const sequence = await loadOrderedWorkOrders(opts.orderedWorkOrderIds);
+  for (const job of sequence) {
+    assertJobCanJoinRoute(job, String(user._id), opts.date);
+  }
+
+  const dayStart = localDateToUtc(opts.date, "00:00");
+  const dayEnd = localDateToUtc(opts.date, "23:59");
+  const existing = await WorkOrder.find({
+    assignedUserRef: user._id,
+    scheduledStart: { $gte: dayStart, $lte: dayEnd },
+    completed: { $ne: true },
+  }).select("_id customerName");
+  const included = new Set(opts.orderedWorkOrderIds);
+  const omitted = existing.filter((job) => !included.has(String(job._id)));
+  if (omitted.length > 0) {
+    throw routeError(
+      `Route must include every job already scheduled for this technician on this day: ${omitted.map((job) => placeJobLabel(job)).join(", ")}.`,
+    );
+  }
+
+  const addressIds = [
+    ...new Set(
+      sequence
+        .map((job) => job.addressRef?.toString())
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const addressPoints = await coordsByAddressId(addressIds);
+  const warnings: string[] = [];
+  const warn = (message: string) => {
+    if (!warnings.includes(message)) warnings.push(message);
+  };
+  const pointFor = (job: (typeof sequence)[number]): LatLng | null => {
+    const id = job.addressRef?.toString();
+    if (!id) return null;
+    return addressPoints.get(id) ?? null;
+  };
+  const driveBetween = async (
+    from: LatLng | null,
+    to: LatLng | null,
+    fromLabel: string,
+    toLabel: string,
+  ): Promise<number> => {
+    if (!from || !to) {
+      warn(
+        `Drive time from ${fromLabel} to ${toLabel} is unknown and was treated as 0 minutes.`,
+      );
+      return 0;
+    }
+    const drive = await computeDriveMinutes(from, to);
+    return drive.minutes;
+  };
+
+  let cursorEnd: Date | null = null;
+  let cursorPoint: LatLng | null = null;
+  let cursorLabel = "home";
+  const lockById = lockArrivalById(opts.lockedStops);
+  for (let index = 0; index < sequence.length; index += 1) {
+    const job = sequence[index]!;
+    const duration = estimatedMinutesForWorkOrder(job);
+    const point = pointFor(job);
+    const earliest =
+      index === 0
+        ? new Date(workRange.start)
+        : addMinutes(
+            cursorEnd ?? workRange.start,
+            await driveBetween(
+              cursorPoint,
+              point,
+              cursorLabel,
+              placeJobLabel(job),
+            ),
+          );
+    const locked = lockById.get(String(job._id)) ?? null;
+    const start = locked ?? earliest;
+    if (locked && locked.getTime() + 1000 < earliest.getTime()) {
+      warn(
+        `${placeJobLabel(job)} stays at ${formatRouteClock(locked)}, which is earlier than the stop before it allows.`,
+      );
+    }
+    const end = addMinutes(start, duration);
+    job.scheduledStart = start;
+    job.scheduledEnd = end;
+    job.estimatedMinutes = duration;
+    job.assignedUserRef = user._id;
+    job.appointmentCanceledAt = null;
+    job.appointmentCanceledBy = null;
+    await applyAssignmentSideEffects(job, user);
+    const hoursWarn = availabilityWarning({
+      weeklyHours: user.weeklyHours,
+      exceptions: user.scheduleExceptions,
+      localDate: opts.date,
+      start,
+      end,
+    });
+    if (hoursWarn) warn(`${placeJobLabel(job)}: ${hoursWarn}`);
+    cursorEnd = end;
+    cursorPoint = point;
+    cursorLabel = placeJobLabel(job);
+  }
+
+  for (const job of sequence) {
+    await job.save();
+  }
+
+  const workOrders = await enrichScheduleWorkOrders(
+    sequence.map((job) => job.toObject() as unknown as Record<string, unknown>),
+  );
+  return { workOrders, warnings };
+}
+
 export async function applyAssignmentSideEffects(
   workOrder: InstanceType<typeof WorkOrder>,
   assignee: Pick<IUser, "first_name" | "last_name"> | null,
@@ -1029,7 +1588,6 @@ export async function startOptionsForWorkOrder(
 
   const date = formatLocalDate(job.scheduledStart);
   const dayStart = localDateToUtc(date, "00:00");
-  const dayEnd = localDateToUtc(date, "23:59");
   const earlier = await WorkOrder.find({
     assignedUserRef: assignee._id,
     scheduledStart: { $gte: dayStart, $lt: job.scheduledStart },

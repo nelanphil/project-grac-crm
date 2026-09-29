@@ -79,6 +79,11 @@ function UnscheduledCardShell({
             order.customerCity?.trim() ||
             "—"}
         </div>
+        {order.scheduleNote ? (
+          <div className="mt-1 line-clamp-2 text-neutral-600">
+            {order.scheduleNote}
+          </div>
+        ) : null}
         <div className="mt-1 text-neutral-400">
           {[
             order.workOrderType?.label,
@@ -106,16 +111,19 @@ function DraggableUnscheduledCard({
   order,
   selected,
   onSelect,
+  lift = false,
 }: {
   order: WorkOrderListItem;
   selected: boolean;
   onSelect: () => void;
+  lift?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({ id: `job:${order._id}` });
-  const style = transform
-    ? { transform: CSS.Translate.toString(transform) }
-    : undefined;
+  const style =
+    transform && !lift
+      ? { transform: CSS.Translate.toString(transform) }
+      : undefined;
 
   return (
     <UnscheduledCardShell
@@ -135,11 +143,13 @@ export function UnscheduledCard({
   selected,
   onSelect,
   draggable = true,
+  lift = false,
 }: {
   order: WorkOrderListItem;
   selected: boolean;
   onSelect: () => void;
   draggable?: boolean;
+  lift?: boolean;
 }) {
   if (!draggable || Boolean(order.scheduledStart)) {
     return (
@@ -155,6 +165,7 @@ export function UnscheduledCard({
       order={order}
       selected={selected}
       onSelect={onSelect}
+      lift={lift}
     />
   );
 }
@@ -176,11 +187,14 @@ function JobBlock({
 
   if (!order.scheduledStart) return null;
   const start = new Date(order.scheduledStart);
+  const duration = order.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES;
+  const end = order.scheduledEnd
+    ? new Date(order.scheduledEnd)
+    : new Date(start.getTime() + duration * 60_000);
   const parts = nyDateParts(start);
   const startMin = parts.hour * 60 + parts.minute;
   const boardStart = BOARD_HOUR_START * 60;
   const boardEnd = BOARD_HOUR_END * 60;
-  const duration = order.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES;
   const leftPct =
     ((Math.max(startMin, boardStart) - boardStart) / (boardEnd - boardStart)) *
     100;
@@ -211,7 +225,7 @@ function JobBlock({
         {order.customerName || "Job"}
       </div>
       <div className="truncate opacity-90">
-        {formatLocalTime(start)} · {minutesToLabel(duration)}
+        {formatLocalTime(start)}–{formatLocalTime(end)}
       </div>
     </button>
   );

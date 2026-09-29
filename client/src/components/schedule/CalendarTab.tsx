@@ -13,7 +13,9 @@ import Link from "next/link";
 import {
   DndContext,
   DragEndEvent,
+  DragOverlay,
   PointerSensor,
+  pointerWithin,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -22,12 +24,15 @@ import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
   cancelWorkOrderAppointment,
+  applyScheduleRoute,
   geocodeMissingScheduleAddresses,
   getScheduleQueue,
-  getScheduleRoute,
   getScheduleStaff,
   getScheduleStartOptions,
   placeScheduleWorkOrder,
+  planScheduleRoute,
+  type PlannedRoute,
+  type RouteObjective,
   ScheduleStartOptions,
   ScheduleStaffMember,
   ScheduleSuggestion,
@@ -61,8 +66,10 @@ import WeekBoard, {
 } from "@/components/schedule/WeekBoard";
 import MonthCalendar from "@/components/schedule/MonthCalendar";
 import MonthTable from "@/components/schedule/MonthTable";
-import DayRouteMap from "@/components/schedule/DayRouteMap";
 import SuggestAssigneeModal from "@/components/schedule/SuggestAssigneeModal";
+import RoutePlannerPanel, {
+  type MapJobFilter,
+} from "@/components/schedule/RoutePlannerPanel";
 import ScheduleMap, {
   jobHasCoordinates,
 } from "@/components/schedule/ScheduleMap";
@@ -308,6 +315,7 @@ function ScheduleRail({
   suggesting,
   canSuggest,
   draggable,
+  liftDrag = false,
 }: {
   jobs: WorkOrderListItem[];
   filter: RailFilter;
@@ -324,6 +332,7 @@ function ScheduleRail({
   suggesting: boolean;
   canSuggest: boolean;
   draggable: boolean;
+  liftDrag?: boolean;
 }) {
   const groups = useMemo(
     () => groupJobsByDay(jobs, dateOrder),
@@ -444,6 +453,7 @@ function ScheduleRail({
                   selected={selectedId === order._id}
                   onSelect={() => onSelect(order)}
                   draggable={draggable}
+                  lift={liftDrag}
                 />
               ))}
             </section>
@@ -598,12 +608,22 @@ export default function CalendarTab({
   );
   const [suggesting, setSuggesting] = useState(false);
 
-  const [routeUserId, setRouteUserId] = useState<string | null>(null);
-  const [routeStops, setRouteStops] = useState<
-    Awaited<ReturnType<typeof getScheduleRoute>>["stops"] | null
-  >(null);
-  const [routePolyline, setRoutePolyline] = useState<string | undefined>();
-  const [routeLoading, setRouteLoading] = useState(false);
+  const [mapJobFilter, setMapJobFilter] = useState<MapJobFilter>("scheduled");
+  const [routeTechId, setRouteTechId] = useState<string | null>(null);
+  const [roundTrip, setRoundTrip] = useState(true);
+  const [routeObjective, setRouteObjective] = useState<RouteObjective>("time");
+  const [addedUnscheduledIds, setAddedUnscheduledIds] = useState<string[]>([]);
+  const [manualOrder, setManualOrder] = useState<string[] | null>(null);
+  const [routeLocks, setRouteLocks] = useState<Record<string, string>>({});
+  const [routePlan, setRoutePlan] = useState<PlannedRoute | null>(null);
+  const [routePlanning, setRoutePlanning] = useState(false);
+  const [routeOptimizing, setRouteOptimizing] = useState(false);
+  const [routeApplying, setRouteApplying] = useState(false);
+  const [routeMessage, setRouteMessage] = useState<string | null>(null);
+  const [draggingJobId, setDraggingJobId] = useState<string | null>(null);
+  const planSeq = useRef(0);
+  const optimizeLock = useRef(false);
+  const effectiveTechId = !dispatcher && user?.id ? user.id : routeTechId;
 
   const editingId = editingJob?._id ?? null;
   const editingStart = editingJob?.scheduledStart ?? null;
@@ -704,9 +724,96 @@ export default function CalendarTab({
     [railFilter, railJobs, railScheduled],
   );
   const mapJobs = useMemo(
-    () => uniqueJobs(jobs, calendarUnscheduled),
-    [jobs, calendarUnscheduled],
+    () => uniqueJobs(jobs, calendarUnscheduled, railJobs),
+    [jobs, calendarUnscheduled, railJobs],
   );
+  const jobById = useMemo(() => {
+    const byId = new Map<string, WorkOrderListItem>();
+    for (const job of uniqueJobs(jobs, calendarUnscheduled, railJobs, railScheduled)) {
+      byId.set(job._id, job);
+    }
+    return byId;
+  }, [jobs, calendarUnscheduled, railJobs, railScheduled]);
+  const draggingJob = draggingJobId
+    ? (jobById.get(draggingJobId) ?? null)
+    : null;
+  const dayJobs = useMemo(() => {
+    if (!effectiveTechId) return [];
+    return jobs
+      .filter((job) => {
+        if (job.completed || !job.scheduledStart || job.appointmentCanceledAt) {
+          return false;
+        }
+        const assignee = job.assignedUserRef ?? job.assignee?._id ?? "";
+        if (assignee !== effectiveTechId) return false;
+        return workOrderLocalDate(job) === selectedDate;
+      })
+      .sort((a, b) => {
+        const aTime = a.scheduledStart ? new Date(a.scheduledStart).getTime() : 0;
+        const bTime = b.scheduledStart ? new Date(b.scheduledStart).getTime() : 0;
+        return aTime - bTime;
+      });
+  }, [jobs, effectiveTechId, selectedDate]);
+  const addedJobs = useMemo(
+    () =>
+      addedUnscheduledIds
+        .map((id) => jobById.get(id))
+        .filter((job): job is WorkOrderListItem => Boolean(job && !job.scheduledStart)),
+    [addedUnscheduledIds, jobById],
+  );
+  const routeJobs = useMemo(() => {
+    const seen = new Set(dayJobs.map((job) => job._id));
+    return [...dayJobs, ...addedJobs.filter((job) => !seen.has(job._id))];
+  }, [dayJobs, addedJobs]);
+  const jobsTodayByTech = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const job of jobs) {
+      if (!job.scheduledStart || job.completed || job.appointmentCanceledAt) {
+        continue;
+      }
+      if (workOrderLocalDate(job) !== selectedDate) continue;
+      const id = job.assignedUserRef ?? job.assignee?._id ?? "";
+      if (!id) continue;
+      counts[id] = (counts[id] ?? 0) + 1;
+    }
+    return counts;
+  }, [jobs, selectedDate]);
+  const routeStopIds = useMemo(() => {
+    const available = routeJobs.map((job) => job._id);
+    if (!manualOrder) return available;
+    const availableSet = new Set(available);
+    const kept = manualOrder.filter((id) => availableSet.has(id));
+    const rest = available.filter((id) => !kept.includes(id));
+    return [...kept, ...rest];
+  }, [routeJobs, manualOrder]);
+  const routeStopKey = routeStopIds.join(",");
+  const activeRouteLocks = useMemo(
+    () =>
+      routeStopIds.flatMap((id) => {
+        const time = routeLocks[id];
+        if (!time) return [];
+        return [
+          {
+            workOrderId: id,
+            arrival: localDateTimeToIso(selectedDate, time),
+          },
+        ];
+      }),
+    [routeStopIds, routeLocks, selectedDate],
+  );
+  const unscheduledPins = useMemo(
+    () =>
+      uniqueJobs(calendarUnscheduled, railJobs).filter(
+        (job) => !job.scheduledStart && !job.completed,
+      ),
+    [calendarUnscheduled, railJobs],
+  );
+  const routeTotalsMatch = useMemo(() => {
+    if (!routePlan || routeStopIds.length === 0) return false;
+    const routed = new Set(routePlan.orderedWorkOrderIds);
+    const clientRouted = routeStopIds.filter((id) => routed.has(id));
+    return clientRouted.join(",") === routePlan.orderedWorkOrderIds.join(",");
+  }, [routePlan, routeStopIds]);
   const requestedGeocodeRef = useRef(new Set<string>());
   const [geocodingPins, setGeocodingPins] = useState(false);
 
@@ -890,13 +997,44 @@ export default function CalendarTab({
     }
   }
 
+  function addDroppedJob(overId: string, workOrderId: string) {
+    const job = jobById.get(workOrderId);
+    if (!job || job.scheduledStart || job.completed) return;
+    const droppedTechId = overId.startsWith("tech:")
+      ? overId.slice(5)
+      : effectiveTechId;
+    if (!droppedTechId) {
+      setRouteMessage("Drop the appointment on a technician, or select one first.");
+      return;
+    }
+    setRouteMessage(null);
+    if (droppedTechId !== effectiveTechId) {
+      setRouteTechId(droppedTechId);
+      setManualOrder(null);
+      setRoutePlan(null);
+      setAddedUnscheduledIds([workOrderId]);
+      return;
+    }
+    setAddedUnscheduledIds((current) =>
+      current.includes(workOrderId) ? current : [...current, workOrderId],
+    );
+  }
+
   async function handleDragEnd(event: DragEndEvent) {
     if (!dispatcher || !canWrite) return;
     const overId = event.over?.id ? String(event.over.id) : "";
-    if (!overId.startsWith("row:")) return;
-    const userId = overId.slice(4);
     const activeId = String(event.active.id);
     if (!activeId.startsWith("job:")) return;
+    if (
+      overId.startsWith("tech:") ||
+      overId === "schedule-map" ||
+      overId === "route-table"
+    ) {
+      addDroppedJob(overId, activeId.slice(4));
+      return;
+    }
+    if (!overId.startsWith("row:")) return;
+    const userId = overId.slice(4);
     const workOrderId = activeId.slice(4);
     const minutes = dropMinutes(event);
     if (minutes == null) return;
@@ -956,24 +1094,144 @@ export default function CalendarTab({
 
   function selectRailJob(job: WorkOrderListItem) {
     setSelectedRailJob(job);
+    if (
+      surface !== "map" ||
+      mapJobFilter !== "unscheduled" ||
+      !dispatcher ||
+      !effectiveTechId ||
+      job.scheduledStart
+    ) {
+      return;
+    }
+    setAddedUnscheduledIds((current) =>
+      current.includes(job._id)
+        ? current.filter((id) => id !== job._id)
+        : [...current, job._id],
+    );
   }
 
-  async function openRoute(userId: string) {
-    if (!token) return;
-    setRouteUserId(userId);
-    setRouteLoading(true);
-    setRouteStops(null);
+  function toggleRouteLock(id: string) {
+    setRouteLocks((current) => {
+      if (current[id]) {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      }
+      const fromPlan = routeTotalsMatch
+        ? routePlan?.stops.find((stop) => stop.workOrderId === id)?.arrival
+        : null;
+      const scheduled = jobById.get(id)?.scheduledStart;
+      const source = fromPlan || scheduled;
+      const time = source ? formatLocalTime(new Date(source)) : "08:00";
+      return { ...current, [id]: time };
+    });
+  }
+
+  function setRouteLockTime(id: string, time: string) {
+    if (!time) return;
+    setRouteLocks((current) => ({ ...current, [id]: time }));
+  }
+
+  function moveRouteStop(id: string, direction: -1 | 1) {
+    const order = routeStopIds.slice();
+    const index = order.indexOf(id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= order.length) return;
+    const [item] = order.splice(index, 1);
+    if (!item) return;
+    order.splice(target, 0, item);
+    setManualOrder(order);
+  }
+
+  const runPlan = useCallback(
+    async (optimize: boolean) => {
+      if (!token || !effectiveTechId || routeStopIds.length === 0) {
+        return;
+      }
+      if (optimize) optimizeLock.current = true;
+      const seq = ++planSeq.current;
+      if (optimize) setRouteOptimizing(true);
+      else setRoutePlanning(true);
+      setRouteMessage(null);
+      try {
+        const result = await planScheduleRoute(token, {
+          userId: effectiveTechId,
+          date: selectedDate,
+          workOrderIds: routeStopIds,
+          roundTrip,
+          objective: routeObjective,
+          optimize,
+          lockedStops: activeRouteLocks,
+        });
+        if (seq !== planSeq.current) return;
+        if (optimize) setManualOrder(result.orderedWorkOrderIds);
+        setRoutePlan(result);
+      } catch (err) {
+        if (seq !== planSeq.current) return;
+        setRoutePlan(null);
+        setRouteMessage(
+          err instanceof ApiError ? err.message : "Failed to plan route.",
+        );
+      } finally {
+        if (optimize) optimizeLock.current = false;
+        if (seq === planSeq.current) {
+          setRoutePlanning(false);
+          setRouteOptimizing(false);
+        }
+      }
+    },
+    [
+      token,
+      effectiveTechId,
+      routeStopIds,
+      selectedDate,
+      roundTrip,
+      routeObjective,
+      activeRouteLocks,
+    ],
+  );
+
+  useEffect(() => {
+    if (surface !== "map" || !effectiveTechId || routeStopIds.length === 0) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (optimizeLock.current) return;
+      void runPlan(false);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [surface, effectiveTechId, routeStopKey, roundTrip, runPlan, routeStopIds.length]);
+
+  async function applyRoute() {
+    if (!token || !effectiveTechId || routeStopIds.length === 0 || !canWrite) return;
+    const tech = staff.find((person) => person._id === effectiveTechId);
+    const name = tech
+      ? `${tech.first_name} ${tech.last_name}`
+      : "this technician";
+    const confirmed = window.confirm(
+      `Assign this route to ${name} on ${formatPrettyDate(selectedDate)} and rewrite start times for the day?`,
+    );
+    if (!confirmed) return;
+    setRouteApplying(true);
+    setRouteMessage(null);
+    setWarning(null);
     try {
-      const result = await getScheduleRoute(token, userId, selectedDate);
-      setRouteStops(result.stops);
-      setRoutePolyline(result.route?.encodedPolyline);
+      const applied = await applyScheduleRoute(token, {
+        userId: effectiveTechId,
+        date: selectedDate,
+        orderedWorkOrderIds: routeStopIds,
+        lockedStops: activeRouteLocks,
+      });
+      if (applied.warnings?.length) setWarning(applied.warnings.join(" "));
+      setAddedUnscheduledIds([]);
+      setManualOrder(null);
+      await load();
     } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : "Failed to load day route.",
+      setRouteMessage(
+        err instanceof ApiError ? err.message : "Failed to apply route.",
       );
-      setRouteUserId(null);
     } finally {
-      setRouteLoading(false);
+      setRouteApplying(false);
     }
   }
 
@@ -1068,7 +1326,13 @@ export default function CalendarTab({
       canSuggest={Boolean(
         selectedRailJob && !selectedRailJob.scheduledStart,
       )}
-      draggable={view === "week" && surface === "calendar" && canWrite}
+      draggable={
+        canWrite &&
+        (surface === "map"
+          ? dispatcher
+          : view === "week" && surface === "calendar")
+      }
+      liftDrag={surface === "map"}
     />
   ) : null;
   const editingViewHref = editingJob ? workOrderViewHref(editingJob) : null;
@@ -1213,6 +1477,20 @@ export default function CalendarTab({
       {loading ? (
         <p className="text-sm text-neutral-500">Loading schedule…</p>
       ) : surface === "map" ? (
+        <DndContext
+          key="schedule-map"
+          sensors={sensors}
+          collisionDetection={pointerWithin}
+          onDragStart={(event) => {
+            const id = String(event.active.id);
+            setDraggingJobId(id.startsWith("job:") ? id.slice(4) : null);
+          }}
+          onDragCancel={() => setDraggingJobId(null)}
+          onDragEnd={(event) => {
+            setDraggingJobId(null);
+            void handleDragEnd(event);
+          }}
+        >
         <div className="space-y-3">
           {geocodingPins && (
             <p className="text-xs text-neutral-500">
@@ -1220,17 +1498,100 @@ export default function CalendarTab({
             </p>
           )}
           <ScheduleSplit sidebar={rail}>
-            <ScheduleMap
-              unscheduled={dispatcher ? calendarUnscheduled : []}
-              scheduled={jobs}
-              showScheduled={railFilter === "current"}
-              selectedId={selectedRailJob?._id ?? null}
-              onSelect={selectRailJob}
-            />
+            <div className="space-y-3">
+              <RoutePlannerPanel
+                staff={staff}
+                techId={effectiveTechId}
+                onTech={(id) => {
+                  setRouteTechId(id || null);
+                  setAddedUnscheduledIds([]);
+                  setManualOrder(null);
+                  setRouteLocks({});
+                  setRoutePlan(null);
+                  setRouteMessage(null);
+                }}
+                techLocked={!dispatcher}
+                filter={mapJobFilter}
+                onFilter={setMapJobFilter}
+                allowUnscheduled={dispatcher}
+                roundTrip={roundTrip}
+                onRoundTrip={setRoundTrip}
+                objective={routeObjective}
+                onObjective={setRouteObjective}
+                onOptimize={() => void runPlan(true)}
+                onApply={() => void applyRoute()}
+                canApply={dispatcher && canWrite}
+                optimizing={routeOptimizing}
+                applying={routeApplying}
+                planning={routePlanning}
+                message={routeMessage}
+                warnings={
+                  routeTotalsMatch ? (routePlan?.warnings ?? []) : []
+                }
+                jobs={routeStopIds.map((id) => {
+                  const stop = routeTotalsMatch
+                    ? routePlan?.stops.find((item) => item.workOrderId === id)
+                    : undefined;
+                  return {
+                    id,
+                    label: jobById.get(id)?.customerName || "Work order",
+                    arrival: stop?.arrival,
+                    departure: stop?.departure,
+                  };
+                })}
+                stops={routeTotalsMatch ? (routePlan?.stops ?? []) : []}
+                legs={routeTotalsMatch ? (routePlan?.route?.legs ?? []) : []}
+                orderedWorkOrderIds={
+                  routeTotalsMatch ? (routePlan?.orderedWorkOrderIds ?? []) : []
+                }
+                totalMinutes={routePlan?.route?.durationMinutes}
+                totalMeters={routePlan?.route?.distanceMeters}
+                showTotals={Boolean(routeTotalsMatch && routePlan?.route)}
+                onMove={moveRouteStop}
+                dayCounts={jobsTodayByTech}
+                locks={routeLocks}
+                onToggleLock={toggleRouteLock}
+                onLockTime={setRouteLockTime}
+              />
+              <ScheduleMap
+                unscheduled={
+                  dispatcher && mapJobFilter === "unscheduled"
+                    ? unscheduledPins
+                    : addedJobs
+                }
+                scheduled={dayJobs}
+                pinMode={mapJobFilter}
+                selectedId={selectedRailJob?._id ?? null}
+                onSelect={selectRailJob}
+                routeStops={
+                  routeTotalsMatch && routePlan ? routePlan.stops : undefined
+                }
+                encodedPolyline={
+                  routeTotalsMatch ? routePlan?.route?.encodedPolyline : undefined
+                }
+              />
+            </div>
           </ScheduleSplit>
         </div>
+          <DragOverlay dropAnimation={null}>
+            {draggingJob ? (
+              <div className="w-56">
+                <UnscheduledCard
+                  order={draggingJob}
+                  selected={false}
+                  onSelect={() => {}}
+                  draggable={false}
+                />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       ) : view === "week" ? (
-        <DndContext sensors={sensors} onDragEnd={(e) => void handleDragEnd(e)}>
+        <DndContext
+          key="schedule-week"
+          sensors={sensors}
+          onDragEnd={(e) => void handleDragEnd(e)}
+        >
           <ScheduleSplit sidebar={rail}>
             <WeekBoard
               staff={staff}
@@ -1243,7 +1604,16 @@ export default function CalendarTab({
                   job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
                 );
               }}
-              onMap={(userId) => void openRoute(userId)}
+              onMap={(userId) => {
+                setRouteTechId(userId);
+                setSurface("map");
+                setMapJobFilter("scheduled");
+                setAddedUnscheduledIds([]);
+                setManualOrder(null);
+                setRouteLocks({});
+                setRoutePlan(null);
+                setRouteMessage(null);
+              }}
             />
           </ScheduleSplit>
         </DndContext>
@@ -1392,38 +1762,6 @@ export default function CalendarTab({
         </div>
       )}
 
-      {(routeUserId || routeLoading) && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
-          <div className="w-full max-w-2xl rounded-xl bg-white p-5 shadow-xl">
-            <h3 className="text-lg font-semibold text-brand-dark">Day route</h3>
-            <p className="mt-1 text-sm text-neutral-500">
-              {formatPrettyDate(selectedDate)}
-            </p>
-            <div className="mt-4">
-              {routeLoading || !routeStops ? (
-                <p className="text-sm text-neutral-500">Loading map…</p>
-              ) : (
-                <DayRouteMap
-                  stops={routeStops}
-                  encodedPolyline={routePolyline}
-                />
-              )}
-            </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setRouteUserId(null);
-                  setRouteStops(null);
-                }}
-                className="rounded-md px-3 py-1.5 text-sm text-neutral-600"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

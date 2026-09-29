@@ -111,6 +111,15 @@ export function formatLocalTime(date: Date): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+export function formatLocalClock(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: SCHEDULE_TIMEZONE,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
 export function addDays(localDate: string, days: number): string {
   const [y, m, d] = localDate.split("-").map(Number);
   const utc = Date.UTC(y ?? 1970, (m ?? 1) - 1, (d ?? 1) + days);

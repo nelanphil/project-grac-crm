@@ -13,6 +13,8 @@ import {
   getScheduleStartOptions,
   postScheduleGeocodeMissing,
   getScheduleRoute,
+  postScheduleRoutePlan,
+  postScheduleRouteApply,
 } from "../controllers/schedule.controller";
 
 const router = Router();
@@ -47,6 +49,18 @@ router.get(
 
 router.get("/route", requirePermission("jobs:read"), (req, res: Response) =>
   getScheduleRoute(req as AuthRequest, res),
+);
+
+router.post(
+  "/route/plan",
+  requirePermission("jobs:read"),
+  (req, res: Response) => postScheduleRoutePlan(req as AuthRequest, res),
+);
+
+router.post(
+  "/route/apply",
+  requirePermission("jobs:write"),
+  (req, res: Response) => postScheduleRouteApply(req as AuthRequest, res),
 );
 
 router.post(
