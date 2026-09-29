@@ -17,7 +17,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -26,6 +26,7 @@ import {
   getScheduleQueue,
   getScheduleRoute,
   getScheduleStaff,
+  placeScheduleWorkOrder,
   ScheduleStaffMember,
   ScheduleSuggestion,
   suggestScheduleAssignee,
@@ -67,6 +68,7 @@ type ViewMode = "week" | "month";
 type MonthMode = "calendar" | "table";
 type SurfaceMode = "calendar" | "map";
 type RailFilter = "current" | "unscheduled";
+type RailDateOrder = "asc" | "desc";
 
 function dropMinutes(event: DragEndEvent): number | null {
   const over = event.over;
@@ -180,21 +182,35 @@ type RailDayGroup = {
   jobs: WorkOrderListItem[];
 };
 
-function sortRailJobs(jobs: WorkOrderListItem[]): WorkOrderListItem[] {
+function sortRailJobs(
+  jobs: WorkOrderListItem[],
+  order: RailDateOrder,
+): WorkOrderListItem[] {
+  const direction = order === "asc" ? 1 : -1;
   return [...jobs].sort((a, b) => {
-    const aDate = workOrderLocalDate(a) ?? "9999-99-99";
-    const bDate = workOrderLocalDate(b) ?? "9999-99-99";
-    if (aDate !== bDate) return aDate.localeCompare(bDate);
-    const aScheduled = a.scheduledStart ? 1 : 0;
-    const bScheduled = b.scheduledStart ? 1 : 0;
-    if (aScheduled !== bScheduled) return aScheduled - bScheduled;
-    return (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? "");
+    const aDate = workOrderLocalDate(a);
+    const bDate = workOrderLocalDate(b);
+    if (!aDate && !bDate) return compareWithinDay(a, b);
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    if (aDate !== bDate) return aDate.localeCompare(bDate) * direction;
+    return compareWithinDay(a, b);
   });
 }
 
-function groupJobsByDay(jobs: WorkOrderListItem[]): RailDayGroup[] {
+function compareWithinDay(a: WorkOrderListItem, b: WorkOrderListItem): number {
+  const aScheduled = a.scheduledStart ? 1 : 0;
+  const bScheduled = b.scheduledStart ? 1 : 0;
+  if (aScheduled !== bScheduled) return aScheduled - bScheduled;
+  return (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? "");
+}
+
+function groupJobsByDay(
+  jobs: WorkOrderListItem[],
+  order: RailDateOrder,
+): RailDayGroup[] {
   const groups: RailDayGroup[] = [];
-  for (const job of sortRailJobs(jobs)) {
+  for (const job of sortRailJobs(jobs, order)) {
     const date = workOrderLocalDate(job);
     const key = date ?? "none";
     const last = groups[groups.length - 1];
@@ -235,6 +251,8 @@ function ScheduleRail({
   month,
   monthLabel,
   onMonth,
+  dateOrder,
+  onDateOrder,
   loading,
   selectedId,
   onSelect,
@@ -249,6 +267,8 @@ function ScheduleRail({
   month: string;
   monthLabel: string;
   onMonth: (month: string) => void;
+  dateOrder: RailDateOrder;
+  onDateOrder: (order: RailDateOrder) => void;
   loading: boolean;
   selectedId: string | null;
   onSelect: (job: WorkOrderListItem) => void;
@@ -257,7 +277,11 @@ function ScheduleRail({
   canSuggest: boolean;
   draggable: boolean;
 }) {
-  const groups = useMemo(() => groupJobsByDay(jobs), [jobs]);
+  const groups = useMemo(
+    () => groupJobsByDay(jobs, dateOrder),
+    [jobs, dateOrder],
+  );
+  const newestFirst = dateOrder === "desc";
 
   return (
     <aside className="flex max-h-[40rem] min-h-0 flex-col space-y-2">
@@ -288,7 +312,7 @@ function ScheduleRail({
           <ChevronRight className="h-3.5 w-3.5" aria-hidden />
         </button>
       </div>
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex rounded-md border border-neutral-200 bg-white p-0.5 text-xs">
           <RailFilterTip
             label={`All work orders in ${monthLabel}. Unscheduled jobs are listed first within each day.`}
@@ -321,14 +345,34 @@ function ScheduleRail({
             </button>
           </RailFilterTip>
         </div>
-        <button
-          type="button"
-          disabled={!canSuggest || suggesting}
-          onClick={onSuggest}
-          className="shrink-0 text-xs font-medium text-brand-orange hover:underline disabled:opacity-40"
-        >
-          {suggesting ? "Suggesting…" : "Suggest tech"}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            aria-pressed={newestFirst}
+            aria-label={
+              newestFirst
+                ? "Showing newest dates first. Show oldest first."
+                : "Showing oldest dates first. Show newest first."
+            }
+            onClick={() => onDateOrder(newestFirst ? "asc" : "desc")}
+            className="inline-flex items-center gap-0.5 rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-[11px] font-medium text-neutral-600 hover:bg-neutral-50"
+          >
+            {newestFirst ? (
+              <ArrowUp className="h-3 w-3" aria-hidden />
+            ) : (
+              <ArrowDown className="h-3 w-3" aria-hidden />
+            )}
+            {newestFirst ? "Newest" : "Oldest"}
+          </button>
+          <button
+            type="button"
+            disabled={!canSuggest || suggesting}
+            onClick={onSuggest}
+            className="text-xs font-medium text-brand-orange hover:underline disabled:opacity-40"
+          >
+            {suggesting ? "Suggesting…" : "Suggest tech"}
+          </button>
+        </div>
       </div>
       {loading ? (
         <p className="text-xs text-neutral-400">Loading work orders…</p>
@@ -475,6 +519,7 @@ export default function CalendarTab({
   const [monthMode, setMonthMode] = useState<MonthMode>("calendar");
   const [surface, setSurface] = useState<SurfaceMode>("calendar");
   const [railFilter, setRailFilter] = useState<RailFilter>("current");
+  const [railDateOrder, setRailDateOrder] = useState<RailDateOrder>("asc");
   const [railMonth, setRailMonth] = useState(() => today.slice(0, 7));
 
   const [staff, setStaff] = useState<ScheduleStaffMember[]>([]);
@@ -732,16 +777,30 @@ export default function CalendarTab({
     if (minutes == null) return;
     const hhmm = minutesToHhMm(minutes);
     const iso = localDateTimeToIso(selectedDate, hhmm);
-    const job =
-      jobs.find((j) => j._id === workOrderId) ||
-      railJobs.find((j) => j._id === workOrderId) ||
-      calendarUnscheduled.find((j) => j._id === workOrderId);
-    await assignJob(
-      workOrderId,
-      userId,
-      iso,
-      job?.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
-    );
+    if (!token) return;
+    setSaving(true);
+    setWarning(null);
+    setError(null);
+    try {
+      const placed = await placeScheduleWorkOrder(token, {
+        workOrderId,
+        assignedUserRef: userId,
+        date: selectedDate,
+        scheduledStart: iso,
+      });
+      if (placed.warnings?.length) {
+        setWarning(placed.warnings.join(" "));
+      }
+      setSelectedRailJob(null);
+      setSuggestions(null);
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to place work order.",
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleSuggest() {
@@ -855,6 +914,8 @@ export default function CalendarTab({
       month={railMonth}
       monthLabel={railMonthLabel}
       onMonth={changeRailMonth}
+      dateOrder={railDateOrder}
+      onDateOrder={setRailDateOrder}
       loading={railLoading}
       selectedId={selectedRailJob?._id ?? null}
       onSelect={selectRailJob}

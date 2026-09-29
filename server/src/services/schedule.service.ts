@@ -959,6 +959,250 @@ export async function applyAssignmentSideEffects(
   }
 }
 
+function placeJobLabel(workOrder: { customerName?: string | null }): string {
+  const name = workOrder.customerName?.trim();
+  return name || "Work order";
+}
+
+async function coordsByAddressId(
+  addressIds: string[],
+): Promise<Map<string, LatLng | null>> {
+  const coords = new Map<string, LatLng | null>();
+  if (addressIds.length === 0) return coords;
+  const addresses = await CustomerAddress.find({ _id: { $in: addressIds } })
+    .select("_id lat lng address city state zip")
+    .lean();
+  const geocodeCache = new Map<string, LatLng | null>();
+  for (const address of addresses) {
+    let point = addressCoords(address);
+    if (!point) {
+      point = await geocodeToLatLng(address, geocodeCache);
+      if (point) {
+        await CustomerAddress.updateOne(
+          { _id: address._id },
+          { $set: { lat: point.lat, lng: point.lng } },
+        );
+      }
+    }
+    coords.set(String(address._id), point);
+  }
+  return coords;
+}
+
+export async function placeWorkOrder(opts: {
+  workOrderId: string;
+  assignedUserRef: string;
+  date: string;
+  scheduledStart: Date;
+}): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
+  if (!mongoose.Types.ObjectId.isValid(opts.workOrderId)) {
+    throw Object.assign(new Error("Invalid workOrderId"), { status: 400 });
+  }
+  if (!mongoose.Types.ObjectId.isValid(opts.assignedUserRef)) {
+    throw Object.assign(new Error("Invalid assignedUserRef"), { status: 400 });
+  }
+  if (Number.isNaN(opts.scheduledStart.getTime())) {
+    throw Object.assign(new Error("Invalid scheduledStart"), { status: 400 });
+  }
+
+  const dropped = await WorkOrder.findById(opts.workOrderId);
+  if (!dropped) {
+    throw Object.assign(new Error("Work order not found"), { status: 404 });
+  }
+  if (dropped.completed) {
+    throw Object.assign(new Error("Completed work orders cannot be rescheduled"), {
+      status: 400,
+    });
+  }
+
+  const assignee = await User.findOne({
+    _id: opts.assignedUserRef,
+    ...activeUserFilter,
+  }).select(
+    "first_name last_name schedulable homeLocation weeklyHours scheduleExceptions",
+  );
+  if (!assignee) {
+    throw Object.assign(new Error("Assigned user not found"), { status: 400 });
+  }
+  if (!assignee.schedulable) {
+    throw Object.assign(
+      new Error("Assigned user cannot be scheduled for work orders"),
+      { status: 400 },
+    );
+  }
+
+  const dayStart = localDateToUtc(opts.date, "00:00");
+  const dayEnd = localDateToUtc(opts.date, "23:59");
+  const existing = await WorkOrder.find({
+    assignedUserRef: assignee._id,
+    scheduledStart: { $gte: dayStart, $lte: dayEnd },
+    _id: { $ne: dropped._id },
+  }).sort({ scheduledStart: 1 });
+
+  const insertAt = existing.findIndex((job) => {
+    const start = job.scheduledStart?.getTime() ?? Number.POSITIVE_INFINITY;
+    return start >= opts.scheduledStart.getTime();
+  });
+  const index = insertAt === -1 ? existing.length : insertAt;
+  const sequence = [...existing];
+  sequence.splice(index, 0, dropped);
+
+  const addressIds = [
+    ...new Set(
+      sequence
+        .map((job) => job.addressRef?.toString())
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const addressPoints = await coordsByAddressId(addressIds);
+  const geocodeCache = new Map<string, LatLng | null>();
+  let home = homeCoords(assignee.homeLocation);
+  if (!home && assignee.homeLocation?.address?.trim()) {
+    home = await geocodeToLatLng(assignee.homeLocation, geocodeCache);
+    if (home) {
+      await User.updateOne(
+        { _id: assignee._id },
+        { $set: { "homeLocation.lat": home.lat, "homeLocation.lng": home.lng } },
+      );
+    }
+  }
+
+  const warnings: string[] = [];
+  const warn = (message: string) => {
+    if (!warnings.includes(message)) warnings.push(message);
+  };
+  const pointFor = (job: InstanceType<typeof WorkOrder>): LatLng | null => {
+    const id = job.addressRef?.toString();
+    if (!id) return null;
+    return addressPoints.get(id) ?? null;
+  };
+  const driveBetween = async (
+    from: LatLng | null,
+    to: LatLng | null,
+    fromLabel: string,
+    toLabel: string,
+  ): Promise<number> => {
+    if (!from || !to) {
+      warn(
+        `Drive time from ${fromLabel} to ${toLabel} is unknown and was treated as 0 minutes.`,
+      );
+      return 0;
+    }
+    const drive = await computeDriveMinutes(from, to);
+    return drive.minutes;
+  };
+
+  const dayWindow = resolveDayWindow(
+    assignee.weeklyHours,
+    assignee.scheduleExceptions,
+    opts.date,
+  );
+  const workRange = windowToUtcRange(opts.date, dayWindow);
+
+  let previousEnd: Date | null = null;
+  let previousPoint: LatLng | null = null;
+  let previousLabel = "home";
+  if (index === 0) {
+    previousPoint = home;
+    previousEnd = workRange?.start ?? null;
+  } else {
+    const previous = sequence[index - 1];
+    if (previous) {
+      previousPoint = pointFor(previous);
+      previousLabel = placeJobLabel(previous);
+      const previousDuration = estimatedMinutesForWorkOrder(previous);
+      previousEnd =
+        previous.scheduledEnd ??
+        (previous.scheduledStart
+          ? addMinutes(previous.scheduledStart, previousDuration)
+          : null);
+    }
+  }
+
+  const inserted = sequence[index];
+  if (!inserted) {
+    throw Object.assign(new Error("Work order not found"), { status: 404 });
+  }
+  const insertedDuration = estimatedMinutesForWorkOrder(inserted);
+  const inboundDrive = await driveBetween(
+    previousPoint,
+    pointFor(inserted),
+    previousLabel,
+    placeJobLabel(inserted),
+  );
+  const earliestInserted = previousEnd
+    ? addMinutes(previousEnd, inboundDrive)
+    : opts.scheduledStart;
+  const insertedStart = new Date(
+    Math.max(opts.scheduledStart.getTime(), earliestInserted.getTime()),
+  );
+  const insertedEnd = addMinutes(insertedStart, insertedDuration);
+  inserted.scheduledStart = insertedStart;
+  inserted.scheduledEnd = insertedEnd;
+  inserted.estimatedMinutes = insertedDuration;
+  inserted.assignedUserRef = assignee._id;
+  inserted.appointmentCanceledAt = null;
+  inserted.appointmentCanceledBy = null;
+  await applyAssignmentSideEffects(inserted, assignee);
+
+  const hoursWarn = availabilityWarning({
+    weeklyHours: assignee.weeklyHours,
+    exceptions: assignee.scheduleExceptions,
+    localDate: opts.date,
+    start: insertedStart,
+    end: insertedEnd,
+  });
+  if (hoursWarn) warn(`${placeJobLabel(inserted)}: ${hoursWarn}`);
+
+  const changed: Array<InstanceType<typeof WorkOrder>> = [inserted];
+  let cursorEnd = insertedEnd;
+  let cursorPoint = pointFor(inserted);
+  let cursorLabel = placeJobLabel(inserted);
+
+  for (let i = index + 1; i < sequence.length; i += 1) {
+    const job = sequence[i];
+    if (!job) break;
+    const duration = estimatedMinutesForWorkOrder(job);
+    const drive = await driveBetween(
+      cursorPoint,
+      pointFor(job),
+      cursorLabel,
+      placeJobLabel(job),
+    );
+    const earliest = addMinutes(cursorEnd, drive);
+    const currentStart = job.scheduledStart;
+    if (currentStart && currentStart.getTime() >= earliest.getTime()) break;
+
+    const start = earliest;
+    const end = addMinutes(start, duration);
+    job.scheduledStart = start;
+    job.scheduledEnd = end;
+    job.estimatedMinutes = duration;
+    await applyAssignmentSideEffects(job, assignee);
+    changed.push(job);
+    const jobWarn = availabilityWarning({
+      weeklyHours: assignee.weeklyHours,
+      exceptions: assignee.scheduleExceptions,
+      localDate: opts.date,
+      start,
+      end,
+    });
+    if (jobWarn) warn(`${placeJobLabel(job)}: ${jobWarn}`);
+    cursorEnd = end;
+    cursorPoint = pointFor(job);
+    cursorLabel = placeJobLabel(job);
+  }
+
+  for (const job of changed) {
+    await job.save();
+  }
+
+  const workOrders = await enrichScheduleWorkOrders(
+    changed.map((job) => job.toObject() as unknown as Record<string, unknown>),
+  );
+  return { workOrders, warnings };
+}
+
 export const PAST_DUE_LIMIT = 75;
 
 export type ScheduleQueue = {

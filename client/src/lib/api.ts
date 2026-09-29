@@ -2012,6 +2012,22 @@ export async function suggestScheduleAssignee(
   });
 }
 
+export async function placeScheduleWorkOrder(
+  token: string,
+  data: {
+    workOrderId: string;
+    assignedUserRef: string;
+    date: string;
+    scheduledStart: string;
+  },
+): Promise<{ workOrders: WorkOrderListItem[]; warnings: string[] }> {
+  return authRequest(`/schedule/place`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
 export interface ScheduleRouteStop {
   kind: "home" | "job";
   label: string;

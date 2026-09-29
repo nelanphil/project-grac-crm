@@ -11,6 +11,7 @@ import {
   listScheduleQueue,
   staffDisplayName,
   suggestAssignees,
+  placeWorkOrder,
   toPublicStaff,
   enrichScheduleWorkOrders,
   rangeUtc,
@@ -24,6 +25,13 @@ const suggestSchema = z.object({
   workOrderId: z.string().min(1),
   date: z.string().regex(localDateRe),
   estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
+});
+
+const placeSchema = z.object({
+  workOrderId: z.string().min(1),
+  assignedUserRef: z.string().min(1),
+  date: z.string().regex(localDateRe),
+  scheduledStart: z.string().min(1),
 });
 
 export async function getScheduleQueue(
@@ -215,6 +223,52 @@ export async function postScheduleSuggest(
     }
     console.error("POST /schedule/suggest error:", err);
     res.status(500).json({ message: "Failed to suggest technicians" });
+  }
+}
+
+export async function postSchedulePlace(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isDispatcherRole(req.user)) {
+      res.status(403).json({ message: "Insufficient role" });
+      return;
+    }
+    if (!req.user?.permissions.includes("jobs:write")) {
+      res.status(403).json({ message: "Missing permission: jobs:write" });
+      return;
+    }
+
+    const parsed = placeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const scheduledStart = new Date(parsed.data.scheduledStart);
+    if (Number.isNaN(scheduledStart.getTime())) {
+      res.status(400).json({ message: "scheduledStart must be a date" });
+      return;
+    }
+
+    const result = await placeWorkOrder({
+      workOrderId: parsed.data.workOrderId,
+      assignedUserRef: parsed.data.assignedUserRef,
+      date: parsed.data.date,
+      scheduledStart,
+    });
+    res.json(result);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    if (status !== 500) {
+      res.status(status).json({ message: (err as Error).message });
+      return;
+    }
+    console.error("POST /schedule/place error:", err);
+    res.status(500).json({ message: "Failed to place work order" });
   }
 }
 
