@@ -209,6 +209,43 @@ export function formatMonthDayYear(localDate: string): string {
   });
 }
 
+/** Full weekday plus short date, e.g. "Tuesday, Sep 29". */
+export function formatWeekdayDate(localDate: string): string {
+  const iso = localDateTimeToIso(localDate, "12:00");
+  return new Date(iso).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    timeZone: SCHEDULE_TIMEZONE,
+  });
+}
+
+/** "September 2026" from YYYY-MM. */
+export function formatMonthYear(yyyyMm: string): string {
+  const iso = localDateTimeToIso(`${yyyyMm}-01`, "12:00");
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: SCHEDULE_TIMEZONE,
+  });
+}
+
+/** Move a YYYY-MM value by whole months. */
+export function shiftMonth(yyyyMm: string, delta: number): string {
+  if (delta === 0) return yyyyMm;
+  let cursor = `${yyyyMm}-01`;
+  if (delta > 0) {
+    for (let i = 0; i < delta; i += 1) {
+      cursor = addDays(cursor, daysInMonth(cursor));
+    }
+    return cursor.slice(0, 7);
+  }
+  for (let i = 0; i < -delta; i += 1) {
+    cursor = startOfMonth(addDays(cursor, -1));
+  }
+  return cursor.slice(0, 7);
+}
+
 export function formatPrettyDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
