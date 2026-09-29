@@ -3,13 +3,9 @@ import {
   EMAIL_BODY_MAX,
   EMAIL_SUBJECT_MAX,
   emailChromeSchema,
+  offerContractOverrideSchema,
   offerContractTemplateIdSchema,
 } from "./messageTemplate.schema";
-
-const offerContractOverrideSchema = z.object({
-  contactId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/),
-  contractTemplateId: offerContractTemplateIdSchema,
-});
 
 export const emailPaymentLinkAvailabilitySchema = z.object({
   customerIds: z.array(z.string().trim().min(1)).min(1).max(200),

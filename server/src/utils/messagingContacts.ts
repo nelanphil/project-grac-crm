@@ -193,7 +193,7 @@ export async function searchHubContacts(options: {
     : new Map();
 
   const payableIds =
-    channel === "email"
+    channel === "email" || channel === "sms"
       ? await payableInvoiceCustomerIds(
           pageRows.map((c) => String(c.customerRef)),
         )

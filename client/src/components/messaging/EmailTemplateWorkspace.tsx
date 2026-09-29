@@ -242,12 +242,14 @@ export default function EmailTemplateWorkspace({
         {onOfferContractTemplateIdChange ? (
           <label className="mb-3 block rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm">
             <span className="font-medium text-brand-dark">
-              Temporary contract for customers without a payment link
+              Temporary contract
             </span>
             <span className="mt-0.5 block text-xs text-neutral-500">
-              When this email includes a payment link, those customers get a
+              When this email includes a payment link, each recipient gets a
               temporary contract and an open invoice for the catalog contract
-              you pick. Paying it makes the contract permanent.
+              you pick. That invoice is added to the same checkout as any
+              unpaid invoices or work orders they already have. Paying the
+              contract invoice makes the contract permanent.
             </span>
             <select
               value={offerContractTemplateId ?? ""}

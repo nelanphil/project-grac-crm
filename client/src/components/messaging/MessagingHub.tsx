@@ -145,6 +145,13 @@ export default function MessagingHub() {
   const [offerContractOverrides, setOfferContractOverrides] = useState<
     Record<string, string | null>
   >({});
+  const [smsIncludePaymentLink, setSmsIncludePaymentLink] = useState(false);
+  const [smsOfferContractTemplateId, setSmsOfferContractTemplateId] = useState<
+    string | null
+  >(null);
+  const [smsOfferContractOverrides, setSmsOfferContractOverrides] = useState<
+    Record<string, string | null>
+  >({});
   const [contractTemplates, setContractTemplates] = useState<
     ContractTemplateItem[]
   >([]);
@@ -312,6 +319,9 @@ export default function MessagingHub() {
   );
   const emailUsesPaymentLink =
     includePaymentLink || emailHasPaymentLinkToken;
+  const smsHasPaymentLinkToken = /\{\{\s*payment_link\s*\}\}/.test(body);
+  const smsUsesPaymentLink =
+    smsIncludePaymentLink || smsHasPaymentLinkToken;
 
   useEffect(() => {
     if (!token || !initialInvoiceId) return;
@@ -590,6 +600,54 @@ export default function MessagingHub() {
   ]);
 
   useEffect(() => {
+    if (!token || !smsUsesPaymentLink) return;
+    const customerIds = [
+      ...new Set([
+        ...contacts.map((c) => c.customerRef),
+        ...Object.values(selectedContactsById).map((c) => c.customerRef),
+      ]),
+    ].filter(Boolean);
+    if (customerIds.length === 0) return;
+
+    let cancelled = false;
+    getEmailPaymentLinkAvailability(token, customerIds)
+      .then((res) => {
+        if (cancelled) return;
+        const map = new Map(
+          res.available.map((row) => [row.customerId, row.hasPayableInvoice]),
+        );
+        setContacts((prev) => {
+          let changed = false;
+          const next = prev.map((c) => {
+            const value = map.get(c.customerRef);
+            if (value === undefined || c.hasPayableInvoice === value) return c;
+            changed = true;
+            return { ...c, hasPayableInvoice: value };
+          });
+          return changed ? next : prev;
+        });
+        setSelectedContactsById((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const [id, contact] of Object.entries(prev)) {
+            const value = map.get(contact.customerRef);
+            if (value === undefined || contact.hasPayableInvoice === value) {
+              continue;
+            }
+            next[id] = { ...contact, hasPayableInvoice: value };
+            changed = true;
+          }
+          return changed ? next : prev;
+        });
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, smsUsesPaymentLink, contacts, selectedContactsById]);
+
+  useEffect(() => {
     if (!token) return;
     if (
       activeTab !== "create" &&
@@ -600,6 +658,14 @@ export default function MessagingHub() {
     let cancelled = false;
     const previewContactId =
       selectedIds.size === 1 ? [...selectedIds][0] : undefined;
+    const previewOffer =
+      previewContactId &&
+      Object.prototype.hasOwnProperty.call(
+        smsOfferContractOverrides,
+        previewContactId,
+      )
+        ? smsOfferContractOverrides[previewContactId]
+        : smsOfferContractTemplateId;
 
     const timer = setTimeout(() => {
       previewMessagingMessage(token, {
@@ -607,6 +673,8 @@ export default function MessagingHub() {
         contactId: previewContactId,
         renewalYear: useRenewalsFilter ? viewYear : undefined,
         renewalMonth: useRenewalsFilter ? viewMonth + 1 : undefined,
+        includePaymentLink: smsIncludePaymentLink,
+        offerContractTemplateId: previewOffer,
       })
         .then((res) => {
           if (cancelled) return;
@@ -642,6 +710,9 @@ export default function MessagingHub() {
     useRenewalsFilter,
     viewYear,
     viewMonth,
+    smsIncludePaymentLink,
+    smsOfferContractTemplateId,
+    smsOfferContractOverrides,
   ]);
 
   useEffect(() => {
@@ -725,7 +796,8 @@ export default function MessagingHub() {
     if (!token) return;
     if (
       activeTab !== "email" &&
-      !(activeTab === "templates" && templateEditorType === "email")
+      activeTab !== "create" &&
+      activeTab !== "templates"
     ) {
       return;
     }
@@ -749,12 +821,16 @@ export default function MessagingHub() {
     setSelectedTemplateId(template._id);
     setTemplateName(template.name);
     setBody(template.body ?? "");
+    setSmsOfferContractTemplateId(template.offerContractTemplateId ?? null);
+    setSmsOfferContractOverrides({});
   }
 
   function startNewSmsTemplate() {
     setSelectedTemplateId(null);
     setTemplateName("");
     setBody(DEFAULT_SMS_BODY);
+    setSmsOfferContractTemplateId(null);
+    setSmsOfferContractOverrides({});
   }
 
   function selectEmailTemplate(template: MessageTemplateItem) {
@@ -775,6 +851,28 @@ export default function MessagingHub() {
     setEmailChrome(DEFAULT_EMAIL_CHROME);
     setOfferContractTemplateId(null);
     setOfferContractOverrides({});
+  }
+
+  function setSmsOfferOverride(contactId: string, value: string) {
+    setSmsOfferContractOverrides((prev) => {
+      const next = { ...prev };
+      if (value === "") delete next[contactId];
+      else if (value === "none") next[contactId] = null;
+      else next[contactId] = value;
+      return next;
+    });
+  }
+
+  function applySmsOfferOverrides(contactIds: string[], value: string) {
+    setSmsOfferContractOverrides((prev) => {
+      const next = { ...prev };
+      for (const id of contactIds) {
+        if (value === "") delete next[id];
+        else if (value === "none") next[id] = null;
+        else next[id] = value;
+      }
+      return next;
+    });
   }
 
   function setOfferOverride(contactId: string, value: string) {
@@ -855,7 +953,9 @@ export default function MessagingHub() {
           subject: isEmail ? emailSubject : "",
           templateType: type,
           emailChrome: isEmail ? mergeEmailChrome(emailChrome) : undefined,
-          offerContractTemplateId: isEmail ? offerContractTemplateId : null,
+          offerContractTemplateId: isEmail
+            ? offerContractTemplateId
+            : smsOfferContractTemplateId,
         });
         setTemplates((prev) =>
           prev.map((t) => (t._id === template._id ? template : t)),
@@ -867,7 +967,9 @@ export default function MessagingHub() {
           subject: isEmail ? emailSubject : undefined,
           templateType: type,
           emailChrome: isEmail ? mergeEmailChrome(emailChrome) : undefined,
-          offerContractTemplateId: isEmail ? offerContractTemplateId : null,
+          offerContractTemplateId: isEmail
+            ? offerContractTemplateId
+            : smsOfferContractTemplateId,
         });
         setTemplates((prev) =>
           [...prev, template].sort((a, b) => a.name.localeCompare(b.name)),
@@ -971,6 +1073,9 @@ export default function MessagingHub() {
     setTemplateName("");
     setBody(DEFAULT_SMS_BODY);
     setMediaUrlsRaw("");
+    setSmsIncludePaymentLink(false);
+    setSmsOfferContractTemplateId(null);
+    setSmsOfferContractOverrides({});
     setError(null);
     setSendResult(null);
     setResetSignal((n) => n + 1);
@@ -1106,6 +1211,14 @@ export default function MessagingHub() {
         mediaUrls: mediaUrls.length ? mediaUrls : undefined,
         renewalYear: useRenewalsFilter ? viewYear : undefined,
         renewalMonth: useRenewalsFilter ? viewMonth + 1 : undefined,
+        includePaymentLink: smsIncludePaymentLink,
+        offerContractTemplateId: smsOfferContractTemplateId,
+        offerContractOverrides: Object.entries(smsOfferContractOverrides).map(
+          ([contactId, contractTemplateId]) => ({
+            contactId,
+            contractTemplateId,
+          }),
+        ),
       });
       setSendResult(result);
       setConfirmOpen(false);
@@ -1271,8 +1384,16 @@ export default function MessagingHub() {
             templateEditorType === "email" ? emailPreviewSample : previewSample
           }
           contractTemplates={contractTemplates}
-          offerContractTemplateId={offerContractTemplateId}
-          onOfferContractTemplateIdChange={setOfferContractTemplateId}
+          offerContractTemplateId={
+            templateEditorType === "email"
+              ? offerContractTemplateId
+              : smsOfferContractTemplateId
+          }
+          onOfferContractTemplateIdChange={
+            templateEditorType === "email"
+              ? setOfferContractTemplateId
+              : setSmsOfferContractTemplateId
+          }
           error={error}
         />
       ) : activeTab === "create" ? (
@@ -1380,6 +1501,15 @@ export default function MessagingHub() {
           error={error}
           sendResult={sendResult}
           onDismissSendResult={() => setSendResult(null)}
+          showPaymentLinkColumn={smsUsesPaymentLink}
+          includePaymentLink={smsIncludePaymentLink}
+          onIncludePaymentLinkChange={setSmsIncludePaymentLink}
+          contractTemplates={contractTemplates}
+          offerContractTemplateId={smsOfferContractTemplateId}
+          offerOverrides={smsOfferContractOverrides}
+          onOfferContractTemplateIdChange={setSmsOfferContractTemplateId}
+          onOfferOverrideChange={setSmsOfferOverride}
+          onApplyOfferOverrides={applySmsOfferOverrides}
         />
       ) : activeTab === "email" ? (
         <EmailCreatePanel

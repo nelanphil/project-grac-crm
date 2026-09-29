@@ -46,10 +46,9 @@ function toPublic(doc: IMessageTemplate | Record<string, unknown>) {
       templateType === "email"
         ? mergeEmailChrome((d.emailChrome as EmailChrome | null) ?? undefined)
         : undefined,
-    offerContractTemplateId:
-      templateType === "email" && d.offerContractTemplateId
-        ? String(d.offerContractTemplateId)
-        : null,
+    offerContractTemplateId: d.offerContractTemplateId
+      ? String(d.offerContractTemplateId)
+      : null,
     deletedAt: d.deletedAt ?? null,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
@@ -171,10 +170,9 @@ export async function createMessageTemplate(
         existing.subject = fields.subject;
         existing.templateType = fields.templateType;
         existing.emailChrome = fields.emailChrome ?? null;
-        existing.offerContractTemplateId =
-          fields.templateType === "email" && data.offerContractTemplateId
-            ? new Types.ObjectId(data.offerContractTemplateId)
-            : null;
+        existing.offerContractTemplateId = data.offerContractTemplateId
+          ? new Types.ObjectId(data.offerContractTemplateId)
+          : null;
         await existing.save();
         res.status(200).json({ template: toPublic(existing) });
         return;
@@ -192,10 +190,9 @@ export async function createMessageTemplate(
       subject: fields.subject,
       templateType: fields.templateType,
       emailChrome: fields.emailChrome,
-      offerContractTemplateId:
-        fields.templateType === "email" && data.offerContractTemplateId
-          ? new Types.ObjectId(data.offerContractTemplateId)
-          : null,
+      offerContractTemplateId: data.offerContractTemplateId
+        ? new Types.ObjectId(data.offerContractTemplateId)
+        : null,
       deletedAt: null,
     });
 
@@ -248,7 +245,6 @@ export async function updateMessageTemplate(
     if (nextType === "sms") {
       template.subject = "";
       template.emailChrome = undefined;
-      template.offerContractTemplateId = null;
     } else {
       if (parsed.data.subject !== undefined) {
         template.subject = parsed.data.subject;
@@ -260,11 +256,11 @@ export async function updateMessageTemplate(
             DEFAULT_EMAIL_CHROME,
         ),
       );
-      if (parsed.data.offerContractTemplateId !== undefined) {
-        template.offerContractTemplateId = parsed.data.offerContractTemplateId
-          ? new Types.ObjectId(parsed.data.offerContractTemplateId)
-          : null;
-      }
+    }
+    if (parsed.data.offerContractTemplateId !== undefined) {
+      template.offerContractTemplateId = parsed.data.offerContractTemplateId
+        ? new Types.ObjectId(parsed.data.offerContractTemplateId)
+        : null;
     }
 
     await template.save();

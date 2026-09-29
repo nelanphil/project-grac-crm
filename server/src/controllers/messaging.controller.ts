@@ -13,7 +13,10 @@ import {
   messagingPreviewSchema,
   messagingSendSchema,
 } from "../schemas/messageTemplate.schema";
-import { MERGE_FIELDS, renderMessageTemplate } from "../utils/messageTemplate";
+import {
+  MERGE_FIELDS,
+  templateUsesPaymentLink,
+} from "../utils/messageTemplate";
 import {
   buildTemplateContextForContact,
   sampleTemplateContext,
@@ -53,6 +56,13 @@ import {
   isPubliclyReachableApiHost,
   resolvePublicApiBase,
 } from "../utils/publicUrl";
+import { sampleShortPaymentUrl } from "../utils/checkoutKey";
+import {
+  createShortPaymentLinkCache,
+  customerHasPayableInvoice,
+} from "../utils/paymentLinkForCustomer";
+import { composeSmsPaymentBody } from "../utils/smsPaymentLink";
+import { resolveSmsPaymentUrl } from "../services/smsPaymentLink.service";
 
 const PAGE_SIZES = new Set([25, 50, 100, 150, 200, 250]);
 const SEND_CONCURRENCY = 5;
@@ -138,31 +148,56 @@ export async function previewMessage(
       return;
     }
 
-    const { body, contactId, renewalYear, renewalMonth } = parsed.data;
+    const {
+      body,
+      contactId,
+      renewalYear,
+      renewalMonth,
+      includePaymentLink,
+      offerContractTemplateId,
+    } = parsed.data;
     const scope =
       renewalYear !== undefined && renewalMonth !== undefined
         ? { year: renewalYear, month: renewalMonth }
         : undefined;
 
+    let context = sampleTemplateContext();
+    let sample = true;
+    let customerRef: string | null = null;
     if (contactId) {
       const built = await buildTemplateContextForContact(contactId, scope);
       if (!built) {
         res.status(404).json({ message: "Contact not found" });
         return;
       }
-      res.json({
-        rendered: renderMessageTemplate(body, built.context),
-        context: built.context,
-        sample: false,
-      });
-      return;
+      context = built.context;
+      sample = false;
+      customerRef = built.contact.customerRef;
     }
 
-    const context = sampleTemplateContext();
-    res.json({
-      rendered: renderMessageTemplate(body, context),
+    const wantsPayLink =
+      includePaymentLink === true || templateUsesPaymentLink(body);
+    let paymentUrl: string | null = null;
+    if (wantsPayLink) {
+      const offerId = offerContractTemplateId ?? null;
+      const showLink = sample
+        ? true
+        : customerRef
+          ? (await customerHasPayableInvoice(customerRef)) || Boolean(offerId)
+          : Boolean(offerId);
+      if (showLink) paymentUrl = sampleShortPaymentUrl();
+    }
+
+    const composed = composeSmsPaymentBody({
+      bodyTemplate: body,
       context,
-      sample: true,
+      includePaymentLink: includePaymentLink === true,
+      paymentUrl,
+    });
+    res.json({
+      rendered: composed.body,
+      context: { ...context, payment_link: paymentUrl ?? "" },
+      sample,
     });
   } catch (err) {
     console.error("POST /messaging/preview error:", err);
@@ -211,6 +246,7 @@ export async function sendMessages(
 
     const data = parsed.data;
     let bodyTemplate = data.body?.trim() ?? "";
+    let templateOfferId: string | null = null;
 
     if (data.templateId) {
       if (!Types.ObjectId.isValid(data.templateId)) {
@@ -228,10 +264,18 @@ export async function sendMessages(
         });
         return;
       }
+      templateOfferId = template.offerContractTemplateId
+        ? String(template.offerContractTemplateId)
+        : null;
       if (!bodyTemplate) {
         bodyTemplate = template.body ?? "";
       }
     }
+
+    const offerContractTemplateId =
+      data.offerContractTemplateId !== undefined
+        ? data.offerContractTemplateId
+        : templateOfferId;
 
     if (!bodyTemplate.trim()) {
       res.status(400).json({ message: "Message body is empty" });
@@ -269,6 +313,13 @@ export async function sendMessages(
       apiBase,
       account.accountSid,
     );
+    const wantsPayLink =
+      data.includePaymentLink === true ||
+      templateUsesPaymentLink(bodyTemplate);
+    const paymentLinkForCustomer = wantsPayLink
+      ? createShortPaymentLinkCache(scope)
+      : null;
+    const offerInflight = new Map<string, Promise<unknown>>();
 
     const results = await mapWithConcurrency(
       uniqueContactIds,
@@ -292,7 +343,31 @@ export async function sendMessages(
         }
 
         const toE164Number = toE164(built.contact.phone);
-        const rendered = renderMessageTemplate(bodyTemplate, built.context);
+        let paymentUrl: string | null = null;
+        if (wantsPayLink && paymentLinkForCustomer) {
+          paymentUrl = await resolveSmsPaymentUrl({
+            contactId,
+            customerId: built.contact.customerRef,
+            offerContractTemplateId,
+            offerContractOverrides: data.offerContractOverrides,
+            paymentLinkForCustomer,
+            offerInflight,
+          });
+        }
+        const composed = composeSmsPaymentBody({
+          bodyTemplate,
+          context: built.context,
+          includePaymentLink: data.includePaymentLink === true,
+          paymentUrl,
+        });
+        if (composed.error) {
+          return {
+            contactId,
+            status: "failed" as const,
+            error: composed.error,
+          };
+        }
+        const rendered = composed.body;
         const contactRef = new Types.ObjectId(built.contact._id);
         const customerRef = built.customer
           ? new Types.ObjectId(built.customer._id)

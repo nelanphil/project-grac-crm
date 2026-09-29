@@ -3,7 +3,12 @@ import { Customer } from "../models/mongo/Customer";
 import { Invoice, IInvoice } from "../models/mongo/Invoice";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { type WorkOrderInvoiceSource } from "../services/invoice.service";
-import { buildCheckoutUrl, getOrCreateCheckoutKey } from "./checkoutKey";
+import {
+  buildCheckoutUrl,
+  buildShortPaymentUrl,
+  getOrCreateCheckoutKey,
+  getOrCreatePayCode,
+} from "./checkoutKey";
 import type { RenewalScope } from "./messagingContext";
 
 const OPEN_STATUSES = ["open", "draft"] as const;
@@ -141,6 +146,25 @@ export async function mintPaymentLinkForCustomer(
   };
 }
 
+/**
+ * Stable short payment URL (`/p/{payCode}`) for SMS. Same payable rules as
+ * the full checkout link. Does not remint the code on later sends.
+ */
+export async function mintShortPaymentLinkForCustomer(
+  customerId: string,
+  _scope?: RenewalScope,
+): Promise<{ payUrl: string; invoiceId: string } | null> {
+  const payable = await customerHasPayableInvoice(customerId);
+  if (!payable) return null;
+
+  const invoices = await findOpenInvoicesForCustomer(customerId);
+  const code = await getOrCreatePayCode(customerId);
+  return {
+    payUrl: buildShortPaymentUrl(code),
+    invoiceId: invoices[0] ? String(invoices[0]._id) : "",
+  };
+}
+
 export function createPaymentLinkCache(scope?: RenewalScope) {
   const inflight = new Map<
     string,
@@ -151,6 +175,21 @@ export function createPaymentLinkCache(scope?: RenewalScope) {
     const existing = inflight.get(customerId);
     if (existing) return existing;
     const pending = mintPaymentLinkForCustomer(customerId, scope);
+    inflight.set(customerId, pending);
+    return pending;
+  };
+}
+
+export function createShortPaymentLinkCache(scope?: RenewalScope) {
+  const inflight = new Map<
+    string,
+    Promise<{ payUrl: string; invoiceId: string } | null>
+  >();
+
+  return function shortPaymentLinkForCustomer(customerId: string) {
+    const existing = inflight.get(customerId);
+    if (existing) return existing;
+    const pending = mintShortPaymentLinkForCustomer(customerId, scope);
     inflight.set(customerId, pending);
     return pending;
   };

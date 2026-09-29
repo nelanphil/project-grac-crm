@@ -25,16 +25,28 @@ const nextConfig: NextConfig = {
   // /images/<slug> to the API. Slug pattern excludes dots so static files
   // like *.jpg are not proxied.
   async rewrites() {
-    return [
-      {
-        source: "/images/:slug([a-zA-Z0-9-]+)",
-        destination: `${apiUrl}/public-assets/:slug`,
-      },
-      {
-        source: "/images/:slug([a-zA-Z0-9-]+)/",
-        destination: `${apiUrl}/public-assets/:slug`,
-      },
-    ];
+    return {
+      beforeFiles: [
+        {
+          source: "/p/:code",
+          destination: `${apiUrl}/checkout/code/:code/redirect`,
+        },
+        {
+          source: "/p/:code/",
+          destination: `${apiUrl}/checkout/code/:code/redirect`,
+        },
+      ],
+      afterFiles: [
+        {
+          source: "/images/:slug([a-zA-Z0-9-]+)",
+          destination: `${apiUrl}/public-assets/:slug`,
+        },
+        {
+          source: "/images/:slug([a-zA-Z0-9-]+)/",
+          destination: `${apiUrl}/public-assets/:slug`,
+        },
+      ],
+    };
   },
 };
 

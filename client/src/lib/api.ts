@@ -4626,6 +4626,8 @@ export async function previewMessagingMessage(
     contactId?: string;
     renewalYear?: number;
     renewalMonth?: number;
+    includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
   },
 ): Promise<MessagingPreviewResult> {
   return authRequest<MessagingPreviewResult>("/messaging/preview", {
@@ -4647,6 +4649,12 @@ export async function sendMessagingMessages(
     mediaUrls?: string[];
     renewalYear?: number;
     renewalMonth?: number;
+    includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
+    offerContractOverrides?: {
+      contactId: string;
+      contractTemplateId: string | null;
+    }[];
   },
 ): Promise<MessagingSendResponse> {
   return authRequest<MessagingSendResponse>("/messaging/send", {

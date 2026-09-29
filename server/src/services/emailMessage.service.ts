@@ -23,10 +23,7 @@ import {
   buildTemplateContextForContact,
   contactHasValidEmail,
 } from "../utils/messagingContext";
-import {
-  createPaymentLinkCache,
-  customerHasPayableInvoice,
-} from "../utils/paymentLinkForCustomer";
+import { createPaymentLinkCache } from "../utils/paymentLinkForCustomer";
 import {
   resolveOfferContractTemplateId,
   type OfferContractOverride,
@@ -289,28 +286,23 @@ export async function dispatchStaffEmailBatch(
           input.offerContractOverrides,
         );
         if (offerTemplateId && built.contact.customerRef) {
-          const payable = await customerHasPayableInvoice(
-            built.contact.customerRef,
-          );
-          if (!payable) {
-            const offerKey = `${built.contact.customerRef}:${offerTemplateId}`;
-            let pending = offerInflight.get(offerKey);
-            if (!pending) {
-              pending = ensureTemporaryContractOffer(
-                built.contact.customerRef,
-                offerTemplateId,
-              );
-              offerInflight.set(offerKey, pending);
-            }
-            try {
-              await pending;
-            } catch (err) {
-              if (!(err instanceof TemporaryContractOfferError)) throw err;
-              console.error(
-                `[email] temporary contract offer skipped for ${built.contact.customerRef}`,
-                err.message,
-              );
-            }
+          const offerKey = `${built.contact.customerRef}:${offerTemplateId}`;
+          let pending = offerInflight.get(offerKey);
+          if (!pending) {
+            pending = ensureTemporaryContractOffer(
+              built.contact.customerRef,
+              offerTemplateId,
+            );
+            offerInflight.set(offerKey, pending);
+          }
+          try {
+            await pending;
+          } catch (err) {
+            if (!(err instanceof TemporaryContractOfferError)) throw err;
+            console.error(
+              `[email] temporary contract offer skipped for ${built.contact.customerRef}`,
+              err.message,
+            );
           }
         }
         const minted = await paymentLinkForCustomer(built.contact.customerRef);

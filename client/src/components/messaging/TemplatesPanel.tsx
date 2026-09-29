@@ -269,6 +269,35 @@ export default function TemplatesPanel({
             <p className="mt-1 text-right text-[11px] text-neutral-400">
               {body.length}/{SMS_BODY_MAX}
             </p>
+            {onOfferContractTemplateIdChange ? (
+              <label className="mt-3 block rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm">
+                <span className="font-medium text-brand-dark">
+                  Temporary contract
+                </span>
+                <span className="mt-0.5 block text-xs text-neutral-500">
+                  When a message from this template includes a payment link,
+                  each recipient gets a temporary contract and an open invoice
+                  for the catalog contract you pick. That invoice is added to
+                  the same checkout as any unpaid invoices or work orders they
+                  already have. Paying the contract invoice makes the contract
+                  permanent.
+                </span>
+                <select
+                  value={offerContractTemplateId ?? ""}
+                  onChange={(e) =>
+                    onOfferContractTemplateIdChange(e.target.value || null)
+                  }
+                  className="mt-2 w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-orange"
+                >
+                  <option value="">None</option>
+                  {(contractTemplates ?? []).map((template) => (
+                    <option key={template._id} value={template._id}>
+                      {template.label} (${template.cost})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <p className="mt-2 text-xs text-neutral-400">
               Pick a template and recipients in Message Wizard to send a
               message.

@@ -4,6 +4,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { publicAssetSlugFromPath } from "./publicImagePath.mjs";
+import { payCodeFromPath } from "./payLinkPath.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.resolve(rootDir, "out");
@@ -111,8 +112,37 @@ async function proxyPublicImage(slug, req, res) {
   }
 }
 
+async function redirectPayCode(code, res) {
+  try {
+    const upstream = await fetch(
+      `${apiBase}/checkout/code/${encodeURIComponent(code)}`,
+    );
+    if (!upstream.ok) {
+      sendNotFound(res);
+      return;
+    }
+    const data = await upstream.json();
+    if (!data?.checkoutKey) {
+      sendNotFound(res);
+      return;
+    }
+    res.writeHead(302, {
+      Location: `/checkout/?c=${encodeURIComponent(data.checkoutKey)}`,
+    });
+    res.end();
+  } catch {
+    res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ message: "Unable to open the payment link." }));
+  }
+}
+
 const server = http.createServer((req, res) => {
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
+  const payCode = payCodeFromPath(pathname);
+  if (payCode && (req.method === "GET" || req.method === "HEAD")) {
+    void redirectPayCode(payCode, res);
+    return;
+  }
   const slug = publicAssetSlugFromPath(pathname);
   if (slug) {
     if (req.method !== "GET" && req.method !== "HEAD") {

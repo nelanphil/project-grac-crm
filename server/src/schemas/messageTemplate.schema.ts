@@ -19,6 +19,11 @@ export const offerContractTemplateIdSchema = z
   .regex(/^[a-fA-F0-9]{24}$/, "Invalid contract template")
   .nullable();
 
+export const offerContractOverrideSchema = z.object({
+  contactId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/),
+  contractTemplateId: offerContractTemplateIdSchema,
+});
+
 function refineBodyMax(
   data: { templateType?: "sms" | "email"; body?: string },
   ctx: z.RefinementCtx,
@@ -77,12 +82,24 @@ export const updateMessageTemplateSchema = z
     }
   });
 
-export const messagingPreviewSchema = z.object({
-  body: z.string().max(1600),
-  contactId: z.string().trim().min(1).optional(),
-  renewalYear: z.number().int().min(1970).max(2100).optional(),
-  renewalMonth: z.number().int().min(1).max(12).optional(),
-});
+export const messagingPreviewSchema = z
+  .object({
+    body: z.string().max(1600),
+    contactId: z.string().trim().min(1).optional(),
+    renewalYear: z.number().int().min(1970).max(2100).optional(),
+    renewalMonth: z.number().int().min(1).max(12).optional(),
+    includePaymentLink: z.boolean().optional(),
+    offerContractTemplateId: offerContractTemplateIdSchema.optional(),
+  })
+  .refine(
+    (data) =>
+      (data.renewalYear === undefined && data.renewalMonth === undefined) ||
+      (data.renewalYear !== undefined && data.renewalMonth !== undefined),
+    {
+      message: "Both renewalYear and renewalMonth are required together",
+      path: ["renewalMonth"],
+    },
+  );
 
 export const messagingSendSchema = z
   .object({
@@ -99,6 +116,12 @@ export const messagingSendSchema = z
       .default([]),
     renewalYear: z.number().int().min(1970).max(2100).optional(),
     renewalMonth: z.number().int().min(1).max(12).optional(),
+    includePaymentLink: z.boolean().optional(),
+    offerContractTemplateId: offerContractTemplateIdSchema.optional(),
+    offerContractOverrides: z
+      .array(offerContractOverrideSchema)
+      .max(200)
+      .optional(),
   })
   .refine((data) => Boolean(data.body?.trim()) || Boolean(data.templateId), {
     message: "Either body or templateId is required",

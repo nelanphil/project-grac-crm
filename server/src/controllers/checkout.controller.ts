@@ -11,6 +11,7 @@ import {
 } from "../services/checkout.service";
 import {
   buildCheckoutUrl,
+  findCheckoutKeyByPayCode,
   findCustomerByCheckoutKey,
   getOrCreateCheckoutKey,
 } from "../utils/checkoutKey";
@@ -44,6 +45,40 @@ function sendCheckoutError(res: Response, err: unknown, fallback: string): void 
   res.status(500).json({
     message: err instanceof Error ? err.message : fallback,
   });
+}
+
+export async function getCheckoutKeyByPayCode(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const code = String(req.params.code ?? "").trim();
+    const checkoutKey = await findCheckoutKeyByPayCode(code);
+    if (!checkoutKey) {
+      res.status(404).json({ message: "Payment link not found" });
+      return;
+    }
+    res.json({ checkoutKey });
+  } catch (err) {
+    sendCheckoutError(res, err, "Failed to resolve payment link");
+  }
+}
+
+export async function redirectCheckoutByPayCode(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const code = String(req.params.code ?? "").trim();
+    const checkoutKey = await findCheckoutKeyByPayCode(code);
+    if (!checkoutKey) {
+      res.status(404).json({ message: "Payment link not found" });
+      return;
+    }
+    res.redirect(302, buildCheckoutUrl(checkoutKey));
+  } catch (err) {
+    sendCheckoutError(res, err, "Failed to resolve payment link");
+  }
 }
 
 export async function getCheckoutByKey(

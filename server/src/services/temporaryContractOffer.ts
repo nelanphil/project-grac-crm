@@ -30,8 +30,9 @@ function isDuplicateKey(err: unknown): boolean {
 }
 
 /**
- * Create or reuse a hidden contract and an open initial invoice so a customer
- * without payable items can receive a Pay securely button.
+ * Create or reuse a hidden contract and an open initial invoice for the
+ * selected catalog contract. The invoice is added to checkout with any unpaid
+ * invoices or work orders the customer already has.
  */
 export async function ensureTemporaryContractOffer(
   customerId: string,
