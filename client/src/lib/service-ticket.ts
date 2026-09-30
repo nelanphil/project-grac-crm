@@ -11,7 +11,7 @@ export const LABOR_BLOCK_MINUTES = 30;
 export const LABOR_BLOCK_RATE = 75;
 
 export type TicketVariant = "work-order" | "estimate";
-export type TicketLineType = "product" | "note";
+export type TicketLineType = "product" | "note" | "agreement";
 export type TicketProductKind = "part" | "labor";
 
 export interface TicketPartRow {
@@ -19,6 +19,8 @@ export interface TicketPartRow {
   lineType: TicketLineType;
   kind: TicketProductKind;
   productRef: string;
+  contractTemplateRef: string;
+  enrolledContractRef: string;
   partNumber: string;
   description: string;
   quantity: string;
@@ -80,12 +82,21 @@ export function emptyPartRow(): TicketPartRow {
     lineType: "product",
     kind: "part",
     productRef: "",
+    contractTemplateRef: "",
+    enrolledContractRef: "",
     partNumber: "",
     description: "",
     quantity: "",
     listPrice: "",
     unitPrice: "",
     priceOverridden: false,
+  };
+}
+
+export function emptyAgreementRow(): TicketPartRow {
+  return {
+    ...emptyPartRow(),
+    lineType: "agreement",
   };
 }
 
@@ -129,6 +140,8 @@ export function emptyNoteRow(): TicketPartRow {
     lineType: "note",
     kind: "part",
     productRef: "",
+    contractTemplateRef: "",
+    enrolledContractRef: "",
     partNumber: "",
     description: "",
     quantity: "",
@@ -198,7 +211,7 @@ export function applyDiscountsToParts(
 ): TicketPartRow[] {
   const rules = discounts ?? DEFAULT_PRODUCT_DISCOUNTS;
   return parts.map((row) => {
-    if (row.lineType === "note" || row.priceOverridden) return row;
+    if (row.lineType !== "product" || row.priceOverridden) return row;
     const list = parseMoney(row.listPrice) || parseMoney(row.unitPrice);
     if (!row.listPrice && !row.unitPrice) return row;
     return {
@@ -214,16 +227,20 @@ export function partAmount(row: TicketPartRow): number {
 }
 
 export function hasLaborProductLines(parts: TicketPartRow[]): boolean {
-  return parts.some((row) => row.lineType !== "note" && row.kind === "labor");
+  return parts.some((row) => row.lineType === "product" && row.kind === "labor");
 }
 
 export function ticketTotals(form: TicketFormState) {
   const totalParts = form.parts.reduce((sum, row) => {
-    if (row.lineType === "note" || row.kind === "labor") return sum;
+    if (row.lineType !== "product" || row.kind === "labor") return sum;
+    return sum + partAmount(row);
+  }, 0);
+  const totalAgreements = form.parts.reduce((sum, row) => {
+    if (row.lineType !== "agreement") return sum;
     return sum + partAmount(row);
   }, 0);
   const lineLabor = form.parts.reduce((sum, row) => {
-    if (row.lineType === "note" || row.kind !== "labor") return sum;
+    if (row.lineType !== "product" || row.kind !== "labor") return sum;
     return sum + partAmount(row);
   }, 0);
   const laborHours = parseMoney(form.laborHours);
@@ -237,9 +254,19 @@ export function ticketTotals(form: TicketFormState) {
         );
   const miscExp = parseMoney(form.miscExp);
   const shipping = parseMoney(form.shipping);
-  const subtotal = Math.round((totalParts + totalLabor + miscExp) * 100) / 100;
+  const subtotal =
+    Math.round((totalParts + totalLabor + totalAgreements + miscExp) * 100) / 100;
   const total = Math.round((subtotal + shipping) * 100) / 100;
-  return { totalParts, totalLabor, miscExp, shipping, subtotal, total, laborHours };
+  return {
+    totalParts,
+    totalLabor,
+    totalAgreements,
+    miscExp,
+    shipping,
+    subtotal,
+    total,
+    laborHours,
+  };
 }
 
 export function ticketToPayload(form: TicketFormState) {
@@ -262,15 +289,19 @@ export function ticketToPayload(form: TicketFormState) {
     miscExp: totals.miscExp,
     shipping: totals.shipping,
     parts: form.parts
-      .filter((row) =>
-        row.lineType === "note"
-          ? Boolean(row.description.trim())
-          : Boolean(row.partNumber.trim() || row.description.trim()),
-      )
+      .filter((row) => {
+        if (row.lineType === "note") return Boolean(row.description.trim());
+        if (row.lineType === "agreement") {
+          return Boolean(row.contractTemplateRef.trim() || row.description.trim());
+        }
+        return Boolean(row.partNumber.trim() || row.description.trim());
+      })
       .map((row) =>
         row.lineType === "note"
           ? {
               productRef: null,
+              contractTemplateRef: null,
+              enrolledContractRef: null,
               lineType: "note" as const,
               kind: "part" as const,
               partNumber: "",
@@ -281,18 +312,35 @@ export function ticketToPayload(form: TicketFormState) {
               priceOverridden: false,
               amount: 0,
             }
-          : {
-              productRef: row.productRef || null,
-              lineType: "product" as const,
-              kind: row.kind,
-              partNumber: row.partNumber.trim(),
-              description: row.description.trim(),
-              quantity: parseMoney(row.quantity),
-              unitPrice: parseMoney(row.unitPrice),
-              listPrice: parseMoney(row.listPrice),
-              priceOverridden: row.priceOverridden,
-              amount: partAmount(row),
-            },
+          : row.lineType === "agreement"
+            ? {
+                productRef: null,
+                contractTemplateRef: row.contractTemplateRef || null,
+                enrolledContractRef: row.enrolledContractRef || null,
+                lineType: "agreement" as const,
+                kind: "part" as const,
+                partNumber: "",
+                description: row.description.trim(),
+                quantity: parseMoney(row.quantity),
+                unitPrice: parseMoney(row.unitPrice),
+                listPrice: parseMoney(row.listPrice),
+                priceOverridden: row.priceOverridden,
+                amount: partAmount(row),
+              }
+            : {
+                productRef: row.productRef || null,
+                contractTemplateRef: null,
+                enrolledContractRef: null,
+                lineType: "product" as const,
+                kind: row.kind,
+                partNumber: row.partNumber.trim(),
+                description: row.description.trim(),
+                quantity: parseMoney(row.quantity),
+                unitPrice: parseMoney(row.unitPrice),
+                listPrice: parseMoney(row.listPrice),
+                priceOverridden: row.priceOverridden,
+                amount: partAmount(row),
+              },
       ),
     customerName: form.customerName,
     customerAddress: form.customerAddress,
@@ -344,6 +392,8 @@ export function ticketFromRecord(record: {
   descPerformed?: string | null;
   parts?: Array<{
     productRef?: string | null;
+    contractTemplateRef?: string | null;
+    enrolledContractRef?: string | null;
     lineType?: TicketLineType;
     kind?: TicketProductKind;
     partNumber?: string;
@@ -365,9 +415,16 @@ export function ticketFromRecord(record: {
   const base = emptyTicketForm();
   const parts = (record.parts ?? []).map((part) => ({
     id: newRowId(),
-    lineType: part.lineType === "note" ? ("note" as const) : ("product" as const),
-    kind: part.kind === "labor" ? ("labor" as const) : ("part" as const),
+    lineType:
+      part.lineType === "note"
+        ? ("note" as const)
+        : part.lineType === "agreement"
+          ? ("agreement" as const)
+          : ("product" as const),
+    kind: part.lineType === "product" && part.kind === "labor" ? ("labor" as const) : ("part" as const),
     productRef: part.productRef ?? "",
+    contractTemplateRef: part.contractTemplateRef ?? "",
+    enrolledContractRef: part.enrolledContractRef ?? "",
     partNumber: part.partNumber ?? "",
     description: part.description ?? "",
     quantity: part.quantity ? String(part.quantity) : "",

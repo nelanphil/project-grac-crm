@@ -31,6 +31,7 @@ import {
 import { useAuthStore } from "@/store/useAuthStore";
 import { updateNavOrder } from "@/lib/api";
 import NotificationBell from "@/components/notifications/NotificationBell";
+import ThemeToggle from "@/components/theme/ThemeToggle";
 import NavItemGroup from "@/components/dashboard/NavItemGroup";
 import { RootDropZone } from "@/components/dashboard/NavDropTargets";
 import CustomerHeaderSearch from "@/components/dashboard/staff/CustomerHeaderSearch";
@@ -262,7 +263,7 @@ export default function StaffTopBar() {
             <button
               type="button"
               onClick={() => setNewOpen((v) => !v)}
-              className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-[var(--staff-ink)] px-3 text-sm font-semibold text-white transition hover:bg-black sm:h-auto sm:py-2"
+              className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-brand-dark px-3 text-sm font-semibold text-white transition hover:bg-black sm:h-auto sm:py-2"
             >
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New</span>
@@ -292,7 +293,7 @@ export default function StaffTopBar() {
             <button
               type="button"
               onClick={() => setNewOpen((v) => !v)}
-              className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-[var(--staff-ink)] px-3 text-sm font-semibold text-white transition hover:bg-black sm:h-auto sm:py-2"
+              className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-brand-dark px-3 text-sm font-semibold text-white transition hover:bg-black sm:h-auto sm:py-2"
             >
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New</span>
@@ -312,6 +313,7 @@ export default function StaffTopBar() {
             )}
           </div>
 
+          <ThemeToggle variant="light" />
           <NotificationBell variant="light" />
 
           <Link
@@ -370,7 +372,7 @@ export default function StaffTopBar() {
                     href="/dashboard"
                     className={`rounded-lg px-3 py-2.5 text-sm font-medium ${
                       pathname === "/dashboard"
-                        ? "bg-[var(--staff-ink)] text-white"
+                        ? "bg-brand-dark text-white"
                         : "text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
                     }`}
                     onClick={closeMenus}

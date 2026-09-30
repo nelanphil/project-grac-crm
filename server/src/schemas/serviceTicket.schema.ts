@@ -3,7 +3,9 @@ import { ticketContractDiscountSchema } from "./contractTemplate.schema";
 
 export const ticketPartSchema = z.object({
   productRef: z.string().trim().nullable().optional(),
-  lineType: z.enum(["product", "note"]).optional().default("product"),
+  contractTemplateRef: z.string().trim().nullable().optional(),
+  enrolledContractRef: z.string().trim().nullable().optional(),
+  lineType: z.enum(["product", "note", "agreement"]).optional().default("product"),
   kind: z.enum(["part", "labor"]).optional().default("part"),
   partNumber: z.string().trim().max(80).optional().default(""),
   description: z.string().trim().max(2000).optional().default(""),

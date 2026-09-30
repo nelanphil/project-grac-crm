@@ -108,6 +108,7 @@ function WorkOrderDetailContent() {
     parts: order.parts ?? [],
     totalParts: order.totalParts ?? 0,
     totalLabor: order.totalLabor ?? 0,
+    totalAgreements: order.totalAgreements ?? 0,
     miscExp: order.miscExp ?? 0,
     subtotal: order.subtotal ?? 0,
     shipping: order.shipping ?? 0,

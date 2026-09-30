@@ -60,6 +60,199 @@ body {
   }
 }
 
+/* Dashboard dark theme. Applied only while `data-theme="dark"` is set,
+   which ThemeSync limits to /dashboard routes. */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #110f0d;
+  --foreground: #f6f2ee;
+  --staff-canvas: #110f0d;
+  --staff-surface: #1c1917;
+  --staff-cream: #262220;
+  --staff-border: #3d3632;
+  --staff-ink: #f6f2ee;
+  --staff-muted: #c4b6ab;
+  --color-neutral-50: #1a1715;
+  --color-neutral-100: #262220;
+  --color-neutral-200: #3d3632;
+  --color-neutral-300: #5c534c;
+  --color-neutral-400: #8a7d74;
+}
+
+html[data-theme="dark"] .bg-white {
+  background-color: var(--staff-surface);
+}
+
+html[data-theme="dark"] .hover\:bg-white:hover {
+  background-color: var(--staff-cream);
+}
+
+html[data-theme="dark"] .text-neutral-300 {
+  color: #c4b6ab;
+}
+
+html[data-theme="dark"] .text-neutral-400 {
+  color: #b3a59b;
+}
+
+html[data-theme="dark"] .text-neutral-500 {
+  color: #c4b6ab;
+}
+
+html[data-theme="dark"] .text-neutral-600 {
+  color: #d4c8bf;
+}
+
+html[data-theme="dark"] .text-neutral-700 {
+  color: #e7dfd8;
+}
+
+html[data-theme="dark"] .text-neutral-800 {
+  color: #f3ece6;
+}
+
+html[data-theme="dark"] .text-neutral-900 {
+  color: #faf7f4;
+}
+
+html[data-theme="dark"] .text-brand-dark,
+html[data-theme="dark"] .hover\:text-brand-dark:hover {
+  color: var(--foreground);
+}
+
+/* Paper documents, customer-facing previews, and the job terminal keep
+   their own light (or already-dark) colors. */
+html[data-theme="dark"] :is(.invoice-document, .theme-light) {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #231f20;
+  --staff-canvas: #f5f2ef;
+  --staff-surface: #fffdfb;
+  --staff-cream: #faf4ee;
+  --staff-border: #e7e2de;
+  --staff-ink: #110f0d;
+  --staff-muted: #524941;
+  --color-neutral-50: oklch(98.5% 0 0);
+  --color-neutral-100: oklch(97% 0 0);
+  --color-neutral-200: oklch(92.2% 0 0);
+  --color-neutral-300: oklch(87% 0 0);
+  --color-neutral-400: oklch(70.8% 0 0);
+}
+
+html[data-theme="dark"] .job-terminal {
+  color-scheme: dark;
+  --color-neutral-50: oklch(98.5% 0 0);
+  --color-neutral-100: oklch(97% 0 0);
+  --color-neutral-200: oklch(92.2% 0 0);
+  --color-neutral-300: oklch(87% 0 0);
+  --color-neutral-400: oklch(70.8% 0 0);
+}
+
+html[data-theme="dark"] :is(.invoice-document, .theme-light, .job-terminal) .bg-white {
+  background-color: #fff;
+}
+
+html[data-theme="dark"]
+  :is(.invoice-document, .theme-light, .job-terminal)
+  .hover\:bg-white:hover {
+  background-color: #fff;
+}
+
+html[data-theme="dark"] :is(.invoice-document, .theme-light, .job-terminal) .text-brand-dark,
+html[data-theme="dark"]
+  :is(.invoice-document, .theme-light, .job-terminal)
+  .hover\:text-brand-dark:hover {
+  color: #231f20;
+}
+
+html[data-theme="dark"] :is(.invoice-document, .theme-light, .job-terminal) .text-neutral-300 {
+  color: var(--color-neutral-300);
+}
+
+html[data-theme="dark"] :is(.invoice-document, .theme-light, .job-terminal) .text-neutral-400 {
+  color: var(--color-neutral-400);
+}
+
+html[data-theme="dark"] :is(.invoice-document, .theme-light, .job-terminal) .text-neutral-500 {
+  color: var(--color-neutral-500);
+}
+
+html[data-theme="dark"] :is(.invoice-document, .theme-light, .job-terminal) .text-neutral-600 {
+  color: var(--color-neutral-600);
+}
+
+html[data-theme="dark"] :is(.invoice-document, .theme-light, .job-terminal) .text-neutral-700 {
+  color: var(--color-neutral-700);
+}
+
+html[data-theme="dark"] :is(.invoice-document, .theme-light, .job-terminal) .text-neutral-800 {
+  color: var(--color-neutral-800);
+}
+
+html[data-theme="dark"] :is(.invoice-document, .theme-light, .job-terminal) .text-neutral-900 {
+  color: var(--color-neutral-900);
+}
+
+@media print {
+  html[data-theme="dark"] {
+    color-scheme: light;
+    --background: #ffffff;
+    --foreground: #231f20;
+    --staff-canvas: #f5f2ef;
+    --staff-surface: #fffdfb;
+    --staff-cream: #faf4ee;
+    --staff-border: #e7e2de;
+    --staff-ink: #110f0d;
+    --staff-muted: #524941;
+    --color-neutral-50: oklch(98.5% 0 0);
+    --color-neutral-100: oklch(97% 0 0);
+    --color-neutral-200: oklch(92.2% 0 0);
+    --color-neutral-300: oklch(87% 0 0);
+    --color-neutral-400: oklch(70.8% 0 0);
+  }
+
+  html[data-theme="dark"] .bg-white {
+    background-color: #fff;
+  }
+
+  html[data-theme="dark"] .hover\:bg-white:hover {
+    background-color: #fff;
+  }
+
+  html[data-theme="dark"] .text-brand-dark,
+  html[data-theme="dark"] .hover\:text-brand-dark:hover {
+    color: #231f20;
+  }
+
+  html[data-theme="dark"] .text-neutral-300 {
+    color: var(--color-neutral-300);
+  }
+
+  html[data-theme="dark"] .text-neutral-400 {
+    color: var(--color-neutral-400);
+  }
+
+  html[data-theme="dark"] .text-neutral-500 {
+    color: var(--color-neutral-500);
+  }
+
+  html[data-theme="dark"] .text-neutral-600 {
+    color: var(--color-neutral-600);
+  }
+
+  html[data-theme="dark"] .text-neutral-700 {
+    color: var(--color-neutral-700);
+  }
+
+  html[data-theme="dark"] .text-neutral-800 {
+    color: var(--color-neutral-800);
+  }
+
+  html[data-theme="dark"] .text-neutral-900 {
+    color: var(--color-neutral-900);
+  }
+}
+
 /* iOS-style "shake to reorder" nav item indicator during dashboard nav edit mode. */
 @keyframes nav-wiggle {
   0% {

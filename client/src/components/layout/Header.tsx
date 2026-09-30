@@ -10,6 +10,7 @@ import { getVisibleNavSections } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
 import NotificationBell from "@/components/notifications/NotificationBell";
+import ThemeToggle from "@/components/theme/ThemeToggle";
 import NavItemGroup from "@/components/dashboard/NavItemGroup";
 
 const HEADER_CONTAINER =
@@ -99,6 +100,7 @@ export default function Header() {
                 <Menu className="h-5 w-5" />
               )}
             </button>
+            <ThemeToggle />
             <NotificationBell />
             <Link
               href="/dashboard/settings"
@@ -233,6 +235,7 @@ export default function Header() {
           </Link>
           {showAuthedActions && (
             <div className="flex items-center gap-1">
+              <ThemeToggle />
               <NotificationBell />
               <Link
                 href="/dashboard/settings"
@@ -254,6 +257,7 @@ export default function Header() {
         </div>
 
         <div className="flex items-center gap-1 md:hidden">
+          {showAuthedActions && <ThemeToggle />}
           {showAuthedActions && <NotificationBell />}
           <button
             type="button"

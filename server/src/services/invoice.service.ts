@@ -383,14 +383,20 @@ export function workOrderInvoiceLineItems(wo: {
   let hasLaborProductLines = false;
   for (const part of parts) {
     if (part.lineType === "note") continue;
-    if (part.kind === "labor") hasLaborProductLines = true;
+    if (part.lineType !== "agreement" && part.kind === "labor") {
+      hasLaborProductLines = true;
+    }
     const cents = dollarsToCents(part.amount || 0);
     if (cents <= 0) continue;
     const qty = part.quantity && part.quantity !== 1 ? `${part.quantity} × ` : "";
     const label =
       part.description?.trim() ||
       part.partNumber?.trim() ||
-      (part.kind === "labor" ? "Labor" : "Part");
+      (part.lineType === "agreement"
+        ? "Agreement"
+        : part.kind === "labor"
+          ? "Labor"
+          : "Part");
     items.push({
       description: `${qty}${label}${part.partNumber && part.description ? ` (${part.partNumber})` : ""}`,
       amountCents: cents,

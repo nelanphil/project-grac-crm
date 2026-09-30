@@ -16,6 +16,7 @@ import {
   logNotificationAsync,
 } from "../services/notification.service";
 import { estimatedMinutesForWorkOrder } from "../services/schedule.service";
+import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
 import { syncWorkOrderInvoice } from "../services/invoice.service";
 
@@ -324,6 +325,7 @@ export async function convertEstimate(
       exerciseTime: estimate.exerciseTime,
       totalParts: estimate.totalParts,
       totalLabor: estimate.totalLabor,
+      totalAgreements: estimate.totalAgreements,
       laborOverridden: estimate.laborOverridden,
       miscExp: estimate.miscExp,
       subtotal: estimate.subtotal,
@@ -337,6 +339,7 @@ export async function convertEstimate(
       }),
     });
     await workOrder.save();
+    await saveWorkOrderAgreements(workOrder);
     await syncWorkOrderInvoice(workOrder);
 
     estimate.status = "converted";

@@ -21,7 +21,7 @@ export default function EmailPreview({
 
   return (
     <div className={fullWidth ? "w-full" : "mx-auto w-full max-w-[580px]"}>
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+      <div className="theme-light overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
         <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
             Inbox preview

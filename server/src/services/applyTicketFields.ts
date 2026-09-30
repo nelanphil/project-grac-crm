@@ -62,6 +62,8 @@ function asObjectId(value: string | null | undefined): Types.ObjectId | null {
 function partsForDoc(parts: NormalizedTicketPart[]) {
   return parts.map((part) => ({
     productRef: asObjectId(part.productRef),
+    contractTemplateRef: asObjectId(part.contractTemplateRef),
+    enrolledContractRef: asObjectId(part.enrolledContractRef),
     lineType: part.lineType,
     kind: part.kind,
     partNumber: part.partNumber,
@@ -155,6 +157,7 @@ export function applyTicketMoney(
     runHours: number;
     totalParts: number;
     totalLabor: number;
+    totalAgreements: number;
     laborOverridden: boolean;
     miscExp: number;
     subtotal: number;
@@ -212,6 +215,7 @@ export function applyTicketMoney(
   });
   target.totalParts = totals.totalParts;
   target.totalLabor = totals.totalLabor;
+  target.totalAgreements = totals.totalAgreements;
   target.miscExp = totals.miscExp;
   target.subtotal = totals.subtotal;
   target.shipping = totals.shipping;
@@ -363,6 +367,7 @@ export async function applyTicketFields(
       runHours: number;
       totalParts: number;
       totalLabor: number;
+      totalAgreements: number;
       laborOverridden: boolean;
       miscExp: number;
       subtotal: number;

@@ -366,12 +366,23 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
     }
 
     const normalizedEmail = email.toLowerCase();
-    const softDeleted = await User.findOne({
+    const activeWithEmail = await User.findOne({
       email: normalizedEmail,
-      deletedAt: { $ne: null },
+      ...activeUserFilter,
     });
+    const softDeleted = activeWithEmail
+      ? null
+      : await User.findOne({
+          email: normalizedEmail,
+          deletedAt: { $ne: null },
+        });
+    const promoteCustomerLogin =
+      !isCustomer && activeWithEmail && isCustomerRole(activeWithEmail)
+        ? activeWithEmail
+        : null;
     const emailConflict = await findEmailConflict(normalizedEmail, {
-      excludeUserId: softDeleted?._id ?? null,
+      excludeUserId: promoteCustomerLogin?._id ?? softDeleted?._id ?? null,
+      forStaffAccount: !isCustomer,
     });
     if (emailConflict) {
       const message =
@@ -400,24 +411,25 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
 
     let user;
     let restored = false;
-    if (softDeleted) {
-      softDeleted.password_hash = password_hash;
-      softDeleted.first_name = first_name;
-      softDeleted.last_name = last_name;
-      softDeleted.roles = roles;
-      softDeleted.role = role;
-      softDeleted.userType = userType;
-      softDeleted.jobRoles = jobs.ids;
-      softDeleted.jobRoleData = jobRoleData;
-      softDeleted.markModified("jobRoleData");
-      softDeleted.territories = territories;
-      softDeleted.weeklyHours = weeklyHours;
-      softDeleted.homeLocation = homeLocation;
-      softDeleted.scheduleExceptions = scheduleExceptions;
-      softDeleted.deletedAt = null;
+    const reuse = promoteCustomerLogin ?? softDeleted;
+    if (reuse) {
+      reuse.password_hash = password_hash;
+      reuse.first_name = first_name;
+      reuse.last_name = last_name;
+      reuse.roles = roles;
+      reuse.role = role;
+      reuse.userType = userType;
+      reuse.jobRoles = jobs.ids;
+      reuse.jobRoleData = jobRoleData;
+      reuse.markModified("jobRoleData");
+      reuse.territories = territories;
+      reuse.weeklyHours = weeklyHours;
+      reuse.homeLocation = homeLocation;
+      reuse.scheduleExceptions = scheduleExceptions;
+      reuse.deletedAt = null;
       if (username !== undefined) {
         try {
-          await applyUsername(softDeleted, username === "" ? null : username);
+          await applyUsername(reuse, username === "" ? null : username);
         } catch (err) {
           res.status(400).json({
             message: err instanceof Error ? err.message : "Invalid username",
@@ -425,8 +437,8 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
           return;
         }
       }
-      await softDeleted.save();
-      user = softDeleted;
+      await reuse.save();
+      user = reuse;
       restored = true;
     } else {
       user = await User.create({
@@ -533,24 +545,6 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
     const wasTech = Boolean(user.schedulable);
     const previousTerritories = formatTerritories(user.territories);
     const previousEmail = user.email;
-
-    if (email !== undefined) {
-      const emailConflict = await findEmailConflict(email.toLowerCase(), {
-        excludeUserId: user._id,
-      });
-      if (emailConflict) {
-        const nextRoles = assigned?.roles ?? user.roles;
-        const message =
-          isCustomerRole(nextRoles) || emailConflict.type === "customer"
-            ? EMAIL_CONFLICT_ADMIN
-            : "Email already in use";
-        res.status(409).json({ message });
-        return;
-      }
-      user.email = email.toLowerCase();
-    }
-    if (first_name !== undefined) user.first_name = first_name;
-    if (last_name !== undefined) user.last_name = last_name;
     const nextUserType =
       parsed.data.userType ??
       (assigned
@@ -565,6 +559,38 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
       res.status(400).json({ message: "Staff users cannot have the customer role" });
       return;
     }
+
+    if (email !== undefined) {
+      const normalized = email.toLowerCase();
+      const emailConflict = await findEmailConflict(normalized, {
+        excludeUserId: user._id,
+        forStaffAccount: nextUserType === "staff",
+      });
+      if (emailConflict) {
+        const message =
+          nextUserType === "customer" || emailConflict.type === "customer"
+            ? EMAIL_CONFLICT_ADMIN
+            : "Email already in use";
+        res.status(409).json({ message });
+        return;
+      }
+      if (nextUserType === "staff") {
+        const otherUser = await User.findOne({
+          email: normalized,
+          _id: { $ne: user._id },
+          ...activeUserFilter,
+        })
+          .select("_id")
+          .lean();
+        if (otherUser) {
+          res.status(409).json({ message: "Email already in use" });
+          return;
+        }
+      }
+      user.email = normalized;
+    }
+    if (first_name !== undefined) user.first_name = first_name;
+    if (last_name !== undefined) user.last_name = last_name;
 
     if (assigned && nextUserType === "staff") {
       user.roles = assigned.roles;
@@ -675,14 +701,9 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
 
     if (email !== undefined && previousEmail !== user.email) {
       await renameEmailPreferences(previousEmail, user.email);
-    }
-
-    if (
-      (nextIsCustomer || wasCustomer) &&
-      email !== undefined &&
-      previousEmail !== user.email
-    ) {
-      await syncCustomersToUserEmail(previousEmail, user.email);
+      if (nextIsCustomer || wasCustomer || nextUserType === "staff") {
+        await syncCustomersToUserEmail(previousEmail, user.email);
+      }
     }
 
     const nextTerritories = formatTerritories(user.territories);

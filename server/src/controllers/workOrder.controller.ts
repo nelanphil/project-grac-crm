@@ -26,6 +26,7 @@ import {
   isDispatcherRole,
   rangeUtc,
 } from "../services/schedule.service";
+import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
 import { syncWorkOrderInvoice } from "../services/invoice.service";
 import { addMinutes, formatLocalDate } from "../utils/scheduleTime";
@@ -427,6 +428,7 @@ export async function createWorkOrder(
     }
 
     await workOrder.save();
+    await saveWorkOrderAgreements(workOrder);
     await syncWorkOrderInvoice(workOrder);
 
     if (workOrder.estimateRef) {
@@ -628,6 +630,7 @@ export async function updateWorkOrder(
 
     await applyAssignmentSideEffects(workOrder, assignee);
     await workOrder.save();
+    await saveWorkOrderAgreements(workOrder);
     try {
       await syncWorkOrderInvoice(workOrder);
     } catch (syncErr) {

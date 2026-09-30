@@ -1633,11 +1633,13 @@ export async function deleteNoteTemplate(
   });
 }
 
-export type TicketLineType = "product" | "note";
+export type TicketLineType = "product" | "note" | "agreement";
 export type ProductKind = "part" | "labor";
 
 export interface WorkOrderPart {
   productRef?: string | null;
+  contractTemplateRef?: string | null;
+  enrolledContractRef?: string | null;
   lineType?: TicketLineType;
   kind?: ProductKind;
   partNumber: string;
@@ -1671,6 +1673,7 @@ export interface WorkOrderListItem {
   total: number;
   totalParts?: number;
   totalLabor?: number;
+  totalAgreements?: number;
   miscExp?: number;
   subtotal?: number;
   shipping?: number;
@@ -3121,6 +3124,7 @@ export interface EstimateItem {
   exerciseTime: string;
   totalParts: number;
   totalLabor: number;
+  totalAgreements?: number;
   laborOverridden: boolean;
   miscExp: number;
   subtotal: number;

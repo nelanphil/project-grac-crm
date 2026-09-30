@@ -6,6 +6,7 @@ import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import CookieConsentBanner from "@/components/legal/CookieConsentBanner";
 import ScrollToTopButton from "@/components/ui/ScrollToTopButton";
+import ThemeSync from "@/components/theme/ThemeSync";
 
 function normalizePath(pathname: string) {
   if (pathname.length > 1 && pathname.endsWith("/")) {
@@ -30,11 +31,17 @@ export default function SiteChrome({ children }: { children: ReactNode }) {
   const bare = BARE_PATHS.has(path);
 
   if (bare) {
-    return <main className="flex-1">{children}</main>;
+    return (
+      <>
+        <ThemeSync />
+        <main className="flex-1">{children}</main>
+      </>
+    );
   }
 
   return (
     <>
+      <ThemeSync />
       <Header />
       <main className="flex-1">{children}</main>
       <Footer />

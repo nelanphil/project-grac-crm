@@ -4,7 +4,9 @@ import { ticketContractDiscountSchema } from "./productDiscounts";
 
 export interface IWorkOrderPart {
   productRef?: Types.ObjectId | null;
-  lineType: "product" | "note";
+  contractTemplateRef?: Types.ObjectId | null;
+  enrolledContractRef?: Types.ObjectId | null;
+  lineType: "product" | "note" | "agreement";
   kind: "part" | "labor";
   partNumber: string;
   description: string;
@@ -54,6 +56,7 @@ export interface IWorkOrder extends Document {
   exerciseTime: string;
   totalParts: number;
   totalLabor: number;
+  totalAgreements: number;
   laborOverridden: boolean;
   miscExp: number;
   subtotal: number;
@@ -75,7 +78,21 @@ const workOrderPartSchema = new Schema<IWorkOrderPart>(
       ref: "Product",
       default: null,
     },
-    lineType: { type: String, enum: ["product", "note"], default: "product" },
+    contractTemplateRef: {
+      type: Schema.Types.ObjectId,
+      ref: "ContractTemplate",
+      default: null,
+    },
+    enrolledContractRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Contract",
+      default: null,
+    },
+    lineType: {
+      type: String,
+      enum: ["product", "note", "agreement"],
+      default: "product",
+    },
     kind: { type: String, enum: ["part", "labor"], default: "part" },
     partNumber: { type: String, default: "" },
     description: { type: String, default: "" },
@@ -164,6 +181,7 @@ const workOrderSchema = new Schema<IWorkOrder>(
     exerciseTime: { type: String, default: "" },
     totalParts: { type: Number, default: 0 },
     totalLabor: { type: Number, default: 0 },
+    totalAgreements: { type: Number, default: 0 },
     laborOverridden: { type: Boolean, default: false },
     miscExp: { type: Number, default: 0 },
     subtotal: { type: Number, default: 0 },

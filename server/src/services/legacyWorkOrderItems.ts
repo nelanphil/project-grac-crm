@@ -34,6 +34,7 @@ export type LegacyMappedWorkOrderMoney = {
   laborOverridden: boolean;
   totalParts: number;
   totalLabor: number;
+  totalAgreements: number;
   miscExp: number;
   shipping: number;
   subtotal: number;
@@ -302,6 +303,8 @@ function lineFromDetection(
   const unitPrice = roundMoney(amount);
   return {
     productRef: item.productRef,
+    contractTemplateRef: null,
+    enrolledContractRef: null,
     lineType: "product",
     kind: item.kind,
     partNumber: item.partNumber,
@@ -323,6 +326,8 @@ function genericLine(
   const unitPrice = roundMoney(amount);
   return {
     productRef: null,
+    contractTemplateRef: null,
+    enrolledContractRef: null,
     lineType: "product",
     kind,
     partNumber,
@@ -338,6 +343,8 @@ function genericLine(
 function noteLine(description: string): NormalizedTicketPart {
   return {
     productRef: null,
+    contractTemplateRef: null,
+    enrolledContractRef: null,
     lineType: "note",
     kind: "part",
     partNumber: "",
@@ -454,6 +461,7 @@ export function mapLegacyWorkOrderItems(
       laborOverridden: false,
       totalParts: 0,
       totalLabor: 0,
+      totalAgreements: 0,
       miscExp: 0,
       shipping: 0,
       subtotal: 0,
@@ -571,6 +579,14 @@ export function partsForMongo(parts: NormalizedTicketPart[]) {
       part.productRef && Types.ObjectId.isValid(part.productRef)
         ? new Types.ObjectId(part.productRef)
         : null,
+    contractTemplateRef:
+      part.contractTemplateRef && Types.ObjectId.isValid(part.contractTemplateRef)
+        ? new Types.ObjectId(part.contractTemplateRef)
+        : null,
+    enrolledContractRef:
+      part.enrolledContractRef && Types.ObjectId.isValid(part.enrolledContractRef)
+        ? new Types.ObjectId(part.enrolledContractRef)
+        : null,
     lineType: part.lineType,
     kind: part.kind,
     partNumber: part.partNumber,
@@ -594,6 +610,7 @@ export function mappedWorkOrderMoneyFields(
     laborOverridden: mapped.laborOverridden,
     totalParts: mapped.totalParts,
     totalLabor: mapped.totalLabor,
+    totalAgreements: mapped.totalAgreements,
     miscExp: mapped.miscExp,
     shipping: mapped.shipping,
     subtotal: mapped.subtotal,

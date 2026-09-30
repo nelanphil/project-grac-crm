@@ -20,7 +20,21 @@ const estimateTemplatePartSchema = new Schema<IEstimatePart>(
       ref: "Product",
       default: null,
     },
-    lineType: { type: String, enum: ["product", "note"], default: "product" },
+    contractTemplateRef: {
+      type: Schema.Types.ObjectId,
+      ref: "ContractTemplate",
+      default: null,
+    },
+    enrolledContractRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Contract",
+      default: null,
+    },
+    lineType: {
+      type: String,
+      enum: ["product", "note", "agreement"],
+      default: "product",
+    },
     kind: { type: String, enum: ["part", "labor"], default: "part" },
     partNumber: { type: String, default: "" },
     description: { type: String, default: "" },

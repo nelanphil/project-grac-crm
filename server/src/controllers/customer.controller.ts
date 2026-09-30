@@ -970,7 +970,9 @@ export async function createCustomer(
     }
     const primaryEmail = normalizeAccountEmail(trimStr(primary.email));
     if (primaryEmail) {
-      const emailConflict = await findEmailConflict(primaryEmail);
+      const emailConflict = await findEmailConflict(primaryEmail, {
+        allowStaffUser: true,
+      });
       if (emailConflict) {
         res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
         return;
@@ -2490,6 +2492,7 @@ export async function createCustomerContact(
       const emailConflict = await findEmailConflict(contactEmail, {
         excludeCustomerId: customer._id,
         allowCustomerUser: true,
+        allowStaffUser: true,
       });
       if (emailConflict) {
         res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
@@ -2601,6 +2604,7 @@ export async function updateCustomerContact(
       const emailConflict = await findEmailConflict(nextPrimaryEmail, {
         excludeCustomerId: customer._id,
         allowCustomerUser: true,
+        allowStaffUser: true,
       });
       if (emailConflict) {
         res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });

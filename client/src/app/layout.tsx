@@ -3,6 +3,9 @@ import { Inter } from "next/font/google";
 import SiteChrome from "@/components/layout/SiteChrome";
 import "./globals.css";
 
+/** Runs in <head> before paint. Keep in sync with client/src/lib/theme.ts. */
+const themeInitScript = `(function(){try{if(location.pathname.indexOf("/dashboard")!==0)return;var t=localStorage.getItem("grac-theme");if(t==="light")return;if(t==="dark"){document.documentElement.setAttribute("data-theme","dark");return;}var raw=localStorage.getItem("grac-auth");if(!raw)return;var parsed=JSON.parse(raw);var state=parsed&&parsed.state;if(state&&state.isAuthenticated&&state.token){document.documentElement.setAttribute("data-theme","dark");}}catch(e){}})();`;
+
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
@@ -51,7 +54,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} h-full antialiased`}>
+    <html
+      lang="en"
+      className={`${inter.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="flex min-h-full flex-col">
         <SiteChrome>{children}</SiteChrome>
       </body>

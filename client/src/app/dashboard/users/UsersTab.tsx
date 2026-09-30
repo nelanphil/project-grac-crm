@@ -381,9 +381,14 @@ export default function UsersTab() {
         const payload: typeof shared & { password?: string } = { ...shared };
         if (form.password.trim()) payload.password = form.password;
         const { user, temporaryPassword } = await createUser(token, payload);
-        setUsers((prev) => [user, ...prev]);
+        setUsers((prev) => [
+          user,
+          ...prev.filter((row) => row._id !== user._id),
+        ]);
         if (isCustomerRole(user) && view !== "customers") {
           setUserView("customers");
+        } else if (!isCustomerRole(user) && view === "customers") {
+          setUserView("staff");
         }
         if (temporaryPassword) {
           setTempPassword(temporaryPassword);

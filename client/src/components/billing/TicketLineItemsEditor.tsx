@@ -19,10 +19,12 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Plus, Trash2 } from "lucide-react";
 import {
   ApiError,
+  ContractTemplateItem,
   ManufacturerItem,
   ProductItem,
   createManufacturer,
   createProduct,
+  getContractTemplates,
   getManufacturers,
   getProducts,
 } from "@/lib/api";
@@ -42,6 +44,7 @@ import {
 } from "@/lib/productDiscounts";
 import {
   TicketPartRow,
+  emptyAgreementRow,
   emptyNoteRow,
   emptyPartRow,
   insertEmptyProductBelow,
@@ -223,7 +226,111 @@ function ProductSuggestMenu({
 }
 
 function isEmptyLine(row: TicketPartRow): boolean {
+  if (row.lineType === "agreement") {
+    return !row.contractTemplateRef.trim() && !row.description.trim();
+  }
   return !row.partNumber.trim() && !row.description.trim();
+}
+
+function AgreementSuggestMenu({
+  anchor,
+  templates,
+  onSelect,
+  onClose,
+}: {
+  anchor: HTMLElement | null;
+  templates: ContractTemplateItem[];
+  onSelect: (template: ContractTemplateItem) => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLUListElement>(null);
+  const [coords, setCoords] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!anchor) return;
+    function update() {
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const gutter = 8;
+      const spaceBelow = window.innerHeight - rect.bottom - gutter;
+      const spaceAbove = rect.top - gutter;
+      const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
+      const maxHeight = Math.min(256, Math.max(openUp ? spaceAbove : spaceBelow, 120));
+      const width = Math.min(
+        Math.max(rect.width, 240),
+        window.innerWidth - gutter * 2,
+      );
+      const left = Math.min(
+        Math.max(gutter, rect.left),
+        window.innerWidth - width - gutter,
+      );
+      setCoords({
+        top: openUp ? Math.max(gutter, rect.top - maxHeight - 4) : rect.bottom + 4,
+        left,
+        width,
+        maxHeight,
+      });
+    }
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [anchor, templates.length]);
+
+  useEffect(() => {
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (anchor?.contains(target) || menuRef.current?.contains(target)) return;
+      onClose();
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [anchor, onClose]);
+
+  if (!coords || templates.length === 0) return null;
+
+  return createPortal(
+    <ul
+      ref={menuRef}
+      style={{
+        position: "fixed",
+        top: coords.top,
+        left: coords.left,
+        width: coords.width,
+        maxHeight: coords.maxHeight,
+        zIndex: 80,
+      }}
+      className="overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg"
+    >
+      {templates.map((template) => (
+        <li key={template._id}>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onSelect(template)}
+            className="w-full px-3 py-2 text-left text-xs hover:bg-neutral-50"
+          >
+            <span className="font-medium">{template.label}</span>
+            <span className="ml-2 rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600">
+              Agreement
+            </span>
+            <span className="mt-0.5 block text-neutral-500">
+              {formatMoney(template.cost ?? 0)}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>,
+    document.body,
+  );
 }
 
 function LineRemoveConfirm({
@@ -420,6 +527,7 @@ function CreateProductDialog({
 function SortableLineRow({
   row,
   productResults,
+  agreementResults,
   isActiveSearch,
   pendingFocus,
   discounts,
@@ -433,6 +541,7 @@ function SortableLineRow({
 }: {
   row: TicketPartRow;
   productResults: ProductItem[];
+  agreementResults: ContractTemplateItem[];
   isActiveSearch: boolean;
   pendingFocus: boolean;
   discounts: ProductDiscounts;
@@ -489,7 +598,9 @@ function SortableLineRow({
           label={
             row.lineType === "note"
               ? "Remove this line note?"
-              : "Remove this product?"
+              : row.lineType === "agreement"
+                ? "Remove this agreement?"
+                : "Remove this product?"
           }
           onCancel={() => setConfirmingRemove(false)}
           onConfirm={onRemove}
@@ -529,6 +640,101 @@ function SortableLineRow({
               onClick={requestRemove}
               className="rounded p-1 text-neutral-400 hover:text-red-600"
               aria-label="Remove note"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </td>
+        </tr>
+        {confirmRow}
+      </>
+    );
+  }
+
+  if (row.lineType === "agreement") {
+    return (
+      <>
+        <tr ref={setNodeRef} style={style} className="border-t border-neutral-100">
+          <td className="px-1 py-1">
+            <button
+              type="button"
+              className="cursor-grab touch-none rounded p-1 text-neutral-400 hover:text-neutral-600"
+              aria-label="Reorder agreement"
+              {...attributes}
+              {...listeners}
+            >
+              <GripVertical className="h-4 w-4" />
+            </button>
+          </td>
+          <td className="w-16 px-2 py-1">
+            <input
+              value={row.quantity}
+              onChange={(e) => onChange({ quantity: e.target.value })}
+              className={inputClass}
+            />
+          </td>
+          <td className="relative px-2 py-1">
+            <input
+              ref={searchRef}
+              value={row.description}
+              onFocus={onFocusSearch}
+              onChange={(e) =>
+                onChange(
+                  {
+                    description: e.target.value,
+                    contractTemplateRef: "",
+                    enrolledContractRef: "",
+                  },
+                  e.target.value,
+                )
+              }
+              className={inputClass}
+              placeholder="Search agreements"
+            />
+            {row.contractTemplateRef ? (
+              <p className="mt-0.5 text-[11px] text-neutral-500">Agreement</p>
+            ) : null}
+            {isActiveSearch && agreementResults.length > 0 ? (
+              <AgreementSuggestMenu
+                anchor={menuAnchor}
+                templates={agreementResults}
+                onClose={onCloseSearch}
+                onSelect={(template) => {
+                  const cost = template.cost ?? 0;
+                  onChange({
+                    contractTemplateRef: template._id,
+                    enrolledContractRef: "",
+                    description: template.label,
+                    partNumber: "",
+                    productRef: "",
+                    kind: "part",
+                    quantity: row.quantity || "1",
+                    listPrice: String(cost),
+                    unitPrice: String(cost),
+                    priceOverridden: false,
+                  });
+                }}
+              />
+            ) : null}
+          </td>
+          <td className="w-28 px-2 py-1">
+            <input
+              value={row.unitPrice}
+              onChange={(e) =>
+                onChange({ unitPrice: e.target.value, priceOverridden: true })
+              }
+              className={inputClass}
+            />
+            <p className="mt-0.5 text-[10px] text-neutral-400">
+              Line {formatMoney(partAmount(row))}
+              {row.priceOverridden ? " · override" : ""}
+            </p>
+          </td>
+          <td className="px-1 py-1 text-right">
+            <button
+              type="button"
+              onClick={requestRemove}
+              className="rounded p-1 text-neutral-400 hover:text-red-600"
+              aria-label="Remove agreement"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -658,6 +864,9 @@ export default function TicketLineItemsEditor({
   );
   const [productQuery, setProductQuery] = useState<Record<string, string>>({});
   const [productResults, setProductResults] = useState<ProductItem[]>([]);
+  const [agreementCatalog, setAgreementCatalog] = useState<
+    ContractTemplateItem[] | null
+  >(null);
   const [activePartId, setActivePartId] = useState<string | null>(null);
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
   const [createFor, setCreateFor] = useState<{ rowId: string; code: string } | null>(
@@ -671,6 +880,11 @@ export default function TicketLineItemsEditor({
 
   useEffect(() => {
     if (!token || activePartId == null) return;
+    const row = parts.find((part) => part.id === activePartId);
+    if (!row || row.lineType === "agreement") {
+      setProductResults([]);
+      return;
+    }
     const q = (productQuery[activePartId] ?? "").trim();
     const t = setTimeout(() => {
       getProducts(token, {
@@ -681,7 +895,26 @@ export default function TicketLineItemsEditor({
         .catch(() => setProductResults([]));
     }, q ? 200 : 0);
     return () => clearTimeout(t);
-  }, [token, activePartId, productQuery]);
+  }, [token, activePartId, productQuery, parts]);
+
+  useEffect(() => {
+    if (!token || activePartId == null || agreementCatalog) return;
+    const row = parts.find((part) => part.id === activePartId);
+    if (!row || row.lineType !== "agreement") return;
+    let cancelled = false;
+    getContractTemplates(token)
+      .then(({ templates }) => {
+        if (!cancelled) {
+          setAgreementCatalog(templates.filter((template) => !template.deletedAt));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAgreementCatalog([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activePartId, parts, agreementCatalog]);
 
   function addProductRow() {
     const row = emptyPartRow();
@@ -693,6 +926,29 @@ export default function TicketLineItemsEditor({
   function addNoteRow() {
     onChange([...parts, emptyNoteRow()]);
   }
+
+  function addAgreementRow() {
+    const row = emptyAgreementRow();
+    onChange([...parts, row]);
+    setPendingFocusId(row.id);
+    setActivePartId(row.id);
+  }
+
+  const activeRow = parts.find((part) => part.id === activePartId);
+  const agreementQuery = (
+    activePartId ? (productQuery[activePartId] ?? activeRow?.description ?? "") : ""
+  )
+    .trim()
+    .toLowerCase();
+  const agreementResults = (agreementCatalog ?? [])
+    .filter((template) => {
+      if (!agreementQuery) return true;
+      return (
+        template.label.toLowerCase().includes(agreementQuery) ||
+        template.slug.toLowerCase().includes(agreementQuery)
+      );
+    })
+    .slice(0, 12);
 
   function applyProductToRow(id: string, product: ProductItem) {
     const listPrice = catalogListPrice(product);
@@ -726,6 +982,9 @@ export default function TicketLineItemsEditor({
       setPendingFocusId(inserted.emptyId);
       setProductResults([]);
       setCreateFor(null);
+    } else if (updates.contractTemplateRef) {
+      setActivePartId(null);
+      setProductResults([]);
     }
     onChange(next);
   }
@@ -754,7 +1013,7 @@ export default function TicketLineItemsEditor({
     <div className="min-w-0 flex-1">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-          Parts & Labor
+          Parts, Labor & Agreements
         </p>
         {banner}
         <div className="flex gap-2">
@@ -765,6 +1024,14 @@ export default function TicketLineItemsEditor({
           >
             <Plus className="h-3.5 w-3.5" />
             Add product
+          </button>
+          <button
+            type="button"
+            onClick={addAgreementRow}
+            className="inline-flex items-center gap-1 rounded border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add agreement
           </button>
           <button
             type="button"
@@ -803,7 +1070,7 @@ export default function TicketLineItemsEditor({
                       colSpan={5}
                       className="px-3 py-6 text-center text-sm text-neutral-400"
                     >
-                      Add parts or labor from the product catalog.
+                      Add parts, labor, or agreements.
                     </td>
                   </tr>
                 ) : (
@@ -812,6 +1079,9 @@ export default function TicketLineItemsEditor({
                       key={row.id}
                       row={row}
                       productResults={productResults}
+                      agreementResults={
+                        activePartId === row.id ? agreementResults : []
+                      }
                       isActiveSearch={activePartId === row.id}
                       pendingFocus={pendingFocusId === row.id}
                       discounts={discountRules}

@@ -692,6 +692,10 @@ export default function ServiceTicketForm({
               <span>Total labor</span>
               <span>{formatMoney(totals.totalLabor)}</span>
             </div>
+            <div className="flex justify-between">
+              <span>Total agreements</span>
+              <span>{formatMoney(totals.totalAgreements)}</span>
+            </div>
             <div className="flex items-center justify-between gap-2">
               <span>Misc exp.</span>
               <input

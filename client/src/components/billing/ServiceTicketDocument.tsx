@@ -50,11 +50,12 @@ export type ServiceTicketView = {
     description?: string;
     unitPrice?: number;
     amount: number;
-    lineType?: "product" | "note";
+    lineType?: "product" | "note" | "agreement";
     kind?: "part" | "labor";
   }>;
   totalParts: number;
   totalLabor: number;
+  totalAgreements?: number;
   miscExp: number;
   subtotal: number;
   shipping: number;
@@ -93,6 +94,10 @@ function TicketTotals({
       <p className="flex justify-between gap-4">
         <span>Total labor</span>
         <span>{formatMoney(ticket.totalLabor)}</span>
+      </p>
+      <p className="flex justify-between gap-4">
+        <span>Total agreements</span>
+        <span>{formatMoney(ticket.totalAgreements ?? 0)}</span>
       </p>
       <p className="flex justify-between gap-4">
         <span>Misc exp.</span>
@@ -203,7 +208,7 @@ export default function ServiceTicketDocument({
 
       <div className="mx-auto mt-5 w-full max-w-3xl">
         <p className="text-center text-xs font-semibold uppercase text-neutral-500">
-          Parts & Labor
+          Parts, Labor & Agreements
         </p>
         <table className="mt-1 min-w-full text-sm">
           <thead>
@@ -222,6 +227,16 @@ export default function ServiceTicketDocument({
                 <tr key={index} className="border-b border-neutral-100">
                   <td colSpan={3} className="py-2 italic text-neutral-600">
                     {part.description || "—"}
+                  </td>
+                </tr>
+              ) : part.lineType === "agreement" ? (
+                <tr key={index} className="border-b border-neutral-100">
+                  <td className="py-2">{part.quantity || ""}</td>
+                  <td className="py-2">
+                    Agreement · {part.description || "Agreement"}
+                  </td>
+                  <td className="py-2 text-right">
+                    {part.amount ? formatMoney(part.amount) : ""}
                   </td>
                 </tr>
               ) : (

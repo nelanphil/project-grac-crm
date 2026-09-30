@@ -86,6 +86,7 @@ function EstimateDetailContent() {
     parts: estimate.parts,
     totalParts: estimate.totalParts,
     totalLabor: estimate.totalLabor,
+    totalAgreements: estimate.totalAgreements ?? 0,
     miscExp: estimate.miscExp,
     subtotal: estimate.subtotal,
     shipping: estimate.shipping,
