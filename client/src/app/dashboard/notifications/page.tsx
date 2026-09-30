@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import NotificationListItem from "@/components/notifications/NotificationItem";
+import RemindersPanel from "@/components/notifications/RemindersPanel";
+import { isCustomerRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useNotificationsStore } from "@/store/useNotificationsStore";
 import {
@@ -25,7 +27,10 @@ export default function NotificationsPage() {
 
 function NotificationsContent() {
   const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
   const fetchUnreadCount = useNotificationsStore((s) => s.fetchUnreadCount);
+  const isCustomer = isCustomerRole(user);
+  const [tab, setTab] = useState<"notifications" | "reminders">("notifications");
 
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -109,7 +114,7 @@ function NotificationsContent() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-brand-dark">Notifications</h1>
-        {hasUnread && (
+        {tab === "notifications" && hasUnread && (
           <button
             type="button"
             onClick={() => void handleMarkAllRead()}
@@ -120,12 +125,44 @@ function NotificationsContent() {
         )}
       </div>
 
-      {error && (
+      {!isCustomer ? (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setTab("notifications")}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+              tab === "notifications"
+                ? "bg-brand-dark text-white"
+                : "border border-neutral-200 bg-white text-brand-dark hover:bg-neutral-50"
+            }`}
+          >
+            Notifications
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("reminders")}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+              tab === "reminders"
+                ? "bg-brand-dark text-white"
+                : "border border-neutral-200 bg-white text-brand-dark hover:bg-neutral-50"
+            }`}
+          >
+            Reminders
+          </button>
+        </div>
+      ) : null}
+
+      {tab === "reminders" && token && !isCustomer ? (
+        <RemindersPanel token={token} />
+      ) : null}
+
+      {tab === "notifications" && error && (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
+      {tab === "notifications" ? (
       <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
         {loading ? (
           <p className="px-4 py-8 text-center text-sm text-neutral-500">
@@ -146,8 +183,9 @@ function NotificationsContent() {
           ))
         )}
       </div>
+      ) : null}
 
-      {nextCursor && (
+      {tab === "notifications" && nextCursor && (
         <div className="flex justify-center">
           <button
             type="button"

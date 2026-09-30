@@ -48,6 +48,7 @@ import recaptchaCredentialsRoutes from "./recaptchaCredentials.routes";
 import emailPreferenceRoutes from "./emailPreference.routes";
 import legacyDumpRoutes from "./legacyDump.routes";
 import databaseInspectRoutes from "./databaseInspect.routes";
+import reminderRoutes from "./reminder.routes";
 
 const router = Router();
 
@@ -81,6 +82,7 @@ router.use("/message-templates", messageTemplateRoutes);
 router.use("/messaging", messagingRoutes);
 router.use("/email-messages", emailMessageRoutes);
 router.use("/notifications", notificationRoutes);
+router.use("/reminders", reminderRoutes);
 router.use("/payment-provider-accounts", paymentProviderAccountRoutes);
 router.use("/invoices", invoiceRoutes);
 router.use("/products", productRoutes);

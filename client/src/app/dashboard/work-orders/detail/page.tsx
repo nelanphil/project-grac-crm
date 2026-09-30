@@ -122,7 +122,7 @@ function WorkOrderDetailContent() {
     token && user ? (
       <WorkOrderNotesPanel
         token={token}
-        workOrderId={order._id}
+        recordId={order._id}
         userId={user.id}
         canWrite={canWrite}
         userRole={user}
@@ -134,7 +134,7 @@ function WorkOrderDetailContent() {
     token && user ? (
       <WorkOrderNotesPanel
         token={token}
-        workOrderId={order._id}
+        recordId={order._id}
         userId={user.id}
         canWrite={false}
         userRole={user}

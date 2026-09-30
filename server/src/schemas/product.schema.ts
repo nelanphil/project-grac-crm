@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PRODUCT_KINDS } from "../models/mongo/Product";
+import { productDiscountsSchema } from "./contractTemplate.schema";
 
 const manufacturerIdSchema = z
   .string()
@@ -19,6 +20,8 @@ export const createProductSchema = z
     strikeThroughPrice: z.number().min(0).optional().default(0),
     active: z.boolean().optional().default(true),
     notes: z.string().trim().toUpperCase().max(2000).optional().default(""),
+    agreementBody: z.string().max(50000).optional().default(""),
+    productDiscounts: productDiscountsSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (!(data.productCode?.trim() || data.partNumber?.trim())) {
@@ -43,6 +46,8 @@ export const updateProductSchema = z.object({
   strikeThroughPrice: z.number().min(0).optional(),
   active: z.boolean().optional(),
   notes: z.string().trim().toUpperCase().max(2000).optional(),
+  agreementBody: z.string().max(50000).optional(),
+  productDiscounts: productDiscountsSchema.optional(),
 });
 
 export type CreateProductInput = z.infer<typeof createProductSchema>;

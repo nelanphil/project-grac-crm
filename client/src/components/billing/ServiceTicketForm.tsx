@@ -93,6 +93,7 @@ export default function ServiceTicketForm({
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const canWriteJobs = useAuthStore((s) => s.hasPermission("jobs:write"));
+  const canWriteEstimates = useAuthStore((s) => s.hasPermission("estimates:write"));
   const [form, setForm] = useState<TicketFormState>(initial ?? emptyTicketForm());
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerListItem[]>([]);
@@ -737,22 +738,30 @@ export default function ServiceTicketForm({
               />
             </Field>
           </div>
-        ) : token && user && recordId ? (
+        ) : null}
+
+        {token && user && recordId ? (
           <div className="mt-5">
             <WorkOrderNotesPanel
               token={token}
-              workOrderId={recordId}
+              recordId={recordId}
+              source={variant === "estimate" ? "estimate" : "work-order"}
               userId={user.id}
-              canWrite={canWriteJobs}
+              canWrite={variant === "estimate" ? canWriteEstimates : canWriteJobs}
               userRole={user}
-              fallbackContent={form.descPerformed}
+              fallbackContent={variant === "work-order" ? form.descPerformed : undefined}
+              visibilityLabel={
+                variant === "estimate"
+                  ? "Show on estimate"
+                  : "Show on work order & invoice"
+              }
             />
           </div>
-        ) : variant === "work-order" ? (
+        ) : (
           <p className="mt-5 text-sm text-neutral-500">
-            Save this work order to add notes.
+            Save this {variant === "estimate" ? "estimate" : "work order"} to add notes.
           </p>
-        ) : null}
+        )}
 
         <div className="mt-5 flex flex-wrap items-end justify-between gap-4 border-t border-neutral-200 pt-5">
           {variant === "work-order" ? (

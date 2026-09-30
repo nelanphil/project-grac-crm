@@ -7,8 +7,13 @@ import {
   updateUserRole,
   softDeleteUser,
 } from "../controllers/user.controller";
+import { searchMentionableUsers } from "../controllers/mention.controller";
 
 const router = Router();
+
+router.get("/mentions", authenticate, (req, res: Response) =>
+  searchMentionableUsers(req as AuthRequest, res),
+);
 
 router.get(
   "/",

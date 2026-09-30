@@ -70,16 +70,24 @@ function PriceDisplay({
   );
 }
 
+function kindLabel(kind: ProductKind): string {
+  if (kind === "labor") return "Labor";
+  if (kind === "contract") return "Contract";
+  return "Part";
+}
+
 function KindBadge({ kind }: { kind: ProductKind }) {
+  const tone =
+    kind === "labor"
+      ? "bg-sky-50 text-sky-800 ring-sky-600/20"
+      : kind === "contract"
+        ? "bg-emerald-50 text-emerald-800 ring-emerald-600/20"
+        : "bg-amber-50 text-amber-800 ring-amber-600/20";
   return (
     <span
-      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-        kind === "labor"
-          ? "bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-600/20"
-          : "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/20"
-      }`}
+      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tone}`}
     >
-      {kind === "labor" ? "Labor" : "Part"}
+      {kindLabel(kind)}
     </span>
   );
 }
@@ -232,7 +240,7 @@ function ProductsContent() {
       productNumber: uppercaseText(product.productNumber ?? ""),
       name: uppercaseText(product.name),
       manufacturer: product.manufacturer?._id ?? "",
-      kind: product.kind === "labor" ? "labor" : "part",
+      kind: product.kind === "labor" || product.kind === "contract" ? product.kind : "part",
       listPrice: moneyString(listPriceOf(product)),
       cost: moneyString(product.cost ?? 0),
       strikeThroughPrice:
@@ -241,6 +249,8 @@ function ProductsContent() {
           : "",
       active: product.active,
       notes: uppercaseText(product.notes ?? ""),
+      agreementBody: product.agreementBody ?? "",
+      productDiscounts: product.productDiscounts ?? EMPTY_PRODUCT_FORM.productDiscounts,
     });
     resetManufacturerAdd();
     setModalOpen(true);
@@ -315,7 +325,7 @@ function ProductsContent() {
         <div>
           <h1 className="text-2xl font-bold text-brand-dark">Products</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            Parts and labor used on estimates and work orders.
+            Parts, labor, and contracts used on estimates and work orders.
           </p>
         </div>
         {canWrite ? (
@@ -394,7 +404,7 @@ function ProductsContent() {
               subtitle={product.name}
               badges={
                 <span className="flex flex-wrap gap-1">
-                  <KindBadge kind={product.kind === "labor" ? "labor" : "part"} />
+                  <KindBadge kind={product.kind} />
                   <span
                     className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
                       product.active
@@ -498,7 +508,7 @@ function ProductsContent() {
                       </td>
                       <td className="px-6 py-4 text-neutral-600">{product.name}</td>
                       <td className="px-6 py-4">
-                        <KindBadge kind={product.kind === "labor" ? "labor" : "part"} />
+                        <KindBadge kind={product.kind} />
                       </td>
                       <td className="px-6 py-4 text-neutral-700">
                         <PriceDisplay

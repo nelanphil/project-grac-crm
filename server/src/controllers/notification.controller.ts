@@ -1,11 +1,22 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import {
+  AuthUserLike,
   listForUser,
   markAllRead,
   markRead,
   unreadCount,
 } from "../services/notification.service";
+
+function authUser(req: AuthRequest): AuthUserLike {
+  return {
+    id: req.user!.id,
+    role: req.user!.role,
+    roles: req.user!.roles,
+    userType: req.user!.userType,
+    jobRoles: req.user!.jobRoles,
+  };
+}
 
 export async function getNotifications(
   req: AuthRequest,
@@ -21,10 +32,7 @@ export async function getNotifications(
   const before =
     typeof req.query.before === "string" ? req.query.before : undefined;
 
-  const result = await listForUser(
-    { id: req.user.id, role: req.user.role },
-    { limit, before }
-  );
+  const result = await listForUser(authUser(req), { limit, before });
 
   res.json(result);
 }
@@ -38,7 +46,7 @@ export async function getUnreadCount(
     return;
   }
 
-  const count = await unreadCount({ id: req.user.id, role: req.user.role });
+  const count = await unreadCount(authUser(req));
   res.json({ count });
 }
 
@@ -52,7 +60,7 @@ export async function markNotificationRead(
   }
 
   const id = String(req.params.id ?? "");
-  const ok = await markRead({ id: req.user.id, role: req.user.role }, id);
+  const ok = await markRead(authUser(req), id);
   if (!ok) {
     res.status(404).json({ message: "Notification not found" });
     return;
@@ -70,6 +78,6 @@ export async function markAllNotificationsRead(
     return;
   }
 
-  const marked = await markAllRead({ id: req.user.id, role: req.user.role });
+  const marked = await markAllRead(authUser(req));
   res.json({ marked });
 }

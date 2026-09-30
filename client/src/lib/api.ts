@@ -1509,23 +1509,49 @@ export interface WorkOrderNoteAuthor {
   last_name: string;
 }
 
+export interface NoteMention {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+export type TicketNoteSource = "work-order" | "estimate";
+
 export interface WorkOrderNote {
   _id: string;
-  workOrderRef: string;
+  workOrderRef?: string;
+  estimateRef?: string;
   authorId?: string;
   author?: WorkOrderNoteAuthor;
   content: string;
   visibleToCustomer: boolean;
+  isReminder?: boolean;
+  mentionUserIds?: string[];
+  mentions?: NoteMention[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TicketNoteInput {
+  content: string;
+  visibleToCustomer?: boolean;
+  templateId?: string;
+  isReminder?: boolean;
+  mentionUserIds?: string[];
+}
+
+function ticketNotesPath(source: TicketNoteSource, recordId: string): string {
+  const root = source === "estimate" ? "estimates" : "work-orders";
+  return `/${root}/${recordId}/notes`;
 }
 
 export async function getWorkOrderNotes(
   token: string,
   workOrderId: string,
+  source: TicketNoteSource = "work-order",
 ): Promise<{ notes: WorkOrderNote[] }> {
   return authRequest<{ notes: WorkOrderNote[] }>(
-    `/work-orders/${workOrderId}/notes`,
+    ticketNotesPath(source, workOrderId),
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
@@ -1536,10 +1562,11 @@ export async function getWorkOrderNotes(
 export async function createWorkOrderNote(
   token: string,
   workOrderId: string,
-  data: { content: string; visibleToCustomer?: boolean; templateId?: string },
+  data: TicketNoteInput,
+  source: TicketNoteSource = "work-order",
 ): Promise<{ note: WorkOrderNote }> {
   return authRequest<{ note: WorkOrderNote }>(
-    `/work-orders/${workOrderId}/notes`,
+    ticketNotesPath(source, workOrderId),
     {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
@@ -1552,10 +1579,11 @@ export async function updateWorkOrderNote(
   token: string,
   workOrderId: string,
   noteId: string,
-  data: { content?: string; visibleToCustomer?: boolean },
+  data: TicketNoteInput,
+  source: TicketNoteSource = "work-order",
 ): Promise<{ note: WorkOrderNote }> {
   return authRequest<{ note: WorkOrderNote }>(
-    `/work-orders/${workOrderId}/notes/${noteId}`,
+    `${ticketNotesPath(source, workOrderId)}/${noteId}`,
     {
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}` },
@@ -1568,14 +1596,91 @@ export async function deleteWorkOrderNote(
   token: string,
   workOrderId: string,
   noteId: string,
+  source: TicketNoteSource = "work-order",
 ): Promise<void> {
   await authRequest<Record<string, never>>(
-    `/work-orders/${workOrderId}/notes/${noteId}`,
+    `${ticketNotesPath(source, workOrderId)}/${noteId}`,
     {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     },
   );
+}
+
+export interface MentionableUser {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+export async function searchMentionableUsers(
+  token: string,
+  search: string,
+): Promise<{ users: MentionableUser[] }> {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  const qs = params.toString();
+  return authRequest<{ users: MentionableUser[] }>(
+    `/users/mentions${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export interface ReminderListItem {
+  id: string;
+  source: TicketNoteSource;
+  content: string;
+  ticketId: string;
+  ticketNumber: string;
+  customerName: string;
+  createdAt: string;
+  completed: boolean;
+}
+
+export async function getReminders(
+  token: string,
+  opts: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    sort?: "note" | "ticket" | "customer" | "created" | "completed";
+    dir?: "asc" | "desc";
+    showCompleted?: boolean;
+  } = {},
+): Promise<{
+  reminders: ReminderListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (opts.page != null) params.set("page", String(opts.page));
+  if (opts.pageSize != null) params.set("pageSize", String(opts.pageSize));
+  if (opts.search) params.set("search", opts.search);
+  if (opts.sort) params.set("sort", opts.sort);
+  if (opts.dir) params.set("dir", opts.dir);
+  if (opts.showCompleted) params.set("showCompleted", "true");
+  const qs = params.toString();
+  return authRequest(`/reminders${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function updateReminderCompleted(
+  token: string,
+  source: TicketNoteSource,
+  noteId: string,
+  completed: boolean,
+): Promise<{ id: string; source: TicketNoteSource; completed: boolean }> {
+  return authRequest(`/reminders/${source}/${noteId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ completed }),
+  });
 }
 
 export type NoteTemplateScope = "global" | "personal";
@@ -1634,7 +1739,7 @@ export async function deleteNoteTemplate(
 }
 
 export type TicketLineType = "product" | "note" | "agreement";
-export type ProductKind = "part" | "labor";
+export type ProductKind = "part" | "labor" | "contract";
 
 export interface WorkOrderPart {
   productRef?: string | null;
@@ -2901,6 +3006,9 @@ export interface ProductItem {
   strikeThroughPrice: number;
   active: boolean;
   notes: string;
+  agreementBody?: string;
+  productDiscounts?: ProductDiscounts;
+  contractTemplateRef?: string | null;
   usageCount?: number;
   createdAt: string;
   updatedAt: string;
@@ -2917,6 +3025,8 @@ export type ProductWritePayload = {
   strikeThroughPrice?: number;
   active?: boolean;
   notes?: string;
+  agreementBody?: string;
+  productDiscounts?: ProductDiscounts;
 };
 
 export async function getProducts(
@@ -5102,6 +5212,7 @@ export type NotificationEntityType =
   | "contract"
   | "customer_note"
   | "work_order_note"
+  | "estimate_note"
   | "user"
   | "role"
   | "twilio_account"
@@ -5123,7 +5234,8 @@ export type NotificationAction =
   | "deleted"
   | "merged"
   | "renewed"
-  | "assigned";
+  | "assigned"
+  | "mentioned";
 
 export interface NotificationItem {
   id: string;

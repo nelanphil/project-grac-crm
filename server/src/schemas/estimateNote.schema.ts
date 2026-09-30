@@ -8,7 +8,7 @@ const noteContentSchema = z
 
 const mentionUserIdsSchema = z.array(z.string()).max(20).optional();
 
-export const createWorkOrderNoteSchema = z.object({
+export const createEstimateNoteSchema = z.object({
   content: noteContentSchema,
   visibleToCustomer: z.boolean().optional().default(true),
   templateId: z.string().optional(),
@@ -16,12 +16,12 @@ export const createWorkOrderNoteSchema = z.object({
   mentionUserIds: mentionUserIdsSchema,
 });
 
-export const updateWorkOrderNoteSchema = z.object({
+export const updateEstimateNoteSchema = z.object({
   content: noteContentSchema.optional(),
   visibleToCustomer: z.boolean().optional(),
   isReminder: z.boolean().optional(),
   mentionUserIds: mentionUserIdsSchema,
 });
 
-export type CreateWorkOrderNoteInput = z.infer<typeof createWorkOrderNoteSchema>;
-export type UpdateWorkOrderNoteInput = z.infer<typeof updateWorkOrderNoteSchema>;
+export type CreateEstimateNoteInput = z.infer<typeof createEstimateNoteSchema>;
+export type UpdateEstimateNoteInput = z.infer<typeof updateEstimateNoteSchema>;

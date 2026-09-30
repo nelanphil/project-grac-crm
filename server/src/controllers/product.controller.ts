@@ -22,9 +22,12 @@ import {
   normalizeProductCode,
   uppercaseText,
 } from "../utils/productCodes";
+import { normalizeProductDiscounts } from "../utils/productDiscounts";
+import { syncContractTemplateForProduct } from "../services/syncContractProduct";
 
 function asProductKind(value: unknown): ProductKind {
-  return value === "labor" ? "labor" : "part";
+  if (value === "labor" || value === "contract") return value;
+  return "part";
 }
 
 type PublicManufacturer = { _id: string; name: string };
@@ -62,6 +65,13 @@ function toPublic(doc: IProduct | Record<string, unknown>) {
     strikeThroughPrice: Number(d.strikeThroughPrice ?? 0),
     active: d.active !== false,
     notes: uppercaseText(String(d.notes ?? "")),
+    agreementBody: String(d.agreementBody ?? ""),
+    productDiscounts: normalizeProductDiscounts(
+      d.productDiscounts as Parameters<typeof normalizeProductDiscounts>[0],
+    ),
+    contractTemplateRef: d.contractTemplateRef
+      ? String(d.contractTemplateRef)
+      : null,
     usageCount: Number(d.usageCount) || 0,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
@@ -234,7 +244,10 @@ export async function createProduct(
       strikeThroughPrice: data.strikeThroughPrice ?? 0,
       active: data.active ?? true,
       notes: data.notes ?? "",
+      agreementBody: data.agreementBody ?? "",
+      productDiscounts: normalizeProductDiscounts(data.productDiscounts),
     });
+    await syncContractTemplateForProduct(product);
     await product.populate(PRODUCT_POPULATE);
 
     logNotificationAsync({
@@ -307,6 +320,10 @@ export async function updateProduct(
     }
     if (data.active !== undefined) product.active = data.active;
     if (data.notes !== undefined) product.notes = data.notes;
+    if (data.agreementBody !== undefined) product.agreementBody = data.agreementBody;
+    if (data.productDiscounts !== undefined) {
+      product.productDiscounts = normalizeProductDiscounts(data.productDiscounts);
+    }
     if (data.manufacturer !== undefined) {
       const manufacturerId = await resolveManufacturerId(data.manufacturer);
       if (!manufacturerId) {
@@ -317,6 +334,7 @@ export async function updateProduct(
     }
 
     await product.save();
+    await syncContractTemplateForProduct(product);
     await product.populate(PRODUCT_POPULATE);
 
     logNotificationAsync({

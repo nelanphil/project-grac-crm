@@ -25,6 +25,8 @@ export interface LogNotificationInput {
   actorName?: string | null;
   recipientUserIds?: Array<Types.ObjectId | string>;
   metadata?: Record<string, unknown>;
+  /** When true, only recipientUserIds can see the event. */
+  direct?: boolean;
 }
 
 export interface NotificationListItem {
@@ -113,6 +115,7 @@ export async function logNotification(input: LogNotificationInput): Promise<void
       recipientUserIds: (input.recipientUserIds ?? [])
         .map((id) => toObjectId(id))
         .filter((id): id is Types.ObjectId => id !== null),
+      direct: Boolean(input.direct),
     });
   } catch (err) {
     console.error("[notifications] failed to log event", err);
@@ -171,14 +174,30 @@ async function roleVisibilityFilter(
   return { entityType: { $in: OPERATIONAL_ENTITY_TYPES } };
 }
 
+const notDirect = { direct: { $ne: true } };
+
 export async function buildVisibilityFilter(
   user: AuthUserLike
 ): Promise<FilterQuery<INotificationEvent>> {
-  const base = await roleVisibilityFilter(user);
-  if (isOrgAdminRole(user)) return base;
   const userId = toObjectId(user.id);
-  if (!userId) return base;
-  return { $or: [base, { recipientUserIds: userId }] };
+  const directForUser =
+    userId && !isCustomerRole(user)
+      ? { direct: true, recipientUserIds: userId }
+      : null;
+
+  if (isOrgAdminRole(user)) {
+    if (!directForUser) return notDirect;
+    return { $or: [notDirect, directForUser] };
+  }
+
+  const base = await roleVisibilityFilter(user);
+  const scoped: FilterQuery<INotificationEvent> = { $and: [base, notDirect] };
+  const clauses: FilterQuery<INotificationEvent>[] = [scoped];
+  if (userId) {
+    clauses.push({ ...notDirect, recipientUserIds: userId });
+  }
+  if (directForUser) clauses.push(directForUser);
+  return clauses.length === 1 ? clauses[0] : { $or: clauses };
 }
 
 function serializeEvent(

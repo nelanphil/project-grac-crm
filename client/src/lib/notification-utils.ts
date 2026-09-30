@@ -10,6 +10,7 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   contract: "Contract",
   customer_note: "Note",
   work_order_note: "Work order note",
+  estimate_note: "Estimate note",
   user: "User",
   role: "Role",
   twilio_account: "Twilio",
@@ -39,6 +40,15 @@ export function notificationHref(
       return `/dashboard/orders/detail?id=${item.entityId}`;
     }
     return "/dashboard";
+  }
+
+  if (item.entityType === "work_order_note") {
+    const id = String(item.metadata.workOrderId ?? "");
+    if (id) return `/dashboard/work-orders/detail?id=${id}`;
+  }
+  if (item.entityType === "estimate_note") {
+    const id = String(item.metadata.estimateId ?? "");
+    if (id) return `/dashboard/estimates/detail?id=${id}`;
   }
 
   if (item.customerRef) {

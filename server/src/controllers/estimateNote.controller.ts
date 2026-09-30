@@ -1,16 +1,14 @@
 import { Response } from "express";
 import mongoose from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { WorkOrder } from "../models/mongo/WorkOrder";
-import { WorkOrderNote } from "../models/mongo/WorkOrderNote";
+import { Estimate } from "../models/mongo/Estimate";
+import { EstimateNote } from "../models/mongo/EstimateNote";
 import { NoteTemplate } from "../models/mongo/NoteTemplate";
-import { User } from "../models/mongo/User";
 import {
-  createWorkOrderNoteSchema,
-  updateWorkOrderNoteSchema,
-} from "../schemas/workOrderNote.schema";
-import { isDispatcherRole } from "../services/schedule.service";
-import { isAdminRole, isStaffRole, DISPATCHER_ROLES } from "../utils/roles";
+  createEstimateNoteSchema,
+  updateEstimateNoteSchema,
+} from "../schemas/estimateNote.schema";
+import { isAdminRole, isStaffRole } from "../utils/roles";
 import {
   actorFromRequest,
   logNotificationAsync,
@@ -32,9 +30,9 @@ type PopulatedAuthor = {
   last_name: string;
 };
 
-export type PublicWorkOrderNote = {
+export type PublicEstimateNote = {
   _id: string;
-  workOrderRef: string;
+  estimateRef: string;
   authorId?: string;
   author?: { first_name: string; last_name: string };
   content: string;
@@ -46,14 +44,10 @@ export type PublicWorkOrderNote = {
   updatedAt: string;
 };
 
-function hasJobsPermission(req: AuthRequest, permission: string): boolean {
-  return Boolean(req.user?.permissions.includes(permission));
-}
-
 function formatNote(
   note: {
     _id: mongoose.Types.ObjectId;
-    workOrderRef: mongoose.Types.ObjectId;
+    estimateRef: mongoose.Types.ObjectId;
     authorId: mongoose.Types.ObjectId | PopulatedAuthor;
     content: string;
     visibleToCustomer: boolean;
@@ -63,15 +57,15 @@ function formatNote(
     updatedAt: Date;
   },
   includeAuthor: boolean,
-): PublicWorkOrderNote {
+): PublicEstimateNote {
   const author =
     note.authorId instanceof mongoose.Types.ObjectId
       ? null
       : (note.authorId as PopulatedAuthor);
 
-  const publicNote: PublicWorkOrderNote = {
+  const publicNote: PublicEstimateNote = {
     _id: note._id.toString(),
-    workOrderRef: note.workOrderRef.toString(),
+    estimateRef: note.estimateRef.toString(),
     content: note.content,
     visibleToCustomer: note.visibleToCustomer,
     createdAt: note.createdAt.toISOString(),
@@ -96,11 +90,11 @@ function formatNote(
 function asFormatted(
   note: Record<string, unknown>,
   includeAuthor: boolean,
-): PublicWorkOrderNote {
+): PublicEstimateNote {
   return formatNote(
     {
       _id: note._id as mongoose.Types.ObjectId,
-      workOrderRef: note.workOrderRef as mongoose.Types.ObjectId,
+      estimateRef: note.estimateRef as mongoose.Types.ObjectId,
       authorId: note.authorId as PopulatedAuthor,
       content: String(note.content ?? ""),
       visibleToCustomer: Boolean(note.visibleToCustomer),
@@ -113,167 +107,49 @@ function asFormatted(
   );
 }
 
-async function findWorkOrderOr404(
-  workOrderId: string,
-  res: Response,
-) {
-  if (!mongoose.Types.ObjectId.isValid(workOrderId)) {
-    res.status(400).json({ message: "Invalid work order id" });
+async function findEstimateOr404(estimateId: string, res: Response) {
+  if (!mongoose.Types.ObjectId.isValid(estimateId)) {
+    res.status(400).json({ message: "Invalid estimate id" });
     return null;
   }
-  const workOrder = await WorkOrder.findById(workOrderId);
-  if (!workOrder) {
-    res.status(404).json({ message: "Work order not found" });
+  const estimate = await Estimate.findById(estimateId);
+  if (!estimate) {
+    res.status(404).json({ message: "Estimate not found" });
     return null;
   }
-  return workOrder;
+  return estimate;
 }
 
-async function canWriteNotes(
-  req: AuthRequest,
-  workOrder: { assignedUserRef?: mongoose.Types.ObjectId | null },
-  res: Response,
-): Promise<boolean> {
-  if (!req.user) {
-    res.status(401).json({ message: "Unauthorized" });
-    return false;
-  }
-  if (!hasJobsPermission(req, "jobs:write")) {
-    res.status(403).json({ message: "Missing permission: jobs:write" });
-    return false;
-  }
-  const dispatcher = isDispatcherRole(req.user);
-  const isAssignee =
-    workOrder.assignedUserRef &&
-    String(workOrder.assignedUserRef) === req.user.id;
-  if (!dispatcher && !isAssignee) {
-    res.status(403).json({
-      message: "You can only update jobs assigned to you",
-    });
-    return false;
-  }
-  return true;
-}
-
-async function resolveLegacyAuthorId(
-  assignedUserRef?: mongoose.Types.ObjectId | null,
-): Promise<mongoose.Types.ObjectId | null> {
-  if (assignedUserRef) return assignedUserRef;
-  const admin = await User.findOne({
-    $or: [
-      { roles: { $in: [...DISPATCHER_ROLES] } },
-      { role: { $in: [...DISPATCHER_ROLES] } },
-    ],
-  })
-    .select("_id")
-    .lean();
-  return admin?._id ?? null;
-}
-
-export async function ensureLegacyWorkOrderNote(
-  workOrder: {
-    _id: mongoose.Types.ObjectId;
-    descPerformed?: string;
-    assignedUserRef?: mongoose.Types.ObjectId | null;
-  },
-): Promise<void> {
-  const content = String(workOrder.descPerformed ?? "").trim();
-  if (!content) return;
-  const existing = await WorkOrderNote.exists({ workOrderRef: workOrder._id });
-  if (existing) return;
-  const authorId = await resolveLegacyAuthorId(workOrder.assignedUserRef);
-  if (!authorId) return;
-  await WorkOrderNote.create({
-    workOrderRef: workOrder._id,
-    authorId,
-    content,
-    visibleToCustomer: true,
-  });
-}
-
-async function syncDescPerformedPreview(
-  workOrderId: mongoose.Types.ObjectId,
-): Promise<void> {
-  const latest = await WorkOrderNote.findOne({
-    workOrderRef: workOrderId,
-    visibleToCustomer: true,
-  })
-    .sort({ createdAt: -1 })
-    .select("content")
-    .lean();
-  await WorkOrder.updateOne(
-    { _id: workOrderId },
-    { descPerformed: latest?.content ?? "" },
-  );
-}
-
-export async function listVisibleWorkOrderNotes(
-  workOrderId: mongoose.Types.ObjectId | string,
-): Promise<PublicWorkOrderNote[]> {
-  if (!mongoose.Types.ObjectId.isValid(String(workOrderId))) return [];
-  const id = new mongoose.Types.ObjectId(String(workOrderId));
-  const workOrder = await WorkOrder.findById(id)
-    .select("descPerformed assignedUserRef")
-    .lean();
-  if (workOrder) {
-    await ensureLegacyWorkOrderNote({
-      _id: id,
-      descPerformed: workOrder.descPerformed,
-      assignedUserRef: workOrder.assignedUserRef,
-    });
-  }
-  const notes = await WorkOrderNote.find({
-    workOrderRef: id,
-    visibleToCustomer: true,
-  })
-    .sort({ createdAt: 1 })
-    .lean();
-  return notes.map((note) => asFormatted(note, false));
-}
-
-export async function findWorkOrderIdsMatchingNoteSearch(
-  re: RegExp,
-): Promise<mongoose.Types.ObjectId[]> {
-  const ids = await WorkOrderNote.find({ content: re }).distinct("workOrderRef");
-  return ids as mongoose.Types.ObjectId[];
-}
-
-export async function getWorkOrderNotes(
+export async function getEstimateNotes(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
   try {
-    const workOrder = await findWorkOrderOr404(String(req.params.id), res);
-    if (!workOrder) return;
-
-    await ensureLegacyWorkOrderNote(workOrder);
+    const estimate = await findEstimateOr404(String(req.params.id), res);
+    if (!estimate) return;
 
     const staff = isStaffRole(req.user);
-    const query: Record<string, unknown> = { workOrderRef: workOrder._id };
-    if (!staff) {
-      query.visibleToCustomer = true;
-    }
+    const query: Record<string, unknown> = { estimateRef: estimate._id };
+    if (!staff) query.visibleToCustomer = true;
 
-    const notes = await WorkOrderNote.find(query)
+    const notes = await EstimateNote.find(query)
       .populate("authorId", "first_name last_name")
       .populate("mentionUserIds", "first_name last_name")
       .sort({ createdAt: 1 })
       .lean();
 
-    res.json({
-      notes: notes.map((note) => asFormatted(note, staff)),
-    });
+    res.json({ notes: notes.map((note) => asFormatted(note, staff)) });
   } catch (err) {
-    console.error("GET /work-orders/:id/notes error:", err);
+    console.error("GET /estimates/:id/notes error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }
 
-export async function createWorkOrderNote(
+export async function createEstimateNote(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
-  const parsed = createWorkOrderNoteSchema.safeParse(req.body);
+  const parsed = createEstimateNoteSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
       message: "Validation error",
@@ -283,9 +159,8 @@ export async function createWorkOrderNote(
   }
 
   try {
-    const workOrder = await findWorkOrderOr404(String(req.params.id), res);
-    if (!workOrder) return;
-    if (!(await canWriteNotes(req, workOrder, res))) return;
+    const estimate = await findEstimateOr404(String(req.params.id), res);
+    if (!estimate) return;
 
     let content = parsed.data.content;
     if (parsed.data.templateId && mongoose.Types.ObjectId.isValid(parsed.data.templateId)) {
@@ -297,16 +172,14 @@ export async function createWorkOrderNote(
           { scope: "personal", ownerId: req.user?.id },
         ],
       }).lean();
-      if (template && !content) {
-        content = template.body;
-      }
+      if (template && !content) content = template.body;
     }
 
     const mentionUserIds = await sanitizeMentionUserIds(parsed.data.mentionUserIds);
     const isReminder = parsed.data.isReminder ?? false;
 
-    const note = await WorkOrderNote.create({
-      workOrderRef: workOrder._id,
+    const note = await EstimateNote.create({
+      estimateRef: estimate._id,
       authorId: req.user!.id,
       content,
       visibleToCustomer: parsed.data.visibleToCustomer ?? true,
@@ -314,11 +187,7 @@ export async function createWorkOrderNote(
       mentionUserIds,
     });
 
-    if (note.visibleToCustomer) {
-      await syncDescPerformedPreview(workOrder._id);
-    }
-
-    const populated = await WorkOrderNote.findById(note._id)
+    const populated = await EstimateNote.findById(note._id)
       .populate("authorId", "first_name last_name")
       .populate("mentionUserIds", "first_name last_name")
       .lean();
@@ -328,7 +197,7 @@ export async function createWorkOrderNote(
     }
 
     notifyNoteAudience({
-      entityType: "work_order_note",
+      entityType: "estimate_note",
       noteId: String(note._id),
       recipientIds: createAudience(
         req.user!.id,
@@ -336,35 +205,35 @@ export async function createWorkOrderNote(
         isReminder,
       ),
       isReminder,
-      ticketNumber: displayTicketNumber(workOrder),
-      ticketId: String(workOrder._id),
-      customerRef: workOrder.customerRef,
-      customerName: workOrder.customerName,
+      ticketNumber: displayTicketNumber(estimate),
+      ticketId: String(estimate._id),
+      customerRef: estimate.customerRef,
+      customerName: estimate.customerName,
       actorUserId: req.user!.id,
     });
 
     logNotificationAsync({
-      entityType: "work_order_note",
+      entityType: "estimate_note",
       action: "created",
       entityId: String(note._id),
-      customerRef: workOrder.customerRef,
-      summary: `Note added on work order ${workOrder.number || workOrder._id}`,
-      metadata: { workOrderId: String(workOrder._id) },
+      customerRef: estimate.customerRef,
+      summary: `Note added on estimate ${estimate.number || estimate._id}`,
+      metadata: { estimateId: String(estimate._id) },
       ...actorFromRequest(req.user),
     });
 
     res.status(201).json({ note: asFormatted(populated, true) });
   } catch (err) {
-    console.error("POST /work-orders/:id/notes error:", err);
+    console.error("POST /estimates/:id/notes error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }
 
-export async function updateWorkOrderNote(
+export async function updateEstimateNote(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
-  const parsed = updateWorkOrderNoteSchema.safeParse(req.body);
+  const parsed = updateEstimateNoteSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
       message: "Validation error",
@@ -374,9 +243,8 @@ export async function updateWorkOrderNote(
   }
 
   try {
-    const workOrder = await findWorkOrderOr404(String(req.params.id), res);
-    if (!workOrder) return;
-    if (!(await canWriteNotes(req, workOrder, res))) return;
+    const estimate = await findEstimateOr404(String(req.params.id), res);
+    if (!estimate) return;
 
     const noteId = String(req.params.noteId);
     if (!mongoose.Types.ObjectId.isValid(noteId)) {
@@ -384,9 +252,9 @@ export async function updateWorkOrderNote(
       return;
     }
 
-    const note = await WorkOrderNote.findOne({
+    const note = await EstimateNote.findOne({
       _id: noteId,
-      workOrderRef: workOrder._id,
+      estimateRef: estimate._id,
     });
     if (!note) {
       res.status(404).json({ message: "Note not found" });
@@ -411,9 +279,8 @@ export async function updateWorkOrderNote(
       note.mentionUserIds = await sanitizeMentionUserIds(parsed.data.mentionUserIds);
     }
     await note.save();
-    await syncDescPerformedPreview(workOrder._id);
 
-    const populated = await WorkOrderNote.findById(note._id)
+    const populated = await EstimateNote.findById(note._id)
       .populate("authorId", "first_name last_name")
       .populate("mentionUserIds", "first_name last_name")
       .lean();
@@ -423,7 +290,7 @@ export async function updateWorkOrderNote(
     }
 
     notifyNoteAudience({
-      entityType: "work_order_note",
+      entityType: "estimate_note",
       noteId: String(note._id),
       recipientIds: editAudience({
         authorId: String(note.authorId),
@@ -433,38 +300,37 @@ export async function updateWorkOrderNote(
         nextReminder: Boolean(note.isReminder),
       }),
       isReminder: Boolean(note.isReminder),
-      ticketNumber: displayTicketNumber(workOrder),
-      ticketId: String(workOrder._id),
-      customerRef: workOrder.customerRef,
-      customerName: workOrder.customerName,
+      ticketNumber: displayTicketNumber(estimate),
+      ticketId: String(estimate._id),
+      customerRef: estimate.customerRef,
+      customerName: estimate.customerName,
       actorUserId: req.user!.id,
     });
 
     logNotificationAsync({
-      entityType: "work_order_note",
+      entityType: "estimate_note",
       action: "updated",
       entityId: String(note._id),
-      customerRef: workOrder.customerRef,
-      summary: `Note updated on work order ${workOrder.number || workOrder._id}`,
-      metadata: { workOrderId: String(workOrder._id) },
+      customerRef: estimate.customerRef,
+      summary: `Note updated on estimate ${estimate.number || estimate._id}`,
+      metadata: { estimateId: String(estimate._id) },
       ...actorFromRequest(req.user),
     });
 
     res.json({ note: asFormatted(populated, true) });
   } catch (err) {
-    console.error("PATCH /work-orders/:id/notes/:noteId error:", err);
+    console.error("PATCH /estimates/:id/notes/:noteId error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }
 
-export async function deleteWorkOrderNote(
+export async function deleteEstimateNote(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
   try {
-    const workOrder = await findWorkOrderOr404(String(req.params.id), res);
-    if (!workOrder) return;
-    if (!(await canWriteNotes(req, workOrder, res))) return;
+    const estimate = await findEstimateOr404(String(req.params.id), res);
+    if (!estimate) return;
 
     const noteId = String(req.params.noteId);
     if (!mongoose.Types.ObjectId.isValid(noteId)) {
@@ -472,9 +338,9 @@ export async function deleteWorkOrderNote(
       return;
     }
 
-    const note = await WorkOrderNote.findOne({
+    const note = await EstimateNote.findOne({
       _id: noteId,
-      workOrderRef: workOrder._id,
+      estimateRef: estimate._id,
     });
     if (!note) {
       res.status(404).json({ message: "Note not found" });
@@ -488,21 +354,20 @@ export async function deleteWorkOrderNote(
     }
 
     await note.deleteOne();
-    await syncDescPerformedPreview(workOrder._id);
 
     logNotificationAsync({
-      entityType: "work_order_note",
+      entityType: "estimate_note",
       action: "deleted",
       entityId: noteId,
-      customerRef: workOrder.customerRef,
-      summary: `Note deleted on work order ${workOrder.number || workOrder._id}`,
-      metadata: { workOrderId: String(workOrder._id) },
+      customerRef: estimate.customerRef,
+      summary: `Note deleted on estimate ${estimate.number || estimate._id}`,
+      metadata: { estimateId: String(estimate._id) },
       ...actorFromRequest(req.user),
     });
 
     res.status(204).send();
   } catch (err) {
-    console.error("DELETE /work-orders/:id/notes/:noteId error:", err);
+    console.error("DELETE /estimates/:id/notes/:noteId error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }

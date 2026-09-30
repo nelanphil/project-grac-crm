@@ -9,11 +9,14 @@ import {
   deleteWorkOrderNote,
   getNoteTemplates,
   getWorkOrderNotes,
+  NoteMention,
   NoteTemplateItem,
+  TicketNoteSource,
   updateWorkOrderNote,
   WorkOrderNote,
 } from "@/lib/api";
 import { isAdminRole, type RoleLike } from "@/lib/dashboard-role";
+import MentionTextarea, { NoteBody } from "@/components/billing/MentionTextarea";
 
 function formatNoteDate(date: string): string {
   return new Date(date).toLocaleString(undefined, {
@@ -27,18 +30,22 @@ function formatNoteDate(date: string): string {
 
 export default function WorkOrderNotesPanel({
   token,
-  workOrderId,
+  recordId,
+  source = "work-order",
   userId,
   canWrite,
   userRole,
   fallbackContent,
+  visibilityLabel = "Show on work order & invoice",
 }: {
   token: string;
-  workOrderId: string;
+  recordId: string;
+  source?: TicketNoteSource;
   userId: string;
   canWrite: boolean;
   userRole?: RoleLike;
   fallbackContent?: string;
+  visibilityLabel?: string;
 }) {
   const isAdmin = isAdminRole(userRole);
   const [notes, setNotes] = useState<WorkOrderNote[]>([]);
@@ -47,6 +54,9 @@ export default function WorkOrderNotesPanel({
 
   const [content, setContent] = useState("");
   const [visibleToCustomer, setVisibleToCustomer] = useState(true);
+  const [isReminder, setIsReminder] = useState(false);
+  const [mentionIds, setMentionIds] = useState<string[]>([]);
+  const [mentions, setMentions] = useState<NoteMention[]>([]);
   const [adding, setAdding] = useState(false);
 
   const [templates, setTemplates] = useState<NoteTemplateItem[]>([]);
@@ -59,6 +69,9 @@ export default function WorkOrderNotesPanel({
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [editVisible, setEditVisible] = useState(true);
+  const [editReminder, setEditReminder] = useState(false);
+  const [editMentionIds, setEditMentionIds] = useState<string[]>([]);
+  const [editMentions, setEditMentions] = useState<NoteMention[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
@@ -67,14 +80,14 @@ export default function WorkOrderNotesPanel({
     setLoading(true);
     setError(null);
     try {
-      const { notes: fetched } = await getWorkOrderNotes(token, workOrderId);
+      const { notes: fetched } = await getWorkOrderNotes(token, recordId, source);
       setNotes(fetched);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load notes.");
     } finally {
       setLoading(false);
     }
-  }, [token, workOrderId]);
+  }, [token, recordId, source]);
 
   const loadTemplates = useCallback(async () => {
     try {
@@ -118,15 +131,25 @@ export default function WorkOrderNotesPanel({
     setAdding(true);
     setError(null);
     try {
-      const { note } = await createWorkOrderNote(token, workOrderId, {
-        content: text,
-        visibleToCustomer,
-        ...(templateId ? { templateId } : {}),
-      });
+      const { note } = await createWorkOrderNote(
+        token,
+        recordId,
+        {
+          content: text,
+          visibleToCustomer,
+          isReminder,
+          mentionUserIds: mentionIds,
+          ...(templateId ? { templateId } : {}),
+        },
+        source,
+      );
       setNotes((prev) => [...prev, note]);
       setContent("");
       setTemplateId("");
       setVisibleToCustomer(true);
+      setIsReminder(false);
+      setMentionIds([]);
+      setMentions([]);
       setShowSaveTemplate(false);
       setTemplateName("");
     } catch (err) {
@@ -182,6 +205,9 @@ export default function WorkOrderNotesPanel({
     setEditingNoteId(note._id);
     setEditContent(note.content);
     setEditVisible(note.visibleToCustomer);
+    setEditReminder(Boolean(note.isReminder));
+    setEditMentionIds(note.mentionUserIds ?? []);
+    setEditMentions(note.mentions ?? []);
   }
 
   async function handleSaveEdit(noteId: string) {
@@ -190,10 +216,18 @@ export default function WorkOrderNotesPanel({
     setSavingEdit(true);
     setError(null);
     try {
-      const { note } = await updateWorkOrderNote(token, workOrderId, noteId, {
-        content: text,
-        visibleToCustomer: editVisible,
-      });
+      const { note } = await updateWorkOrderNote(
+        token,
+        recordId,
+        noteId,
+        {
+          content: text,
+          visibleToCustomer: editVisible,
+          isReminder: editReminder,
+          mentionUserIds: editMentionIds,
+        },
+        source,
+      );
       setNotes((prev) => prev.map((item) => (item._id === noteId ? note : item)));
       setEditingNoteId(null);
     } catch (err) {
@@ -209,7 +243,7 @@ export default function WorkOrderNotesPanel({
     setDeletingNoteId(noteId);
     setError(null);
     try {
-      await deleteWorkOrderNote(token, workOrderId, noteId);
+      await deleteWorkOrderNote(token, recordId, noteId, source);
       setNotes((prev) => prev.filter((item) => item._id !== noteId));
       if (editingNoteId === noteId) setEditingNoteId(null);
       setConfirmingDeleteId(null);
@@ -274,6 +308,11 @@ export default function WorkOrderNotesPanel({
                           Internal
                         </span>
                       ) : null}
+                      {note.isReminder ? (
+                        <span className="ml-2 rounded-full bg-brand-orange/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-orange print:hidden">
+                          Reminder
+                        </span>
+                      ) : null}
                     </p>
                     <p className="text-xs text-neutral-400">
                       {formatNoteDate(note.createdAt)}
@@ -304,11 +343,17 @@ export default function WorkOrderNotesPanel({
 
                 {editingNoteId === note._id ? (
                   <div className="mt-3 space-y-2 print:hidden">
-                    <textarea
+                    <MentionTextarea
+                      token={token}
                       value={editContent}
-                      onChange={(e) => setEditContent(e.target.value)}
+                      mentionIds={editMentionIds}
+                      knownMentions={editMentions}
                       rows={3}
-                      className="w-full resize-y rounded-lg border border-neutral-200 px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange"
+                      onChange={(next, ids, nextMentions) => {
+                        setEditContent(next);
+                        setEditMentionIds(ids);
+                        setEditMentions(nextMentions);
+                      }}
                     />
                     <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
                       <input
@@ -316,7 +361,15 @@ export default function WorkOrderNotesPanel({
                         checked={editVisible}
                         onChange={(e) => setEditVisible(e.target.checked)}
                       />
-                      Show on work order & invoice
+                      {visibilityLabel}
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
+                      <input
+                        type="checkbox"
+                        checked={editReminder}
+                        onChange={(e) => setEditReminder(e.target.checked)}
+                      />
+                      Reminder
                     </label>
                     <div className="flex gap-2">
                       <button
@@ -339,9 +392,7 @@ export default function WorkOrderNotesPanel({
                   </div>
                 ) : (
                   <>
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-700">
-                      {note.content}
-                    </p>
+                    <NoteBody content={note.content} mentions={note.mentions} />
                     {confirmingDeleteId === note._id ? (
                       <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md bg-red-50 px-3 py-2 text-xs print:hidden">
                         <p className="text-red-700">Remove this note?</p>
@@ -426,21 +477,36 @@ export default function WorkOrderNotesPanel({
             </div>
           ) : null}
 
-          <textarea
+          <MentionTextarea
+            token={token}
             value={content}
-            onChange={(e) => setContent(e.target.value)}
-            rows={4}
-            placeholder="Write a note…"
-            className="w-full resize-y rounded-lg border border-neutral-200 px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange"
+            mentionIds={mentionIds}
+            knownMentions={mentions}
+            placeholder="Write a note… Use @ to tag staff"
+            onChange={(next, ids, nextMentions) => {
+              setContent(next);
+              setMentionIds(ids);
+              setMentions(nextMentions);
+            }}
           />
-          <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
-            <input
-              type="checkbox"
-              checked={visibleToCustomer}
-              onChange={(e) => setVisibleToCustomer(e.target.checked)}
-            />
-            Show on work order & invoice
-          </label>
+          <div className="flex flex-wrap gap-4">
+            <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
+              <input
+                type="checkbox"
+                checked={visibleToCustomer}
+                onChange={(e) => setVisibleToCustomer(e.target.checked)}
+              />
+              {visibilityLabel}
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
+              <input
+                type="checkbox"
+                checked={isReminder}
+                onChange={(e) => setIsReminder(e.target.checked)}
+              />
+              Reminder
+            </label>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"

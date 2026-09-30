@@ -1,12 +1,8 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
+import { IReminderCompletion } from "./WorkOrderNote";
 
-export interface IReminderCompletion {
-  userId: Types.ObjectId;
-  completedAt: Date;
-}
-
-export interface IWorkOrderNote extends Document {
-  workOrderRef: Types.ObjectId;
+export interface IEstimateNote extends Document {
+  estimateRef: Types.ObjectId;
   authorId: Types.ObjectId;
   content: string;
   visibleToCustomer: boolean;
@@ -17,11 +13,11 @@ export interface IWorkOrderNote extends Document {
   updatedAt: Date;
 }
 
-const workOrderNoteSchema = new Schema<IWorkOrderNote>(
+const estimateNoteSchema = new Schema<IEstimateNote>(
   {
-    workOrderRef: {
+    estimateRef: {
       type: Schema.Types.ObjectId,
-      ref: "WorkOrder",
+      ref: "Estimate",
       required: true,
       index: true,
     },
@@ -46,11 +42,11 @@ const workOrderNoteSchema = new Schema<IWorkOrderNote>(
   { timestamps: true },
 );
 
-workOrderNoteSchema.index({ workOrderRef: 1, createdAt: -1 });
-workOrderNoteSchema.index({ authorId: 1, isReminder: 1, createdAt: -1 });
-workOrderNoteSchema.index({ mentionUserIds: 1, isReminder: 1, createdAt: -1 });
+estimateNoteSchema.index({ estimateRef: 1, createdAt: -1 });
+estimateNoteSchema.index({ authorId: 1, isReminder: 1, createdAt: -1 });
+estimateNoteSchema.index({ mentionUserIds: 1, isReminder: 1, createdAt: -1 });
 
-export const WorkOrderNote = mongoose.model<IWorkOrderNote>(
-  "WorkOrderNote",
-  workOrderNoteSchema,
+export const EstimateNote = mongoose.model<IEstimateNote>(
+  "EstimateNote",
+  estimateNoteSchema,
 );

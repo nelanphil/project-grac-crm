@@ -395,7 +395,7 @@ export function ticketFromRecord(record: {
     contractTemplateRef?: string | null;
     enrolledContractRef?: string | null;
     lineType?: TicketLineType;
-    kind?: TicketProductKind;
+    kind?: TicketProductKind | "contract";
     partNumber?: string;
     description?: string;
     quantity?: number;

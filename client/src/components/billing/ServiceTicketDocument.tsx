@@ -51,7 +51,7 @@ export type ServiceTicketView = {
     unitPrice?: number;
     amount: number;
     lineType?: "product" | "note" | "agreement";
-    kind?: "part" | "labor";
+    kind?: "part" | "labor" | "contract";
   }>;
   totalParts: number;
   totalLabor: number;

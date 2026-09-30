@@ -70,6 +70,44 @@ function catalogListPrice(product: ProductItem): number {
   return product.listPrice ?? product.unitPrice ?? 0;
 }
 
+function ticketFieldsForProduct(
+  product: ProductItem,
+  quantity: string,
+  discounts: ProductDiscounts,
+): Partial<TicketPartRow> {
+  const listPrice = catalogListPrice(product);
+  const qty = quantity || "1";
+  if (product.kind === "contract") {
+    return {
+      lineType: "agreement",
+      productRef: "",
+      contractTemplateRef: product.contractTemplateRef ?? "",
+      enrolledContractRef: "",
+      partNumber: "",
+      description: product.name,
+      kind: "part",
+      quantity: qty,
+      listPrice: String(listPrice),
+      unitPrice: String(listPrice),
+      priceOverridden: false,
+    };
+  }
+  const kind = product.kind === "labor" ? "labor" : "part";
+  return {
+    lineType: "product",
+    productRef: product._id,
+    contractTemplateRef: "",
+    enrolledContractRef: "",
+    partNumber: catalogCode(product),
+    description: product.name,
+    kind,
+    quantity: qty,
+    listPrice: String(listPrice),
+    unitPrice: String(discountedUnitPrice(listPrice, kind, discounts)),
+    priceOverridden: false,
+  };
+}
+
 function patchRow(
   parts: TicketPartRow[],
   id: string,
@@ -171,9 +209,13 @@ function ProductSuggestMenu({
     >
       {products.map((product) => {
         const listPrice = catalogListPrice(product);
+        const isContract = product.kind === "contract";
         const kind = product.kind === "labor" ? "labor" : "part";
-        const unitPrice = discountedUnitPrice(listPrice, kind, discounts);
+        const unitPrice = isContract
+          ? listPrice
+          : discountedUnitPrice(listPrice, kind, discounts);
         const strike = product.strikeThroughPrice > 0;
+        const kindLabel = isContract ? "Contract" : kind === "labor" ? "Labor" : "Part";
         return (
           <li key={product._id}>
             <button
@@ -184,7 +226,7 @@ function ProductSuggestMenu({
             >
               <span className="font-medium">{catalogCode(product)}</span>
               <span className="ml-2 rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600">
-                {kind === "labor" ? "Labor" : "Part"}
+                {kindLabel}
               </span>
               <span className="mt-0.5 block text-neutral-500">
                 {product.name} ·{" "}
@@ -799,18 +841,7 @@ function SortableLineRow({
               onClose={onCloseSearch}
               onCreate={onCreateProduct}
               onSelect={(product) => {
-                const listPrice = catalogListPrice(product);
-                const kind = product.kind === "labor" ? "labor" : "part";
-                onChange({
-                  productRef: product._id,
-                  partNumber: catalogCode(product),
-                  description: product.name,
-                  kind,
-                  quantity: row.quantity || "1",
-                  listPrice: String(listPrice),
-                  unitPrice: String(discountedUnitPrice(listPrice, kind, discounts)),
-                  priceOverridden: false,
-                });
+                onChange(ticketFieldsForProduct(product, row.quantity, discounts));
               }}
             />
           ) : null}
@@ -951,19 +982,8 @@ export default function TicketLineItemsEditor({
     .slice(0, 12);
 
   function applyProductToRow(id: string, product: ProductItem) {
-    const listPrice = catalogListPrice(product);
-    const kind = product.kind === "labor" ? "labor" : "part";
-    updatePart(id, {
-      productRef: product._id,
-      partNumber: catalogCode(product),
-      description: product.name,
-      kind,
-      quantity:
-        parts.find((row) => row.id === id)?.quantity || "1",
-      listPrice: String(listPrice),
-      unitPrice: String(discountedUnitPrice(listPrice, kind, discountRules)),
-      priceOverridden: false,
-    });
+    const quantity = parts.find((row) => row.id === id)?.quantity || "1";
+    updatePart(id, ticketFieldsForProduct(product, quantity, discountRules));
   }
 
   function updatePart(
@@ -975,7 +995,9 @@ export default function TicketLineItemsEditor({
     if (searchQuery !== undefined) {
       setProductQuery((prev) => ({ ...prev, [id]: searchQuery }));
     }
-    if (updates.productRef) {
+    const selectedAgreement =
+      updates.lineType === "agreement" && Boolean(updates.contractTemplateRef);
+    if (updates.productRef || selectedAgreement) {
       const inserted = insertEmptyProductBelow(next, id);
       next = inserted.parts;
       setActivePartId(inserted.emptyId);
