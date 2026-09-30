@@ -1,5 +1,6 @@
 import mongoose, { Schema, Document } from "mongoose";
 import { UserRole } from "./User";
+import { Role } from "./Role";
 
 export interface IRolePermission extends Document {
   role: UserRole;
@@ -277,5 +278,70 @@ export async function ensureJobRolePermissions(): Promise<void> {
       { $setOnInsert: { role, permission } },
       { upsert: true },
     );
+  }
+}
+
+/**
+ * Sidebar links each role could see before nav permissions existed.
+ * New links are not added here; they stay hidden until a super-admin grants them.
+ * Inserts only, so a later removal is kept.
+ */
+const NAV_GRANT_RULES: {
+  href: string;
+  includeRoles?: string[];
+  excludeRoles?: string[];
+}[] = [
+  { href: "/dashboard/leads", excludeRoles: ["customer"] },
+  { href: "/dashboard/messaging", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/control-panel", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/customers", excludeRoles: ["customer"] },
+  { href: "/dashboard/contact", excludeRoles: ["customer"] },
+  { href: "/dashboard/contracts", excludeRoles: ["customer"] },
+  { href: "/dashboard/products", excludeRoles: ["customer"] },
+  { href: "/dashboard/discount-codes", excludeRoles: ["customer"] },
+  { href: "/dashboard/territory", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/users", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/users/roles", includeRoles: ["super-admin"] },
+  { href: "/dashboard/users/job-roles", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/admin", includeRoles: ["super-admin"] },
+  { href: "/dashboard", includeRoles: ["customer"] },
+  { href: "/dashboard/checkout", includeRoles: ["customer"] },
+  {
+    href: "/dashboard/financials",
+    excludeRoles: ["customer"],
+    includeRoles: ["admin", "super-admin", "manager"],
+  },
+  { href: "/dashboard/orders" },
+  { href: "/dashboard/work-orders", excludeRoles: ["customer", "agent"] },
+  { href: "/dashboard/estimates", excludeRoles: ["customer", "agent"] },
+  {
+    href: "/dashboard/estimates/templates",
+    excludeRoles: ["customer", "agent"],
+  },
+  { href: "/dashboard/schedule", excludeRoles: ["customer", "agent"] },
+  { href: "/dashboard/settings" },
+];
+
+function legacyRoleSeesNav(
+  rule: (typeof NAV_GRANT_RULES)[number],
+  role: string,
+): boolean {
+  if (rule.excludeRoles?.includes(role)) return false;
+  if (rule.includeRoles) return rule.includeRoles.includes(role);
+  return true;
+}
+
+export async function ensureNavPermissions(): Promise<void> {
+  const roles = await Role.find({ deletedAt: null }).select("slug").lean();
+  for (const { slug } of roles) {
+    for (const rule of NAV_GRANT_RULES) {
+      if (!legacyRoleSeesNav(rule, slug)) continue;
+      const permission = `nav:${rule.href}`;
+      await RolePermission.updateOne(
+        { role: slug, permission },
+        { $setOnInsert: { role: slug, permission } },
+        { upsert: true },
+      );
+    }
   }
 }

@@ -22,13 +22,15 @@ import {
   LayoutDashboard,
   LucideIcon,
 } from "lucide-react";
-import { normalizeRoles, type RoleLike } from "@/lib/dashboard-role";
+import { hasRole } from "@/lib/dashboard-role";
 
 export interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
+  /** Kept as the historical audience. Live visibility is the nav permission. */
   excludeRoles?: string[];
+  /** Kept as the historical audience. Live visibility is the nav permission. */
   includeRoles?: string[];
   children?: NavItem[];
 }
@@ -189,6 +191,102 @@ export const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
+/** Staff and customer account link pinned outside {@link NAV_SECTIONS}. */
+export const SETTINGS_NAV_HREF = "/dashboard/settings";
+
+const HOME_NAV_HREF = "/dashboard";
+
+export interface NavPermissionEntry {
+  key: string;
+  href: string;
+  label: string;
+}
+
+export interface NavViewer {
+  role?: string | null;
+  roles?: string[] | null;
+  permissions?: readonly string[] | null;
+}
+
+export function navPermissionKey(href: string): string {
+  return `nav:${href}`;
+}
+
+function collectNavPermissions(
+  items: NavItem[],
+  parentLabel: string | undefined,
+  into: NavPermissionEntry[],
+): void {
+  for (const item of items) {
+    const label = parentLabel ? `${parentLabel} / ${item.label}` : item.label;
+    into.push({ key: navPermissionKey(item.href), href: item.href, label });
+    if (item.children?.length) {
+      collectNavPermissions(item.children, item.label, into);
+    }
+  }
+}
+
+/** Every left-hand link, including ones added to {@link NAV_SECTIONS} later. */
+export function listNavPermissions(): NavPermissionEntry[] {
+  const entries: NavPermissionEntry[] = [];
+  for (const section of NAV_SECTIONS) {
+    collectNavPermissions(section.items, undefined, entries);
+  }
+  if (!entries.some((entry) => entry.href === SETTINGS_NAV_HREF)) {
+    entries.push({
+      key: navPermissionKey(SETTINGS_NAV_HREF),
+      href: SETTINGS_NAV_HREF,
+      label: "Settings",
+    });
+  }
+  return entries;
+}
+
+export function navPermissionLabel(permission: string): string | null {
+  return (
+    listNavPermissions().find((entry) => entry.key === permission)?.label ??
+    null
+  );
+}
+
+/** Super-admin sees every link. Other roles need the nav permission. */
+export function canSeeNavHref(
+  viewer: NavViewer | null | undefined,
+  href: string,
+): boolean {
+  if (!viewer) return false;
+  if (hasRole(viewer, "super-admin")) return true;
+  return viewer.permissions?.includes(navPermissionKey(href)) ?? false;
+}
+
+/**
+ * Longest nav href that owns this path. The staff home (`/dashboard`) is not
+ * a prefix, so it stays open without the customer Dashboard permission.
+ */
+export function navHrefForPath(pathname: string): string | null {
+  let best: string | null = null;
+  for (const entry of listNavPermissions()) {
+    if (entry.href === HOME_NAV_HREF) continue;
+    const matches =
+      pathname === entry.href || pathname.startsWith(`${entry.href}/`);
+    if (matches && (!best || entry.href.length > best.length)) {
+      best = entry.href;
+    }
+  }
+  return best;
+}
+
+/** Signed-out visitors are left to the auth guard. */
+export function canAccessNavPath(
+  viewer: NavViewer | null | undefined,
+  pathname: string,
+): boolean {
+  if (!viewer) return true;
+  const href = navHrefForPath(pathname);
+  if (!href) return true;
+  return canSeeNavHref(viewer, href);
+}
+
 const NEST_PREFIX = "nest:";
 
 export function nestDroppableId(parentHref: string): string {
@@ -200,22 +298,10 @@ export function parseNestDroppableId(id: string): string | null {
   return id.startsWith(NEST_PREFIX) ? id.slice(NEST_PREFIX.length) : null;
 }
 
-function isItemVisible(
-  item: { includeRoles?: string[]; excludeRoles?: string[] },
-  role: RoleLike,
-): boolean {
-  const roles = normalizeRoles(role);
-  if (item.excludeRoles?.some((slug) => roles.includes(slug))) return false;
-  if (item.includeRoles) {
-    return item.includeRoles.some((slug) => roles.includes(slug));
-  }
-  return true;
-}
-
-function visibleTree(items: NavItem[], role: RoleLike): NavItem[] {
+function visibleTree(items: NavItem[], viewer: NavViewer): NavItem[] {
   return items.flatMap((item) => {
-    const kids = visibleTree(item.children ?? [], role);
-    if (isItemVisible(item, role)) {
+    const kids = visibleTree(item.children ?? [], viewer);
+    if (canSeeNavHref(viewer, item.href)) {
       return [
         {
           ...item,
@@ -227,10 +313,13 @@ function visibleTree(items: NavItem[], role: RoleLike): NavItem[] {
   });
 }
 
-export function getVisibleNavSections(role: RoleLike): NavSection[] {
+export function getVisibleNavSections(
+  viewer: NavViewer | null | undefined,
+): NavSection[] {
+  if (!viewer) return [];
   return NAV_SECTIONS.map((section) => ({
     ...section,
-    items: visibleTree(section.items, role),
+    items: visibleTree(section.items, viewer),
   })).filter((section) => section.items.length > 0);
 }
 

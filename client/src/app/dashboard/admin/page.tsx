@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
+import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import PaymentPlatformAppsCard from "@/components/admin/PaymentPlatformAppsCard";
@@ -69,15 +69,7 @@ function AdminContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = useAuthStore((s) => s.token);
-  const user = useAuthStore((s) => s.user);
-  const isSuperAdmin = useAuthStore((s) => s.hasRole("super-admin"));
   const activeTab = parseTab(searchParams.get("tab"));
-
-  useEffect(() => {
-    if (user && !isSuperAdmin) {
-      router.replace("/dashboard");
-    }
-  }, [user, isSuperAdmin, router]);
 
   function setTab(id: TabId) {
     const params = new URLSearchParams();
@@ -92,8 +84,6 @@ function AdminContent() {
     }
     router.replace(`/dashboard/admin?${params.toString()}`, { scroll: false });
   }
-
-  if (!user || !isSuperAdmin) return null;
 
   return (
     <div className="space-y-6">

@@ -18,7 +18,6 @@ import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import TablePagination from "@/components/ui/TablePagination";
 import { useAuthStore } from "@/store/useAuthStore";
-import { isCustomerRole } from "@/lib/dashboard-role";
 import { DEFAULT_PAGE_SIZE, type PageSize } from "@/lib/pagination";
 import {
   getCustomers,
@@ -227,7 +226,6 @@ function CustomersContent() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q")?.trim() ?? "";
   const token = useAuthStore((s) => s.token);
-  const user = useAuthStore((s) => s.user);
   const canManageCustomers = useAuthStore((s) =>
     s.hasRole("admin", "super-admin"),
   );
@@ -268,12 +266,6 @@ function CustomersContent() {
   }
 
   useEffect(() => {
-    if (isCustomerRole(user)) {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
     const q = searchParams.get("q")?.trim() ?? "";
     if (q && q !== search) {
       // Seed from URL only when the query param changes.
@@ -292,7 +284,7 @@ function CustomersContent() {
   }, [search]);
 
   useEffect(() => {
-    if (!token || isCustomerRole(user)) return;
+    if (!token) return;
 
     let cancelled = false;
 
@@ -330,7 +322,6 @@ function CustomersContent() {
     };
   }, [
     token,
-    user,
     canManageCustomers,
     listView,
     page,
@@ -381,8 +372,6 @@ function CustomersContent() {
       setRestoringId(null);
     }
   }
-
-  if (!user || isCustomerRole(user)) return null;
 
   if (loading && customers.length === 0)
     return (

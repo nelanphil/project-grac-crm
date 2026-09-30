@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import TerritoryEditor from "@/components/territory/TerritoryEditor";
 import {
@@ -14,7 +13,6 @@ import {
 } from "@/lib/api";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
-  isDispatcherRole,
   isOrgAdminRole,
   userHasCapability,
 } from "@/lib/dashboard-role";
@@ -28,10 +26,8 @@ export default function TerritoryPage() {
 }
 
 function TerritoryPageContent() {
-  const router = useRouter();
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
-  const isAllowed = isDispatcherRole(user);
   const isOrgAdmin = isOrgAdminRole(user);
   const editingOwn =
     !isOrgAdmin && userHasCapability(user, "territoryOwner");
@@ -44,12 +40,6 @@ function TerritoryPageContent() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveOk, setSaveOk] = useState<string | null>(null);
   const [recalculating, setRecalculating] = useState(false);
-
-  useEffect(() => {
-    if (user && !isAllowed) {
-      router.replace("/dashboard");
-    }
-  }, [user, isAllowed, router]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -77,11 +67,11 @@ function TerritoryPageContent() {
   }, [token, user, editingOwn]);
 
   useEffect(() => {
-    if (isAllowed && token) {
+    if (token) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       void load();
     }
-  }, [isAllowed, token, load]);
+  }, [token, load]);
 
   async function handleRecalculate() {
     if (!token) return;
@@ -129,7 +119,7 @@ function TerritoryPageContent() {
     }
   }
 
-  if (!user || !isAllowed) return null;
+  if (!user) return null;
 
   const selected =
     owners.find((o) => o._id === selectedId) ?? owners[0] ?? null;

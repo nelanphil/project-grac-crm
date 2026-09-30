@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import { useAuthStore } from "@/store/useAuthStore";
-import { isCustomerRole } from "@/lib/dashboard-role";
 import {
   getContract,
   getCustomer,
@@ -109,19 +108,13 @@ function EditContractContent() {
   }, [contract, renewedAt, renewDurationMonths]);
 
   useEffect(() => {
-    if (isCustomerRole(user)) {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
-    if (user && !isCustomerRole(user) && !canWrite) {
+    if (user && !canWrite) {
       router.replace(returnTo);
     }
   }, [canWrite, user, router, returnTo]);
 
   useEffect(() => {
-    if (!token || !id || isCustomerRole(user)) return;
+    if (!token || !id) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -162,7 +155,7 @@ function EditContractContent() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [token, id, user]);
+  }, [token, id]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -266,7 +259,7 @@ function EditContractContent() {
     }
   }
 
-  if (!user || isCustomerRole(user)) return null;
+  if (!user) return null;
 
   if (loading) {
     return (

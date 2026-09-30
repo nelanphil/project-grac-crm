@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
+import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import TwilioAccountsCard from "@/components/control-panel/TwilioAccountsCard";
@@ -11,7 +11,6 @@ import PaymentProvidersCard from "@/components/control-panel/PaymentProvidersCar
 import WorkOrderTypesCard from "@/components/control-panel/WorkOrderTypesCard";
 import NoteTemplatesCard from "@/components/control-panel/NoteTemplatesCard";
 import MobileTabBar from "@/components/ui/MobileTabBar";
-import { useAuthStore } from "@/store/useAuthStore";
 
 type TabId = "payments" | "communications" | "api-services" | "work-orders";
 
@@ -64,21 +63,10 @@ export default function ControlPanelPage() {
 function ControlPanelContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const user = useAuthStore((s) => s.user);
-
-  const isAdmin = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin"),
-  );
   const activeTab = parseTab(
     searchParams.get("tab"),
     Boolean(searchParams.get("square_oauth")),
   );
-
-  useEffect(() => {
-    if (user && !isAdmin) {
-      router.replace("/dashboard");
-    }
-  }, [user, isAdmin, router]);
 
   function setTab(id: TabId) {
     const params = new URLSearchParams(searchParams.toString());
@@ -89,8 +77,6 @@ function ControlPanelContent() {
       { scroll: false },
     );
   }
-
-  if (!user || !isAdmin) return null;
 
   return (
     <div className="space-y-6">

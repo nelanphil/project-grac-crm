@@ -39,7 +39,12 @@ export async function findRoleLabelConflict(
   return match ? { slug: match.slug, label: match.label } : null;
 }
 
-async function ensureFieldStaffRole(): Promise<void> {
+/**
+ * Field staff is the security role for technicians. The first migration copied
+ * whatever the retired tech role had and then skipped, so jobs access was never
+ * added. Upsert the intended set without removing anything an admin added later.
+ */
+export async function ensureFieldStaffPermissions(): Promise<void> {
   await Role.updateOne(
     { slug: "field-staff" },
     {
@@ -53,24 +58,28 @@ async function ensureFieldStaffRole(): Promise<void> {
     { upsert: true },
   );
 
-  const existing = await RolePermission.countDocuments({ role: "field-staff" });
-  if (existing > 0) return;
+  for (const permission of FIELD_STAFF_PERMISSIONS) {
+    await RolePermission.updateOne(
+      { role: "field-staff", permission },
+      { $setOnInsert: { role: "field-staff", permission } },
+      { upsert: true },
+    );
+  }
+}
+
+async function ensureFieldStaffRole(): Promise<void> {
+  await ensureFieldStaffPermissions();
 
   const fromTech = await RolePermission.find({ role: "tech" })
     .select("permission")
     .lean();
-  const permissions =
-    fromTech.length > 0
-      ? [...new Set(fromTech.map((row) => row.permission))]
-      : FIELD_STAFF_PERMISSIONS;
-
-  if (permissions.length === 0) return;
-  await RolePermission.insertMany(
-    permissions.map((permission) => ({ role: "field-staff", permission })),
-    { ordered: false },
-  ).catch((err: { code?: number }) => {
-    if (err?.code !== 11000) throw err;
-  });
+  for (const row of fromTech) {
+    await RolePermission.updateOne(
+      { role: "field-staff", permission: row.permission },
+      { $setOnInsert: { role: "field-staff", permission: row.permission } },
+      { upsert: true },
+    );
+  }
 }
 
 function idList(ids: unknown[] | null | undefined): string[] {

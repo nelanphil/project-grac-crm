@@ -13,6 +13,10 @@ import { CSS } from "@dnd-kit/utilities";
 import { X, Pencil, Trash2, Plus, Check } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
+  listNavPermissions,
+  navPermissionLabel,
+} from "@/lib/dashboard-nav";
+import {
   getRoles,
   getRolePermissions,
   updateRolePermissions,
@@ -58,6 +62,11 @@ const ALL_PERMISSIONS = [
 ].sort();
 
 const ACTION_ORDER = ["read", "write", "delete", "manage"];
+const NAV_PERMISSIONS = listNavPermissions();
+
+function permissionChipLabel(permission: string): string {
+  return navPermissionLabel(permission) ?? permission.split(":").slice(1).join(":");
+}
 
 function groupPermissions(permissions: string[]): Record<string, string[]> {
   const groups: Record<string, string[]> = {};
@@ -375,21 +384,25 @@ function RoleCard({
         ) : (
           <div className="space-y-2">
             {Object.entries(groupPermissions(permissions))
-              .sort(([a], [b]) => a.localeCompare(b))
+              .sort(([a], [b]) => {
+                if (a === "nav") return -1;
+                if (b === "nav") return 1;
+                return a.localeCompare(b);
+              })
               .map(([resource, perms]) => (
                 <div
                   key={resource}
                   className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2"
                 >
                   <span className="sm:w-24 shrink-0 sm:text-right text-xs font-medium text-neutral-400 capitalize">
-                    {resource}
+                    {resource === "nav" ? "Navigation" : resource}
                   </span>
                   <div className="flex flex-wrap gap-1.5 min-w-0">
                     {perms.map((perm) => (
                       <DraggableChip
                         key={`${role.slug}:${perm}`}
                         id={`assigned:${role.slug}:${perm}`}
-                        label={perm.split(":")[1]}
+                        label={permissionChipLabel(perm)}
                         onRemove={() => onRemovePerm(perm)}
                       />
                     ))}
@@ -654,7 +667,7 @@ export default function RolesTab() {
         </div>
 
         {/* Permissions palette — stacked above roles on small screens */}
-        <div className="w-full md:w-60 shrink-0 order-1 md:order-2">
+        <div className="w-full md:w-72 shrink-0 order-1 md:order-2">
           <div className="md:sticky md:top-24 rounded-xl border border-neutral-200 bg-white p-4 sm:p-5 shadow-sm">
             <h3 className="text-sm font-semibold text-brand-dark mb-1">
               All Permissions
@@ -662,21 +675,46 @@ export default function RolesTab() {
             <p className="text-xs text-neutral-400 mb-3">
               Drag any permission onto a role card.
             </p>
-            <div className="flex flex-wrap gap-1.5 max-h-[40vh] overflow-y-auto md:max-h-[calc(100vh-10rem)] md:flex-col md:flex-nowrap">
-              {ALL_PERMISSIONS.map((perm) => (
-                <DraggableChip
-                  key={perm}
-                  id={`available:${perm}`}
-                  label={perm}
-                />
-              ))}
+            <div className="max-h-[40vh] space-y-4 overflow-y-auto md:max-h-[calc(100vh-10rem)]">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                  Navigation
+                </p>
+                <div className="flex flex-wrap gap-1.5 md:flex-col md:flex-nowrap">
+                  {NAV_PERMISSIONS.map((entry) => (
+                    <DraggableChip
+                      key={entry.key}
+                      id={`available:${entry.key}`}
+                      label={entry.label}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                  Actions
+                </p>
+                <div className="flex flex-wrap gap-1.5 md:flex-col md:flex-nowrap">
+                  {ALL_PERMISSIONS.map((perm) => (
+                    <DraggableChip
+                      key={perm}
+                      id={`available:${perm}`}
+                      label={perm}
+                    />
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       <DragOverlay dropAnimation={null}>
-        {activePermission ? <StaticChip label={activePermission} /> : null}
+        {activePermission ? (
+          <StaticChip
+            label={navPermissionLabel(activePermission) ?? activePermission}
+          />
+        ) : null}
       </DragOverlay>
     </DndContext>
   );

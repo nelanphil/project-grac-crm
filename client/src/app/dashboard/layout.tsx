@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import DashboardNav from "@/components/dashboard/DashboardNav";
 import StaffDashboardShell from "@/components/dashboard/staff/StaffDashboardShell";
 import { isJobTerminalPopoutPath } from "@/utils/jobTerminalWindow";
 import { authGetMe } from "@/lib/api";
+import { canAccessNavPath } from "@/lib/dashboard-nav";
 import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
@@ -16,6 +17,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const hydrated = useHasHydrated();
   const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
@@ -23,6 +25,7 @@ export default function DashboardLayout({
   const [syncedToken, setSyncedToken] = useState<string | null>(null);
   const isTerminalPopout = isJobTerminalPopoutPath(pathname);
   const synced = !token || syncedToken === token;
+  const pathAllowed = canAccessNavPath(user, pathname);
 
   useEffect(() => {
     if (!hydrated || !token) return;
@@ -42,6 +45,11 @@ export default function DashboardLayout({
     };
   }, [hydrated, token, login]);
 
+  useEffect(() => {
+    if (!hydrated || !synced || !user || pathAllowed) return;
+    router.replace("/dashboard");
+  }, [hydrated, synced, user, pathAllowed, router]);
+
   if (!hydrated || !synced) {
     if (isTerminalPopout) {
       return (
@@ -58,6 +66,16 @@ export default function DashboardLayout({
       >
         {children}
       </div>
+    );
+  }
+
+  if (user && !pathAllowed) {
+    return (
+      <div
+        className="min-h-[50vh] bg-[var(--staff-canvas)] px-4 py-6 sm:px-6"
+        aria-busy="true"
+        aria-label="Opening dashboard"
+      />
     );
   }
 

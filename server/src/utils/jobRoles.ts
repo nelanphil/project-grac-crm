@@ -76,6 +76,32 @@ export async function capabilitiesForJobRoleIds(
   return capabilitiesFromIds(ids, await getCapabilitySets());
 }
 
+/** Slugs for the given job-role ids, in the same order, skipping missing roles. */
+export async function slugsForJobRoleIds(
+  ids: unknown[] | null | undefined,
+): Promise<string[]> {
+  const list = (ids ?? [])
+    .map((id) => String(id))
+    .filter((id) => Types.ObjectId.isValid(id));
+  if (list.length === 0) return [];
+  const roles = await JobRole.find({
+    _id: { $in: list },
+    deletedAt: null,
+  })
+    .select("slug")
+    .lean();
+  const byId = new Map(roles.map((role) => [String(role._id), role.slug]));
+  const seen = new Set<string>();
+  const slugs: string[] = [];
+  for (const id of list) {
+    const slug = byId.get(id);
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    slugs.push(slug);
+  }
+  return slugs;
+}
+
 export async function userHasCapability(
   user: { jobRoles?: unknown[] | null },
   capability: JobRoleCapability,

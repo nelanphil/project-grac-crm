@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 import { useDroppable } from "@dnd-kit/core";
 import {
@@ -61,7 +61,47 @@ type ScheduleMapProps = {
   onSelect: (job: WorkOrderListItem) => void;
   routeStops?: ScheduleRouteStop[];
   encodedPolyline?: string;
+  /** Schedule board accepts drops onto the map. Read-only maps leave this off. */
+  droppable?: boolean;
 };
+
+function DroppableMapSurface({ children }: { children: ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: "schedule-map" });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`relative h-[32rem] w-full overflow-hidden rounded-lg border ${
+        isOver
+          ? "border-brand-orange ring-2 ring-brand-orange"
+          : "border-neutral-200"
+      }`}
+    >
+      {children}
+      {isOver ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-orange-500/10">
+          <span className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-brand-dark shadow">
+            Add to this route
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MapSurface({
+  droppable,
+  children,
+}: {
+  droppable: boolean;
+  children: ReactNode;
+}) {
+  if (droppable) return <DroppableMapSurface>{children}</DroppableMapSurface>;
+  return (
+    <div className="relative h-[32rem] w-full overflow-hidden rounded-lg border border-neutral-200">
+      {children}
+    </div>
+  );
+}
 
 export default function ScheduleMap({
   unscheduled,
@@ -71,9 +111,9 @@ export default function ScheduleMap({
   onSelect,
   routeStops = EMPTY_STOPS,
   encodedPolyline,
+  droppable = true,
 }: ScheduleMapProps) {
   const token = useAuthStore((s) => s.token);
-  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: "schedule-map" });
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
@@ -350,23 +390,9 @@ export default function ScheduleMap({
           </span>
         )}
       </div>
-      <div
-        ref={setDropRef}
-        className={`relative h-[32rem] w-full overflow-hidden rounded-lg border ${
-          isOver
-            ? "border-brand-orange ring-2 ring-brand-orange"
-            : "border-neutral-200"
-        }`}
-      >
+      <MapSurface droppable={droppable}>
         <div ref={mapEl} className="h-full w-full" />
-        {isOver && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-orange-500/10">
-            <span className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-brand-dark shadow">
-              Add to this route
-            </span>
-          </div>
-        )}
-      </div>
+      </MapSurface>
     </div>
   );
 }

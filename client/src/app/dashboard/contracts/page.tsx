@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ServiceContractsTable from "@/components/contracts/ServiceContractsTable";
@@ -9,7 +8,6 @@ import ContractStatsCard from "@/components/contracts/ContractStatsCard";
 import ContractsCard from "@/components/control-panel/ContractsCard";
 import TablePagination from "@/components/ui/TablePagination";
 import { useAuthStore } from "@/store/useAuthStore";
-import { isCustomerRole } from "@/lib/dashboard-role";
 import {
   DEFAULT_PAGE_SIZE,
   paginationRange,
@@ -58,9 +56,7 @@ function matchesSearch(contract: ContractListItem, query: string): boolean {
 }
 
 function ContractsContent() {
-  const router = useRouter();
   const token = useAuthStore((s) => s.token);
-  const user = useAuthStore((s) => s.user);
 
   const [contracts, setContracts] = useState<ContractListItem[]>([]);
   const [statsContracts, setStatsContracts] = useState<ContractListItem[]>([]);
@@ -124,13 +120,7 @@ function ContractsContent() {
   };
 
   useEffect(() => {
-    if (isCustomerRole(user)) {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
-    if (!token || isCustomerRole(user)) return;
+    if (!token) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -151,10 +141,10 @@ function ContractsContent() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [token, user, standingFilter]);
+  }, [token, standingFilter]);
 
   useEffect(() => {
-    if (!token || isCustomerRole(user)) return;
+    if (!token) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatsLoading(true);
@@ -163,9 +153,7 @@ function ContractsContent() {
       .then(({ contracts: list }) => setStatsContracts(list))
       .catch(() => {})
       .finally(() => setStatsLoading(false));
-  }, [token, user]);
-
-  if (!user || isCustomerRole(user)) return null;
+  }, [token]);
 
   if (loading && contracts.length === 0 && statsContracts.length === 0)
     return (

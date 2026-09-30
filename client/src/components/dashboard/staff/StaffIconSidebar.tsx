@@ -39,7 +39,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   applyNavOrder,
+  canSeeNavHref,
   getVisibleNavSections,
+  SETTINGS_NAV_HREF,
   hiddenNavItems,
   hideNavItem,
   isNavItemActive,
@@ -879,18 +881,20 @@ export default function StaffIconSidebar() {
           ) : null}
         </button>
 
-        <NavLink
-          href="/dashboard/settings"
-          label="Settings"
-          active={settingsActive}
-          expanded={expanded}
-          onShowHover={(el) =>
-            showHover(el, { kind: "tooltip", label: "Settings" })
-          }
-          onHideHover={scheduleHideHover}
-        >
-          <Settings className="h-5 w-5" />
-        </NavLink>
+        {canSeeNavHref(user, SETTINGS_NAV_HREF) ? (
+          <NavLink
+            href={SETTINGS_NAV_HREF}
+            label="Settings"
+            active={settingsActive}
+            expanded={expanded}
+            onShowHover={(el) =>
+              showHover(el, { kind: "tooltip", label: "Settings" })
+            }
+            onHideHover={scheduleHideHover}
+          >
+            <Settings className="h-5 w-5" />
+          </NavLink>
+        ) : null}
       </div>
 
       {!expanded && tooltip ? (

@@ -21,7 +21,9 @@ import {
 } from "@dnd-kit/sortable";
 import {
   applyNavOrder,
+  canSeeNavHref,
   getVisibleNavSections,
+  SETTINGS_NAV_HREF,
   hiddenNavItems,
   hideNavItem,
   moveNavItem,
@@ -316,14 +318,23 @@ export default function StaffTopBar() {
           <ThemeToggle variant="light" />
           <NotificationBell variant="light" />
 
-          <Link
-            href="/dashboard/settings"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--staff-cream)] text-xs font-bold text-[var(--staff-ink)] ring-1 ring-[var(--staff-border)] transition hover:ring-brand-orange"
-            title="Settings"
-            aria-label="Account settings"
-          >
-            {initials}
-          </Link>
+          {canSeeNavHref(user, SETTINGS_NAV_HREF) ? (
+            <Link
+              href={SETTINGS_NAV_HREF}
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--staff-cream)] text-xs font-bold text-[var(--staff-ink)] ring-1 ring-[var(--staff-border)] transition hover:ring-brand-orange"
+              title="Settings"
+              aria-label="Account settings"
+            >
+              {initials}
+            </Link>
+          ) : (
+            <span
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--staff-cream)] text-xs font-bold text-[var(--staff-ink)] ring-1 ring-[var(--staff-border)]"
+              aria-hidden
+            >
+              {initials}
+            </span>
+          )}
 
           <button
             type="button"

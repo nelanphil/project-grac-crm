@@ -25,6 +25,8 @@ export interface AuthUser {
   roles?: UserRole[];
   userType?: "staff" | "customer";
   jobRoles?: string[];
+  /** Job-role slugs, e.g. "technician". Empty for customers. */
+  jobRoleSlugs?: string[];
   capabilities?: {
     schedulable: boolean;
     territoryOwner: boolean;

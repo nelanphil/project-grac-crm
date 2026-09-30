@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   ArrowDown,
   ArrowUp,
@@ -15,7 +14,6 @@ import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import TablePagination from "@/components/ui/TablePagination";
 import { useAuthStore } from "@/store/useAuthStore";
-import { isCustomerRole } from "@/lib/dashboard-role";
 import { DEFAULT_PAGE_SIZE, type PageSize } from "@/lib/pagination";
 import {
   ApiError,
@@ -73,9 +71,7 @@ function SortHeader({
 }
 
 function ContactsContent() {
-  const router = useRouter();
   const token = useAuthStore((s) => s.token);
-  const user = useAuthStore((s) => s.user);
 
   const [contacts, setContacts] = useState<ContactListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -105,12 +101,6 @@ function ContactsContent() {
   }
 
   useEffect(() => {
-    if (isCustomerRole(user)) {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(search.trim());
       setPage(1);
@@ -119,7 +109,7 @@ function ContactsContent() {
   }, [search]);
 
   useEffect(() => {
-    if (!token || isCustomerRole(user)) return;
+    if (!token) return;
 
     let cancelled = false;
 
@@ -152,9 +142,7 @@ function ContactsContent() {
     return () => {
       cancelled = true;
     };
-  }, [token, user, page, pageSize, sortKey, sortDir, debouncedSearch]);
-
-  if (!user || isCustomerRole(user)) return null;
+  }, [token, page, pageSize, sortKey, sortDir, debouncedSearch]);
 
   if (loading && contacts.length === 0)
     return (

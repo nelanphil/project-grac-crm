@@ -13,10 +13,14 @@ import {
   ensureProductPermissions,
   ensureDiscountPermissions,
   ensureJobRolePermissions,
+  ensureNavPermissions,
 } from "./models/mongo/RolePermission";
 import { seedDefaultRoles } from "./models/mongo/Role";
 import { seedDefaultJobRoles } from "./models/mongo/JobRole";
-import { migrateToJobRoles } from "./utils/migrateUserRoles";
+import {
+  ensureFieldStaffPermissions,
+  migrateToJobRoles,
+} from "./utils/migrateUserRoles";
 import { seedDefaultManufacturers } from "./models/mongo/Manufacturer";
 import { seedContractTemplates } from "./models/mongo/ContractTemplate";
 import { ensureTwilioPhoneLineShape } from "./models/mongo/TwilioAccount";
@@ -28,6 +32,7 @@ async function bootstrap(): Promise<void> {
   await seedDefaultRoles();
   await seedDefaultJobRoles();
   await migrateToJobRoles();
+  await ensureFieldStaffPermissions();
   await seedDefaultPermissions();
   await revokeCustomerListAccess();
   await ensureContractPermissions();
@@ -37,6 +42,7 @@ async function bootstrap(): Promise<void> {
   await ensureProductPermissions();
   await ensureDiscountPermissions();
   await ensureJobRolePermissions();
+  await ensureNavPermissions();
   await seedDefaultManufacturers();
   await seedContractTemplates();
   await ensureTwilioPhoneLineShape();

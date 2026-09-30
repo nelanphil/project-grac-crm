@@ -446,24 +446,52 @@ const geocodeMissingSchema = z.object({
   addressIds: z.array(z.string().min(1)).min(1).max(80),
 });
 
+async function addressIdsOnAssignedWorkOrders(
+  userId: string,
+  addressIds: string[],
+): Promise<Set<string>> {
+  if (!mongoose.Types.ObjectId.isValid(userId)) return new Set();
+  const ids = addressIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+  if (ids.length === 0) return new Set();
+  const rows = await WorkOrder.find({
+    assignedUserRef: userId,
+    addressRef: { $in: ids },
+  })
+    .select("addressRef")
+    .lean();
+  return new Set(
+    rows
+      .map((row) => (row.addressRef ? String(row.addressRef) : ""))
+      .filter(Boolean),
+  );
+}
+
 export async function postScheduleGeocodeMissing(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
   try {
-    if (!req.user?.permissions.includes("jobs:read")) {
+    const user = req.user;
+    if (!user || !user.permissions.includes("jobs:read")) {
       res.status(403).json({ message: "Missing permission: jobs:read" });
       return;
     }
-    if (!isDispatcherRole(req.user)) {
-      res.status(403).json({ message: "Only dispatchers can geocode map pins" });
-      return;
-    }
-
     const parsed = geocodeMissingSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ message: "addressIds (1–80) is required" });
       return;
+    }
+
+    if (!isDispatcherRole(user)) {
+      const owned = await addressIdsOnAssignedWorkOrders(
+        user.id,
+        parsed.data.addressIds,
+      );
+      const blocked = parsed.data.addressIds.some((id) => !owned.has(id));
+      if (blocked) {
+        res.status(403).json({ message: "Only dispatchers can geocode map pins" });
+        return;
+      }
     }
 
     const updated = await hydrateMissingAddressCoordinates(parsed.data.addressIds);

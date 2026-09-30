@@ -22,7 +22,6 @@ import MobileSectionNav from "@/components/ui/MobileSectionNav";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { useAuthStore } from "@/store/useAuthStore";
-import { isCustomerRole } from "@/lib/dashboard-role";
 import {
   getCustomer,
   getWorkOrdersForCustomer,
@@ -133,13 +132,7 @@ function CustomerDetailContent() {
   const [statusError, setStatusError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isCustomerRole(user)) {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
-    if (!token || !id || isCustomerRole(user)) return;
+    if (!token || !id) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -168,7 +161,7 @@ function CustomerDetailContent() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [token, id, user]);
+  }, [token, id]);
 
   const filteredWorkOrders = useMemo(() => {
     if (addressFilter === "all") return workOrders;
@@ -279,7 +272,7 @@ function CustomerDetailContent() {
     }
   }
 
-  if (!user || isCustomerRole(user)) return null;
+  if (!user) return null;
 
   if (loading) {
     return (

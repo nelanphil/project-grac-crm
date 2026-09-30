@@ -6,7 +6,11 @@ import { useState } from "react";
 import { Home, Settings, LogOut, Menu, X } from "lucide-react";
 import { NAV_LINKS, COMPANY, ESTIMATE_ROUTE } from "@/lib/constants";
 import { isStaffRole } from "@/lib/dashboard-role";
-import { getVisibleNavSections } from "@/lib/dashboard-nav";
+import {
+  canSeeNavHref,
+  getVisibleNavSections,
+  SETTINGS_NAV_HREF,
+} from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
 import NotificationBell from "@/components/notifications/NotificationBell";
@@ -76,7 +80,8 @@ export default function Header() {
     }
 
     const visibleSections = getVisibleNavSections(user);
-    const settingsActive = pathname.startsWith("/dashboard/settings");
+    const showSettings = canSeeNavHref(user, SETTINGS_NAV_HREF);
+    const settingsActive = pathname.startsWith(SETTINGS_NAV_HREF);
 
     return (
       <header className="sticky top-0 z-50 bg-brand-dark text-white print:hidden">
@@ -102,13 +107,15 @@ export default function Header() {
             </button>
             <ThemeToggle />
             <NotificationBell />
-            <Link
-              href="/dashboard/settings"
-              className="hidden rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:block"
-              aria-label="Settings"
-            >
-              <Settings className="h-5 w-5" />
-            </Link>
+            {showSettings ? (
+              <Link
+                href={SETTINGS_NAV_HREF}
+                className="hidden rounded-md p-2 text-white/80 transition-colors hover:text-brand-orange md:block"
+                aria-label="Settings"
+              >
+                <Settings className="h-5 w-5" />
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={handleLogout}
@@ -157,18 +164,20 @@ export default function Header() {
                   <Home className="h-4 w-4 shrink-0" />
                   Dashboard
                 </Link>
-                <Link
-                  href="/dashboard/settings"
-                  className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                    settingsActive
-                      ? "bg-brand-orange text-white"
-                      : "text-white/90 hover:bg-white/10"
-                  }`}
-                  onClick={() => setMobileOpen(false)}
-                >
-                  <Settings className="h-4 w-4 shrink-0" />
-                  Settings
-                </Link>
+                {showSettings ? (
+                  <Link
+                    href={SETTINGS_NAV_HREF}
+                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                      settingsActive
+                        ? "bg-brand-orange text-white"
+                        : "text-white/90 hover:bg-white/10"
+                    }`}
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    <Settings className="h-4 w-4 shrink-0" />
+                    Settings
+                  </Link>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => {

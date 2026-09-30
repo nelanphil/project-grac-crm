@@ -1,47 +1,25 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense } from "react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import MessagingHub from "@/components/messaging/MessagingHub";
-import { useAuthStore } from "@/store/useAuthStore";
 
 export default function MessagingPage() {
   return (
     <AuthGuard>
-      <MessagingPageContent />
-    </AuthGuard>
-  );
-}
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-brand-dark">Messages</h1>
+        </div>
 
-function MessagingPageContent() {
-  const router = useRouter();
-  const user = useAuthStore((s) => s.user);
-  const isAdmin = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin"),
-  );
-
-  useEffect(() => {
-    if (user && !isAdmin) {
-      router.replace("/dashboard");
-    }
-  }, [user, isAdmin, router]);
-
-  if (!user || !isAdmin) return null;
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-brand-dark">Messages</h1>
+        <Suspense
+          fallback={
+            <div className="text-sm text-neutral-500">Loading messages…</div>
+          }
+        >
+          <MessagingHub />
+        </Suspense>
       </div>
-
-      <Suspense
-        fallback={
-          <div className="text-sm text-neutral-500">Loading messages…</div>
-        }
-      >
-        <MessagingHub />
-      </Suspense>
-    </div>
+    </AuthGuard>
   );
 }
