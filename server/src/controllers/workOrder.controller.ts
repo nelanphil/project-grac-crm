@@ -549,6 +549,7 @@ export async function updateWorkOrder(
     if (parsed.data.assignedUserRef !== undefined) {
       if (parsed.data.assignedUserRef === null || parsed.data.assignedUserRef === "") {
         workOrder.assignedUserRef = null;
+        workOrder.tech = "";
       } else if (!mongoose.Types.ObjectId.isValid(parsed.data.assignedUserRef)) {
         res.status(400).json({ message: "Invalid assignedUserRef" });
         return;

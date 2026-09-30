@@ -615,6 +615,10 @@ export default function CalendarTab({
   const [addedUnscheduledIds, setAddedUnscheduledIds] = useState<string[]>([]);
   const [manualOrder, setManualOrder] = useState<string[] | null>(null);
   const [routeLocks, setRouteLocks] = useState<Record<string, string>>({});
+  const [unscheduling, setUnscheduling] = useState(false);
+  const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(
+    null,
+  );
   const [routePlan, setRoutePlan] = useState<PlannedRoute | null>(null);
   const [routePlanning, setRoutePlanning] = useState(false);
   const [routeOptimizing, setRouteOptimizing] = useState(false);
@@ -1132,6 +1136,69 @@ export default function CalendarTab({
     setRouteLocks((current) => ({ ...current, [id]: time }));
   }
 
+  function forgetRouteStop(id: string) {
+    setAddedUnscheduledIds((current) => current.filter((item) => item !== id));
+    setManualOrder((current) =>
+      current ? current.filter((item) => item !== id) : current,
+    );
+    setRouteLocks((current) => {
+      if (!current[id]) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function stopIsScheduledOnDay(id: string): boolean {
+    const job = jobById.get(id);
+    const assignee = job?.assignedUserRef ?? job?.assignee?._id ?? "";
+    return Boolean(
+      job?.scheduledStart &&
+        !job.completed &&
+        !job.appointmentCanceledAt &&
+        assignee === effectiveTechId &&
+        workOrderLocalDate(job) === selectedDate,
+    );
+  }
+
+  function requestRemoveRouteStop(id: string) {
+    if (!dispatcher || !canWrite || unscheduling) return;
+    if (!stopIsScheduledOnDay(id)) {
+      setConfirmingRemoveId((current) => (current === id ? null : current));
+      forgetRouteStop(id);
+      return;
+    }
+    setConfirmingRemoveId(id);
+  }
+
+  async function confirmRemoveRouteStop(id: string) {
+    if (!dispatcher || !canWrite || unscheduling || !token) return;
+    if (!stopIsScheduledOnDay(id)) {
+      forgetRouteStop(id);
+      setConfirmingRemoveId(null);
+      return;
+    }
+    setUnscheduling(true);
+    setRouteMessage(null);
+    try {
+      await updateWorkOrder(token, id, {
+        scheduledStart: null,
+        assignedUserRef: null,
+      });
+      forgetRouteStop(id);
+      setConfirmingRemoveId(null);
+      await load();
+    } catch (err) {
+      setRouteMessage(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to unschedule work order.",
+      );
+    } finally {
+      setUnscheduling(false);
+    }
+  }
+
   function moveRouteStop(id: string, direction: -1 | 1) {
     const order = routeStopIds.slice();
     const index = order.indexOf(id);
@@ -1509,6 +1576,7 @@ export default function CalendarTab({
                   setRouteLocks({});
                   setRoutePlan(null);
                   setRouteMessage(null);
+                  setConfirmingRemoveId(null);
                 }}
                 techLocked={!dispatcher}
                 filter={mapJobFilter}
@@ -1548,6 +1616,13 @@ export default function CalendarTab({
                 totalMeters={routePlan?.route?.distanceMeters}
                 showTotals={Boolean(routeTotalsMatch && routePlan?.route)}
                 onMove={moveRouteStop}
+                onRemove={
+                  dispatcher && canWrite ? requestRemoveRouteStop : undefined
+                }
+                confirmingRemoveId={confirmingRemoveId}
+                onConfirmRemove={(id) => void confirmRemoveRouteStop(id)}
+                onCancelRemove={() => setConfirmingRemoveId(null)}
+                removing={unscheduling}
                 dayCounts={jobsTodayByTech}
                 locks={routeLocks}
                 onToggleLock={toggleRouteLock}

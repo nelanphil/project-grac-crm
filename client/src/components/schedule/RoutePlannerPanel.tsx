@@ -8,7 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useDroppable } from "@dnd-kit/core";
-import { ArrowDown, ArrowUp, Lock, LockOpen } from "lucide-react";
+import { ArrowDown, ArrowUp, Lock, LockOpen, X } from "lucide-react";
 import type { RouteObjective, ScheduleRouteLeg, ScheduleRouteStop } from "@/lib/api";
 import { formatLocalClock } from "@/lib/schedule";
 
@@ -106,6 +106,11 @@ type RoutePlannerPanelProps = {
   totalMeters?: number;
   showTotals: boolean;
   onMove: (id: string, direction: -1 | 1) => void;
+  onRemove?: (id: string) => void;
+  confirmingRemoveId?: string | null;
+  onConfirmRemove?: (id: string) => void;
+  onCancelRemove?: () => void;
+  removing?: boolean;
   dayCounts: Record<string, number>;
   locks: Record<string, string>;
   onToggleLock: (id: string) => void;
@@ -181,6 +186,11 @@ export default function RoutePlannerPanel({
   totalMeters,
   showTotals,
   onMove,
+  onRemove,
+  confirmingRemoveId = null,
+  onConfirmRemove,
+  onCancelRemove,
+  removing = false,
   dayCounts,
   locks,
   onToggleLock,
@@ -414,11 +424,13 @@ export default function RoutePlannerPanel({
               const onRoute = !orderedWorkOrderIds.length || routed.has(job.id);
               const windowLabel = formatStopWindow(job.arrival, job.departure);
               const lockedTime = locks[job.id];
+              const confirming = confirmingRemoveId === job.id;
               return (
                 <li
                   key={job.id}
-                  className="flex items-center gap-2 px-3 py-2"
+                  className="px-3 py-2"
                 >
+                  <div className="flex items-center gap-2">
                   <span className="w-5 shrink-0 text-xs font-semibold text-neutral-400">
                     {index + 1}
                   </span>
@@ -459,7 +471,7 @@ export default function RoutePlannerPanel({
                         ? `Unlock ${job.label}`
                         : `Lock ${job.label} at this time`
                     }
-                    disabled={optimizing || applying}
+                    disabled={optimizing || applying || removing}
                     onClick={() => onToggleLock(job.id)}
                     className={`rounded p-1 hover:bg-neutral-100 disabled:opacity-30 ${
                       lockedTime ? "text-brand-orange" : "text-neutral-500"
@@ -474,7 +486,7 @@ export default function RoutePlannerPanel({
                   <button
                     type="button"
                     aria-label={`Move ${job.label} up`}
-                    disabled={index === 0 || optimizing || applying}
+                    disabled={index === 0 || optimizing || applying || removing}
                     onClick={() => onMove(job.id, -1)}
                     className="rounded p-1 text-neutral-500 hover:bg-neutral-100 disabled:opacity-30"
                   >
@@ -483,12 +495,45 @@ export default function RoutePlannerPanel({
                   <button
                     type="button"
                     aria-label={`Move ${job.label} down`}
-                    disabled={index === jobs.length - 1 || optimizing || applying}
+                    disabled={index === jobs.length - 1 || optimizing || applying || removing}
                     onClick={() => onMove(job.id, 1)}
                     className="rounded p-1 text-neutral-500 hover:bg-neutral-100 disabled:opacity-30"
                   >
                     <ArrowDown className="h-3.5 w-3.5" />
                   </button>
+                  {onRemove && !confirming ? (
+                    <button
+                      type="button"
+                      aria-label={`Remove ${job.label} from this route`}
+                      disabled={optimizing || applying || removing}
+                      onClick={() => onRemove(job.id)}
+                      className="rounded p-1 text-neutral-500 hover:bg-neutral-100 hover:text-red-600 disabled:opacity-30"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                  </div>
+                  {confirming ? (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-7 text-xs">
+                      <p className="text-neutral-700">Return to unscheduled?</p>
+                      <button
+                        type="button"
+                        onClick={onCancelRemove}
+                        disabled={removing}
+                        className="rounded border border-neutral-300 px-2 py-1 font-medium text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onConfirmRemove?.(job.id)}
+                        disabled={removing || !onConfirmRemove}
+                        className="rounded bg-red-600 px-2 py-1 font-medium text-white hover:bg-red-700 disabled:opacity-40"
+                      >
+                        {removing ? "Removing…" : "Remove"}
+                      </button>
+                    </div>
+                  ) : null}
                 </li>
               );
             })}
