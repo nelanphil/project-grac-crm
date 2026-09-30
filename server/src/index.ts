@@ -1,6 +1,8 @@
+import mongoose from "mongoose";
 import app from "./app";
 import { env } from "./config/env";
 import { connectMongoDB, disconnectMongoDB } from "./config/mongodb";
+import { ensureCustomerOptionalUniqueIndexes } from "./models/mongo/Customer";
 import {
   seedDefaultPermissions,
   revokeCustomerListAccess,
@@ -22,6 +24,7 @@ import { startRenewalInvoiceScheduler } from "./jobs/scheduler";
 
 async function bootstrap(): Promise<void> {
   await connectMongoDB();
+  await ensureCustomerOptionalUniqueIndexes(mongoose.connection);
   await seedDefaultRoles();
   await seedDefaultJobRoles();
   await migrateToJobRoles();

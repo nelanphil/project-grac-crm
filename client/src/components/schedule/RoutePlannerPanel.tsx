@@ -135,6 +135,8 @@ function TechDropRow({
       ref={setNodeRef}
       onClick={onSelect}
       className={`grid w-full grid-cols-[1fr_auto] items-center gap-3 border-b border-neutral-100 px-3 py-2 text-left text-sm last:border-0 ${
+        isOver || selected ? "tech-row-highlight" : ""
+      } ${
         isOver
           ? "bg-orange-100"
           : selected

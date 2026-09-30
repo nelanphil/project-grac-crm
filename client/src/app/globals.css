@@ -120,6 +120,15 @@ html[data-theme="dark"] .hover\:text-brand-dark:hover {
   color: var(--foreground);
 }
 
+/* Selected technician rows keep a light orange fill, so their text stays dark. */
+html[data-theme="dark"] .tech-row-highlight .text-brand-dark {
+  color: #231f20;
+}
+
+html[data-theme="dark"] .tech-row-highlight .text-neutral-500 {
+  color: oklch(43.9% 0 0);
+}
+
 /* Paper documents, customer-facing previews, and the job terminal keep
    their own light (or already-dark) colors. */
 html[data-theme="dark"] :is(.invoice-document, .theme-light) {
