@@ -2055,6 +2055,8 @@ export async function getTechnicians(
     search?: string;
     date?: string;
     excludeWorkOrderId?: string;
+    /** Return every schedulable technician. Default search stays capped. */
+    all?: boolean;
   },
 ): Promise<{ technicians: TechnicianListItem[] }> {
   const params = new URLSearchParams();
@@ -2063,6 +2065,7 @@ export async function getTechnicians(
   if (options?.excludeWorkOrderId) {
     params.set("excludeWorkOrderId", options.excludeWorkOrderId);
   }
+  if (options?.all) params.set("all", "1");
   const qs = params.toString();
   return authRequest<{ technicians: TechnicianListItem[] }>(
     `/schedule/technicians${qs ? `?${qs}` : ""}`,
@@ -2077,8 +2080,10 @@ export async function getScheduleStaff(
   token: string,
   from: string,
   to: string,
+  userId?: string,
 ): Promise<{ staff: ScheduleStaffMember[]; workOrders: WorkOrderListItem[] }> {
   const params = new URLSearchParams({ from, to });
+  if (userId) params.set("userId", userId);
   return authRequest<{
     staff: ScheduleStaffMember[];
     workOrders: WorkOrderListItem[];

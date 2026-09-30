@@ -2,7 +2,6 @@
 
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -13,7 +12,9 @@ import {
   geocodeMissingScheduleAddresses,
   getScheduleRoute,
   getScheduleStaff,
+  getTechnicians,
   getWorkOrder,
+  type TechnicianListItem,
   updateWorkOrder,
   type ScheduleRouteStop,
   type WorkOrderListItem,
@@ -33,7 +34,25 @@ import {
   startOfWeekSunday,
   workOrderLocalDate,
 } from "@/lib/schedule";
+import { staffHomeView } from "@/lib/dashboard-home";
+import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
+
+const TECH_STORAGE_KEY = "grac.todoTechnicianId";
+
+function technicianName(tech: {
+  first_name: string;
+  last_name: string;
+}): string {
+  return [tech.first_name, tech.last_name]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function possessive(name: string): string {
+  return `${name}'s`;
+}
 
 type RangeMode = "day" | "week";
 
@@ -388,6 +407,8 @@ export default function TechnicianHomeDashboard() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const userId = user?.id ?? "";
+  const canSwitchTechnicians =
+    isStaffRole(user) && staffHomeView(user?.jobRoleSlugs) !== "technician";
   const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
   const layout = useTodoLayout();
 
@@ -396,6 +417,10 @@ export default function TechnicianHomeDashboard() {
   const weekEnd = addDays(weekStart, 6);
 
   const [mode, setMode] = useState<RangeMode>("day");
+  const [technicians, setTechnicians] = useState<TechnicianListItem[]>([]);
+  const [techId, setTechId] = useState<string | null>(null);
+  const [techsLoading, setTechsLoading] = useState(canSwitchTechnicians);
+  const [techsError, setTechsError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<WorkOrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -413,22 +438,76 @@ export default function TechnicianHomeDashboard() {
   const [routeStops, setRouteStops] = useState<ScheduleRouteStop[]>([]);
   const [routePolyline, setRoutePolyline] = useState<string | undefined>();
   const requestedGeocodeRef = useRef(new Set<string>());
+  const subjectId = canSwitchTechnicians ? (techId ?? "") : userId;
+  const selectedTech =
+    technicians.find((tech) => tech._id === subjectId) ?? null;
+  const ownerName = selectedTech ? technicianName(selectedTech) : "";
+  const scheduleWhose = canSwitchTechnicians
+    ? ownerName
+      ? possessive(ownerName)
+      : "their"
+    : "your";
 
   useEffect(() => {
-    if (!token || !userId) return;
+    if (!canSwitchTechnicians || !token) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTechsLoading(true);
+    setTechsError(null);
+
+    getTechnicians(token, { all: true })
+      .then(({ technicians: rows }) => {
+        if (cancelled) return;
+        setTechnicians(rows);
+        let stored: string | null = null;
+        try {
+          stored = sessionStorage.getItem(TECH_STORAGE_KEY);
+        } catch {
+          stored = null;
+        }
+        const match = rows.find((row) => row._id === stored);
+        setTechId(match?._id ?? rows[0]?._id ?? null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setTechsError(
+          err instanceof ApiError
+            ? err.message
+            : "Failed to load technicians.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setTechsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canSwitchTechnicians, token]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (!subjectId) {
+      if (!techsLoading) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLoading(false);
+        setJobs([]);
+      }
+      return;
+    }
     let cancelled = false;
 
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
 
-    getScheduleStaff(token, weekStart, weekEnd)
+    getScheduleStaff(token, weekStart, weekEnd, subjectId)
       .then(({ workOrders }) => {
         if (cancelled) return;
         setJobs(
           workOrders
             .filter(
-              (job) => assignedToUser(job, userId) && isOpenAppointment(job),
+              (job) =>
+                assignedToUser(job, subjectId) && isOpenAppointment(job),
             )
             .sort(compareJobs),
         );
@@ -442,7 +521,7 @@ export default function TechnicianHomeDashboard() {
         setError(
           err instanceof ApiError
             ? err.message
-            : "Failed to load your schedule.",
+            : `Failed to load ${scheduleWhose} schedule.`,
         );
       })
       .finally(() => {
@@ -452,7 +531,7 @@ export default function TechnicianHomeDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [token, userId, weekStart, weekEnd]);
+  }, [token, subjectId, weekStart, weekEnd, techsLoading, scheduleWhose]);
 
   useEffect(() => {
     if (!token || jobs.length === 0) return;
@@ -517,16 +596,10 @@ export default function TechnicianHomeDashboard() {
     };
   }, [token, selectedId]);
 
-  const dayJobs = useMemo(
-    () => jobs.filter((job) => workOrderLocalDate(job) === today),
-    [jobs, today],
-  );
+  const dayJobs = jobs.filter((job) => workOrderLocalDate(job) === today);
 
   const mapDay = mode === "day" ? today : mapDate;
-  const mapJobs = useMemo(
-    () => jobs.filter((job) => workOrderLocalDate(job) === mapDay),
-    [jobs, mapDay],
-  );
+  const mapJobs = jobs.filter((job) => workOrderLocalDate(job) === mapDay);
   const mapCoordKey = mapJobs
     .map(
       (job) =>
@@ -535,12 +608,12 @@ export default function TechnicianHomeDashboard() {
     .join("|");
 
   useEffect(() => {
-    if (!token || !userId) return;
+    if (!token || !subjectId) return;
     let cancelled = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRouteStops([]);
     setRoutePolyline(undefined);
-    getScheduleRoute(token, userId, mapDay)
+    getScheduleRoute(token, subjectId, mapDay)
       .then((result) => {
         if (cancelled) return;
         setRouteStops(result.stops);
@@ -554,31 +627,26 @@ export default function TechnicianHomeDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [token, userId, mapDay, mapCoordKey]);
+  }, [token, subjectId, mapDay, mapCoordKey]);
 
-  const weekDays = useMemo(() => {
-    const days: { date: string; jobs: WorkOrderListItem[] }[] = [];
-    for (let offset = 0; offset < 7; offset += 1) {
-      const date = addDays(weekStart, offset);
-      const dayJobsForDate = jobs.filter(
-        (job) => workOrderLocalDate(job) === date,
-      );
-      if (dayJobsForDate.length > 0) days.push({ date, jobs: dayJobsForDate });
+  const weekDays: { date: string; jobs: WorkOrderListItem[] }[] = [];
+  for (let offset = 0; offset < 7; offset += 1) {
+    const date = addDays(weekStart, offset);
+    const dayJobsForDate = jobs.filter(
+      (job) => workOrderLocalDate(job) === date,
+    );
+    if (dayJobsForDate.length > 0) {
+      weekDays.push({ date, jobs: dayJobsForDate });
     }
-    return days;
-  }, [jobs, weekStart]);
+  }
 
-  const weekCalendar = useMemo(
-    () =>
-      Array.from({ length: 7 }, (_, offset) => {
-        const date = addDays(weekStart, offset);
-        return {
-          date,
-          jobs: jobs.filter((job) => workOrderLocalDate(job) === date),
-        };
-      }),
-    [jobs, weekStart],
-  );
+  const weekCalendar = Array.from({ length: 7 }, (_, offset) => {
+    const date = addDays(weekStart, offset);
+    return {
+      date,
+      jobs: jobs.filter((job) => workOrderLocalDate(job) === date),
+    };
+  });
   const mobileWeekDay =
     weekCalendar.find((day) => day.date === mapDate) ?? weekCalendar[0];
 
@@ -587,6 +655,36 @@ export default function TechnicianHomeDashboard() {
     mode === "day"
       ? formatWeekdayDate(today)
       : `${formatMonthDayYear(weekStart)} – ${formatMonthDayYear(weekEnd)}`;
+  const pageError = techsError ?? error;
+  const pageLoading =
+    (canSwitchTechnicians && techsLoading) || (Boolean(subjectId) && loading);
+  const noTechnicians =
+    canSwitchTechnicians &&
+    !techsLoading &&
+    !techsError &&
+    technicians.length === 0;
+  const loadingLabel = !canSwitchTechnicians
+    ? "Loading your schedule…"
+    : ownerName
+      ? `Loading ${possessive(ownerName)} schedule…`
+      : "Loading schedule…";
+  const emptyToday = `Nothing on ${scheduleWhose} schedule today.`;
+  const emptyDay = `Nothing on ${scheduleWhose} schedule.`;
+  const emptyWeek = `Nothing on ${scheduleWhose} schedule this week.`;
+
+  function selectTechnician(id: string) {
+    setTechId(id);
+    try {
+      sessionStorage.setItem(TECH_STORAGE_KEY, id);
+    } catch {
+      // The choice still applies for this visit when storage is blocked.
+    }
+    setSelectedId(null);
+    setOrder(null);
+    setOrderError(null);
+    setPending(null);
+    setActionError(null);
+  }
 
   function askAction(id: string, action: CardAction) {
     setActionError(null);
@@ -726,10 +824,26 @@ export default function TechnicianHomeDashboard() {
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--staff-ink)]">To Do</h1>
+          {canSwitchTechnicians && technicians.length > 0 ? (
+            <label className="mt-2 flex flex-col gap-1 text-xs font-medium text-[var(--staff-muted)]">
+              Technician
+              <select
+                value={subjectId}
+                onChange={(event) => selectTechnician(event.target.value)}
+                className="rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-sm font-medium text-[var(--staff-ink)]"
+              >
+                {technicians.map((tech) => (
+                  <option key={tech._id} value={tech._id}>
+                    {technicianName(tech)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <p className="mt-1 text-sm text-[var(--staff-muted)]">
-            {loading
-              ? "Loading your schedule…"
-              : error
+            {pageLoading
+              ? loadingLabel
+              : pageError
                 ? periodLabel
                 : `${periodLabel} · ${jobCountLabel(visibleCount)}`}
           </p>
@@ -757,16 +871,20 @@ export default function TechnicianHomeDashboard() {
         </div>
       </div>
 
-      {error ? (
+      {pageError ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+          {pageError}
         </div>
       ) : null}
 
-      {loading || error ? null : mode === "day" ? (
+      {pageLoading || pageError ? null : noTechnicians ? (
+        <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
+          No technicians to show.
+        </p>
+      ) : mode === "day" ? (
         dayJobs.length === 0 ? (
           <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
-            Nothing on your schedule today.
+            {emptyToday}
           </p>
         ) : (
           <div className="space-y-3">
@@ -787,7 +905,7 @@ export default function TechnicianHomeDashboard() {
             </h2>
             {mobileWeekDay.jobs.length === 0 ? (
               <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
-                Nothing on your schedule.
+                {emptyDay}
               </p>
             ) : (
               mobileWeekDay.jobs.map((job) => (
@@ -798,7 +916,7 @@ export default function TechnicianHomeDashboard() {
         </WeekDayCarousel>
       ) : weekDays.length === 0 ? (
         <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
-          Nothing on your schedule this week.
+          {emptyWeek}
         </p>
       ) : (
         <div className="space-y-6">

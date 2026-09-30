@@ -304,7 +304,7 @@ const NAV_GRANT_RULES: {
   { href: "/dashboard/users/roles", includeRoles: ["super-admin"] },
   { href: "/dashboard/users/job-roles", includeRoles: ["admin", "super-admin"] },
   { href: "/dashboard/admin", includeRoles: ["super-admin"] },
-  { href: "/dashboard", includeRoles: ["customer"] },
+  { href: "/dashboard" },
   { href: "/dashboard/checkout", includeRoles: ["customer"] },
   {
     href: "/dashboard/financials",

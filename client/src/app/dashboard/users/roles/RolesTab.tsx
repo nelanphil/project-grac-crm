@@ -667,15 +667,15 @@ export default function RolesTab() {
         </div>
 
         {/* Permissions palette — stacked above roles on small screens */}
-        <div className="w-full md:w-72 shrink-0 order-1 md:order-2">
-          <div className="md:sticky md:top-24 rounded-xl border border-neutral-200 bg-white p-4 sm:p-5 shadow-sm">
-            <h3 className="text-sm font-semibold text-brand-dark mb-1">
+        <div className="order-1 w-full shrink-0 self-start md:sticky md:top-24 md:order-2 md:h-[calc(100dvh-7.5rem)] md:w-72">
+          <div className="flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white p-4 shadow-sm sm:p-5 md:h-full">
+            <h3 className="mb-1 shrink-0 text-sm font-semibold text-brand-dark">
               All Permissions
             </h3>
-            <p className="text-xs text-neutral-400 mb-3">
+            <p className="mb-3 shrink-0 text-xs text-neutral-400">
               Drag any permission onto a role card.
             </p>
-            <div className="max-h-[40vh] space-y-4 overflow-y-auto md:max-h-[calc(100vh-10rem)]">
+            <div className="max-h-[40vh] space-y-4 overflow-y-auto overscroll-contain md:min-h-0 md:max-h-none md:flex-1">
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
                   Navigation

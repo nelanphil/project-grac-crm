@@ -24,6 +24,27 @@ import { User, activeUserFilter } from "../models/mongo/User";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 
+const SCHEDULE_USER_SELECT =
+  "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions";
+
+/** Self, or an active schedulable technician. */
+async function scheduleUserForViewer(viewerId: string, userId: string) {
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    return { error: "invalid" as const };
+  }
+  const person = await User.findOne({
+    _id: userId,
+    ...activeUserFilter,
+    ...(userId === viewerId
+      ? {}
+      : { userType: "staff" as const, schedulable: true }),
+  })
+    .select(SCHEDULE_USER_SELECT)
+    .lean();
+  if (!person) return { error: "forbidden" as const };
+  return { person };
+}
+
 const suggestSchema = z.object({
   workOrderId: z.string().min(1),
   date: z.string().regex(localDateRe),
@@ -113,7 +134,8 @@ export async function getScheduleTechnicians(
           staffDisplayName(user).toLowerCase().includes(query),
         )
       : staff;
-    const limited = filtered.slice(0, 8);
+    const all = req.query.all === "1";
+    const limited = all ? filtered : filtered.slice(0, 8);
 
     const counts =
       date && limited.length > 0
@@ -155,18 +177,31 @@ export async function getScheduleStaff(
       return;
     }
 
+    const requestedId =
+      typeof req.query.userId === "string" ? req.query.userId : "";
     const dispatcher = isDispatcherRole(req.user);
     let staff;
-    if (dispatcher) {
+    if (requestedId) {
+      const viewed = await scheduleUserForViewer(req.user.id, requestedId);
+      if (viewed.error === "invalid") {
+        res.status(400).json({ message: "Invalid userId" });
+        return;
+      }
+      if (viewed.error === "forbidden") {
+        res.status(403).json({
+          message: "You can only view a technician's schedule",
+        });
+        return;
+      }
+      staff = [viewed.person];
+    } else if (dispatcher) {
       staff = await listSchedulableStaff();
     } else {
       const me = await User.findOne({
         _id: req.user.id,
         ...activeUserFilter,
       })
-        .select(
-          "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions",
-        )
+        .select(SCHEDULE_USER_SELECT)
         .lean();
       staff = me ? [me] : [];
     }
@@ -328,10 +363,19 @@ export async function getScheduleRoute(
       res.status(400).json({ message: "date (YYYY-MM-DD) is required" });
       return;
     }
-
-    if (!isDispatcherRole(req.user) && userId !== req.user.id) {
-      res.status(403).json({ message: "You can only view your own route" });
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      res.status(400).json({ message: "Invalid userId" });
       return;
+    }
+
+    if (userId !== req.user.id) {
+      const viewed = await scheduleUserForViewer(req.user.id, userId);
+      if (viewed.error) {
+        res.status(403).json({
+          message: "You can only view a technician's route",
+        });
+        return;
+      }
     }
 
     const result = await dayRouteForUser({ userId, date });

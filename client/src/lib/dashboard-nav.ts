@@ -22,7 +22,7 @@ import {
   LayoutDashboard,
   LucideIcon,
 } from "lucide-react";
-import { hasRole } from "@/lib/dashboard-role";
+import { hasRole, isStaffRole } from "@/lib/dashboard-role";
 
 export interface NavItem {
   href: string;
@@ -205,6 +205,7 @@ export interface NavPermissionEntry {
 export interface NavViewer {
   role?: string | null;
   roles?: string[] | null;
+  userType?: string | null;
   permissions?: readonly string[] | null;
 }
 
@@ -305,6 +306,10 @@ function visibleTree(items: NavItem[], viewer: NavViewer): NavItem[] {
       return [
         {
           ...item,
+          label:
+            item.href === "/dashboard" && isStaffRole(viewer)
+              ? "To Do"
+              : item.label,
           children: kids.length ? kids : undefined,
         },
       ];
