@@ -8,6 +8,7 @@ import CloudinaryCredentialsCard from "@/components/admin/CloudinaryCredentialsC
 import PublicAssetManagerCard from "@/components/admin/PublicAssetManagerCard";
 import ContactFormEmailsCard from "@/components/admin/ContactFormEmailsCard";
 import DatabaseSection from "@/components/admin/DatabaseSection";
+import CrashReportsTab from "@/components/admin/CrashReportsTab";
 import MobileTabBar from "@/components/ui/MobileTabBar";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -16,7 +17,8 @@ type TabId =
   | "api-credentials"
   | "public-images"
   | "forms"
-  | "database";
+  | "database"
+  | "crash-reports";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "payment-platforms", label: "Payment platforms" },
@@ -24,6 +26,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "public-images", label: "Public Images" },
   { id: "forms", label: "Forms" },
   { id: "database", label: "Database" },
+  { id: "crash-reports", label: "Crash reports" },
 ];
 
 function parseTab(value: string | null): TabId {
@@ -32,7 +35,8 @@ function parseTab(value: string | null): TabId {
     value === "api-credentials" ||
     value === "public-images" ||
     value === "forms" ||
-    value === "database"
+    value === "database" ||
+    value === "crash-reports"
   ) {
     return value;
   }
@@ -50,7 +54,7 @@ export default function AdminPage() {
                 Admin Panel
               </h1>
               <p className="mt-1 text-sm text-neutral-500">
-                Manage platform credentials, public images, and form settings.
+                Manage platform credentials, public images, form settings, and crash reports.
               </p>
             </div>
             <div className="rounded-xl border border-neutral-200 bg-white shadow-sm px-6 py-8 text-sm text-neutral-500">
@@ -90,7 +94,7 @@ function AdminContent() {
       <div>
         <h1 className="text-2xl font-bold text-brand-dark">Admin Panel</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Manage platform credentials, public images, and form settings.
+          Manage platform credentials, public images, form settings, and crash reports.
         </p>
       </div>
 
@@ -122,6 +126,7 @@ function AdminContent() {
       )}
       {activeTab === "forms" && <ContactFormEmailsCard token={token} />}
       {activeTab === "database" && <DatabaseSection token={token} />}
+      {activeTab === "crash-reports" && <CrashReportsTab token={token} />}
     </div>
   );
 }

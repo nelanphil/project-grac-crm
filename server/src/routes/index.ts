@@ -49,6 +49,7 @@ import emailPreferenceRoutes from "./emailPreference.routes";
 import legacyDumpRoutes from "./legacyDump.routes";
 import databaseInspectRoutes from "./databaseInspect.routes";
 import reminderRoutes from "./reminder.routes";
+import crashReportRoutes from "./crashReport.routes";
 
 const router = Router();
 
@@ -105,5 +106,6 @@ router.use("/email-preferences", emailPreferenceRoutes);
 router.use("/contact-form-settings", contactFormSettingsRouter);
 router.use("/legacy-dumps", legacyDumpRoutes);
 router.use("/databases", databaseInspectRoutes);
+router.use("/crash-reports", crashReportRoutes);
 
 export default router;

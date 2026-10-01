@@ -72,6 +72,55 @@ export async function authenticate(
   }
 }
 
+/**
+ * Attaches the user when a valid Bearer token is present.
+ * Missing or invalid tokens continue as anonymous so public ingest
+ * (crash reports) is not blocked by a stale session.
+ */
+export async function authenticateIfPresent(
+  req: AuthRequest,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    next();
+    return;
+  }
+
+  const token = authHeader.slice(7);
+  try {
+    const decoded = jwt.verify(token, env.jwt.secret) as unknown as AuthTokenPayload;
+    const dbUser = await User.findOne({
+      _id: decoded.sub,
+      ...activeUserFilter,
+    })
+      .select("email role roles userType jobRoles")
+      .lean();
+    if (!dbUser) {
+      next();
+      return;
+    }
+    const roles = normalizeRoles(dbUser);
+    const userType: UserType =
+      dbUser.userType === "customer" ? "customer" : "staff";
+    const permissions = await getPermissionsForRoles(roles);
+    req.user = {
+      ...decoded,
+      id: decoded.sub,
+      email: dbUser.email,
+      role: primaryRole(roles) ?? dbUser.role,
+      roles,
+      userType,
+      jobRoles: (dbUser.jobRoles ?? []).map((id) => String(id)),
+      permissions,
+    };
+  } catch {
+    // Ignore invalid tokens and store the report as anonymous.
+  }
+  next();
+}
+
 export function requireRole(...roles: string[]) {
   return (req: AuthRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {

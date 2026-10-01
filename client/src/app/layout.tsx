@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
+import CrashBoundary from "@/components/crash/CrashBoundary";
 import SiteChrome from "@/components/layout/SiteChrome";
 import "./globals.css";
 
@@ -71,7 +72,9 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="flex min-h-full flex-col">
-        <SiteChrome>{children}</SiteChrome>
+        <CrashBoundary>
+          <SiteChrome>{children}</SiteChrome>
+        </CrashBoundary>
       </body>
     </html>
   );
