@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   isNonPublicIp,
+  isValidCoordinates,
+  locationFromGoogleGeocode,
   locationFromLookup,
   normalizeClientIp,
 } from "./loginLocation";
@@ -48,7 +50,7 @@ describe("locationFromLookup", () => {
         region_code: "FL",
         country: "United States",
       }),
-      { city: "Orlando", region: "FL", country: "United States" },
+      { city: "Orlando", region: "FL", country: "United States", source: "ip" },
     );
     assert.equal(locationFromLookup({ success: false, city: "Orlando" }), null);
     assert.equal(locationFromLookup({ success: true }), null);
@@ -61,7 +63,49 @@ describe("locationFromLookup", () => {
         region: "Île-de-France",
         country: "France",
       }),
-      { city: "Paris", region: "Île-de-France", country: "France" },
+      { city: "Paris", region: "Île-de-France", country: "France", source: "ip" },
     );
+  });
+});
+
+describe("locationFromGoogleGeocode", () => {
+  it("reads city, state code, and country from the first result", () => {
+    assert.deepEqual(
+      locationFromGoogleGeocode({
+        status: "OK",
+        results: [
+          {
+            address_components: [
+              { long_name: "DeLand", short_name: "DeLand", types: ["locality", "political"] },
+              { long_name: "Volusia County", short_name: "Volusia County", types: ["administrative_area_level_2", "political"] },
+              { long_name: "Florida", short_name: "FL", types: ["administrative_area_level_1", "political"] },
+              { long_name: "United States", short_name: "US", types: ["country", "political"] },
+            ],
+          },
+        ],
+      }),
+      { city: "DeLand", region: "FL", country: "United States", source: "device" },
+    );
+  });
+
+  it("returns null for errors and empty results", () => {
+    assert.equal(locationFromGoogleGeocode({ status: "REQUEST_DENIED" }), null);
+    assert.equal(locationFromGoogleGeocode({ status: "ZERO_RESULTS", results: [] }), null);
+    assert.equal(
+      locationFromGoogleGeocode({
+        status: "OK",
+        results: [{ address_components: [{ long_name: "United States", types: ["country"] }] }],
+      }),
+      null,
+    );
+  });
+});
+
+describe("isValidCoordinates", () => {
+  it("accepts real coordinates and rejects out-of-range values", () => {
+    assert.equal(isValidCoordinates(29.028, -81.303), true);
+    assert.equal(isValidCoordinates(91, 0), false);
+    assert.equal(isValidCoordinates(0, -181), false);
+    assert.equal(isValidCoordinates(Number.NaN, 0), false);
   });
 });

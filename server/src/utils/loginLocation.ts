@@ -1,6 +1,21 @@
 import type { IUserLoginLocation } from "../models/mongo/User";
+import { getActiveGoogleApiKey } from "./googleAddressValidator";
 
 const LOOKUP_TIMEOUT_MS = 1500;
+const REVERSE_GEOCODE_TIMEOUT_MS = 3000;
+const GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
+
+type GoogleGeocodeComponent = {
+  long_name?: string;
+  short_name?: string;
+  types?: string[];
+};
+
+type GoogleGeocodeResponse = {
+  status?: string;
+  error_message?: string;
+  results?: Array<{ address_components?: GoogleGeocodeComponent[] }>;
+};
 
 type IpWhoResponse = {
   success?: boolean;
@@ -64,7 +79,78 @@ export function locationFromLookup(
   const region = text(data.region_code) || text(data.region);
   const country = text(data.country) || text(data.country_code);
   if (!city && !region && !country) return null;
-  return { city, region, country };
+  return { city, region, country, source: "ip" };
+}
+
+export function locationFromGoogleGeocode(
+  data: GoogleGeocodeResponse,
+): IUserLoginLocation | null {
+  if (data.status !== "OK") return null;
+  const components = data.results?.[0]?.address_components ?? [];
+  const find = (type: string) =>
+    components.find((component) => component.types?.includes(type));
+  const city =
+    text(find("locality")?.long_name) ||
+    text(find("postal_town")?.long_name) ||
+    text(find("sublocality")?.long_name);
+  const region = text(find("administrative_area_level_1")?.short_name);
+  const country = text(find("country")?.long_name);
+  if (!city && !region) return null;
+  return { city, region, country, source: "device" };
+}
+
+export function isValidCoordinates(lat: number, lng: number): boolean {
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180
+  );
+}
+
+/**
+ * City/region for browser coordinates via Google Geocoding. Returns null when
+ * no key is configured, the Geocoding API is not enabled, or the call fails.
+ */
+export async function reverseGeocodeLocation(
+  lat: number,
+  lng: number,
+): Promise<IUserLoginLocation | null> {
+  if (!isValidCoordinates(lat, lng)) return null;
+  const apiKey = await getActiveGoogleApiKey();
+  if (!apiKey) {
+    console.warn("[login] reverse geocode skipped: no Google API key configured");
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    latlng: `${lat},${lng}`,
+    result_type: "locality|postal_town|sublocality",
+    key: apiKey,
+  });
+  try {
+    const response = await fetch(`${GOOGLE_GEOCODE_URL}?${params}`, {
+      signal: AbortSignal.timeout(REVERSE_GEOCODE_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as GoogleGeocodeResponse;
+    if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+      console.warn(
+        "[login] reverse geocode failed:",
+        data.status,
+        data.error_message ?? "",
+      );
+    }
+    return locationFromGoogleGeocode(data);
+  } catch (err) {
+    console.warn(
+      "[login] reverse geocode failed:",
+      err instanceof Error ? err.message : "unknown error",
+    );
+    return null;
+  }
 }
 
 /**

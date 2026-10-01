@@ -78,9 +78,14 @@ function formatLoginLocation(
   const city = location.city.trim();
   const region = location.region.trim();
   const country = location.country.trim();
-  if (city && region) return `${city}, ${region}`;
-  if (city && country) return `${city}, ${country}`;
-  return city || region || country || "—";
+  const place =
+    city && region
+      ? `${city}, ${region}`
+      : city && country
+        ? `${city}, ${country}`
+        : city || region || country;
+  if (!place) return "—";
+  return location.source === "device" ? place : `${place} (approx.)`;
 }
 
 export default function UsersTab() {

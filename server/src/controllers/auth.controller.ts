@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import {
+  coordinatesSchema,
   loginSchema,
   registerSchema,
   legalConsentSchema,
@@ -45,7 +46,10 @@ import {
   provisionCrmCustomerForUser,
 } from "../utils/provisionCustomerAccount";
 import { syncCustomersToUserEmail } from "../utils/ensureCustomerLogin";
-import { lookupLoginLocation } from "../utils/loginLocation";
+import {
+  lookupLoginLocation,
+  reverseGeocodeLocation,
+} from "../utils/loginLocation";
 import {
   getEmailPreferences,
   renameEmailPreferences,
@@ -214,6 +218,13 @@ const LOGIN_AMBIGUOUS = {
   message:
     "This username is shared. Sign in with your username and number (e.g. doc1), or use your email.",
 };
+const LOCATION_REQUIRED = {
+  code: "LOCATION_REQUIRED",
+  message:
+    "Staff sign-in requires location access. Allow location for this site in your browser, then sign in again.",
+};
+/** Device location is only accepted shortly after the sign-in it describes. */
+const LOGIN_LOCATION_WINDOW_MS = 10 * 60 * 1000;
 
 export async function register(req: Request, res: Response): Promise<void> {
   const parsed = registerSchema.safeParse(req.body);
@@ -401,7 +412,7 @@ export async function login(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const { identifier, password } = parsed.data;
+  const { identifier, password, location } = parsed.data;
   const trimmed = identifier.trim();
 
   try {
@@ -452,8 +463,17 @@ export async function login(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    if (!isCustomerRole(matchedUser) && !location) {
+      res.status(403).json(LOCATION_REQUIRED);
+      return;
+    }
+
     const lastLoginAt = new Date();
-    const lastLoginLocation = await lookupLoginLocation(req.ip);
+    const deviceLocation = location
+      ? await reverseGeocodeLocation(location.lat, location.lng)
+      : null;
+    const lastLoginLocation =
+      deviceLocation ?? (await lookupLoginLocation(req.ip));
     await User.updateOne(
       { _id: matchedUser._id },
       { $set: { lastLoginAt, lastLoginLocation } },
@@ -479,6 +499,53 @@ export async function login(req: Request, res: Response): Promise<void> {
     });
   } catch (err) {
     console.error("login error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+/** POST /auth/me/login-location — device location sent after a customer signs in */
+export async function updateLoginLocation(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  const parsed = coordinatesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "Validation error",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  try {
+    const user = await User.findOne({ _id: req.user.id, ...activeUserFilter })
+      .select("lastLoginAt")
+      .lean();
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+    const loggedInAt = user.lastLoginAt ? new Date(user.lastLoginAt).getTime() : 0;
+    if (!loggedInAt || Date.now() - loggedInAt > LOGIN_LOCATION_WINDOW_MS) {
+      res.status(409).json({ message: "Sign-in is too old to update its location" });
+      return;
+    }
+
+    const location = await reverseGeocodeLocation(parsed.data.lat, parsed.data.lng);
+    if (location) {
+      await User.updateOne(
+        { _id: req.user.id },
+        { $set: { lastLoginLocation: location } },
+      );
+    }
+    res.status(204).end();
+  } catch (err) {
+    console.error("POST /auth/me/login-location error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }

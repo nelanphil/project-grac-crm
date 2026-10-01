@@ -92,7 +92,11 @@ export interface IUserLoginLocation {
   /** Region code when the lookup provides one (e.g. "FL"), otherwise the region name. */
   region: string;
   country: string;
+  /** "device" from browser coordinates, "ip" from an IP lookup (approximate). */
+  source: LoginLocationSource;
 }
+
+export type LoginLocationSource = "device" | "ip";
 
 const territoriesSchema = new Schema<IUserTerritories>(
   {
@@ -161,6 +165,7 @@ const loginLocationSchema = new Schema<IUserLoginLocation>(
     city: { type: String, default: "" },
     region: { type: String, default: "" },
     country: { type: String, default: "" },
+    source: { type: String, enum: ["device", "ip"], default: "ip" },
   },
   { _id: false },
 );

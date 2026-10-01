@@ -15,6 +15,7 @@ export class ApiError extends Error {
     message: string,
     public status: number,
     public errors?: Record<string, string[]>,
+    public code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -217,6 +218,7 @@ async function authRequest<T>(
       body.message ?? "Something went wrong. Please try again.",
       res.status,
       body.errors,
+      typeof body.code === "string" ? body.code : undefined,
     );
   }
 
@@ -327,13 +329,36 @@ async function streamAuthRequest(
   return lastResult;
 }
 
+export interface LoginCoordinates {
+  lat: number;
+  lng: number;
+}
+
+/** Server code returned when a staff sign-in is missing browser coordinates. */
+export const LOCATION_REQUIRED_CODE = "LOCATION_REQUIRED";
+
 export async function authLogin(
   identifier: string,
   password: string,
+  location?: LoginCoordinates,
 ): Promise<LoginResponse> {
   return authRequest<LoginResponse>("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ identifier, password }),
+    body: JSON.stringify({ identifier, password, ...(location ? { location } : {}) }),
+  });
+}
+
+export async function authUpdateLoginLocation(
+  token: string,
+  location: LoginCoordinates,
+): Promise<void> {
+  await fetch(`${API_URL}/auth/me/login-location`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(location),
   });
 }
 
@@ -546,6 +571,8 @@ export interface UserLoginLocation {
   city: string;
   region: string;
   country: string;
+  /** "device" from browser coordinates; "ip" (or missing) is an approximate IP guess. */
+  source?: "device" | "ip";
 }
 
 export interface UserListItem {

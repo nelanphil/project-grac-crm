@@ -4,8 +4,56 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore, userNeedsLegalConsent } from "@/store/useAuthStore";
-import { authLogin, ApiError } from "@/lib/api";
+import {
+  authLogin,
+  authUpdateLoginLocation,
+  ApiError,
+  LOCATION_REQUIRED_CODE,
+  type LoginCoordinates,
+  type LoginResponse,
+} from "@/lib/api";
+import { isCustomerRole } from "@/lib/dashboard-role";
 import PasswordInput from "@/components/ui/PasswordInput";
+
+class LocationError extends Error {}
+
+const LOCATION_DENIED_MESSAGE =
+  "Staff sign-in requires location access. Allow location for this site in your browser's address bar settings, then sign in again.";
+const LOCATION_UNAVAILABLE_MESSAGE =
+  "We couldn't get your location. Staff sign-in requires it. Check that location services are on for this device and browser, then sign in again.";
+const LOCATION_UNSUPPORTED_MESSAGE =
+  "Staff sign-in requires location, and this browser does not support it. Use a current version of Chrome, Safari, Edge, or Firefox.";
+
+function getBrowserLocation(options: PositionOptions): Promise<LoginCoordinates> {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      reject(new LocationError(LOCATION_UNSUPPORTED_MESSAGE));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) =>
+        resolve({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        }),
+      (err) =>
+        reject(
+          new LocationError(
+            err.code === err.PERMISSION_DENIED
+              ? LOCATION_DENIED_MESSAGE
+              : LOCATION_UNAVAILABLE_MESSAGE,
+          ),
+        ),
+      options,
+    );
+  });
+}
+
+function sendCustomerLocation(token: string) {
+  getBrowserLocation({ enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 })
+    .then((coords) => authUpdateLoginLocation(token, coords))
+    .catch(() => {});
+}
 
 export default function LoginForm() {
   const router = useRouter();
@@ -15,6 +63,28 @@ export default function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [locating, setLocating] = useState(false);
+
+  async function signIn(): Promise<LoginResponse> {
+    try {
+      return await authLogin(identifier, password);
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.code !== LOCATION_REQUIRED_CODE) {
+        throw err;
+      }
+    }
+    setLocating(true);
+    try {
+      const coords = await getBrowserLocation({
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      });
+      return await authLogin(identifier, password, coords);
+    } finally {
+      setLocating(false);
+    }
+  }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -22,8 +92,9 @@ export default function LoginForm() {
     setLoading(true);
 
     try {
-      const { token, user } = await authLogin(identifier, password);
+      const { token, user } = await signIn();
       login(token, user);
+      if (isCustomerRole(user)) sendCustomerLocation(token);
 
       if (userNeedsLegalConsent(user)) {
         router.push("/auth/legal-consent");
@@ -34,7 +105,7 @@ export default function LoginForm() {
       setRedirectAfterAuth(null);
       router.push(destination);
     } catch (err) {
-      if (err instanceof ApiError) {
+      if (err instanceof ApiError || err instanceof LocationError) {
         setError(err.message);
       } else {
         setError("An unexpected error occurred. Please try again.");
@@ -108,7 +179,11 @@ export default function LoginForm() {
         disabled={loading}
         className="btn-primary w-full disabled:opacity-60"
       >
-        {loading ? "Signing in…" : "Sign In"}
+        {locating
+          ? "Getting your location…"
+          : loading
+            ? "Signing in…"
+            : "Sign In"}
       </button>
     </form>
   );
