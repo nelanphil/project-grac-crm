@@ -1600,11 +1600,14 @@ export default function CalendarTab({
                   const stop = routeTotalsMatch
                     ? routePlan?.stops.find((item) => item.workOrderId === id)
                     : undefined;
+                  const order = jobById.get(id);
                   return {
                     id,
-                    label: jobById.get(id)?.customerName || "Work order",
+                    label: order?.customerName || "Work order",
                     arrival: stop?.arrival,
                     departure: stop?.departure,
+                    startTime: order?.startTime,
+                    endTime: order?.endTime,
                   };
                 })}
                 stops={routeTotalsMatch ? (routePlan?.stops ?? []) : []}

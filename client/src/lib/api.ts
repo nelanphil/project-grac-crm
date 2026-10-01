@@ -1997,6 +1997,8 @@ export interface WorkOrderListItem {
   legacyId?: number;
   number?: string;
   date: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
   descPerform: string;
   descPerformed: string;
   tech: string;
@@ -2056,6 +2058,8 @@ export type ServiceTicketPayload = {
   descPerform?: string;
   descPerformed?: string;
   date?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
   tech?: string;
   assignedUserRef?: string | null;
   workOrderTypeRef?: string | null;

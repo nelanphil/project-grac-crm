@@ -120,6 +120,50 @@ export function formatLocalClock(date: Date): string {
   }).format(date);
 }
 
+const TIME_OF_DAY = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function normalizeTimeOfDay(value: string | null | undefined): string {
+  const trimmed = (value ?? "").trim();
+  return TIME_OF_DAY.test(trimmed) ? trimmed : "";
+}
+
+function formatHmClock(value: string): string {
+  const [hour, minute] = value.split(":").map(Number);
+  const date = new Date(Date.UTC(2020, 0, 1, hour, minute));
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+export function timeWindowError(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): string | null {
+  const startTime = normalizeTimeOfDay(start);
+  const endTime = normalizeTimeOfDay(end);
+  if (startTime && endTime && endTime <= startTime) {
+    return "End time must be after start time";
+  }
+  return null;
+}
+
+export function formatTimeWindow(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): string | null {
+  const startLabel = normalizeTimeOfDay(start);
+  const endLabel = normalizeTimeOfDay(end);
+  if (startLabel && endLabel) {
+    return `${formatHmClock(startLabel)} – ${formatHmClock(endLabel)}`;
+  }
+  if (startLabel) return `From ${formatHmClock(startLabel)}`;
+  if (endLabel) return `Until ${formatHmClock(endLabel)}`;
+  return null;
+}
+
 export function addDays(localDate: string, days: number): string {
   const [y, m, d] = localDate.split("-").map(Number);
   const utc = Date.UTC(y ?? 1970, (m ?? 1) - 1, (d ?? 1) + days);

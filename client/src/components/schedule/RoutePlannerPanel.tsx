@@ -10,7 +10,7 @@ import {
 import { useDroppable } from "@dnd-kit/core";
 import { ArrowDown, ArrowUp, Lock, LockOpen, X } from "lucide-react";
 import type { RouteObjective, ScheduleRouteLeg, ScheduleRouteStop } from "@/lib/api";
-import { formatLocalClock } from "@/lib/schedule";
+import { formatLocalClock, formatTimeWindow } from "@/lib/schedule";
 
 const ROUTE_LIST_HEIGHT_KEY = "schedule-route-list-height";
 const ROUTE_LIST_MIN = 160;
@@ -68,6 +68,8 @@ type RoutePlannerJob = {
   label: string;
   arrival?: string | null;
   departure?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
 };
 
 function formatStopWindow(arrival?: string | null, departure?: string | null): string | null {
@@ -425,6 +427,7 @@ export default function RoutePlannerPanel({
               const leg = legById.get(job.id);
               const onRoute = !orderedWorkOrderIds.length || routed.has(job.id);
               const windowLabel = formatStopWindow(job.arrival, job.departure);
+              const preferredWindow = formatTimeWindow(job.startTime, job.endTime);
               const lockedTime = locks[job.id];
               const confirming = confirmingRemoveId === job.id;
               return (
@@ -440,6 +443,11 @@ export default function RoutePlannerPanel({
                     <span className="block truncate text-neutral-800">
                       {job.label}
                     </span>
+                    {preferredWindow ? (
+                      <span className="block truncate text-xs text-neutral-600">
+                        {preferredWindow}
+                      </span>
+                    ) : null}
                     {(windowLabel || leg || !onRoute) && (
                       <span className="block truncate text-xs text-neutral-500">
                         {windowLabel}

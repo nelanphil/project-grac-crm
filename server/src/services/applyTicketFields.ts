@@ -34,6 +34,8 @@ export type TicketBodyFields = TicketSnapshotFields & {
   descPerform?: string;
   descPerformed?: string;
   date?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
   tech?: string;
   paid?: boolean;
   completed?: boolean;
@@ -324,6 +326,12 @@ export async function applyTicketFields(
   if (body.certify !== undefined) target.certify = body.certify;
   if (body.date !== undefined) {
     target.date = body.date ? new Date(body.date) : null;
+  }
+  if (body.startTime !== undefined) {
+    target.startTime = body.startTime?.trim() || "";
+  }
+  if (body.endTime !== undefined) {
+    target.endTime = body.endTime?.trim() || "";
   }
 
   if (body.addressRef !== undefined) {

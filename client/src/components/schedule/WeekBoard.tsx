@@ -11,6 +11,7 @@ import {
   DEFAULT_ESTIMATED_MINUTES,
   formatLocalTime,
   formatMonthDayYear,
+  formatTimeWindow,
   minutesToLabel,
   nyDateParts,
   workOrderViewHref,
@@ -42,6 +43,7 @@ function UnscheduledCardShell({
   };
 }) {
   const href = workOrderViewHref(order);
+  const windowLabel = formatTimeWindow(order.startTime, order.endTime);
 
   return (
     <div
@@ -93,6 +95,9 @@ function UnscheduledCardShell({
             .filter(Boolean)
             .join(" · ")}
         </div>
+        {windowLabel ? (
+          <div className="mt-1 text-neutral-600">{windowLabel}</div>
+        ) : null}
       </button>
       {href ? (
         <Link

@@ -32,6 +32,8 @@ export interface TicketPartRow {
 export interface TicketFormState {
   number: string;
   date: string;
+  startTime: string;
+  endTime: string;
   tech: string;
   assignedUserRef: string | null;
   workOrderTypeRef: string | null;
@@ -155,6 +157,8 @@ export function emptyTicketForm(): TicketFormState {
   return {
     number: "",
     date: new Date().toISOString().slice(0, 10),
+    startTime: "",
+    endTime: "",
     tech: "",
     assignedUserRef: null,
     workOrderTypeRef: null,
@@ -277,6 +281,8 @@ export function ticketToPayload(form: TicketFormState) {
     equipmentRef: form.equipmentRef || null,
     descPerform: form.descPerform,
     date: form.date || null,
+    startTime: form.startTime.trim(),
+    endTime: form.endTime.trim(),
     tech: form.tech,
     assignedUserRef: form.assignedUserRef || null,
     workOrderTypeRef: form.workOrderTypeRef || null,
@@ -364,6 +370,8 @@ export function ticketToPayload(form: TicketFormState) {
 export function ticketFromRecord(record: {
   number?: string | null;
   date?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
   tech?: string | null;
   assignedUserRef?: string | null;
   workOrderTypeRef?: string | null;
@@ -436,6 +444,8 @@ export function ticketFromRecord(record: {
     ...base,
     number: record.number ?? "",
     date: record.date ? String(record.date).slice(0, 10) : base.date,
+    startTime: record.startTime ?? "",
+    endTime: record.endTime ?? "",
     tech: record.tech ?? "",
     assignedUserRef: record.assignedUserRef ?? null,
     workOrderTypeRef:

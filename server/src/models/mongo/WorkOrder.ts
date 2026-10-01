@@ -33,6 +33,8 @@ export interface IWorkOrder extends Document {
   runHours: number;
   laborHours: number;
   date: Date | null;
+  startTime: string;
+  endTime: string;
   tech: string;
   assignedUserRef?: Types.ObjectId | null;
   workOrderTypeRef?: Types.ObjectId | null;
@@ -144,6 +146,8 @@ const workOrderSchema = new Schema<IWorkOrder>(
     runHours: { type: Number, default: 0 },
     laborHours: { type: Number, default: 0 },
     date: { type: Date, default: null },
+    startTime: { type: String, default: "" },
+    endTime: { type: String, default: "" },
     tech: { type: String, default: "" },
     assignedUserRef: {
       type: Schema.Types.ObjectId,

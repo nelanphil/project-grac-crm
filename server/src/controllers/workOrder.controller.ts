@@ -35,6 +35,12 @@ import { findWorkOrderIdsMatchingNoteSearch } from "./workOrderNote.controller";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 
+function timeWindowIsInvalid(start: unknown, end: unknown): boolean {
+  const startTime = typeof start === "string" ? start : "";
+  const endTime = typeof end === "string" ? end : "";
+  return Boolean(startTime && endTime && endTime <= startTime);
+}
+
 async function loadSchedulableAssignee(id: string): Promise<
   | {
       ok: true;
@@ -427,6 +433,11 @@ export async function createWorkOrder(
       }
     }
 
+    if (timeWindowIsInvalid(workOrder.startTime, workOrder.endTime)) {
+      res.status(400).json({ message: "End time must be after start time" });
+      return;
+    }
+
     await workOrder.save();
     await saveWorkOrderAgreements(workOrder);
     await syncWorkOrderInvoice(workOrder);
@@ -535,6 +546,13 @@ export async function updateWorkOrder(
       }
     }
 
+    if (parsed.data.startTime !== undefined) {
+      workOrder.startTime = parsed.data.startTime?.trim() || "";
+    }
+    if (parsed.data.endTime !== undefined) {
+      workOrder.endTime = parsed.data.endTime?.trim() || "";
+    }
+
     const typeRef = await resolveWorkOrderTypeRef(parsed.data.workOrderTypeRef);
     if (!typeRef.ok) {
       res.status(400).json({ message: typeRef.message });
@@ -626,6 +644,11 @@ export async function updateWorkOrder(
           return;
         }
       }
+    }
+
+    if (timeWindowIsInvalid(workOrder.startTime, workOrder.endTime)) {
+      res.status(400).json({ message: "End time must be after start time" });
+      return;
     }
 
     await applyAssignmentSideEffects(workOrder, assignee);

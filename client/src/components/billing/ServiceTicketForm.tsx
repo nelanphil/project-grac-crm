@@ -32,6 +32,7 @@ import {
   ticketTotals,
 } from "@/lib/service-ticket";
 import { useAuthStore } from "@/store/useAuthStore";
+import { timeWindowError } from "@/lib/schedule";
 import TicketLineItemsEditor from "@/components/billing/TicketLineItemsEditor";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 
@@ -348,6 +349,9 @@ export default function ServiceTicketForm({
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!form.customerId) return;
+    if (variant === "work-order" && timeWindowError(form.startTime, form.endTime)) {
+      return;
+    }
     await onSubmit(ticketToPayload(form));
   }
 
@@ -362,6 +366,8 @@ export default function ServiceTicketForm({
       equipmentOptions.some((unit) => unit._id === form.equipmentRef),
   );
   const equipmentFieldsLocked = Boolean(customer && existingEquipmentSelected);
+  const windowError =
+    variant === "work-order" ? timeWindowError(form.startTime, form.endTime) : null;
 
   return (
     <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6 print:hidden">
@@ -379,7 +385,11 @@ export default function ServiceTicketForm({
           </p>
         </header>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div
+          className={`mt-5 grid gap-3 sm:grid-cols-2 ${
+            variant === "work-order" ? "lg:grid-cols-7" : "lg:grid-cols-5"
+          }`}
+        >
           <Field label={variant === "estimate" ? "Estimate No" : "Work Order No"}>
             <input value={form.number || "Assigned on save"} disabled className={inputClass} />
           </Field>
@@ -391,6 +401,29 @@ export default function ServiceTicketForm({
               className={inputClass}
             />
           </Field>
+          {variant === "work-order" ? (
+            <>
+              <Field label="Start time">
+                <input
+                  type="time"
+                  value={form.startTime}
+                  onChange={(e) => patch({ startTime: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="End time">
+                <input
+                  type="time"
+                  value={form.endTime}
+                  onChange={(e) => patch({ endTime: e.target.value })}
+                  className={inputClass}
+                />
+                {windowError ? (
+                  <p className="mt-1 text-xs text-amber-700">{windowError}</p>
+                ) : null}
+              </Field>
+            </>
+          ) : null}
           {variant === "work-order" ? (
             <Field label="Type">
               <select
