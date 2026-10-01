@@ -38,6 +38,8 @@ const capabilitiesSchema = z.object({
   territoryOwner: z.boolean(),
 });
 
+const dashboardViewSchema = z.enum(["default", "todo"]);
+
 export const createJobRoleSchema = z.object({
   label: z.string().trim().min(1).max(60),
   description: z.string().trim().max(240).optional().default(""),
@@ -47,6 +49,7 @@ export const createJobRoleSchema = z.object({
     .regex(/^#[0-9a-fA-F]{6}$/, "Color must be a hex value like #1e3a5f")
     .optional(),
   capabilities: capabilitiesSchema.optional(),
+  dashboardView: dashboardViewSchema.optional().default("default"),
   fields: z.array(jobRoleFieldSchema).optional().default([]),
 });
 
@@ -59,6 +62,7 @@ export const updateJobRoleSchema = z.object({
     .regex(/^#[0-9a-fA-F]{6}$/, "Color must be a hex value like #1e3a5f")
     .optional(),
   capabilities: capabilitiesSchema.optional(),
+  dashboardView: dashboardViewSchema.optional(),
   fields: z.array(jobRoleFieldSchema).optional(),
 });
 

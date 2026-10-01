@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { JobRole, IJobRoleField } from "../models/mongo/JobRole";
+import { JobRole, IJobRoleField, JobRoleDashboardView } from "../models/mongo/JobRole";
 import { User, activeUserFilter } from "../models/mongo/User";
 import {
   createJobRoleSchema,
@@ -49,6 +49,7 @@ function formatJobRole(role: {
   color?: string;
   isSystem?: boolean;
   capabilities?: { schedulable?: boolean; territoryOwner?: boolean } | null;
+  dashboardView?: string | null;
   fields?: IJobRoleField[] | null;
   createdAt?: Date;
   updatedAt?: Date;
@@ -65,6 +66,7 @@ function formatJobRole(role: {
       schedulable: Boolean(role.capabilities?.schedulable),
       territoryOwner: Boolean(role.capabilities?.territoryOwner),
     },
+    dashboardView: role.dashboardView === "todo" ? "todo" : "default",
     fields,
     createdAt: role.createdAt,
     updatedAt: role.updatedAt,
@@ -96,7 +98,7 @@ export async function createJobRole(
     return;
   }
 
-  const { label, description, color, capabilities } = parsed.data;
+  const { label, description, color, capabilities, dashboardView } = parsed.data;
   const slug = slugify(label);
   if (!slug) {
     res.status(400).json({ message: "Label must contain letters or numbers" });
@@ -125,6 +127,7 @@ export async function createJobRole(
     color: color ?? "#44403c",
     isSystem: false,
     capabilities: capabilities ?? { schedulable: false, territoryOwner: false },
+    dashboardView: (dashboardView ?? "default") as JobRoleDashboardView,
     fields,
     deletedAt: null,
   };
@@ -191,6 +194,10 @@ export async function updateJobRole(
       return;
     }
     role.capabilities = next;
+  }
+
+  if (parsed.data.dashboardView) {
+    role.dashboardView = parsed.data.dashboardView;
   }
 
   if (parsed.data.fields) {

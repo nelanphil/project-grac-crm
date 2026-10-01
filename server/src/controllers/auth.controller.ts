@@ -50,7 +50,7 @@ import {
   renameEmailPreferences,
   setEmailPreferences,
 } from "../utils/emailPreferences";
-import { capabilitiesForJobRoleIds, slugsForJobRoleIds } from "../utils/jobRoles";
+import { capabilitiesForJobRoleIds, homeViewForJobRoleIds, slugsForJobRoleIds } from "../utils/jobRoles";
 import {
   isCustomerRole,
   normalizeRoles,
@@ -74,6 +74,7 @@ function buildUserPayload(user: {
   userType?: UserType | null;
   jobRoles?: unknown[] | null;
   jobRoleSlugs?: string[] | null;
+  homeView?: "default" | "todo" | null;
   capabilities?: { schedulable: boolean; territoryOwner: boolean };
   username?: string | null;
   usernameKey?: string | null;
@@ -108,6 +109,7 @@ function buildUserPayload(user: {
     jobRoles: userType === "customer" ? [] : jobRoles,
     jobRoleSlugs:
       userType === "customer" ? [] : (user.jobRoleSlugs ?? []),
+    homeView: userType === "customer" ? "default" : (user.homeView ?? "default"),
     capabilities: user.capabilities ?? {
       schedulable: false,
       territoryOwner: false,
@@ -156,12 +158,20 @@ async function toUserPayload(
   const phone = own || (await lookupContactPhone(user.email));
   const prefs = await getEmailPreferences(user.email);
   const jobRoles = (user.jobRoles ?? []).map((id) => String(id));
-  const [capabilities, jobRoleSlugs] = await Promise.all([
+  const [capabilities, jobRoleSlugs, homeView] = await Promise.all([
     capabilitiesForJobRoleIds(jobRoles),
     slugsForJobRoleIds(jobRoles),
+    homeViewForJobRoleIds(jobRoles),
   ]);
   return {
-    ...buildUserPayload({ ...user, phone, jobRoles, jobRoleSlugs, capabilities }),
+    ...buildUserPayload({
+      ...user,
+      phone,
+      jobRoles,
+      jobRoleSlugs,
+      homeView,
+      capabilities,
+    }),
     generalNotifications: prefs.generalNotifications,
     billingAlerts: prefs.billingAlerts,
   };

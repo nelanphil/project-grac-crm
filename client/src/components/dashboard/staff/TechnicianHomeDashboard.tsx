@@ -34,8 +34,6 @@ import {
   startOfWeekSunday,
   workOrderLocalDate,
 } from "@/lib/schedule";
-import { staffHomeView } from "@/lib/dashboard-home";
-import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const TECH_STORAGE_KEY = "grac.todoTechnicianId";
@@ -407,8 +405,9 @@ export default function TechnicianHomeDashboard() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const userId = user?.id ?? "";
-  const canSwitchTechnicians =
-    isStaffRole(user) && staffHomeView(user?.jobRoleSlugs) !== "technician";
+  const canSwitchTechnicians = !(user?.jobRoleSlugs ?? []).includes(
+    "technician",
+  );
   const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
   const layout = useTodoLayout();
 
@@ -823,7 +822,7 @@ export default function TechnicianHomeDashboard() {
     >
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[var(--staff-ink)]">To Do</h1>
+          <h2 className="text-2xl font-bold text-[var(--staff-ink)]">To Do</h2>
           {canSwitchTechnicians && technicians.length > 0 ? (
             <label className="mt-2 flex flex-col gap-1 text-xs font-medium text-[var(--staff-muted)]">
               Technician

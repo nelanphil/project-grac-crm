@@ -14,6 +14,10 @@ export const JOB_ROLE_FIELD_TYPES = [
 
 export type JobRoleFieldType = (typeof JOB_ROLE_FIELD_TYPES)[number];
 
+export const JOB_ROLE_DASHBOARD_VIEWS = ["default", "todo"] as const;
+
+export type JobRoleDashboardView = (typeof JOB_ROLE_DASHBOARD_VIEWS)[number];
+
 export interface IJobRoleField {
   key: string;
   label: string;
@@ -38,6 +42,8 @@ export interface IJobRole extends Document {
   color: string;
   isSystem: boolean;
   capabilities: IJobRoleCapabilities;
+  /** Kept on the role. The staff home no longer follows this value. */
+  dashboardView: JobRoleDashboardView;
   fields: IJobRoleField[];
   deletedAt: Date | null;
   createdAt: Date;
@@ -82,6 +88,11 @@ const jobRoleSchema = new Schema<IJobRole>(
       type: capabilitiesSchema,
       default: () => ({ schedulable: false, territoryOwner: false }),
     },
+    dashboardView: {
+      type: String,
+      enum: JOB_ROLE_DASHBOARD_VIEWS,
+      default: "default",
+    },
     fields: { type: [fieldSchema], default: [] },
     deletedAt: { type: Date, default: null },
   },
@@ -96,6 +107,7 @@ const SYSTEM_JOB_ROLES: {
   description: string;
   color: string;
   capabilities: IJobRoleCapabilities;
+  dashboardView: JobRoleDashboardView;
 }[] = [
   {
     slug: "technician",
@@ -103,6 +115,7 @@ const SYSTEM_JOB_ROLES: {
     description: "Can be scheduled for work order appointments.",
     color: "#c2410c",
     capabilities: { schedulable: true, territoryOwner: false },
+    dashboardView: "todo",
   },
   {
     slug: "territory-owner",
@@ -111,6 +124,7 @@ const SYSTEM_JOB_ROLES: {
       "Customers in this person's counties and ZIP carve-outs are assigned to them.",
     color: "#1e3a5f",
     capabilities: { schedulable: false, territoryOwner: true },
+    dashboardView: "default",
   },
 ];
 
@@ -127,6 +141,7 @@ export async function seedDefaultJobRoles(): Promise<void> {
           color: role.color,
           isSystem: true,
           capabilities: role.capabilities,
+          dashboardView: role.dashboardView,
           fields: [],
           deletedAt: null,
         },
@@ -140,5 +155,14 @@ export async function seedDefaultJobRoles(): Promise<void> {
     }
     await JobRole.updateOne({ slug: role.slug }, { $set: locked });
   }
+  // Fill the view only when it has never been chosen, so later edits stick.
+  await JobRole.updateOne(
+    { slug: "technician", dashboardView: { $exists: false } },
+    { $set: { dashboardView: "todo" } },
+  );
+  await JobRole.updateMany(
+    { dashboardView: { $exists: false } },
+    { $set: { dashboardView: "default" } },
+  );
   console.log("Job roles collection seeded");
 }

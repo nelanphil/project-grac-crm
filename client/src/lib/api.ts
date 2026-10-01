@@ -1545,6 +1545,66 @@ function ticketNotesPath(source: TicketNoteSource, recordId: string): string {
   return `/${root}/${recordId}/notes`;
 }
 
+export interface RecentWorkOrderNote {
+  id: string;
+  content: string;
+  createdAt: string;
+  authorName: string;
+  workOrderId: string;
+  ticketNumber: string;
+  customerName: string;
+}
+
+export interface WorkOrderNoteHistoryItem {
+  id: string;
+  content: string;
+  workOrderId: string;
+  ticketNumber: string;
+  customerName: string;
+  createdAt: string;
+  canEdit: boolean;
+}
+
+export async function getWorkOrderNoteHistory(
+  token: string,
+  opts: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    sort?: "note" | "ticket" | "customer" | "created";
+    dir?: "asc" | "desc";
+  } = {},
+): Promise<{
+  notes: WorkOrderNoteHistoryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (opts.page != null) params.set("page", String(opts.page));
+  if (opts.pageSize != null) params.set("pageSize", String(opts.pageSize));
+  if (opts.search) params.set("search", opts.search);
+  if (opts.sort) params.set("sort", opts.sort);
+  if (opts.dir) params.set("dir", opts.dir);
+  const qs = params.toString();
+  return authRequest(`/work-orders/notes${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getRecentWorkOrderNotes(
+  token: string,
+): Promise<{ notes: RecentWorkOrderNote[] }> {
+  return authRequest<{ notes: RecentWorkOrderNote[] }>(
+    "/work-orders/recent-notes",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export async function getWorkOrderNotes(
   token: string,
   workOrderId: string,
@@ -3619,6 +3679,8 @@ export interface JobRoleItem {
   color: string;
   isSystem: boolean;
   capabilities: UserCapabilities;
+  /** Stored on the role. The staff home no longer follows this value. */
+  dashboardView: "default" | "todo";
   fields: JobRoleField[];
   createdAt?: string;
   updatedAt?: string;
@@ -3629,6 +3691,7 @@ export type JobRoleWrite = {
   description?: string;
   color?: string;
   capabilities?: UserCapabilities;
+  dashboardView?: "default" | "todo";
   fields?: JobRoleField[];
 };
 

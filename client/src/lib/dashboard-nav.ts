@@ -302,14 +302,12 @@ export function parseNestDroppableId(id: string): string | null {
 function visibleTree(items: NavItem[], viewer: NavViewer): NavItem[] {
   return items.flatMap((item) => {
     const kids = visibleTree(item.children ?? [], viewer);
+    // Staff reach home from the logo. Customers keep the Dashboard link.
+    if (item.href === "/dashboard" && isStaffRole(viewer)) return kids;
     if (canSeeNavHref(viewer, item.href)) {
       return [
         {
           ...item,
-          label:
-            item.href === "/dashboard" && isStaffRole(viewer)
-              ? "To Do"
-              : item.label,
           children: kids.length ? kids : undefined,
         },
       ];

@@ -2,7 +2,7 @@
 
 import AuthGuard from "@/components/auth/AuthGuard";
 import CustomerHomeDashboard from "@/components/dashboard/customer/CustomerHomeDashboard";
-import TechnicianHomeDashboard from "@/components/dashboard/staff/TechnicianHomeDashboard";
+import StaffBriefingHome from "@/components/dashboard/staff/StaffBriefingHome";
 import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -20,7 +20,7 @@ function DashboardContent() {
   if (!user) return null;
 
   if (isStaffRole(user)) {
-    return <TechnicianHomeDashboard />;
+    return <StaffBriefingHome />;
   }
 
   return <CustomerHomeDashboard />;

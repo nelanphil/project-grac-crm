@@ -76,6 +76,21 @@ export async function capabilitiesForJobRoleIds(
   return capabilitiesFromIds(ids, await getCapabilitySets());
 }
 
+export async function homeViewForJobRoleIds(
+  ids: unknown[] | null | undefined,
+): Promise<"default" | "todo"> {
+  const list = (ids ?? [])
+    .map((id) => String(id))
+    .filter((id) => Types.ObjectId.isValid(id));
+  if (list.length === 0) return "default";
+  const match = await JobRole.exists({
+    _id: { $in: list },
+    deletedAt: null,
+    dashboardView: "todo",
+  });
+  return match ? "todo" : "default";
+}
+
 /** Slugs for the given job-role ids, in the same order, skipping missing roles. */
 export async function slugsForJobRoleIds(
   ids: unknown[] | null | undefined,

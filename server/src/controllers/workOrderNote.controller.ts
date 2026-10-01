@@ -506,3 +506,262 @@ export async function deleteWorkOrderNote(
     res.status(500).json({ message: "Internal server error" });
   }
 }
+
+export async function getRecentWorkOrderNotes(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user || !isStaffRole(req.user)) {
+    res.status(403).json({ message: "Staff only" });
+    return;
+  }
+  if (!hasJobsPermission(req, "jobs:read")) {
+    res.status(403).json({ message: "Missing permission: jobs:read" });
+    return;
+  }
+
+  try {
+    const notes = await WorkOrderNote.find({ isReminder: { $ne: true } })
+      .sort({ createdAt: -1 })
+      .limit(8)
+      .populate("authorId", "first_name last_name")
+      .lean();
+
+    const workOrderIds = notes.map((note) => note.workOrderRef);
+    const workOrders = await WorkOrder.find({ _id: { $in: workOrderIds } })
+      .select("number legacyId customerName")
+      .lean();
+    const ordersById = new Map(
+      workOrders.map((order) => [String(order._id), order]),
+    );
+
+    res.json({
+      notes: notes.map((note) => {
+        const author = note.authorId as Partial<PopulatedAuthor> | null;
+        const authorName = [author?.first_name, author?.last_name]
+          .map((part) => part?.trim())
+          .filter(Boolean)
+          .join(" ");
+        const order = ordersById.get(String(note.workOrderRef));
+        return {
+          id: String(note._id),
+          content: note.content,
+          createdAt: note.createdAt.toISOString(),
+          authorName,
+          workOrderId: String(note.workOrderRef),
+          ticketNumber: order
+            ? displayTicketNumber(order)
+            : String(note.workOrderRef).slice(-6),
+          customerName: order?.customerName?.trim() ?? "",
+        };
+      }),
+    });
+  } catch (err) {
+    console.error("GET /work-orders/recent-notes error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+const NOTE_HISTORY_PAGE_SIZES = [50, 150, 250] as const;
+const NOTE_HISTORY_SORTS = ["note", "ticket", "customer", "created"] as const;
+type NoteHistorySort = (typeof NOTE_HISTORY_SORTS)[number];
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export async function listWorkOrderNoteHistory(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user || !isStaffRole(req.user)) {
+    res.status(403).json({ message: "Staff only" });
+    return;
+  }
+  if (!hasJobsPermission(req, "jobs:read")) {
+    res.status(403).json({ message: "Missing permission: jobs:read" });
+    return;
+  }
+
+  const pageRaw = Number(req.query.page);
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+  const sizeRaw = Number(req.query.pageSize);
+  const pageSize = (NOTE_HISTORY_PAGE_SIZES as readonly number[]).includes(sizeRaw)
+    ? sizeRaw
+    : 50;
+  const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+  const sortRaw = typeof req.query.sort === "string" ? req.query.sort : "";
+  const sort: NoteHistorySort = (NOTE_HISTORY_SORTS as readonly string[]).includes(
+    sortRaw,
+  )
+    ? (sortRaw as NoteHistorySort)
+    : "created";
+  const dir = req.query.dir === "asc" ? 1 : -1;
+  const sortField =
+    sort === "note"
+      ? "content"
+      : sort === "ticket"
+        ? "ticketSort"
+        : sort === "customer"
+          ? "customerSort"
+          : "createdAt";
+
+  const canWrite = hasJobsPermission(req, "jobs:write");
+  const dispatcher = isDispatcherRole(req.user);
+  const admin = isAdminRole(req.user);
+  const userId = req.user.id;
+
+  try {
+    const pipeline: mongoose.PipelineStage[] = [
+      { $match: { isReminder: { $ne: true } } },
+      {
+        $lookup: {
+          from: WorkOrder.collection.name,
+          localField: "workOrderRef",
+          foreignField: "_id",
+          as: "order",
+        },
+      },
+      { $unwind: { path: "$order", preserveNullAndEmptyArrays: true } },
+    ];
+
+    if (search) {
+      const pattern = escapeRegex(search);
+      pipeline.push({
+        $match: {
+          $or: [
+            { content: { $regex: pattern, $options: "i" } },
+            { "order.number": { $regex: pattern, $options: "i" } },
+            { "order.customerName": { $regex: pattern, $options: "i" } },
+            {
+              $expr: {
+                $regexMatch: {
+                  input: { $toString: { $ifNull: ["$order.legacyId", ""] } },
+                  regex: pattern,
+                  options: "i",
+                },
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    pipeline.push(
+      {
+        $addFields: {
+          ticketSort: {
+            $let: {
+              vars: {
+                number: {
+                  $trim: { input: { $ifNull: ["$order.number", ""] } },
+                },
+              },
+              in: {
+                $cond: [
+                  { $gt: [{ $strLenCP: "$$number" }, 0] },
+                  "$$number",
+                  {
+                    $cond: [
+                      { $gt: ["$order.legacyId", 0] },
+                      { $toString: "$order.legacyId" },
+                      {
+                        $substrCP: [
+                          { $toString: "$workOrderRef" },
+                          {
+                            $max: [
+                              0,
+                              {
+                                $subtract: [
+                                  { $strLenCP: { $toString: "$workOrderRef" } },
+                                  6,
+                                ],
+                              },
+                            ],
+                          },
+                          6,
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          customerSort: { $ifNull: ["$order.customerName", ""] },
+        },
+      },
+      {
+        $sort: {
+          [sortField]: dir,
+          ...(sortField === "createdAt" ? {} : { createdAt: -1 as const }),
+          _id: dir,
+        },
+      },
+      {
+        $facet: {
+          rows: [
+            { $skip: (page - 1) * pageSize },
+            { $limit: pageSize },
+            {
+              $project: {
+                content: 1,
+                workOrderRef: 1,
+                authorId: 1,
+                createdAt: 1,
+                ticketSort: 1,
+                customerSort: 1,
+                "order.assignedUserRef": 1,
+              },
+            },
+          ],
+          total: [{ $count: "count" }],
+        },
+      },
+    );
+
+    const [result] = await WorkOrderNote.aggregate(pipeline).collation({
+      locale: "en",
+      numericOrdering: true,
+      strength: 2,
+    });
+
+    const rows = (result?.rows ?? []) as Array<{
+      _id: mongoose.Types.ObjectId;
+      content: string;
+      workOrderRef: mongoose.Types.ObjectId;
+      authorId: mongoose.Types.ObjectId;
+      createdAt: Date;
+      ticketSort?: string;
+      customerSort?: string;
+      order?: { assignedUserRef?: mongoose.Types.ObjectId | null };
+    }>;
+    const total = Number(result?.total?.[0]?.count ?? 0);
+
+    res.json({
+      notes: rows.map((note) => {
+        const isAssignee =
+          note.order?.assignedUserRef != null &&
+          String(note.order.assignedUserRef) === userId;
+        const isAuthor = String(note.authorId) === userId;
+        const canEdit =
+          canWrite && (dispatcher || isAssignee) && (isAuthor || admin);
+        return {
+          id: String(note._id),
+          content: note.content,
+          workOrderId: String(note.workOrderRef),
+          ticketNumber: note.ticketSort?.trim() || String(note.workOrderRef).slice(-6),
+          customerName: note.customerSort?.trim() ?? "",
+          createdAt: new Date(note.createdAt).toISOString(),
+          canEdit,
+        };
+      }),
+      total,
+      page,
+      pageSize,
+    });
+  } catch (err) {
+    console.error("GET /work-orders/notes error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}

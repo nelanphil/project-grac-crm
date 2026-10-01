@@ -27,6 +27,8 @@ export interface AuthUser {
   jobRoles?: string[];
   /** Job-role slugs, e.g. "technician". Empty for customers. */
   jobRoleSlugs?: string[];
+  /** Staff home resolved from assigned job roles. */
+  homeView?: "default" | "todo";
   capabilities?: {
     schedulable: boolean;
     territoryOwner: boolean;

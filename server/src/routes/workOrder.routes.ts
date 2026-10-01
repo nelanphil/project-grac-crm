@@ -10,6 +10,8 @@ import {
   deleteWorkOrder,
 } from "../controllers/workOrder.controller";
 import {
+  getRecentWorkOrderNotes,
+  listWorkOrderNoteHistory,
   getWorkOrderNotes,
   createWorkOrderNote,
   updateWorkOrderNote,
@@ -20,6 +22,8 @@ const router = Router();
 
 router.use(authenticate);
 
+router.get("/recent-notes", getRecentWorkOrderNotes);
+router.get("/notes", listWorkOrderNoteHistory);
 router.get("/", getWorkOrders);
 router.get("/by-customer/:customerId", getWorkOrdersByCustomer);
 router.get("/:id/notes", getWorkOrderNotes);

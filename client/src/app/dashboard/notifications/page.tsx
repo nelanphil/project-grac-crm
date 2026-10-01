@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import NotificationListItem from "@/components/notifications/NotificationItem";
+import NotesHistoryPanel from "@/components/notifications/NotesHistoryPanel";
 import RemindersPanel from "@/components/notifications/RemindersPanel";
 import { isCustomerRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -30,7 +32,19 @@ function NotificationsContent() {
   const user = useAuthStore((s) => s.user);
   const fetchUnreadCount = useNotificationsStore((s) => s.fetchUnreadCount);
   const isCustomer = isCustomerRole(user);
-  const [tab, setTab] = useState<"notifications" | "reminders">("notifications");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tab =
+    tabParam === "notes" || tabParam === "reminders" ? tabParam : "notifications";
+
+  function selectTab(next: "notifications" | "reminders" | "notes") {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "notifications") params.delete("tab");
+    else params.set("tab", next);
+    const qs = params.toString();
+    router.replace(qs ? `/dashboard/notifications/?${qs}` : "/dashboard/notifications/");
+  }
 
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -129,7 +143,7 @@ function NotificationsContent() {
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => setTab("notifications")}
+            onClick={() => selectTab("notifications")}
             className={`rounded-md px-3 py-1.5 text-sm font-medium ${
               tab === "notifications"
                 ? "bg-brand-dark text-white"
@@ -140,7 +154,7 @@ function NotificationsContent() {
           </button>
           <button
             type="button"
-            onClick={() => setTab("reminders")}
+            onClick={() => selectTab("reminders")}
             className={`rounded-md px-3 py-1.5 text-sm font-medium ${
               tab === "reminders"
                 ? "bg-brand-dark text-white"
@@ -149,11 +163,26 @@ function NotificationsContent() {
           >
             Reminders
           </button>
+          <button
+            type="button"
+            onClick={() => selectTab("notes")}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+              tab === "notes"
+                ? "bg-brand-dark text-white"
+                : "border border-neutral-200 bg-white text-brand-dark hover:bg-neutral-50"
+            }`}
+          >
+            Notes
+          </button>
         </div>
       ) : null}
 
       {tab === "reminders" && token && !isCustomer ? (
         <RemindersPanel token={token} />
+      ) : null}
+
+      {tab === "notes" && token && !isCustomer ? (
+        <NotesHistoryPanel token={token} />
       ) : null}
 
       {tab === "notifications" && error && (
