@@ -45,6 +45,7 @@ import {
   provisionCrmCustomerForUser,
 } from "../utils/provisionCustomerAccount";
 import { syncCustomersToUserEmail } from "../utils/ensureCustomerLogin";
+import { lookupLoginLocation } from "../utils/loginLocation";
 import {
   getEmailPreferences,
   renameEmailPreferences,
@@ -450,6 +451,13 @@ export async function login(req: Request, res: Response): Promise<void> {
       res.status(401).json(LOGIN_FAIL);
       return;
     }
+
+    const lastLoginAt = new Date();
+    const lastLoginLocation = await lookupLoginLocation(req.ip);
+    await User.updateOne(
+      { _id: matchedUser._id },
+      { $set: { lastLoginAt, lastLoginLocation } },
+    );
 
     const permissions = await permissionsForUser(matchedUser);
 

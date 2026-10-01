@@ -8,11 +8,13 @@ import {
   activeUserFilter,
   IUserTerritories,
   IUserHomeLocation,
+  IUserLoginLocation,
   IWeeklyHours,
   IScheduleException,
 } from "../models/mongo/User";
 import { Role } from "../models/mongo/Role";
 import { JobRole } from "../models/mongo/JobRole";
+import { Customer } from "../models/mongo/Customer";
 import { createUserSchema, updateUserSchema } from "../schemas/user.schema";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
 import { updateRoleSchema } from "../schemas/auth.schema";
@@ -33,6 +35,7 @@ import {
 } from "../utils/ownerTerritory";
 import {
   EMAIL_CONFLICT_ADMIN,
+  accountEmailRegex,
   findEmailConflict,
   provisionCrmCustomerForUser,
 } from "../utils/provisionCustomerAccount";
@@ -164,6 +167,8 @@ function formatUser(
     homeLocation?: IUserHomeLocation | null;
     weeklyHours?: IWeeklyHours | null;
     scheduleExceptions?: IScheduleException[] | null;
+    lastLoginAt?: Date | null;
+    lastLoginLocation?: IUserLoginLocation | null;
     createdAt: Date;
     updatedAt?: Date;
   },
@@ -191,6 +196,8 @@ function formatUser(
     homeLocation: formatHomeLocation(user.homeLocation),
     weeklyHours: formatWeeklyHours(user.weeklyHours),
     scheduleExceptions: user.scheduleExceptions ?? [],
+    lastLoginAt: user.lastLoginAt ?? null,
+    lastLoginLocation: user.lastLoginLocation ?? null,
     createdAt: user.createdAt,
     ...(user.updatedAt ? { updatedAt: user.updatedAt } : {}),
   };
@@ -562,8 +569,24 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
 
     if (email !== undefined) {
       const normalized = email.toLowerCase();
+      let excludeCustomerId: Types.ObjectId | null = null;
+      if (nextUserType === "customer") {
+        const ownEmailRx = accountEmailRegex(previousEmail);
+        if (ownEmailRx) {
+          const ownCustomer = await Customer.findOne({
+            email: ownEmailRx,
+            deletedAt: null,
+            mergedIntoRef: null,
+          })
+            .select("_id")
+            .sort({ legacyId: 1 })
+            .lean();
+          excludeCustomerId = (ownCustomer?._id as Types.ObjectId | undefined) ?? null;
+        }
+      }
       const emailConflict = await findEmailConflict(normalized, {
         excludeUserId: user._id,
+        excludeCustomerId,
         forStaffAccount: nextUserType === "staff",
       });
       if (emailConflict) {

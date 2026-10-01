@@ -63,6 +63,10 @@ export interface IUser extends Document {
   phone: string;
   /** Version string of the legal docs accepted (e.g. "2026-08-03"). */
   legalDocsVersion: string | null;
+  /** Most recent successful sign-in. Null until the user logs in after this was added. */
+  lastLoginAt: Date | null;
+  /** Approximate place of the most recent sign-in. Null for private IPs or a failed lookup. */
+  lastLoginLocation: IUserLoginLocation | null;
   /** Per-user dashboard nav customization. */
   uiPreferences: IUserUiPreferences;
   deletedAt: Date | null;
@@ -81,6 +85,13 @@ export interface IUserNavOrder {
 
 export interface IUserUiPreferences {
   navOrder: IUserNavOrder;
+}
+
+export interface IUserLoginLocation {
+  city: string;
+  /** Region code when the lookup provides one (e.g. "FL"), otherwise the region name. */
+  region: string;
+  country: string;
 }
 
 const territoriesSchema = new Schema<IUserTerritories>(
@@ -141,6 +152,15 @@ const navOrderSchema = new Schema<IUserNavOrder>(
     order: { type: [String], default: [] },
     children: { type: Schema.Types.Mixed, default: () => ({}) },
     hidden: { type: [String], default: [] },
+  },
+  { _id: false },
+);
+
+const loginLocationSchema = new Schema<IUserLoginLocation>(
+  {
+    city: { type: String, default: "" },
+    region: { type: String, default: "" },
+    country: { type: String, default: "" },
   },
   { _id: false },
 );
@@ -211,6 +231,8 @@ const userSchema = new Schema<IUser>(
     smsOptInAt: { type: Date, default: null },
     phone: { type: String, default: "" },
     legalDocsVersion: { type: String, default: null },
+    lastLoginAt: { type: Date, default: null },
+    lastLoginLocation: { type: loginLocationSchema, default: null },
     uiPreferences: {
       type: uiPreferencesSchema,
       default: () => ({ navOrder: { order: [], children: {}, hidden: [] } }),

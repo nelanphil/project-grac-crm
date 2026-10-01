@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   getUsers,
@@ -27,6 +28,7 @@ import {
   weeklyHoursNeverEnabled,
 } from "@/lib/schedule";
 import { DEFAULT_PAGE_SIZE, type PageSize } from "@/lib/pagination";
+import { canSeeNavHref } from "@/lib/dashboard-nav";
 import {
   hasJobRoleCapability,
   isCustomerRole,
@@ -54,6 +56,31 @@ const emptyForm = {
 
 function normalizeZipInput(raw: string): string {
   return raw.replace(/\D/g, "").slice(0, 5);
+}
+
+function formatLastLogin(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatLoginLocation(
+  location: UserListItem["lastLoginLocation"],
+): string {
+  if (!location) return "—";
+  const city = location.city.trim();
+  const region = location.region.trim();
+  const country = location.country.trim();
+  if (city && region) return `${city}, ${region}`;
+  if (city && country) return `${city}, ${country}`;
+  return city || region || country || "—";
 }
 
 export default function UsersTab() {
@@ -449,7 +476,7 @@ export default function UsersTab() {
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-      <div className="px-4 py-4 sm:px-6 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 border-b border-neutral-100 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">Users</h2>
           <p className="text-sm text-neutral-500 mt-0.5">
@@ -458,13 +485,31 @@ export default function UsersTab() {
               : `${filteredUsers.length} of ${visibleUsers.length}`}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="btn-primary text-sm px-4 py-2"
-        >
-          Create user
-        </button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+          {canSeeNavHref(currentUser, "/dashboard/users/roles") && (
+            <Link
+              href="/dashboard/users/roles"
+              className="inline-flex w-full items-center justify-center rounded-md border border-neutral-200 px-4 py-2 text-sm font-medium text-brand-dark hover:bg-neutral-50 sm:w-auto"
+            >
+              Roles & Permissions
+            </Link>
+          )}
+          {canSeeNavHref(currentUser, "/dashboard/users/job-roles") && (
+            <Link
+              href="/dashboard/users/job-roles"
+              className="inline-flex w-full items-center justify-center rounded-md border border-neutral-200 px-4 py-2 text-sm font-medium text-brand-dark hover:bg-neutral-50 sm:w-auto"
+            >
+              Job Roles
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={openCreate}
+            className="btn-primary w-full px-4 py-2 text-sm sm:w-auto"
+          >
+            Create user
+          </button>
+        </div>
       </div>
 
       <div className="px-4 py-4 sm:px-6 border-b border-neutral-100 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -576,6 +621,14 @@ export default function UsersTab() {
                     label="Joined"
                     value={new Date(user.createdAt).toLocaleDateString()}
                   />
+                  <DataField
+                    label="Last login"
+                    value={formatLastLogin(user.lastLoginAt)}
+                  />
+                  <DataField
+                    label="Location"
+                    value={formatLoginLocation(user.lastLoginLocation)}
+                  />
                 </>
               }
               actions={
@@ -630,6 +683,12 @@ export default function UsersTab() {
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Joined
                     </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Last login
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Location
+                    </th>
                     <th className="px-6 py-3" />
                   </tr>
                 </thead>
@@ -664,6 +723,12 @@ export default function UsersTab() {
                       )}
                       <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
                         {new Date(user.createdAt).toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
+                        {formatLastLogin(user.lastLoginAt)}
+                      </td>
+                      <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
+                        {formatLoginLocation(user.lastLoginLocation)}
                       </td>
                       <td className="px-6 py-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-3">

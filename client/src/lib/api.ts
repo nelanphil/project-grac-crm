@@ -542,6 +542,12 @@ export interface UserCapabilities {
   territoryOwner: boolean;
 }
 
+export interface UserLoginLocation {
+  city: string;
+  region: string;
+  country: string;
+}
+
 export interface UserListItem {
   _id: string;
   email: string;
@@ -560,6 +566,8 @@ export interface UserListItem {
   homeLocation: UserHomeLocation;
   weeklyHours: UserWeeklyHours;
   scheduleExceptions: ScheduleException[];
+  lastLoginAt?: string | null;
+  lastLoginLocation?: UserLoginLocation | null;
   createdAt: string;
   updatedAt?: string;
 }
