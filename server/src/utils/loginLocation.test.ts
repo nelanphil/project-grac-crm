@@ -25,6 +25,17 @@ describe("isNonPublicIp", () => {
     assert.equal(isNonPublicIp("172.32.0.1"), false);
     assert.equal(isNonPublicIp("8.8.8.8"), false);
   });
+
+  it("treats the full fe80::/10 link-local range as non-public", () => {
+    assert.equal(isNonPublicIp("fe80::1"), true);
+    assert.equal(isNonPublicIp("fea0::1"), true);
+    assert.equal(isNonPublicIp("feb0::1"), true);
+    assert.equal(isNonPublicIp("febf::1"), true);
+    assert.equal(isNonPublicIp("FEA0::1"), true);
+    assert.equal(isNonPublicIp("fe7f::1"), false);
+    assert.equal(isNonPublicIp("fec0::1"), false);
+    assert.equal(isNonPublicIp("2001:4860:4860::8888"), false);
+  });
 });
 
 describe("locationFromLookup", () => {

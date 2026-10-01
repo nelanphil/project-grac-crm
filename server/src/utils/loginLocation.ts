@@ -19,12 +19,23 @@ export function normalizeClientIp(raw: string | undefined | null): string {
   return ip;
 }
 
+/**
+ * RFC 4291 link-local is fe80::/10, so the first hextet runs from fe80
+ * through febf. A prefix check for "fe80:" misses fea0::, feb0::, and febf::.
+ */
+function isIpv6LinkLocal(ip: string): boolean {
+  const head = ip.split(":")[0] ?? "";
+  if (!/^[0-9a-f]{1,4}$/.test(head)) return false;
+  const value = Number.parseInt(head, 16);
+  return value >= 0xfe80 && value <= 0xfebf;
+}
+
 /** Loopback, link-local, and RFC1918 addresses have no public place. */
 export function isNonPublicIp(raw: string): boolean {
   const ip = normalizeClientIp(raw).toLowerCase();
   if (!ip || ip === "unknown") return true;
   if (ip === "::1" || ip === "::" || ip === "0.0.0.0") return true;
-  if (ip.startsWith("fe80:") || ip.startsWith("fc") || ip.startsWith("fd")) {
+  if (isIpv6LinkLocal(ip) || ip.startsWith("fc") || ip.startsWith("fd")) {
     return true;
   }
 
