@@ -7,12 +7,18 @@ import { Download, Mail } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import InvoiceDocument from "@/components/billing/InvoiceDocument";
+import {
+  canToggleInvoiceStatus,
+  InvoiceStatusChangeWarning,
+} from "@/components/billing/InvoiceStatusActions";
 import { useAuthStore } from "@/store/useAuthStore";
 import { isCustomerRole } from "@/lib/dashboard-role";
 import {
   ApiError,
   getInvoice,
   InvoiceItem,
+  markInvoicePaid,
+  reopenInvoice,
   startInvoiceCheckout,
 } from "@/lib/api";
 
@@ -38,11 +44,14 @@ function InvoiceDetailContent() {
   const hasRole = useAuthStore((s) => s.hasRole);
   const isCustomer = isCustomerRole(user);
   const canEmail = hasRole("admin", "super-admin");
+  const canWrite = useAuthStore((s) => s.hasPermission("contracts:write"));
 
   const [invoice, setInvoice] = useState<InvoiceItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+  const [confirmingStatus, setConfirmingStatus] = useState(false);
+  const [statusBusy, setStatusBusy] = useState(false);
 
   useEffect(() => {
     if (!token || !id) {
@@ -61,6 +70,28 @@ function InvoiceDetailContent() {
       )
       .finally(() => setLoading(false));
   }, [token, id]);
+
+  async function confirmStatusChange() {
+    if (!token || !invoice) return;
+    setStatusBusy(true);
+    setError(null);
+    try {
+      const { invoice: updated } =
+        invoice.status === "paid"
+          ? await reopenInvoice(token, invoice._id)
+          : await markInvoicePaid(token, invoice._id);
+      setInvoice((current) => (current ? { ...current, ...updated } : updated));
+      setConfirmingStatus(false);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to update invoice status.",
+      );
+    } finally {
+      setStatusBusy(false);
+    }
+  }
 
   async function handlePay() {
     if (!token || !invoice) return;
@@ -129,6 +160,7 @@ function InvoiceDetailContent() {
   }
 
   const canPay = invoice.status === "open" || invoice.status === "failed";
+  const canToggle = !isCustomer && canWrite && canToggleInvoiceStatus(invoice);
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 print:max-w-none print:space-y-0">
@@ -146,6 +178,19 @@ function InvoiceDetailContent() {
             <Download className="h-4 w-4" />
             Export to PDF
           </button>
+          {canToggle ? (
+            <button
+              type="button"
+              disabled={statusBusy}
+              onClick={() => {
+                setError(null);
+                setConfirmingStatus((current) => !current);
+              }}
+              className="inline-flex w-full items-center justify-center rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60 sm:w-auto"
+            >
+              {invoice.status === "paid" ? "Mark as unpaid" : "Mark as paid"}
+            </button>
+          ) : null}
           {isCustomer && canPay ? (
             <Link
               href={`/dashboard/checkout/?invoiceId=${invoice._id}`}
@@ -186,7 +231,20 @@ function InvoiceDetailContent() {
         </div>
       </div>
 
-      {error ? (
+      {confirmingStatus && canToggle ? (
+        <div className="print:hidden">
+          <InvoiceStatusChangeWarning
+            invoice={invoice}
+            busy={statusBusy}
+            error={error}
+            onConfirm={() => void confirmStatusChange()}
+            onCancel={() => {
+              setConfirmingStatus(false);
+              setError(null);
+            }}
+          />
+        </div>
+      ) : error ? (
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 print:hidden">
           {error}
         </div>

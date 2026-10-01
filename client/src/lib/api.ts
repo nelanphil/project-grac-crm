@@ -2846,6 +2846,23 @@ export async function reopenInvoice(
   });
 }
 
+export interface BulkInvoiceStatusResult {
+  updated: InvoiceItem[];
+  skipped: { id: string; reason: string }[];
+  failed: { id: string; message: string }[];
+}
+
+export async function bulkUpdateInvoiceStatus(
+  token: string,
+  data: { ids: string[]; paid: boolean },
+): Promise<BulkInvoiceStatusResult> {
+  return authRequest<BulkInvoiceStatusResult>("/invoices/bulk-status", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
 export type CheckoutItemKind = "invoice" | "work_order";
 
 export interface CheckoutItem {

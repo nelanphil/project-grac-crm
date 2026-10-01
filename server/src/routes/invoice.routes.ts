@@ -4,6 +4,7 @@ import {
   requirePermission,
 } from "../middleware/auth.middleware";
 import {
+  bulkUpdateInvoiceStatus,
   createInvoice,
   createInvoicePayLink,
   getInvoiceById,
@@ -21,6 +22,11 @@ router.get("/", getInvoices);
 router.get("/:id", getInvoiceById);
 
 router.post("/", requirePermission("contracts:write"), createInvoice);
+router.post(
+  "/bulk-status",
+  requirePermission("contracts:write"),
+  bulkUpdateInvoiceStatus,
+);
 router.post("/:id/checkout", startInvoiceCheckout);
 router.post(
   "/:id/pay-link",

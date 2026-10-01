@@ -8,7 +8,10 @@ import { ContractTemplate } from "../models/mongo/ContractTemplate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact } from "../models/mongo/CustomerContact";
-import { createInvoiceSchema } from "../schemas/invoice.schema";
+import {
+  bulkInvoiceStatusSchema,
+  createInvoiceSchema,
+} from "../schemas/invoice.schema";
 import {
   dollarsToCents,
   ensureOpenInvoiceForWorkOrder,
@@ -667,6 +670,74 @@ export async function reopenInvoiceByStaff(
     res.json({ invoice: toPublicInvoice(updated) });
   } catch {
     res.status(500).json({ message: "Failed to reopen invoice" });
+  }
+}
+
+export async function bulkUpdateInvoiceStatus(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const parsed = bulkInvoiceStatusSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: "Validation failed",
+        errors: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const ids = [...new Set(parsed.data.ids)];
+    const actor = actorFromRequest(req.user);
+    const updated: ReturnType<typeof toPublicInvoice>[] = [];
+    const skipped: { id: string; reason: string }[] = [];
+    const failed: { id: string; message: string }[] = [];
+
+    for (const id of ids) {
+      try {
+        if (!Types.ObjectId.isValid(id)) {
+          skipped.push({ id, reason: "not_found" });
+          continue;
+        }
+
+        const invoice = await Invoice.findById(id);
+        if (!invoice) {
+          skipped.push({ id, reason: "not_found" });
+          continue;
+        }
+
+        if (parsed.data.paid) {
+          if (invoice.status === "paid") {
+            skipped.push({ id, reason: "already_paid" });
+            continue;
+          }
+          if (invoice.status !== "open" && invoice.status !== "failed") {
+            skipped.push({ id, reason: "cannot_mark_paid" });
+            continue;
+          }
+          const next = await markInvoicePaid({ invoice, actor });
+          updated.push(toPublicInvoice(next));
+        } else {
+          if (invoice.status !== "paid") {
+            skipped.push({ id, reason: "not_paid" });
+            continue;
+          }
+          const next = await reopenInvoice({ invoice, actor });
+          updated.push(toPublicInvoice(next));
+        }
+      } catch (err) {
+        failed.push({
+          id,
+          message:
+            err instanceof Error ? err.message : "Failed to update invoice",
+        });
+      }
+    }
+
+    res.json({ updated, skipped, failed });
+  } catch (err) {
+    console.error("[invoices] bulk status failed", err);
+    res.status(500).json({ message: "Failed to update invoices" });
   }
 }
 

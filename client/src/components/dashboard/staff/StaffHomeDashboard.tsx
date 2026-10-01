@@ -26,6 +26,11 @@ import {
 } from "@/lib/formatName";
 import { useAuthStore } from "@/store/useAuthStore";
 import UpcomingRenewalsTable from "@/components/dashboard/UpcomingRenewalsTable";
+import {
+  canToggleInvoiceStatus,
+  InvoiceStatusChangeWarning,
+  InvoiceStatusPill,
+} from "@/components/billing/InvoiceStatusActions";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 
@@ -83,93 +88,6 @@ function standingRowDate(invoice: InvoiceItem, bucket: StandingBucket): string {
 
 function invoiceDetailHref(id: string): string {
   return `/dashboard/orders/detail?id=${id}`;
-}
-
-function canToggleInvoiceStatus(invoice: InvoiceItem): boolean {
-  return invoice.status === "open" || invoice.status === "paid";
-}
-
-function StatusPill({
-  invoice,
-  disabled,
-  onClick,
-}: {
-  invoice: InvoiceItem;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  const paid = invoice.status === "paid";
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
-      onKeyDown={(event) => event.stopPropagation()}
-      className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize transition ${
-        paid
-          ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-100"
-          : "bg-sky-50 text-sky-800 ring-1 ring-sky-200 hover:bg-sky-100"
-      } disabled:cursor-not-allowed disabled:opacity-60`}
-    >
-      {invoice.status}
-    </button>
-  );
-}
-
-function StatusChangeWarning({
-  invoice,
-  busy,
-  error,
-  onConfirm,
-  onCancel,
-}: {
-  invoice: InvoiceItem;
-  busy: boolean;
-  error: string | null;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  const markingPaid = invoice.status !== "paid";
-  return (
-    <div
-      className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900"
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      <p>
-        {markingPaid
-          ? "If you proceed, this invoice will be marked as paid."
-          : "If you proceed, this invoice will be marked as unpaid."}
-        {!markingPaid && invoice.sourceType === "contract_renewal"
-          ? " A recorded renewal is not undone."
-          : null}
-      </p>
-      {error ? (
-        <p className="mt-2 text-sm text-red-700">{error}</p>
-      ) : null}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onConfirm}
-          className="rounded-md bg-brand-dark px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
-        >
-          Confirm
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onCancel}
-          className="rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-60"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
 }
 
 type KpiTone = "danger" | "info" | "success" | "warning" | "neutral";
@@ -582,7 +500,7 @@ export default function StaffHomeDashboard() {
                     }
                     actions={
                       showToggle ? (
-                        <StatusPill
+                        <InvoiceStatusPill
                           invoice={invoice}
                           disabled={statusBusyId === invoice._id}
                           onClick={() => beginStatusChange(invoice)}
@@ -593,7 +511,7 @@ export default function StaffHomeDashboard() {
                   >
                     {pending ? (
                       <div className="mt-3">
-                        <StatusChangeWarning
+                        <InvoiceStatusChangeWarning
                           invoice={invoice}
                           busy={statusBusyId === invoice._id}
                           error={statusError}
@@ -664,7 +582,7 @@ export default function StaffHomeDashboard() {
                               </td>
                               <td className="px-4 py-3 capitalize text-[var(--staff-muted)]">
                                 {showToggle ? (
-                                  <StatusPill
+                                  <InvoiceStatusPill
                                     invoice={invoice}
                                     disabled={statusBusyId === invoice._id}
                                     onClick={() => beginStatusChange(invoice)}
@@ -677,7 +595,7 @@ export default function StaffHomeDashboard() {
                             {pending ? (
                               <tr>
                                 <td colSpan={5} className="px-4 pb-3">
-                                  <StatusChangeWarning
+                                  <InvoiceStatusChangeWarning
                                     invoice={invoice}
                                     busy={statusBusyId === invoice._id}
                                     error={statusError}
