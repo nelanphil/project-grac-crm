@@ -6,6 +6,13 @@ import "./globals.css";
 /** Runs in <head> before paint. Keep in sync with client/src/lib/theme.ts. */
 const themeInitScript = `(function(){try{if(location.pathname.indexOf("/dashboard")!==0)return;var t=localStorage.getItem("grac-theme");if(t==="light")return;if(t==="dark"){document.documentElement.setAttribute("data-theme","dark");return;}var raw=localStorage.getItem("grac-auth");if(!raw)return;var parsed=JSON.parse(raw);var state=parsed&&parsed.state;if(state&&state.isAuthenticated&&state.token){document.documentElement.setAttribute("data-theme","dark");}}catch(e){}})();`;
 
+/**
+ * Runs in <head> before paint. Logged-in visitors opening the public homepage
+ * go to the dashboard (or legal consent) instead of the marketing page.
+ * Client navigations are handled by HomeAuthRedirect.
+ */
+const homeAuthRedirectScript = `(function(){try{var path=location.pathname;if(path.length>1&&path.charAt(path.length-1)==="/")path=path.slice(0,-1);if(path!==""&&path!=="/")return;var raw=localStorage.getItem("grac-auth");if(!raw)return;var parsed=JSON.parse(raw);var state=parsed&&parsed.state;if(!state||!state.isAuthenticated||!state.token)return;var user=state.user;var needs=!!(user&&user.needsLegalConsent===true);location.replace(needs?"/auth/legal-consent/":"/dashboard/");}catch(e){}})();`;
+
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
@@ -60,6 +67,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <script dangerouslySetInnerHTML={{ __html: homeAuthRedirectScript }} />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="flex min-h-full flex-col">
