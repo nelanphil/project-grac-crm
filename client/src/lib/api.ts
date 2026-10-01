@@ -351,8 +351,8 @@ export async function authLogin(
 export async function authUpdateLoginLocation(
   token: string,
   location: LoginCoordinates,
-): Promise<void> {
-  await fetch(`${API_URL}/auth/me/login-location`, {
+): Promise<boolean> {
+  const res = await fetch(`${API_URL}/auth/me/login-location`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -360,6 +360,7 @@ export async function authUpdateLoginLocation(
     },
     body: JSON.stringify(location),
   });
+  return res.ok;
 }
 
 export async function authRegister(data: {

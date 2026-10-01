@@ -223,8 +223,6 @@ const LOCATION_REQUIRED = {
   message:
     "Staff sign-in requires location access. Allow location for this site in your browser, then sign in again.",
 };
-/** Device location is only accepted shortly after the sign-in it describes. */
-const LOGIN_LOCATION_WINDOW_MS = 10 * 60 * 1000;
 
 export async function register(req: Request, res: Response): Promise<void> {
   const parsed = registerSchema.safeParse(req.body);
@@ -503,7 +501,7 @@ export async function login(req: Request, res: Response): Promise<void> {
   }
 }
 
-/** POST /auth/me/login-location — device location sent after a customer signs in */
+/** POST /auth/me/login-location — refresh the city for the current session. Does not change lastLoginAt. */
 export async function updateLoginLocation(
   req: AuthRequest,
   res: Response,
@@ -523,23 +521,10 @@ export async function updateLoginLocation(
   }
 
   try {
-    const user = await User.findOne({ _id: req.user.id, ...activeUserFilter })
-      .select("lastLoginAt")
-      .lean();
-    if (!user) {
-      res.status(404).json({ message: "User not found" });
-      return;
-    }
-    const loggedInAt = user.lastLoginAt ? new Date(user.lastLoginAt).getTime() : 0;
-    if (!loggedInAt || Date.now() - loggedInAt > LOGIN_LOCATION_WINDOW_MS) {
-      res.status(409).json({ message: "Sign-in is too old to update its location" });
-      return;
-    }
-
     const location = await reverseGeocodeLocation(parsed.data.lat, parsed.data.lng);
     if (location) {
       await User.updateOne(
-        { _id: req.user.id },
+        { _id: req.user.id, ...activeUserFilter },
         { $set: { lastLoginLocation: location } },
       );
     }

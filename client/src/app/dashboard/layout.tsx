@@ -6,6 +6,7 @@ import DashboardNav from "@/components/dashboard/DashboardNav";
 import StaffDashboardShell from "@/components/dashboard/staff/StaffDashboardShell";
 import { isJobTerminalPopoutPath } from "@/utils/jobTerminalWindow";
 import { authGetMe } from "@/lib/api";
+import { refreshVisitLocation } from "@/lib/browserLocation";
 import { canAccessNavPath } from "@/lib/dashboard-nav";
 import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -32,7 +33,9 @@ export default function DashboardLayout({
     let cancelled = false;
     authGetMe(token)
       .then(({ user: fresh }) => {
-        if (!cancelled) login(token, fresh);
+        if (cancelled) return;
+        login(token, fresh);
+        refreshVisitLocation(token, fresh.id);
       })
       .catch(() => {
         // Keep the stored session if the refresh fails.
