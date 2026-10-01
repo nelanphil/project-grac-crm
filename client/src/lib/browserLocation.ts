@@ -9,7 +9,7 @@ const LOCATION_UNAVAILABLE_MESSAGE =
 const LOCATION_UNSUPPORTED_MESSAGE =
   "Staff sign-in requires location, and this browser does not support it. Use a current version of Chrome, Safari, Edge, or Firefox.";
 
-const COOLDOWN_MS = 4 * 60 * 60 * 1000;
+const COOLDOWN_MS = 10 * 60 * 1000;
 const STORAGE_PREFIX = "login-location-refresh:";
 
 const inFlight = new Set<string>();
