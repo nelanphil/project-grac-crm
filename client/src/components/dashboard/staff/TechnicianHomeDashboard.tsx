@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type TouchEvent,
 } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   ApiError,
   geocodeMissingScheduleAddresses,
@@ -405,15 +406,14 @@ export default function TechnicianHomeDashboard() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const userId = user?.id ?? "";
-  const canSwitchTechnicians = !(user?.jobRoleSlugs ?? []).includes(
-    "technician",
+  const isFieldStaff = useAuthStore((s) => s.hasRole("field-staff"));
+  const canSwitchTechnicians = !(
+    (user?.jobRoleSlugs ?? []).includes("technician") && isFieldStaff
   );
   const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
   const layout = useTodoLayout();
 
   const today = formatLocalDate(new Date());
-  const weekStart = startOfWeekSunday(today);
-  const weekEnd = addDays(weekStart, 6);
 
   const [mode, setMode] = useState<RangeMode>("day");
   const [technicians, setTechnicians] = useState<TechnicianListItem[]>([]);
@@ -433,7 +433,9 @@ export default function TechnicianHomeDashboard() {
   const [order, setOrder] = useState<WorkOrderListItem | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
-  const [mapDate, setMapDate] = useState(today);
+  const [focusDate, setFocusDate] = useState(today);
+  const weekStart = startOfWeekSunday(focusDate);
+  const weekEnd = addDays(weekStart, 6);
   const [routeStops, setRouteStops] = useState<ScheduleRouteStop[]>([]);
   const [routePolyline, setRoutePolyline] = useState<string | undefined>();
   const requestedGeocodeRef = useRef(new Set<string>());
@@ -595,9 +597,9 @@ export default function TechnicianHomeDashboard() {
     };
   }, [token, selectedId]);
 
-  const dayJobs = jobs.filter((job) => workOrderLocalDate(job) === today);
+  const dayJobs = jobs.filter((job) => workOrderLocalDate(job) === focusDate);
 
-  const mapDay = mode === "day" ? today : mapDate;
+  const mapDay = focusDate;
   const mapJobs = jobs.filter((job) => workOrderLocalDate(job) === mapDay);
   const mapCoordKey = mapJobs
     .map(
@@ -647,12 +649,12 @@ export default function TechnicianHomeDashboard() {
     };
   });
   const mobileWeekDay =
-    weekCalendar.find((day) => day.date === mapDate) ?? weekCalendar[0];
+    weekCalendar.find((day) => day.date === focusDate) ?? weekCalendar[0];
 
   const visibleCount = mode === "day" ? dayJobs.length : jobs.length;
   const periodLabel =
     mode === "day"
-      ? formatWeekdayDate(today)
+      ? formatWeekdayDate(focusDate)
       : `${formatMonthDayYear(weekStart)} – ${formatMonthDayYear(weekEnd)}`;
   const pageError = techsError ?? error;
   const pageLoading =
@@ -667,7 +669,10 @@ export default function TechnicianHomeDashboard() {
     : ownerName
       ? `Loading ${possessive(ownerName)} schedule…`
       : "Loading schedule…";
-  const emptyToday = `Nothing on ${scheduleWhose} schedule today.`;
+  const emptyToday =
+    focusDate === today
+      ? `Nothing on ${scheduleWhose} schedule today.`
+      : `Nothing on ${scheduleWhose} schedule for ${formatWeekdayDate(focusDate)}.`;
   const emptyDay = `Nothing on ${scheduleWhose} schedule.`;
   const emptyWeek = `Nothing on ${scheduleWhose} schedule this week.`;
 
@@ -725,14 +730,24 @@ export default function TechnicianHomeDashboard() {
     }
   }
 
-  function showWeekDay(date: string) {
-    if (date === mapDate) return;
-    setMapDate(date);
+  function clearOpenJob() {
     setPending(null);
     setActionError(null);
     setOrder(null);
     setOrderError(null);
     setSelectedId(null);
+  }
+
+  function showWeekDay(date: string) {
+    if (date === focusDate) return;
+    setFocusDate(date);
+    clearOpenJob();
+  }
+
+  function shiftFocus(direction: -1 | 1) {
+    const step = mode === "day" ? direction : direction * 7;
+    setFocusDate(addDays(focusDate, step));
+    clearOpenJob();
   }
 
   function toggleOpen(id: string) {
@@ -839,13 +854,31 @@ export default function TechnicianHomeDashboard() {
               </select>
             </label>
           ) : null}
-          <p className="mt-1 text-sm text-[var(--staff-muted)]">
-            {pageLoading
-              ? loadingLabel
-              : pageError
-                ? periodLabel
-                : `${periodLabel} · ${jobCountLabel(visibleCount)}`}
-          </p>
+          <div className="mt-1 flex items-center gap-1.5">
+            <button
+              type="button"
+              aria-label={mode === "day" ? "Previous day" : "Previous week"}
+              onClick={() => shiftFocus(-1)}
+              className="rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </button>
+            <p className="min-w-0 text-sm text-[var(--staff-muted)]">
+              {pageLoading
+                ? loadingLabel
+                : pageError
+                  ? periodLabel
+                  : `${periodLabel} · ${jobCountLabel(visibleCount)}`}
+            </p>
+            <button
+              type="button"
+              aria-label={mode === "day" ? "Next day" : "Next week"}
+              onClick={() => shiftFocus(1)}
+              className="rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
         </div>
         <div className="flex w-fit max-w-full gap-1 rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] p-0.5">
           {(
@@ -895,7 +928,7 @@ export default function TechnicianHomeDashboard() {
       ) : layout === "mobile" ? (
         <WeekDayCarousel
           days={weekCalendar}
-          date={mapDate}
+          date={focusDate}
           onDateChange={showWeekDay}
         >
           <section className="min-w-0 space-y-3">
@@ -924,10 +957,10 @@ export default function TechnicianHomeDashboard() {
               <h2>
                 <button
                   type="button"
-                  onClick={() => setMapDate(day.date)}
-                  aria-pressed={day.date === mapDate}
+                  onClick={() => setFocusDate(day.date)}
+                  aria-pressed={day.date === focusDate}
                   className={`rounded-md px-2 py-1 text-left text-sm font-semibold uppercase tracking-wide ${
-                    day.date === mapDate
+                    day.date === focusDate
                       ? "bg-brand-orange text-white"
                       : "text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
                   }`}
