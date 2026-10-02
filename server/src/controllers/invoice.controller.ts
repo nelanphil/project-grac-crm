@@ -36,6 +36,7 @@ import {
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { listVisibleWorkOrderNotes } from "./workOrderNote.controller";
 import { isStaffRole } from "../utils/roles";
+import { buildTokenSearchFilter } from "../utils/textSearch";
 
 export { resolveCustomerRefsForAuthUser };
 
@@ -207,24 +208,28 @@ function escapeRegex(value: string): string {
 async function customerRefsMatchingSearch(
   search: string,
 ): Promise<Types.ObjectId[]> {
-  const re = new RegExp(escapeRegex(search), "i");
   const digits = search.replace(/\D/g, "");
-  const customerOr: Record<string, unknown>[] = [
-    { accountName: re },
-    { first: re },
-    { last: re },
-    { email: re },
-    { phone: re },
-  ];
+  const customerOr: Record<string, unknown>[] = [];
+  const customerTokens = buildTokenSearchFilter(search, [
+    "accountName",
+    "first",
+    "last",
+    "email",
+    "phone",
+  ]);
+  if (customerTokens) customerOr.push(customerTokens);
   if (digits) {
     customerOr.push({ phoneDigits: new RegExp(escapeRegex(digits), "i") });
   }
-  const contactOr: Record<string, unknown>[] = [
-    { first: re },
-    { last: re },
-    { email: re },
-    { phone: re },
-  ];
+  const contactOr: Record<string, unknown>[] = [];
+  const contactTokens = buildTokenSearchFilter(search, [
+    "first",
+    "last",
+    "email",
+    "phone",
+  ]);
+  if (contactTokens) contactOr.push(contactTokens);
+  if (customerOr.length === 0 || contactOr.length === 0) return [];
 
   const [customers, contacts] = await Promise.all([
     Customer.find({ $or: customerOr }).select("_id").lean(),

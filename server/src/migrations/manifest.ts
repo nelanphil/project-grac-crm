@@ -50,4 +50,8 @@ export const MIGRATIONS: MigrationEntry[] = [
     id: "2026-09-13-asc-contract-dates",
     file: "sync-asc-contracts",
   },
+  {
+    id: "2026-10-01-customer-account-names",
+    file: "backfill-customer-account-names",
+  },
 ];

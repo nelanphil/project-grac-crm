@@ -84,6 +84,7 @@ import {
 import { User } from "../models/mongo/User";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
 import { mintCheckoutKey } from "../utils/checkoutKey";
+import { buildTokenSearchFilter } from "../utils/textSearch";
 import {
   customerOwnedFilter,
   reassignCustomerOwnedRecords,
@@ -509,18 +510,19 @@ export async function listCustomers(
     const search = trimStr(req.query.search);
     let filter: Record<string, unknown> = baseFilter;
     if (search) {
-      const rx = new RegExp(escapeRegex(search), "i");
-      const or: Array<Record<string, unknown>> = [
-        { accountName: rx },
-        { first: rx },
-        { last: rx },
-        { address: rx },
-        { city: rx },
-        { state: rx },
-        { zip: rx },
-        { county: rx },
-        { phone: rx },
-      ];
+      const or: Array<Record<string, unknown>> = [];
+      const tokenFilter = buildTokenSearchFilter(search, [
+        "accountName",
+        "first",
+        "last",
+        "address",
+        "city",
+        "state",
+        "zip",
+        "county",
+        "phone",
+      ]);
+      if (tokenFilter) or.push(tokenFilter);
       const digits = normalizePhoneDigits(search);
       if (digits.length > 0) {
         or.push({ phoneDigits: new RegExp(escapeRegex(digits)) });
@@ -799,18 +801,19 @@ export async function listContacts(
     const search = trimStr(req.query.search);
     const searchMatch: Record<string, unknown> | null = search
       ? (() => {
-          const rx = new RegExp(escapeRegex(search), "i");
-          const or: Array<Record<string, unknown>> = [
-            { first: rx },
-            { last: rx },
-            { phone: rx },
-            { email: rx },
-            { label: rx },
-            { "customer.accountName": rx },
-            { "customer.first": rx },
-            { "customer.last": rx },
-            { "customer.phone": rx },
-          ];
+          const or: Array<Record<string, unknown>> = [];
+          const tokenFilter = buildTokenSearchFilter(search, [
+            "first",
+            "last",
+            "phone",
+            "email",
+            "label",
+            "customer.accountName",
+            "customer.first",
+            "customer.last",
+            "customer.phone",
+          ]);
+          if (tokenFilter) or.push(tokenFilter);
           const digits = normalizePhoneDigits(search);
           if (digits.length > 0) {
             const digitRx = new RegExp(escapeRegex(digits));
@@ -1434,7 +1437,9 @@ export async function updateCustomer(
       return;
     }
 
-    const accountName = parsed.data.accountName;
+    const accountName =
+      parsed.data.accountName ||
+      `${(customer.first ?? "").trim()} ${(customer.last ?? "").trim()}`.trim();
     const accountNameMatches = await findAccountNameMatches(
       accountName,
       customer._id.toString(),
