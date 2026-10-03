@@ -421,7 +421,7 @@ function CreateCustomerContent() {
     "mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange";
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <div>
         <DashboardBackLink fallbackHref={returnTo} />
         <h1 className="mt-4 text-2xl font-bold text-brand-dark">

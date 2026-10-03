@@ -284,7 +284,7 @@ function EditContractContent() {
   const standing = contract.standing ?? "expired";
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6">
       <div>
         <DashboardBackLink fallbackHref={returnTo} />
         <h1 className="mt-4 text-2xl font-bold text-brand-dark">

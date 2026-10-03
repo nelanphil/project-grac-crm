@@ -163,7 +163,7 @@ function InvoiceDetailContent() {
   const canToggle = !isCustomer && canWrite && canToggleInvoiceStatus(invoice);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 print:max-w-none print:space-y-0">
+    <div className="mx-auto max-w-5xl space-y-4 print:max-w-none print:space-y-0">
       <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <DashboardBackLink
           fallbackHref="/dashboard/orders"
