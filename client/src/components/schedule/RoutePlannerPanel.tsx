@@ -11,6 +11,7 @@ import { useDroppable } from "@dnd-kit/core";
 import { ArrowDown, ArrowUp, Lock, LockOpen, X } from "lucide-react";
 import type { RouteObjective, ScheduleRouteLeg, ScheduleRouteStop } from "@/lib/api";
 import { formatLocalClock, formatTimeWindow } from "@/lib/schedule";
+import Segmented from "@/components/schedule/Segmented";
 
 const ROUTE_LIST_HEIGHT_KEY = "schedule-route-list-height";
 const ROUTE_LIST_MIN = 160;
@@ -136,14 +137,12 @@ function TechDropRow({
       type="button"
       ref={setNodeRef}
       onClick={onSelect}
-      className={`grid w-full grid-cols-[1fr_auto] items-center gap-3 border-b border-neutral-100 px-3 py-2 text-left text-sm last:border-0 ${
-        isOver || selected ? "tech-row-highlight" : ""
-      } ${
+      className={`grid w-full grid-cols-[1fr_auto] items-center gap-3 border-b border-neutral-200/70 px-3 py-2 text-left text-sm transition-colors last:border-0 ${
         isOver
-          ? "bg-orange-100"
+          ? "bg-brand-orange/25"
           : selected
-            ? "bg-orange-50"
-            : "hover:bg-neutral-50"
+            ? "bg-brand-orange/15"
+            : "hover:bg-neutral-100"
       }`}
     >
       <span className="truncate font-medium text-brand-dark">
@@ -258,13 +257,13 @@ export default function RoutePlannerPanel({
   const routed = new Set(orderedWorkOrderIds);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
         <select
           value={techId ?? ""}
           disabled={techLocked}
           onChange={(event) => onTech(event.target.value)}
-          className="rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm disabled:bg-neutral-50"
+          className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm text-brand-dark disabled:opacity-60"
         >
           {!techLocked && <option value="">Select technician</option>}
           {staff.map((person) => (
@@ -274,84 +273,59 @@ export default function RoutePlannerPanel({
           ))}
         </select>
         {allowUnscheduled && (
-          <div className="flex rounded-md border border-neutral-200 bg-white p-0.5 text-sm">
-            <button
-              type="button"
-              onClick={() => onFilter("scheduled")}
-              className={`rounded px-3 py-1.5 ${
-                filter === "scheduled"
-                  ? "bg-brand-orange text-white"
-                  : "text-neutral-600"
-              }`}
-            >
-              Scheduled
-            </button>
-            <button
-              type="button"
-              onClick={() => onFilter("unscheduled")}
-              className={`rounded px-3 py-1.5 ${
-                filter === "unscheduled"
-                  ? "bg-brand-orange text-white"
-                  : "text-neutral-600"
-              }`}
-            >
-              Unscheduled
-            </button>
-          </div>
+          <Segmented<MapJobFilter>
+            ariaLabel="Map pins"
+            value={filter}
+            onChange={onFilter}
+            options={[
+              { id: "scheduled", label: "Scheduled" },
+              { id: "unscheduled", label: "Unscheduled" },
+            ]}
+          />
         )}
-        <label className="inline-flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm text-neutral-700">
+        <label className="inline-flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm text-neutral-700">
           <input
             type="checkbox"
             checked={roundTrip}
             onChange={(event) => onRoundTrip(event.target.checked)}
+            className="accent-[var(--color-brand-orange)]"
           />
           Round trip
         </label>
-        <div className="flex rounded-md border border-neutral-200 bg-white p-0.5 text-sm">
+        <Segmented<RouteObjective>
+          ariaLabel="Route objective"
+          value={objective}
+          onChange={onObjective}
+          options={[
+            { id: "time", label: "Shortest time" },
+            { id: "distance", label: "Shortest distance" },
+          ]}
+        />
+        <div className="flex items-center gap-2 sm:ml-auto">
           <button
             type="button"
-            onClick={() => onObjective("time")}
-            className={`rounded px-3 py-1.5 ${
-              objective === "time" ? "bg-neutral-800 text-white" : "text-neutral-600"
-            }`}
+            disabled={!techId || jobs.length < 2 || optimizing || applying}
+            onClick={onOptimize}
+            className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm font-medium text-brand-dark hover:bg-neutral-100 disabled:opacity-40"
           >
-            Shortest time
+            {optimizing ? "Optimizing…" : "Optimize"}
           </button>
-          <button
-            type="button"
-            onClick={() => onObjective("distance")}
-            className={`rounded px-3 py-1.5 ${
-              objective === "distance"
-                ? "bg-neutral-800 text-white"
-                : "text-neutral-600"
-            }`}
-          >
-            Shortest distance
-          </button>
+          {canApply && (
+            <button
+              type="button"
+              disabled={!techId || jobs.length === 0 || optimizing || applying || planning}
+              onClick={onApply}
+              className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40"
+            >
+              {applying ? "Applying…" : "Apply to this day"}
+            </button>
+          )}
         </div>
-        <button
-          type="button"
-          disabled={!techId || jobs.length < 2 || optimizing || applying}
-          onClick={onOptimize}
-          className="rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm disabled:opacity-40"
-        >
-          {optimizing ? "Optimizing…" : "Optimize"}
-        </button>
-        {canApply && (
-          <button
-            type="button"
-            disabled={!techId || jobs.length === 0 || optimizing || applying || planning}
-            onClick={onApply}
-            className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40"
-          >
-            {applying ? "Applying…" : "Apply to this day"}
-          </button>
-        )}
       </div>
 
       {allowUnscheduled && (
-        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
-          <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-neutral-100 px-3 py-2 text-xs font-medium text-neutral-500">
+        <div className="overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
+          <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-neutral-200 px-3 py-2 text-[11px] font-medium text-neutral-400">
             <span>Technician</span>
             <span>Today</span>
           </div>
@@ -399,14 +373,14 @@ export default function RoutePlannerPanel({
       {techId && (
         <div
           ref={setRouteRef}
-          className={`rounded-lg border bg-white ${
+          className={`overflow-hidden rounded-xl border bg-neutral-50 transition-colors ${
             routeOver
               ? "border-brand-orange ring-2 ring-brand-orange"
               : "border-neutral-200"
           }`}
         >
           {showTotals && totalMinutes != null && totalMeters != null && (
-            <p className="border-b border-neutral-100 px-3 py-2 text-sm font-medium text-neutral-700">
+            <p className="border-b border-neutral-200 px-3 py-2 text-sm font-semibold text-brand-dark">
               {totalMinutes} min · {formatMiles(totalMeters)}
             </p>
           )}
@@ -419,7 +393,7 @@ export default function RoutePlannerPanel({
           ) : (
           <>
           <ol
-            className="divide-y divide-neutral-100 overflow-y-auto text-sm"
+            className="divide-y divide-neutral-200/70 overflow-y-auto text-sm"
             style={{ maxHeight: routeListHeight }}
           >
             <li className="px-3 py-2 text-neutral-600">Home</li>
@@ -436,7 +410,7 @@ export default function RoutePlannerPanel({
                   className="px-3 py-2"
                 >
                   <div className="flex items-center gap-2">
-                  <span className="w-5 shrink-0 text-xs font-semibold text-neutral-400">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-neutral-200 text-[10px] font-semibold text-neutral-600">
                     {index + 1}
                   </span>
                   <span className="min-w-0 flex-1">
@@ -568,7 +542,7 @@ export default function RoutePlannerPanel({
             tabIndex={0}
             onPointerDown={onRouteListResizeStart}
             onKeyDown={onRouteListResizeKey}
-            className="group flex h-3 cursor-row-resize items-center justify-center border-t border-neutral-100 focus:outline-none"
+            className="group flex h-3 cursor-row-resize items-center justify-center border-t border-neutral-200 focus:outline-none"
           >
             <span className="h-1 w-10 rounded-full bg-neutral-300 group-hover:bg-brand-orange group-focus:bg-brand-orange" />
           </div>

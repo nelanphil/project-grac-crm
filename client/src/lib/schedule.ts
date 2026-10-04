@@ -262,6 +262,17 @@ export function formatMonthDayYear(localDate: string): string {
   });
 }
 
+/** Long date, e.g. "August 27, 2026". */
+export function formatLongDate(localDate: string): string {
+  const iso = localDateTimeToIso(localDate, "12:00");
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: SCHEDULE_TIMEZONE,
+  });
+}
+
 /** Full weekday plus short date, e.g. "Tuesday, Sep 29". */
 export function formatWeekdayDate(localDate: string): string {
   const iso = localDateTimeToIso(localDate, "12:00");
@@ -346,6 +357,33 @@ export function workOrderLocalDate(job: {
   if (job.scheduledStart) return formatLocalDate(new Date(job.scheduledStart));
   if (job.date) return job.date.slice(0, 10);
   return null;
+}
+
+const JOB_ACCENTS = [
+  "#f59e0b",
+  "#22c55e",
+  "#6366f1",
+  "#a855f7",
+  "#f43f5e",
+  "#14b8a6",
+];
+/** Untyped jobs use the same status colors as the schedule map pins. */
+const SCHEDULED_ACCENT = "#2563eb";
+const UNSCHEDULED_ACCENT = "#f36c21";
+
+/** Stable accent color per work order type, shared by every schedule view. */
+export function jobAccent(job: {
+  workOrderType?: { _id?: string; label?: string } | null;
+  scheduledStart?: string | null;
+}): string {
+  const fallback = job.scheduledStart ? SCHEDULED_ACCENT : UNSCHEDULED_ACCENT;
+  const key = job.workOrderType?._id || job.workOrderType?.label || "";
+  if (!key) return fallback;
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) | 0;
+  }
+  return JOB_ACCENTS[Math.abs(hash) % JOB_ACCENTS.length] ?? fallback;
 }
 
 export function workOrderViewHref(job: {

@@ -17,6 +17,52 @@ const UNSCHEDULED_COLOR = "#f36c21";
 const SCHEDULED_COLOR = "#2563eb";
 const HOME_COLOR = "#404040";
 
+const DARK_MAP_STYLES: google.maps.MapTypeStyle[] = [
+  { elementType: "geometry", stylers: [{ color: "#1f1c1a" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#a89c93" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#1a1715" }] },
+  {
+    featureType: "administrative",
+    elementType: "geometry.stroke",
+    stylers: [{ color: "#4a423c" }],
+  },
+  { featureType: "poi", stylers: [{ visibility: "off" }] },
+  {
+    featureType: "road",
+    elementType: "geometry",
+    stylers: [{ color: "#3a3430" }],
+  },
+  {
+    featureType: "road",
+    elementType: "geometry.stroke",
+    stylers: [{ color: "#2a2522" }],
+  },
+  {
+    featureType: "road.highway",
+    elementType: "geometry",
+    stylers: [{ color: "#4d4540" }],
+  },
+  { featureType: "transit", stylers: [{ visibility: "off" }] },
+  {
+    featureType: "water",
+    elementType: "geometry",
+    stylers: [{ color: "#121a22" }],
+  },
+  {
+    featureType: "water",
+    elementType: "labels.text.fill",
+    stylers: [{ color: "#5c6b78" }],
+  },
+];
+
+function isDarkTheme(): boolean {
+  return document.documentElement.dataset.theme === "dark";
+}
+
+function mapStylesForTheme(): google.maps.MapTypeStyle[] | null {
+  return isDarkTheme() ? DARK_MAP_STYLES : null;
+}
+
 function parseCoord(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() !== "") {
@@ -70,7 +116,7 @@ function DroppableMapSurface({ children }: { children: ReactNode }) {
   return (
     <div
       ref={setNodeRef}
-      className={`relative h-[32rem] w-full overflow-hidden rounded-lg border ${
+      className={`relative h-[32rem] w-full overflow-hidden rounded-2xl border bg-neutral-100 shadow-sm ${
         isOver
           ? "border-brand-orange ring-2 ring-brand-orange"
           : "border-neutral-200"
@@ -97,7 +143,7 @@ function MapSurface({
 }) {
   if (droppable) return <DroppableMapSurface>{children}</DroppableMapSurface>;
   return (
-    <div className="relative h-[32rem] w-full overflow-hidden rounded-lg border border-neutral-200">
+    <div className="relative h-[32rem] w-full overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 shadow-sm">
       {children}
     </div>
   );
@@ -177,6 +223,7 @@ export default function ScheduleMap({
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: true,
+          styles: mapStylesForTheme(),
         });
         fittedKeyRef.current = "";
         if (!cancelled) {
@@ -204,6 +251,18 @@ export default function ScheduleMap({
       mapRef.current = null;
     };
   }, [token]);
+
+  useEffect(() => {
+    if (status !== "ready") return;
+    const observer = new MutationObserver(() => {
+      mapRef.current?.setOptions({ styles: mapStylesForTheme() });
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => observer.disconnect();
+  }, [status, mapGeneration]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -358,40 +417,46 @@ export default function ScheduleMap({
         mappedScheduled.some((job) => job._id === stop.workOrderId),
     );
 
+  const showHome = routeStops.some(
+    (stop) => stop.kind === "home" && stop.lat != null,
+  );
+
   return (
     <div className="space-y-3">
       {status === "error" && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-600">
-        {showUnscheduled && (
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: UNSCHEDULED_COLOR }}
-            />
-            Needs scheduling
-          </span>
-        )}
-        {showScheduled && (
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: SCHEDULED_COLOR }}
-            />
-            Scheduled
-          </span>
-        )}
-        {routeStops.some((stop) => stop.kind === "home" && stop.lat != null) && (
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: HOME_COLOR }}
-            />
-            Home
-          </span>
-        )}
-      </div>
       <MapSurface droppable={droppable}>
         <div ref={mapEl} className="h-full w-full" />
+        {(showUnscheduled || showScheduled || showHome) && (
+          <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex flex-wrap items-center gap-3 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-[11px] font-medium text-neutral-600 shadow-sm">
+            {showUnscheduled && (
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: UNSCHEDULED_COLOR }}
+                />
+                Needs scheduling
+              </span>
+            )}
+            {showScheduled && (
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: SCHEDULED_COLOR }}
+                />
+                Scheduled
+              </span>
+            )}
+            {showHome && (
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: HOME_COLOR }}
+                />
+                Home
+              </span>
+            )}
+          </div>
+        )}
       </MapSurface>
     </div>
   );

@@ -49,6 +49,7 @@ import {
   formatAddressLine,
   formatLocalDate,
   formatLocalTime,
+  formatLongDate,
   formatMonthYear,
   formatPrettyDate,
   formatWeekdayDate,
@@ -73,6 +74,7 @@ import RoutePlannerPanel, {
 import ScheduleMap, {
   jobHasCoordinates,
 } from "@/components/schedule/ScheduleMap";
+import Segmented from "@/components/schedule/Segmented";
 
 type ViewMode = "week" | "month";
 type MonthMode = "calendar" | "table";
@@ -173,7 +175,7 @@ function emptyQueue() {
 const RAIL_WIDTH_KEY = "schedule-wizard-rail-width";
 const RAIL_MIN = 220;
 const RAIL_MAX = 560;
-const RAIL_DEFAULT = 256;
+const RAIL_DEFAULT = 288;
 
 function clampRailWidth(value: number): number {
   if (!Number.isFinite(value)) return RAIL_DEFAULT;
@@ -341,86 +343,91 @@ function ScheduleRail({
   const newestFirst = dateOrder === "desc";
 
   return (
-    <aside className="flex max-h-[40rem] min-h-0 flex-col space-y-2">
-      <div className="flex items-center gap-1">
+    <aside className="flex max-h-[44rem] min-h-0 flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-base font-semibold text-brand-dark">Upcoming</h2>
         <button
           type="button"
-          aria-label="Previous month"
-          onClick={() => onMonth(shiftMonth(month, -1))}
-          className="rounded-md border border-neutral-200 bg-white p-1 text-neutral-600 hover:bg-neutral-50"
+          aria-pressed={newestFirst}
+          aria-label={
+            newestFirst
+              ? "Showing newest dates first. Show oldest first."
+              : "Showing oldest dates first. Show newest first."
+          }
+          title={newestFirst ? "Newest first" : "Oldest first"}
+          onClick={() => onDateOrder(newestFirst ? "asc" : "desc")}
+          className="rounded-lg border border-neutral-200 p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
         >
-          <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
-        </button>
-        <input
-          type="month"
-          value={month}
-          aria-label="Filter jobs by month and year"
-          onChange={(event) => {
-            if (event.target.value) onMonth(event.target.value);
-          }}
-          className="min-w-0 flex-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs text-brand-dark"
-        />
-        <button
-          type="button"
-          aria-label="Next month"
-          onClick={() => onMonth(shiftMonth(month, 1))}
-          className="rounded-md border border-neutral-200 bg-white p-1 text-neutral-600 hover:bg-neutral-50"
-        >
-          <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+          {newestFirst ? (
+            <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+          ) : (
+            <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+          )}
         </button>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex rounded-md border border-neutral-200 bg-white p-0.5 text-xs">
-          <RailFilterTip
-            label={`All work orders in ${monthLabel}. Unscheduled jobs are listed first within each day.`}
-          >
-            <button
-              type="button"
-              onClick={() => onFilter("current")}
-              className={`rounded px-2.5 py-1 font-medium ${
-                filter === "current"
-                  ? "bg-brand-orange text-white"
-                  : "text-neutral-600"
-              }`}
-            >
-              Current
-            </button>
-          </RailFilterTip>
-          <RailFilterTip
-            label={`Only work orders in ${monthLabel} that still need a time slot.`}
-          >
-            <button
-              type="button"
-              onClick={() => onFilter("unscheduled")}
-              className={`rounded px-2.5 py-1 font-medium ${
-                filter === "unscheduled"
-                  ? "bg-brand-orange text-white"
-                  : "text-neutral-600"
-              }`}
-            >
-              Unscheduled
-            </button>
-          </RailFilterTip>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+      <div className="space-y-2">
+        <div className="flex items-center gap-1">
           <button
             type="button"
-            aria-pressed={newestFirst}
-            aria-label={
-              newestFirst
-                ? "Showing newest dates first. Show oldest first."
-                : "Showing oldest dates first. Show newest first."
-            }
-            onClick={() => onDateOrder(newestFirst ? "asc" : "desc")}
-            className="inline-flex items-center gap-0.5 rounded-md border border-neutral-200 bg-white px-1.5 py-1 text-[11px] font-medium text-neutral-600 hover:bg-neutral-50"
+            aria-label="Previous month"
+            onClick={() => onMonth(shiftMonth(month, -1))}
+            className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
           >
-            {newestFirst ? (
-              <ArrowUp className="h-3 w-3" aria-hidden />
-            ) : (
-              <ArrowDown className="h-3 w-3" aria-hidden />
-            )}
-            {newestFirst ? "Newest" : "Oldest"}
+            <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
           </button>
+          <input
+            type="month"
+            value={month}
+            aria-label="Filter jobs by month and year"
+            onChange={(event) => {
+              if (event.target.value) onMonth(event.target.value);
+            }}
+            className="min-w-0 flex-1 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1 text-xs text-brand-dark"
+          />
+          <button
+            type="button"
+            aria-label="Next month"
+            onClick={() => onMonth(shiftMonth(month, 1))}
+            className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+          >
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-100 p-0.5 text-xs">
+            <RailFilterTip
+              label={`All work orders in ${monthLabel}. Unscheduled jobs are listed first within each day.`}
+            >
+              <button
+                type="button"
+                aria-pressed={filter === "current"}
+                onClick={() => onFilter("current")}
+                className={`rounded-md px-2.5 py-1 font-medium ${
+                  filter === "current"
+                    ? "bg-white text-brand-dark shadow-sm ring-1 ring-neutral-200"
+                    : "text-neutral-500 hover:text-brand-dark"
+                }`}
+              >
+                Current
+              </button>
+            </RailFilterTip>
+            <RailFilterTip
+              label={`Only work orders in ${monthLabel} that still need a time slot.`}
+            >
+              <button
+                type="button"
+                aria-pressed={filter === "unscheduled"}
+                onClick={() => onFilter("unscheduled")}
+                className={`rounded-md px-2.5 py-1 font-medium ${
+                  filter === "unscheduled"
+                    ? "bg-white text-brand-dark shadow-sm ring-1 ring-neutral-200"
+                    : "text-neutral-500 hover:text-brand-dark"
+                }`}
+              >
+                Unscheduled
+              </button>
+            </RailFilterTip>
+          </div>
           <button
             type="button"
             disabled={!canSuggest || suggesting}
@@ -440,10 +447,10 @@ function ScheduleRail({
             : `No work orders in ${monthLabel}.`}
         </p>
       ) : (
-        <div className="min-h-0 space-y-3 overflow-y-auto">
+        <div className="-mx-1 min-h-0 space-y-3 overflow-y-auto px-1">
           {groups.map((group) => (
             <section key={group.key} className="space-y-2">
-              <h3 className="sticky top-0 z-10 border-b border-neutral-200 bg-[var(--staff-canvas)] px-0.5 py-1.5 text-xs font-semibold text-brand-dark">
+              <h3 className="sticky top-0 z-10 bg-white py-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                 {group.label}
               </h3>
               {group.jobs.map((order) => (
@@ -461,6 +468,174 @@ function ScheduleRail({
         </div>
       )}
     </aside>
+  );
+}
+
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function ScheduleHeader({
+  view,
+  surface,
+  monthMode,
+  today,
+  selectedDate,
+  monthStart,
+  weekDays,
+  onToday,
+  onView,
+  onSurface,
+  onMonthMode,
+  onStepTitle,
+  onStepWeek,
+  onSelectDay,
+}: {
+  view: ViewMode;
+  surface: SurfaceMode;
+  monthMode: MonthMode;
+  today: string;
+  selectedDate: string;
+  monthStart: string;
+  weekDays: string[];
+  onToday: () => void;
+  onView: (view: ViewMode) => void;
+  onSurface: (surface: SurfaceMode) => void;
+  onMonthMode: (mode: MonthMode) => void;
+  onStepTitle: (direction: -1 | 1) => void;
+  onStepWeek: (direction: -1 | 1) => void;
+  onSelectDay: (day: string) => void;
+}) {
+  const showDays = view === "week" || surface === "map";
+  const monthOnly = view === "month" && surface === "calendar";
+  const titleUnit = monthOnly ? "month" : "day";
+  const rangeLabel =
+    weekDays.length > 0
+      ? `${formatPrettyDate(weekDays[0]!)} – ${formatPrettyDate(weekDays[weekDays.length - 1]!)}`
+      : "";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <h2 className="min-w-0 text-2xl font-semibold tracking-tight text-brand-dark break-words">
+            {monthOnly
+              ? formatMonthYear(monthStart.slice(0, 7))
+              : formatLongDate(selectedDate)}
+          </h2>
+          <div className="flex shrink-0 items-center">
+            <button
+              type="button"
+              aria-label={`Previous ${titleUnit}`}
+              onClick={() => onStepTitle(-1)}
+              className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label={`Next ${titleUnit}`}
+              onClick={() => onStepTitle(1)}
+              className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+        </div>
+        {showDays && rangeLabel ? (
+          <span className="text-xs text-neutral-500">{rangeLabel}</span>
+        ) : null}
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm lg:flex-row lg:items-center">
+        {showDays ? (
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <button
+              type="button"
+              aria-label="Previous week"
+              onClick={() => onStepWeek(-1)}
+              className="shrink-0 rounded-lg border border-neutral-200 p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </button>
+            <div className="grid min-w-0 flex-1 grid-cols-7 gap-1">
+              {weekDays.map((day, index) => {
+                const selected = day === selectedDate;
+                const isToday = day === today;
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => onSelectDay(day)}
+                    className={`flex flex-col items-center rounded-lg border px-1 py-1.5 text-center transition-colors ${
+                      selected
+                        ? "border-neutral-300 bg-neutral-100 shadow-sm"
+                        : "border-transparent hover:bg-neutral-50"
+                    }`}
+                  >
+                    <span className="text-[11px] text-neutral-500">
+                      {WEEKDAY_SHORT[index]}
+                    </span>
+                    <span
+                      className={`text-sm font-semibold tabular-nums ${
+                        isToday ? "text-brand-orange" : "text-brand-dark"
+                      }`}
+                    >
+                      {Number(day.slice(8))}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              aria-label="Next week"
+              onClick={() => onStepWeek(1)}
+              className="shrink-0 rounded-lg border border-neutral-200 p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+        ) : (
+          <div className="min-w-0 flex-1 px-2 text-sm text-neutral-500">
+            Pick a day to open its technician board.
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <Segmented<"today" | ViewMode>
+            ariaLabel="Calendar range"
+            value={
+              view === "week" && selectedDate === today ? "today" : view
+            }
+            onChange={(id) => (id === "today" ? onToday() : onView(id))}
+            options={[
+              { id: "today", label: "Today" },
+              { id: "week", label: "Week" },
+              { id: "month", label: "Month" },
+            ]}
+          />
+          {monthOnly && (
+            <Segmented<MonthMode>
+              ariaLabel="Month layout"
+              value={monthMode}
+              onChange={onMonthMode}
+              options={[
+                { id: "calendar", label: "Grid" },
+                { id: "table", label: "Table" },
+              ]}
+            />
+          )}
+          <Segmented<SurfaceMode>
+            ariaLabel="Schedule surface"
+            value={surface}
+            onChange={onSurface}
+            options={[
+              { id: "calendar", label: "Calendar" },
+              { id: "map", label: "Map" },
+            ]}
+          />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -502,7 +677,7 @@ function ScheduleSplit({
     const startWidth = widthRef.current;
 
     function onMove(moveEvent: PointerEvent) {
-      applyWidth(startWidth + (moveEvent.clientX - startX));
+      applyWidth(startWidth - (moveEvent.clientX - startX));
     }
     function onUp() {
       window.removeEventListener("pointermove", onMove);
@@ -523,23 +698,18 @@ function ScheduleSplit({
     const step = event.shiftKey ? 40 : 16;
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      applyWidth(widthRef.current - step);
+      applyWidth(widthRef.current + step);
     } else if (event.key === "ArrowRight") {
       event.preventDefault();
-      applyWidth(widthRef.current + step);
+      applyWidth(widthRef.current - step);
     }
   }
 
   if (!sidebar) return <>{children}</>;
 
   return (
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
-      <div
-        className="w-full min-w-0 lg:w-[var(--schedule-rail-width)] lg:shrink-0"
-        style={{ "--schedule-rail-width": `${width}px` } as CSSProperties}
-      >
-        {sidebar}
-      </div>
+    <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch lg:gap-1">
+      <div className="min-w-0 flex-1">{children}</div>
       <div
         role="separator"
         aria-orientation="vertical"
@@ -552,9 +722,14 @@ function ScheduleSplit({
         onKeyDown={onKeyDown}
         className="group relative hidden w-3 shrink-0 cursor-col-resize focus:outline-none lg:block"
       >
-        <span className="absolute inset-y-8 left-1/2 w-1.5 -translate-x-1/2 rounded-full bg-neutral-600/35 group-hover:bg-brand-orange group-focus:bg-brand-orange" />
+        <span className="absolute inset-y-8 left-1/2 w-1 -translate-x-1/2 rounded-full bg-neutral-200 group-hover:bg-brand-orange group-focus:bg-brand-orange" />
       </div>
-      <div className="min-w-0 flex-1">{children}</div>
+      <div
+        className="w-full min-w-0 lg:w-[var(--schedule-rail-width)] lg:shrink-0"
+        style={{ "--schedule-rail-width": `${width}px` } as CSSProperties}
+      >
+        {sidebar}
+      </div>
     </div>
   );
 }
@@ -1406,129 +1581,44 @@ export default function CalendarTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              const next =
-                view === "week"
-                  ? addDays(anchorDate, -7)
-                  : addDays(monthStart, -1);
-              setAnchorDate(next);
-              setSelectedDate(
-                view === "week" ? addDays(weekStart, -7) : startOfMonth(next),
-              );
-            }}
-            className="rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm"
-          >
-            Previous
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setAnchorDate(today);
-              setSelectedDate(today);
-            }}
-            className="rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm"
-          >
-            Today
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const next =
-                view === "week" ? addDays(anchorDate, 7) : addDays(monthEnd, 1);
-              setAnchorDate(next);
-              setSelectedDate(
-                view === "week" ? addDays(weekStart, 7) : startOfMonth(next),
-              );
-            }}
-            className="rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm"
-          >
-            Next
-          </button>
-          <span className="min-w-0 text-sm font-medium text-neutral-600 break-words">
-            {view === "week"
-              ? `${formatPrettyDate(weekStart)} – ${formatPrettyDate(weekEnd)}`
-              : formatPrettyDate(monthStart)}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-md border border-neutral-200 bg-white p-0.5 text-sm">
-            <button
-              type="button"
-              onClick={() => setView("week")}
-              className={`rounded px-3 py-1.5 ${view === "week" ? "bg-brand-orange text-white" : "text-neutral-600"}`}
-            >
-              Week
-            </button>
-            <button
-              type="button"
-              onClick={() => setView("month")}
-              className={`rounded px-3 py-1.5 ${view === "month" ? "bg-brand-orange text-white" : "text-neutral-600"}`}
-            >
-              Month
-            </button>
-          </div>
-          {view === "month" && surface === "calendar" && (
-            <div className="flex rounded-md border border-neutral-200 bg-white p-0.5 text-sm">
-              <button
-                type="button"
-                onClick={() => setMonthMode("calendar")}
-                className={`rounded px-3 py-1.5 ${monthMode === "calendar" ? "bg-neutral-800 text-white" : "text-neutral-600"}`}
-              >
-                Calendar
-              </button>
-              <button
-                type="button"
-                onClick={() => setMonthMode("table")}
-                className={`rounded px-3 py-1.5 ${monthMode === "table" ? "bg-neutral-800 text-white" : "text-neutral-600"}`}
-              >
-                Table
-              </button>
-            </div>
-          )}
-          <div className="flex rounded-md border border-neutral-200 bg-white p-0.5 text-sm">
-            <button
-              type="button"
-              onClick={() => setSurface("calendar")}
-              className={`rounded px-3 py-1.5 ${surface === "calendar" ? "bg-brand-orange text-white" : "text-neutral-600"}`}
-            >
-              Calendar
-            </button>
-            <button
-              type="button"
-              onClick={() => setSurface("map")}
-              className={`rounded px-3 py-1.5 ${surface === "map" ? "bg-brand-orange text-white" : "text-neutral-600"}`}
-            >
-              Map
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {(view === "week" || surface === "map") && (
-        <div className="flex gap-1 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex-wrap md:overflow-visible md:pb-0">
-          {weekDays.map((day) => (
-            <button
-              key={day}
-              type="button"
-              onClick={() => {
-                setSelectedDate(day);
-                setAnchorDate(day);
-              }}
-              className={`shrink-0 rounded-md px-3 py-2 text-xs font-medium ${
-                day === selectedDate
-                  ? "bg-brand-orange text-white"
-                  : "bg-white text-neutral-600 border border-neutral-200"
-              }`}
-            >
-              {formatPrettyDate(day)}
-            </button>
-          ))}
-        </div>
-      )}
+      <ScheduleHeader
+        view={view}
+        surface={surface}
+        monthMode={monthMode}
+        today={today}
+        selectedDate={selectedDate}
+        monthStart={monthStart}
+        weekDays={weekDays}
+        onToday={() => {
+          setView("week");
+          setAnchorDate(today);
+          setSelectedDate(today);
+        }}
+        onView={setView}
+        onSurface={setSurface}
+        onMonthMode={setMonthMode}
+        onStepTitle={(direction) => {
+          if (view === "month" && surface === "calendar") {
+            const next =
+              direction < 0 ? addDays(monthStart, -1) : addDays(monthEnd, 1);
+            setAnchorDate(next);
+            setSelectedDate(startOfMonth(next));
+            return;
+          }
+          const next = addDays(selectedDate, direction);
+          setAnchorDate(next);
+          setSelectedDate(next);
+        }}
+        onStepWeek={(direction) => {
+          const next = addDays(selectedDate, 7 * direction);
+          setAnchorDate(next);
+          setSelectedDate(next);
+        }}
+        onSelectDay={(day) => {
+          setSelectedDate(day);
+          setAnchorDate(day);
+        }}
+      />
 
       {error && (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1706,6 +1796,12 @@ export default function CalendarTab({
                 setSelectedDate(date);
                 setView("week");
                 setAnchorDate(date);
+              }}
+              onJobClick={(job) => {
+                setEditingJob(job);
+                setDurationDraft(
+                  job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                );
               }}
             />
           ) : (

@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { CalendarDays } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuthStore } from "@/store/useAuthStore";
 import { isDispatcherRole } from "@/lib/schedule";
 import CalendarTab from "@/components/schedule/CalendarTab";
 import TechniciansTab from "@/components/schedule/TechniciansTab";
+import Segmented from "@/components/schedule/Segmented";
 
 type TabId = "calendar" | "technicians";
 
@@ -21,34 +23,26 @@ function SchedulePageInner() {
   ];
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-brand-dark">Schedule</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          {dispatcher
-            ? "Dispatch work onto technician calendars and manage who appears on the board."
-            : "Your assigned work orders for the selected week or month."}
-        </p>
-      </div>
-
-      {tabs.length > 1 && (
-        <div className="flex gap-1 overflow-x-auto rounded-lg border border-neutral-200 bg-white p-0.5 w-fit">
-          {tabs.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setTab(item.id)}
-              className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium ${
-                tab === item.id
-                  ? "bg-brand-orange text-white"
-                  : "text-neutral-600 hover:bg-neutral-50"
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 pb-3">
+        <div className="flex min-w-0 items-center gap-2 text-sm">
+          <CalendarDays className="h-4 w-4 shrink-0 text-neutral-500" aria-hidden />
+          <h1 className="font-semibold text-brand-dark">Schedule</h1>
+          <span className="hidden truncate text-neutral-400 sm:inline">
+            {dispatcher
+              ? "Dispatch work onto technician calendars."
+              : "Your assigned work orders."}
+          </span>
         </div>
-      )}
+        {tabs.length > 1 && (
+          <Segmented<TabId>
+            ariaLabel="Schedule section"
+            value={tab}
+            onChange={setTab}
+            options={tabs}
+          />
+        )}
+      </div>
 
       {tab === "calendar" && <CalendarTab />}
       {tab === "technicians" && dispatcher && <TechniciansTab />}
