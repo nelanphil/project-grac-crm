@@ -34,6 +34,13 @@
   --font-sans: var(--font-inter);
 }
 
+/* Every route except the marketing homepage sets data-ui-scale="compact".
+   75% of the default root size scales rem type and spacing to match a
+   75% browser zoom while vh layouts still fill the window. */
+html[data-ui-scale="compact"] {
+  font-size: 75%;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
@@ -51,6 +58,10 @@ body {
 }
 
 @media print {
+  html[data-ui-scale="compact"] {
+    font-size: 100%;
+  }
+
   body {
     background: #fff !important;
   }

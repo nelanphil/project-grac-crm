@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useLayoutEffect, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
@@ -29,6 +29,15 @@ export default function SiteChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const path = normalizePath(pathname);
   const bare = BARE_PATHS.has(path);
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    if (path === "" || path === "/") {
+      root.removeAttribute("data-ui-scale");
+    } else {
+      root.setAttribute("data-ui-scale", "compact");
+    }
+  }, [path]);
 
   if (bare) {
     return (
