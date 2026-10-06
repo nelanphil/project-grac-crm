@@ -2032,7 +2032,7 @@ function speakSlot(start: Date): string {
   }).format(start);
 }
 
-/** Next open 60-minute windows on schedulable staff (next ~14 days). */
+/** Next open appointment windows on schedulable staff (next ~14 days). */
 export async function listNextAvailableSlots(opts?: {
   estimatedMinutes?: number;
   count?: number;

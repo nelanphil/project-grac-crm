@@ -30,6 +30,7 @@ import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { customerDisplayName } from "../services/notification.service";
 import {
   addMinutes,
+  DEFAULT_ESTIMATED_MINUTES,
   formatLocalDate,
   formatLocalTime,
   localDateToUtc,
@@ -205,7 +206,7 @@ async function main(): Promise<void> {
     if (!job.scheduledStart || !job.assignedUserRef) continue;
     const end =
       job.scheduledEnd ??
-      addMinutes(job.scheduledStart, job.estimatedMinutes || 60);
+      addMinutes(job.scheduledStart, job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES);
     const key = String(job.assignedUserRef);
     const list = busyByTech.get(key) ?? [];
     list.push({ start: job.scheduledStart, end });

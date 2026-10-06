@@ -770,7 +770,7 @@ export default function CalendarTab({
   const [selectedRailJob, setSelectedRailJob] =
     useState<WorkOrderListItem | null>(null);
   const [editingJob, setEditingJob] = useState<WorkOrderListItem | null>(null);
-  const [durationDraft, setDurationDraft] = useState(60);
+  const [durationDraft, setDurationDraft] = useState(DEFAULT_ESTIMATED_MINUTES);
   const [startOptions, setStartOptions] = useState<ScheduleStartOptions | null>(
     null,
   );

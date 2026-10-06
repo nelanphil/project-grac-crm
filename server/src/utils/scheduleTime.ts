@@ -15,7 +15,7 @@ export type WeekdayKey = (typeof WEEKDAY_KEYS)[number];
 
 export const DEFAULT_DAY_START = "08:00";
 export const DEFAULT_DAY_END = "17:00";
-export const DEFAULT_ESTIMATED_MINUTES = 60;
+export const DEFAULT_ESTIMATED_MINUTES = 30;
 
 export type WeeklyDayHours = {
   enabled: boolean;

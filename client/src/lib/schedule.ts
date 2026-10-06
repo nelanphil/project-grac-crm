@@ -29,7 +29,7 @@ export const WEEKDAY_LABELS: Record<WeekdayKey, string> = {
 
 export const BOARD_HOUR_START = 7;
 export const BOARD_HOUR_END = 19;
-export const DEFAULT_ESTIMATED_MINUTES = 60;
+export const DEFAULT_ESTIMATED_MINUTES = 30;
 
 export function emptyHomeLocation(): UserHomeLocation {
   return {

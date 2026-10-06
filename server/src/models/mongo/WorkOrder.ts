@@ -163,7 +163,7 @@ const workOrderSchema = new Schema<IWorkOrder>(
     },
     scheduledStart: { type: Date, default: null, index: true },
     scheduledEnd: { type: Date, default: null },
-    estimatedMinutes: { type: Number, default: 60 },
+    estimatedMinutes: { type: Number, default: 30 },
     appointmentCanceledAt: { type: Date, default: null, index: true },
     appointmentCanceledBy: {
       type: Schema.Types.ObjectId,

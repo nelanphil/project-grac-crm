@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-  type TouchEvent,
-} from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   ApiError,
@@ -30,7 +24,6 @@ import {
   formatAddressLine,
   formatLocalClock,
   formatLocalDate,
-  formatMonthDayYear,
   formatWeekdayDate,
   startOfWeekSunday,
   workOrderLocalDate,
@@ -52,8 +45,6 @@ function technicianName(tech: {
 function possessive(name: string): string {
   return `${name}'s`;
 }
-
-type RangeMode = "day" | "week";
 
 function assignedToUser(job: WorkOrderListItem, userId: string): boolean {
   if (job.assignee?._id === userId) return true;
@@ -134,119 +125,6 @@ function applyAddressCoords(
       address: { ...job.address, lat: hit.lat, lng: hit.lng },
     };
   });
-}
-
-const SWIPE_THRESHOLD = 48;
-const SLIDE_MS = 180;
-
-function WeekDayCarousel({
-  days,
-  date,
-  onDateChange,
-  children,
-}: {
-  days: { date: string; jobs: WorkOrderListItem[] }[];
-  date: string;
-  onDateChange: (date: string) => void;
-  children: ReactNode;
-}) {
-  const frameRef = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<number | null>(null);
-  const gesture = useRef({
-    x: 0,
-    y: 0,
-    dx: 0,
-    axis: null as "x" | "y" | null,
-  });
-  const [dragX, setDragX] = useState(0);
-  const [animate, setAnimate] = useState(false);
-  const index = Math.max(
-    0,
-    days.findIndex((day) => day.date === date),
-  );
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current != null) window.clearTimeout(timerRef.current);
-    };
-  }, []);
-
-  function onTouchStart(event: TouchEvent<HTMLDivElement>) {
-    if (event.touches.length !== 1 || timerRef.current != null) return;
-    const touch = event.touches[0];
-    gesture.current = { x: touch.clientX, y: touch.clientY, dx: 0, axis: null };
-    setAnimate(false);
-  }
-
-  function onTouchMove(event: TouchEvent<HTMLDivElement>) {
-    const touch = event.touches[0];
-    if (!touch || timerRef.current != null) return;
-    const dx = touch.clientX - gesture.current.x;
-    const dy = touch.clientY - gesture.current.y;
-    if (!gesture.current.axis) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      gesture.current.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
-    }
-    if (gesture.current.axis !== "x") return;
-    const atStart = index <= 0 && dx > 0;
-    const atEnd = index >= days.length - 1 && dx < 0;
-    const next = atStart || atEnd ? dx * 0.35 : dx;
-    gesture.current.dx = next;
-    setDragX(next);
-  }
-
-  function onTouchEnd() {
-    if (gesture.current.axis !== "x" || timerRef.current != null) {
-      gesture.current.axis = null;
-      return;
-    }
-    const dx = gesture.current.dx;
-    gesture.current.axis = null;
-    const width = frameRef.current?.offsetWidth ?? 1;
-    const nextIndex = dx < 0 ? index + 1 : index - 1;
-    if (Math.abs(dx) < SWIPE_THRESHOLD || nextIndex < 0 || nextIndex >= days.length) {
-      setAnimate(true);
-      setDragX(0);
-      return;
-    }
-    const direction = dx < 0 ? -1 : 1;
-    setAnimate(true);
-    setDragX(direction * width);
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      setAnimate(false);
-      setDragX(direction * -width);
-      onDateChange(days[nextIndex].date);
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          setAnimate(true);
-          setDragX(0);
-        });
-      });
-    }, SLIDE_MS);
-  }
-
-  return (
-    <div
-      ref={frameRef}
-      className="overflow-hidden"
-      style={{ touchAction: "pan-y" }}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchEnd}
-    >
-      <div
-        className="min-w-0"
-        style={{
-          transform: `translateX(${dragX}px)`,
-          transition: animate ? `transform ${SLIDE_MS}ms ease-out` : "none",
-        }}
-      >
-        {children}
-      </div>
-    </div>
-  );
 }
 
 type CardAction = "complete" | "paid";
@@ -415,7 +293,6 @@ export default function TechnicianHomeDashboard() {
 
   const today = formatLocalDate(new Date());
 
-  const [mode, setMode] = useState<RangeMode>("day");
   const [technicians, setTechnicians] = useState<TechnicianListItem[]>([]);
   const [techId, setTechId] = useState<string | null>(null);
   const [techsLoading, setTechsLoading] = useState(canSwitchTechnicians);
@@ -630,32 +507,7 @@ export default function TechnicianHomeDashboard() {
     };
   }, [token, subjectId, mapDay, mapCoordKey]);
 
-  const weekDays: { date: string; jobs: WorkOrderListItem[] }[] = [];
-  for (let offset = 0; offset < 7; offset += 1) {
-    const date = addDays(weekStart, offset);
-    const dayJobsForDate = jobs.filter(
-      (job) => workOrderLocalDate(job) === date,
-    );
-    if (dayJobsForDate.length > 0) {
-      weekDays.push({ date, jobs: dayJobsForDate });
-    }
-  }
-
-  const weekCalendar = Array.from({ length: 7 }, (_, offset) => {
-    const date = addDays(weekStart, offset);
-    return {
-      date,
-      jobs: jobs.filter((job) => workOrderLocalDate(job) === date),
-    };
-  });
-  const mobileWeekDay =
-    weekCalendar.find((day) => day.date === focusDate) ?? weekCalendar[0];
-
-  const visibleCount = mode === "day" ? dayJobs.length : jobs.length;
-  const periodLabel =
-    mode === "day"
-      ? formatWeekdayDate(focusDate)
-      : `${formatMonthDayYear(weekStart)} – ${formatMonthDayYear(weekEnd)}`;
+  const periodLabel = formatWeekdayDate(focusDate);
   const pageError = techsError ?? error;
   const pageLoading =
     (canSwitchTechnicians && techsLoading) || (Boolean(subjectId) && loading);
@@ -673,8 +525,6 @@ export default function TechnicianHomeDashboard() {
     focusDate === today
       ? `Nothing on ${scheduleWhose} schedule today.`
       : `Nothing on ${scheduleWhose} schedule for ${formatWeekdayDate(focusDate)}.`;
-  const emptyDay = `Nothing on ${scheduleWhose} schedule.`;
-  const emptyWeek = `Nothing on ${scheduleWhose} schedule this week.`;
 
   function selectTechnician(id: string) {
     setTechId(id);
@@ -738,15 +588,8 @@ export default function TechnicianHomeDashboard() {
     setSelectedId(null);
   }
 
-  function showWeekDay(date: string) {
-    if (date === focusDate) return;
-    setFocusDate(date);
-    clearOpenJob();
-  }
-
   function shiftFocus(direction: -1 | 1) {
-    const step = mode === "day" ? direction : direction * 7;
-    setFocusDate(addDays(focusDate, step));
+    setFocusDate(addDays(focusDate, direction));
     clearOpenJob();
   }
 
@@ -839,16 +682,16 @@ export default function TechnicianHomeDashboard() {
             : "mx-auto w-full max-w-3xl"
       }`}
     >
-      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-[var(--staff-ink)]">To Do</h2>
-          {canSwitchTechnicians && technicians.length > 0 ? (
-            <label className="mt-2 flex flex-col gap-1 text-xs font-medium text-[var(--staff-muted)]">
-              Technician
+      <div className="space-y-3">
+        <h2 className="text-2xl font-bold text-[var(--staff-ink)]">To Do</h2>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4">
+          <div className="min-w-0 overflow-hidden">
+            {canSwitchTechnicians && technicians.length > 0 ? (
               <select
+                aria-label="Technician"
                 value={subjectId}
                 onChange={(event) => selectTechnician(event.target.value)}
-                className="rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-sm font-medium text-[var(--staff-ink)]"
+                className="max-w-full truncate rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-sm font-medium text-[var(--staff-ink)]"
               >
                 {technicians.map((tech) => (
                   <option key={tech._id} value={tech._id}>
@@ -856,54 +699,34 @@ export default function TechnicianHomeDashboard() {
                   </option>
                 ))}
               </select>
-            </label>
-          ) : null}
-          <div className="mt-1 flex items-center gap-1.5">
+            ) : null}
+          </div>
+          <div className="flex min-w-0 items-center justify-center gap-1.5">
             <button
               type="button"
-              aria-label={mode === "day" ? "Previous day" : "Previous week"}
+              aria-label="Previous day"
               onClick={() => shiftFocus(-1)}
-              className="rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
+              className="shrink-0 rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
             >
               <ChevronLeft className="h-4 w-4" aria-hidden />
             </button>
-            <p className="min-w-0 text-sm text-[var(--staff-muted)]">
+            <p className="min-w-0 truncate text-sm text-[var(--staff-muted)]">
               {pageLoading
                 ? loadingLabel
                 : pageError
                   ? periodLabel
-                  : `${periodLabel} · ${jobCountLabel(visibleCount)}`}
+                  : `${periodLabel} · ${jobCountLabel(dayJobs.length)}`}
             </p>
             <button
               type="button"
-              aria-label={mode === "day" ? "Next day" : "Next week"}
+              aria-label="Next day"
               onClick={() => shiftFocus(1)}
-              className="rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
+              className="shrink-0 rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
             >
               <ChevronRight className="h-4 w-4" aria-hidden />
             </button>
           </div>
-        </div>
-        <div className="flex w-fit max-w-full gap-1 rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] p-0.5">
-          {(
-            [
-              { id: "day", label: "Day" },
-              { id: "week", label: "Week" },
-            ] as const
-          ).map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setMode(item.id)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                mode === item.id
-                  ? "bg-brand-orange text-white"
-                  : "text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+          <div aria-hidden />
         </div>
       </div>
 
@@ -917,65 +740,14 @@ export default function TechnicianHomeDashboard() {
         <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
           No technicians to show.
         </p>
-      ) : mode === "day" ? (
-        dayJobs.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
-            {emptyToday}
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {dayJobs.map((job) => (
-              <AppointmentCard key={job._id} {...cardProps(job)} />
-            ))}
-          </div>
-        )
-      ) : layout === "mobile" ? (
-        <WeekDayCarousel
-          days={weekCalendar}
-          date={focusDate}
-          onDateChange={showWeekDay}
-        >
-          <section className="min-w-0 space-y-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-brand-orange">
-              {formatWeekdayDate(mobileWeekDay.date)}
-            </h2>
-            {mobileWeekDay.jobs.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
-                {emptyDay}
-              </p>
-            ) : (
-              mobileWeekDay.jobs.map((job) => (
-                <AppointmentCard key={job._id} {...cardProps(job)} />
-              ))
-            )}
-          </section>
-        </WeekDayCarousel>
-      ) : weekDays.length === 0 ? (
+      ) : dayJobs.length === 0 ? (
         <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
-          {emptyWeek}
+          {emptyToday}
         </p>
       ) : (
-        <div className="space-y-6">
-          {weekDays.map((day) => (
-            <section key={day.date} className="min-w-0 space-y-3">
-              <h2>
-                <button
-                  type="button"
-                  onClick={() => setFocusDate(day.date)}
-                  aria-pressed={day.date === focusDate}
-                  className={`rounded-md px-2 py-1 text-left text-sm font-semibold uppercase tracking-wide ${
-                    day.date === focusDate
-                      ? "bg-brand-orange text-white"
-                      : "text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
-                  }`}
-                >
-                  {formatWeekdayDate(day.date)}
-                </button>
-              </h2>
-              {day.jobs.map((job) => (
-                <AppointmentCard key={job._id} {...cardProps(job)} />
-              ))}
-            </section>
+        <div className="space-y-3">
+          {dayJobs.map((job) => (
+            <AppointmentCard key={job._id} {...cardProps(job)} />
           ))}
         </div>
       )}
