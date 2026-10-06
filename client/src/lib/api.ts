@@ -4936,6 +4936,12 @@ export interface MessageThreadItem {
   lastMessageChannel: CommunicationChannel | null;
   lastMessagePreview: string;
   messageCount: number;
+  readAt: string | null;
+  readBy: {
+    _id: string;
+    first_name: string;
+    last_name: string;
+  } | null;
   contact: {
     _id: string;
     first: string;
@@ -5198,6 +5204,7 @@ export async function getMessagingThreads(
     customerId?: string;
     contactId?: string;
     status?: MessageThreadStatus;
+    unread?: boolean;
     page?: number;
     pageSize?: number;
   },
@@ -5214,6 +5221,7 @@ export async function getMessagingThreads(
   if (options?.customerId) params.set("customerId", options.customerId);
   if (options?.contactId) params.set("contactId", options.contactId);
   if (options?.status) params.set("status", options.status);
+  if (options?.unread) params.set("unread", "1");
   if (options?.page !== undefined) params.set("page", String(options.page));
   if (options?.pageSize !== undefined) {
     params.set("pageSize", String(options.pageSize));
@@ -5238,6 +5246,19 @@ export async function getMessagingThreadDetail(
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+export async function markMessagingThreadRead(
+  token: string,
+  threadId: string,
+): Promise<{ thread: MessageThreadItem }> {
+  return authRequest<{ thread: MessageThreadItem }>(
+    `/messaging/threads/${threadId}/read`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function checkMessagingThreadConflict(

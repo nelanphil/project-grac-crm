@@ -15,6 +15,7 @@ import {
   listThreads,
   getThreadDetail,
   checkThreadConflict,
+  markThreadRead,
   closeThreadEndpoint,
   getWebhookInfo,
   streamCommunicationRecording,
@@ -50,6 +51,11 @@ router.get(
   "/threads/:threadId",
   requirePermission("messages:read"),
   getThreadDetail,
+);
+router.post(
+  "/threads/:threadId/read",
+  requirePermission("messages:read"),
+  markThreadRead,
 );
 router.patch(
   "/threads/:threadId",

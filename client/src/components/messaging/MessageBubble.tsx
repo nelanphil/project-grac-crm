@@ -40,7 +40,7 @@ export function AccountBadge({
 }) {
   return (
     <span
-      className="inline-flex max-w-35 truncate rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600"
+      className="inline-flex max-w-35 truncate rounded bg-black/10 px-1.5 py-0.5 text-[10px] font-medium text-current"
       title={sid}
     >
       {name || truncateSid(sid)}
@@ -63,7 +63,7 @@ export function NumberBadge({
   if (!number) return null;
   return (
     <span
-      className="inline-flex max-w-40 truncate rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-600"
+      className="inline-flex max-w-40 truncate rounded bg-black/10 px-1.5 py-0.5 text-[10px] font-medium text-current"
       title={`From ${fromNumber || "?"} · To ${toNumber || "?"}`}
     >
       {outbound ? "from " : "to "}
@@ -170,8 +170,10 @@ export function VoiceCallChip({ msg }: { msg: TwilioCommunicationItem }) {
 
 export default function MessageBubble({
   msg,
+  highlighted = false,
 }: {
   msg: TwilioCommunicationItem;
+  highlighted?: boolean;
 }) {
   const outbound = msg.direction === "outbound";
   if (msg.channel === "voice") {
@@ -185,7 +187,7 @@ export default function MessageBubble({
           outbound
             ? "rounded-br-md bg-[#34c759] text-white"
             : "rounded-bl-md bg-neutral-200 text-neutral-800"
-        }`}
+        }${highlighted ? " ring-2 ring-brand-orange ring-offset-2" : ""}`}
       >
         {msg.body || (msg.mediaUrls.length ? "(media)" : "")}
         {msg.mediaUrls.length > 0 ? (

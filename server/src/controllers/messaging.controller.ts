@@ -8,6 +8,7 @@ import { MessageTemplate } from "../models/mongo/MessageTemplate";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
 import { TwilioAccount } from "../models/mongo/TwilioAccount";
 import { MessageThread } from "../models/mongo/MessageThread";
+import { User } from "../models/mongo/User";
 import {
   messagingCallSchema,
   messagingPreviewSchema,
@@ -773,17 +774,36 @@ export async function listCommunications(
 type ThreadLookups = {
   contactById: Map<string, Record<string, unknown>>;
   customerById: Map<string, Record<string, unknown>>;
+  userById: Map<string, { _id: unknown; first_name?: string; last_name?: string }>;
   names: Map<
     string,
     { friendlyName: string; accountSid: string; phoneNumbers: unknown }
   >;
 };
 
+function isoOrNull(value: unknown): string | null {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string" && value) return value;
+  return null;
+}
+
+function unreadTextQuery(): Record<string, unknown> {
+  return {
+    lastMessageDirection: "inbound",
+    lastMessageChannel: { $in: ["sms", "mms"] },
+    $or: [
+      { readAt: null },
+      { $expr: { $gt: ["$lastMessageAt", "$readAt"] } },
+    ],
+  };
+}
+
 async function buildThreadLookups(
   threads: Array<{
     contactRef?: Types.ObjectId | null;
     customerRef?: Types.ObjectId | null;
     twilioAccountRef: Types.ObjectId;
+    readByUserRef?: Types.ObjectId | null;
   }>,
 ): Promise<ThreadLookups> {
   const contactIds = objectIdStrings(threads.map((t) => t.contactRef));
@@ -805,11 +825,19 @@ async function buildThreadLookups(
     : [];
   const customerById = new Map(customers.map((c) => [String(c._id), c]));
 
+  const userIds = objectIdStrings(threads.map((t) => t.readByUserRef));
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } })
+        .select("_id first_name last_name")
+        .lean()
+    : [];
+  const userById = new Map(users.map((user) => [String(user._id), user]));
+
   const names = await accountNameMap(
     threads.map((t) => String(t.twilioAccountRef)),
   );
 
-  return { contactById, customerById, names };
+  return { contactById, customerById, userById, names };
 }
 
 function publicRef(value: unknown): string | null {
@@ -832,6 +860,9 @@ function toPublicThread(
   const accountLabels = lookups.names.get(String(thread.twilioAccountRef));
   const accountFriendlyName = accountLabels?.friendlyName ?? null;
   const ourNumber = String(thread.ourNumber ?? "");
+  const reader = thread.readByUserRef
+    ? lookups.userById.get(String(thread.readByUserRef))
+    : undefined;
 
   return {
     _id: String(thread._id),
@@ -862,6 +893,14 @@ function toPublicThread(
     lastMessageChannel: thread.lastMessageChannel ?? null,
     lastMessagePreview: thread.lastMessagePreview ?? "",
     messageCount: thread.messageCount ?? 0,
+    readAt: isoOrNull(thread.readAt),
+    readBy: reader
+      ? {
+          _id: String(reader._id),
+          first_name: reader.first_name ?? "",
+          last_name: reader.last_name ?? "",
+        }
+      : null,
     contact: contact
       ? {
           _id: String(contact._id),
@@ -995,6 +1034,9 @@ export async function listThreads(
         filter.status = status;
       }
     }
+    if (req.query.unread === "1" || req.query.unread === "true") {
+      Object.assign(filter, unreadTextQuery());
+    }
 
     const [total, rows] = await Promise.all([
       MessageThread.countDocuments(filter),
@@ -1099,6 +1141,45 @@ export async function getThreadDetail(
   } catch (err) {
     console.error("GET /messaging/threads/:threadId error:", err);
     res.status(500).json({ message: "Failed to load thread" });
+  }
+}
+
+// POST /messaging/threads/:threadId/read
+export async function markThreadRead(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const threadId = String(req.params.threadId);
+    if (!Types.ObjectId.isValid(threadId)) {
+      res.status(400).json({ message: "Invalid threadId" });
+      return;
+    }
+    const userId = req.user?.id;
+    if (!userId || !Types.ObjectId.isValid(userId)) {
+      res.status(401).json({ message: "Not authenticated" });
+      return;
+    }
+
+    const now = new Date();
+    const updated = await MessageThread.findOneAndUpdate(
+      { _id: threadId, ...unreadTextQuery() },
+      { $set: { readAt: now, readByUserRef: userId } },
+      { new: true },
+    ).lean();
+
+    const thread =
+      updated ?? (await MessageThread.findById(threadId).lean());
+    if (!thread) {
+      res.status(404).json({ message: "Thread not found" });
+      return;
+    }
+
+    const lookups = await buildThreadLookups([thread]);
+    res.json({ thread: toPublicThread(thread, lookups) });
+  } catch (err) {
+    console.error("POST /messaging/threads/:threadId/read error:", err);
+    res.status(500).json({ message: "Failed to mark thread read" });
   }
 }
 

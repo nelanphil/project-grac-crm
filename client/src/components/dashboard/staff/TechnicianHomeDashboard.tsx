@@ -818,20 +818,24 @@ export default function TechnicianHomeDashboard() {
     };
   }
 
+  const desktopMap = showMap && layout === "desktop";
+
   return (
     <div
-      className={`w-full min-w-0 pb-6 ${
-        split || (showMap && layout === "desktop")
-          ? "lg:flex lg:items-start lg:gap-6"
-          : ""
+      className={`w-full min-w-0 ${
+        desktopMap
+          ? "flex h-full min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:items-stretch"
+          : split
+            ? "pb-6 lg:flex lg:h-full lg:min-h-0 lg:items-start lg:gap-6 lg:overflow-hidden lg:pb-0"
+            : "pb-6"
       }`}
     >
     <div
       className={`min-w-0 space-y-5 transition-[width,max-width,margin] duration-300 ease-out ${
         split
-          ? "w-full lg:mx-0 lg:w-[22rem] lg:max-w-[22rem] lg:shrink-0"
-          : showMap && layout === "desktop"
-            ? "w-full lg:mx-0 lg:max-w-xl lg:shrink-0"
+          ? "w-full lg:mx-0 lg:min-h-0 lg:w-[22rem] lg:max-w-[22rem] lg:shrink-0 lg:overflow-y-auto"
+          : desktopMap
+            ? "w-full min-h-0 overflow-y-auto lg:mx-0 lg:w-[min(36rem,40%)] lg:max-w-xl lg:shrink-0"
             : "mx-auto w-full max-w-3xl"
       }`}
     >
@@ -982,6 +986,7 @@ export default function TechnicianHomeDashboard() {
           pinMode="scheduled"
           selectedId={null}
           droppable={false}
+          surfaceClassName="h-[clamp(16rem,50dvh,24rem)]"
           routeStops={routeStops}
           encodedPolyline={routePolyline}
           onSelect={(job) => toggleOpen(job._id)}
@@ -1002,14 +1007,15 @@ export default function TechnicianHomeDashboard() {
         />
       </div>
     ) : null}
-    {showMap && layout === "desktop" ? (
-      <div className="min-w-0 flex-1 lg:sticky lg:top-4">
+    {desktopMap ? (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <ScheduleMap
           unscheduled={[]}
           scheduled={mapJobs}
           pinMode="scheduled"
           selectedId={null}
           droppable={false}
+          surfaceClassName="h-full min-h-[16rem]"
           routeStops={routeStops}
           encodedPolyline={routePolyline}
           onSelect={(job) => toggleOpen(job._id)}

@@ -21,6 +21,10 @@ export interface IMessageThread extends Document {
   lastMessageChannel: CommunicationChannel | null;
   lastMessagePreview: string;
   messageCount: number;
+  /** When staff opened the latest inbound text. Null until someone reads it. */
+  readAt: Date | null;
+  /** Staff member who opened the current unread inbound text. */
+  readByUserRef: Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -78,6 +82,12 @@ const messageThreadSchema = new Schema<IMessageThread>(
     },
     lastMessagePreview: { type: String, default: "" },
     messageCount: { type: Number, default: 0 },
+    readAt: { type: Date, default: null },
+    readByUserRef: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
   { timestamps: true },
 );

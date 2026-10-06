@@ -129,6 +129,36 @@ html[data-theme="dark"] .tech-row-highlight .text-neutral-500 {
   color: oklch(43.9% 0 0);
 }
 
+/* Conversation rows: light orange selection in light mode, dark warm fill in
+   dark mode so the remapped light text stays readable. */
+.conversation-row-active {
+  background-color: #fff7ed;
+}
+
+html[data-theme="dark"] .conversation-row-active {
+  background-color: #3f2e24;
+}
+
+.conversation-status-open {
+  background-color: #f0fdf4;
+  color: #15803d;
+}
+
+html[data-theme="dark"] .conversation-status-open {
+  background-color: #14532d;
+  color: #bbf7d0;
+}
+
+.conversation-status-closed {
+  background-color: #f5f5f5;
+  color: #737373;
+}
+
+html[data-theme="dark"] .conversation-status-closed {
+  background-color: #3d3632;
+  color: #c4b6ab;
+}
+
 /* Paper documents, customer-facing previews, and the job terminal keep
    their own light (or already-dark) colors. */
 html[data-theme="dark"] :is(.invoice-document, .theme-light) {

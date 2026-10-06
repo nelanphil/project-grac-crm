@@ -90,7 +90,7 @@ export default function VoiceCustomerPanel({
                       onClick={() => onSelectContact(contact)}
                       className={`w-full border-b border-[var(--staff-border)] px-3 py-2 text-left ${
                         active
-                          ? "border-l-2 border-l-brand-orange bg-orange-50"
+                          ? "conversation-row-active border-l-2 border-l-brand-orange"
                           : "hover:bg-[var(--staff-surface)]"
                       }`}
                     >
@@ -102,8 +102,8 @@ export default function VoiceCustomerPanel({
                           <span
                             className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
                               contact.status === "open"
-                                ? "bg-green-50 text-green-700"
-                                : "bg-neutral-100 text-neutral-500"
+                                ? "conversation-status-open"
+                                : "conversation-status-closed"
                             }`}
                           >
                             {contact.status}

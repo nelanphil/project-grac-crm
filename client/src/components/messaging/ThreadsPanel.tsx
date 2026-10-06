@@ -303,7 +303,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                             onClick={() => selectCustomer(row.customerRef)}
                             className={`w-full border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
                               active
-                                ? "border-l-2 border-l-brand-orange bg-orange-50"
+                                ? "conversation-row-active border-l-2 border-l-brand-orange"
                                 : "hover:bg-white"
                             }`}
                           >
@@ -314,8 +314,8 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                               <span
                                 className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
                                   row.status === "open"
-                                    ? "bg-green-50 text-green-700"
-                                    : "bg-neutral-100 text-neutral-500"
+                                    ? "conversation-status-open"
+                                    : "conversation-status-closed"
                                 }`}
                               >
                                 {row.status}
@@ -427,7 +427,7 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                         onClick={() => selectVoiceGroup(group.key)}
                         className={`w-full border-b border-[var(--staff-border)] px-3 py-2.5 text-left ${
                           active
-                            ? "border-l-2 border-l-brand-orange bg-orange-50"
+                            ? "conversation-row-active border-l-2 border-l-brand-orange"
                             : "hover:bg-white"
                         }`}
                       >
@@ -439,8 +439,8 @@ export default function ThreadsPanel({ token, accounts }: ThreadsPanelProps) {
                             <span
                               className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
                                 group.status === "open"
-                                  ? "bg-green-50 text-green-700"
-                                  : "bg-neutral-100 text-neutral-500"
+                                  ? "conversation-status-open"
+                                  : "conversation-status-closed"
                               }`}
                             >
                               {group.status}

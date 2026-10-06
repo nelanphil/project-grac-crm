@@ -219,7 +219,15 @@ export default function EmailInboxPanel({
     setComposeMode(null);
     getMailboxMessage(token, accountId, selectedUid, folder)
       .then(({ message }) => {
-        if (!cancelled) setDetail(message);
+        if (cancelled) return;
+        setDetail(message);
+        if (message.seen) {
+          setMessages((current) =>
+            current.map((row) =>
+              row.uid === message.uid ? { ...row, seen: true } : row,
+            ),
+          );
+        }
       })
       .catch((err) => {
         if (cancelled) return;

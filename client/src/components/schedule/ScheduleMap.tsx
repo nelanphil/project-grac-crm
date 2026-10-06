@@ -13,6 +13,8 @@ import { useAuthStore } from "@/store/useAuthStore";
 
 const EMPTY_STOPS: ScheduleRouteStop[] = [];
 const FL_CENTER = { lat: 28.5, lng: -81.4 };
+const FIT_PADDING = 48;
+const DEFAULT_SURFACE_HEIGHT = "h-[32rem]";
 const UNSCHEDULED_COLOR = "#f36c21";
 const SCHEDULED_COLOR = "#2563eb";
 const HOME_COLOR = "#404040";
@@ -99,6 +101,25 @@ function decodePath(encoded: string): google.maps.LatLng[] {
   return encoding.decodePath(encoded);
 }
 
+type MapFrame = {
+  count: number;
+  bounds: google.maps.LatLngBounds | null;
+};
+
+function applyMapFrame(map: google.maps.Map, frame: MapFrame) {
+  if (frame.count > 1 && frame.bounds) {
+    map.fitBounds(frame.bounds, FIT_PADDING);
+    return;
+  }
+  if (frame.count === 1 && frame.bounds) {
+    map.setCenter(frame.bounds.getCenter());
+    map.setZoom(12);
+    return;
+  }
+  map.setCenter(FL_CENTER);
+  map.setZoom(8);
+}
+
 type ScheduleMapProps = {
   unscheduled: WorkOrderListItem[];
   scheduled: WorkOrderListItem[];
@@ -109,14 +130,25 @@ type ScheduleMapProps = {
   encodedPolyline?: string;
   /** Schedule board accepts drops onto the map. Read-only maps leave this off. */
   droppable?: boolean;
+  /** Replaces the default 32rem height. `h-full` fills a sized parent. */
+  surfaceClassName?: string;
 };
 
-function DroppableMapSurface({ children }: { children: ReactNode }) {
+function DroppableMapSurface({
+  surfaceClassName,
+  children,
+}: {
+  surfaceClassName: string;
+  children: ReactNode;
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: "schedule-map" });
+  const fill = surfaceClassName.includes("h-full");
   return (
     <div
       ref={setNodeRef}
-      className={`relative h-[32rem] w-full overflow-hidden rounded-2xl border bg-neutral-100 shadow-sm ${
+      className={`relative w-full overflow-hidden rounded-2xl border bg-neutral-100 shadow-sm ${surfaceClassName}${
+        fill ? " min-h-0 flex-1" : ""
+      } ${
         isOver
           ? "border-brand-orange ring-2 ring-brand-orange"
           : "border-neutral-200"
@@ -136,14 +168,27 @@ function DroppableMapSurface({ children }: { children: ReactNode }) {
 
 function MapSurface({
   droppable,
+  surfaceClassName = DEFAULT_SURFACE_HEIGHT,
   children,
 }: {
   droppable: boolean;
+  surfaceClassName?: string;
   children: ReactNode;
 }) {
-  if (droppable) return <DroppableMapSurface>{children}</DroppableMapSurface>;
+  if (droppable) {
+    return (
+      <DroppableMapSurface surfaceClassName={surfaceClassName}>
+        {children}
+      </DroppableMapSurface>
+    );
+  }
+  const fill = surfaceClassName.includes("h-full");
   return (
-    <div className="relative h-[32rem] w-full overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 shadow-sm">
+    <div
+      className={`relative w-full overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 shadow-sm ${surfaceClassName}${
+        fill ? " min-h-0 flex-1" : ""
+      }`}
+    >
       {children}
     </div>
   );
@@ -158,6 +203,7 @@ export default function ScheduleMap({
   routeStops = EMPTY_STOPS,
   encodedPolyline,
   droppable = true,
+  surfaceClassName,
 }: ScheduleMapProps) {
   const token = useAuthStore((s) => s.token);
   const mapEl = useRef<HTMLDivElement | null>(null);
@@ -166,6 +212,7 @@ export default function ScheduleMap({
   const polylineRef = useRef<google.maps.Polyline | null>(null);
   const onSelectRef = useRef(onSelect);
   const fittedKeyRef = useRef<string>("");
+  const frameRef = useRef<MapFrame>({ count: 0, bounds: null });
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [mapGeneration, setMapGeneration] = useState(0);
@@ -377,17 +424,13 @@ export default function ScheduleMap({
       });
     }
 
-    if (count > 0 && fittedKeyRef.current !== pinKey) {
-      if (count === 1) {
-        map.setCenter(bounds.getCenter());
-        map.setZoom(12);
-      } else {
-        map.fitBounds(bounds, 48);
-      }
-      fittedKeyRef.current = pinKey;
-    } else if (count === 0) {
-      map.setCenter(FL_CENTER);
-      map.setZoom(8);
+    const frame: MapFrame = {
+      count,
+      bounds: count > 0 ? bounds : null,
+    };
+    frameRef.current = frame;
+    if (count === 0 || fittedKeyRef.current !== pinKey) {
+      applyMapFrame(map, frame);
       fittedKeyRef.current = pinKey;
     }
   }, [
@@ -401,6 +444,34 @@ export default function ScheduleMap({
     routeStops,
     encodedPolyline,
   ]);
+
+  useEffect(() => {
+    const el = mapEl.current;
+    if (!el || status !== "ready") return;
+    let lastWidth = -1;
+    let lastHeight = -1;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      const width = Math.round(rect.width);
+      const height = Math.round(rect.height);
+      if (width < 1 || height < 1) return;
+      if (
+        Math.abs(width - lastWidth) < 2 &&
+        Math.abs(height - lastHeight) < 2
+      ) {
+        return;
+      }
+      lastWidth = width;
+      lastHeight = height;
+      const map = mapRef.current;
+      if (!map) return;
+      google.maps.event.trigger(map, "resize");
+      applyMapFrame(map, frameRef.current);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [status, mapGeneration]);
 
   const showUnscheduled =
     pinMode === "unscheduled" ||
@@ -421,10 +492,18 @@ export default function ScheduleMap({
     (stop) => stop.kind === "home" && stop.lat != null,
   );
 
+  const fillsParent = surfaceClassName?.includes("h-full") ?? false;
+
   return (
-    <div className="space-y-3">
+    <div
+      className={
+        fillsParent
+          ? "flex h-full min-h-0 w-full flex-1 flex-col"
+          : "space-y-3"
+      }
+    >
       {status === "error" && <p className="text-sm text-red-600">{error}</p>}
-      <MapSurface droppable={droppable}>
+      <MapSurface droppable={droppable} surfaceClassName={surfaceClassName}>
         <div ref={mapEl} className="h-full w-full" />
         {(showUnscheduled || showScheduled || showHome) && (
           <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex flex-wrap items-center gap-3 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-[11px] font-medium text-neutral-600 shadow-sm">

@@ -398,6 +398,14 @@ export async function getMailboxMessage(
       }
       const parsed = await simpleParser(msg.source);
       const summary = toSummary(msg);
+      if (folder === "inbox" && !summary.seen) {
+        try {
+          await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true });
+          summary.seen = true;
+        } catch (err) {
+          console.error("[mailbox] failed to mark message seen:", err);
+        }
+      }
       const text = (parsed.text || "").slice(0, MAX_TEXT);
       const rawHtml = typeof parsed.html === "string" ? parsed.html : "";
       const parsedCc = parserAddresses(parsed.cc);

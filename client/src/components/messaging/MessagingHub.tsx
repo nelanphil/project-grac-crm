@@ -100,6 +100,7 @@ function smsMergeFieldsFrom(fields: MergeFieldItem[]): MergeFieldItem[] {
 function messagingTabFromQuery(tab: string | null): MessagingTab {
   if (tab === "inbox" || tab === "threads") return "threads";
   if (
+    tab === "templates" ||
     tab === "create" ||
     tab === "email" ||
     tab === "sent-emails" ||
@@ -107,7 +108,7 @@ function messagingTabFromQuery(tab: string | null): MessagingTab {
   ) {
     return tab;
   }
-  return "templates";
+  return "threads";
 }
 
 export default function MessagingHub() {
@@ -1318,8 +1319,8 @@ export default function MessagingHub() {
       <MobileTabBar className="border-b border-neutral-200">
         {(
           [
-            ["templates", "Templates"],
             ["threads", "Inbox"],
+            ["templates", "Templates"],
             ["create", "Message Wizard"],
             ["email", "Email Wizard"],
             ["scheduled-emails", "Scheduled Emails"],
