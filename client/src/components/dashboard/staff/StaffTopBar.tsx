@@ -27,7 +27,9 @@ import {
   hiddenNavItems,
   hideNavItem,
   moveNavItem,
+  nudgeNavItem,
   showNavItem,
+  type NavNudge,
   type NavOrder,
 } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -177,6 +179,19 @@ export default function StaffTopBar() {
         visibleItems,
         String(active.id),
         String(over.id),
+        navOrder?.hidden ?? [],
+      );
+      if (next) persistNavOrder(next);
+    },
+    [visibleItems, navOrder?.hidden, persistNavOrder],
+  );
+
+  const handleNudge = useCallback(
+    (href: string, direction: NavNudge) => {
+      const next = nudgeNavItem(
+        visibleItems,
+        href,
+        direction,
         navOrder?.hidden ?? [],
       );
       if (next) persistNavOrder(next);
@@ -427,6 +442,8 @@ export default function StaffTopBar() {
                               editable
                               editMode={editMode}
                               onRemove={handleHideItem}
+                              onNudge={handleNudge}
+                              navTree={visibleItems}
                             />
                           ))}
                         </SortableContext>

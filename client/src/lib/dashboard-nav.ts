@@ -780,6 +780,123 @@ export function moveNavItem(
   return { order, children, hidden: snapshot.hidden };
 }
 
+export type NavNudge = "up" | "down" | "indent" | "outdent";
+
+export interface NavNudgeAvailability {
+  up: boolean;
+  down: boolean;
+  indent: boolean;
+  outdent: boolean;
+}
+
+const NO_NUDGE: NavNudgeAvailability = {
+  up: false,
+  down: false,
+  indent: false,
+  outdent: false,
+};
+
+function subtreeExtraDepth(item: NavItem): number {
+  const kids = item.children ?? [];
+  if (!kids.length) return 0;
+  let deepest = 0;
+  for (const kid of kids) {
+    deepest = Math.max(deepest, 1 + subtreeExtraDepth(kid));
+  }
+  return deepest;
+}
+
+function locateSibling(
+  items: NavItem[],
+  href: string,
+): {
+  siblings: NavItem[];
+  index: number;
+  parentHref: string | null;
+} | null {
+  const container = findContainer(items, href);
+  if (!container || container.index < 0) return null;
+  if (container.parentHref === null) {
+    return { siblings: items, index: container.index, parentHref: null };
+  }
+  const parent = findNode(items, container.parentHref);
+  const siblings = parent?.children;
+  if (!siblings || container.index >= siblings.length) return null;
+  return {
+    siblings,
+    index: container.index,
+    parentHref: container.parentHref,
+  };
+}
+
+/** Which arrow moves are legal for this label in the current tree. */
+export function navNudgeAvailability(
+  items: NavItem[],
+  href: string,
+): NavNudgeAvailability {
+  const located = locateSibling(items, href);
+  if (!located) return NO_NUDGE;
+  const item = located.siblings[located.index];
+  if (!item) return NO_NUDGE;
+  const currentDepth = depthOfContainer(items, located.parentHref) + 1;
+  const indentFits =
+    currentDepth + 1 + subtreeExtraDepth(item) <= MAX_NAV_DEPTH;
+  return {
+    up: located.index > 0,
+    down: located.index < located.siblings.length - 1,
+    indent: located.index > 0 && indentFits,
+    outdent: located.parentHref !== null,
+  };
+}
+
+/**
+ * Move a label one step with the edit-mode arrows. Up/down stay among siblings.
+ * Indent nests under the sibling above. Outdent promotes the label to sit
+ * immediately after its parent. Returns null when the move is not allowed.
+ */
+export function nudgeNavItem(
+  items: NavItem[],
+  href: string,
+  direction: NavNudge,
+  hidden: string[] = [],
+): NavOrder | null {
+  if (!navNudgeAvailability(items, href)[direction]) return null;
+  const located = locateSibling(items, href);
+  if (!located) return null;
+  const { siblings, index, parentHref } = located;
+
+  if (direction === "up") {
+    const previous = siblings[index - 1];
+    if (!previous) return null;
+    return moveNavItem(items, href, previous.href, hidden);
+  }
+
+  if (direction === "down") {
+    const next = siblings[index + 1];
+    if (!next) return null;
+    return moveNavItem(items, href, next.href, hidden);
+  }
+
+  if (direction === "indent") {
+    const previous = siblings[index - 1];
+    if (!previous) return null;
+    return moveNavItem(items, href, nestDroppableId(previous.href), hidden);
+  }
+
+  if (!parentHref) return null;
+  const parentLocated = locateSibling(items, parentHref);
+  if (!parentLocated) return null;
+  const afterParent = parentLocated.siblings[parentLocated.index + 1];
+  if (afterParent) {
+    return moveNavItem(items, href, afterParent.href, hidden);
+  }
+  const overId =
+    parentLocated.parentHref === null
+      ? ROOT_DROPPABLE_ID
+      : nestDroppableId(parentLocated.parentHref);
+  return moveNavItem(items, href, overId, hidden);
+}
+
 /** Parent is active only on its exact path (children have their own links). */
 export function isNavItemActive(
   pathname: string,
