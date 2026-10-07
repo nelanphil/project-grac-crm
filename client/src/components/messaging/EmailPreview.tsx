@@ -5,6 +5,7 @@ type EmailPreviewProps = {
   html: string;
   isSample?: boolean;
   fullWidth?: boolean;
+  frameClassName?: string;
 };
 
 export default function EmailPreview({
@@ -14,6 +15,7 @@ export default function EmailPreview({
   html,
   isSample,
   fullWidth,
+  frameClassName,
 }: EmailPreviewProps) {
   const displaySubject = subject.trim() || "Subject will appear here…";
   const emptySubject = !subject.trim();
@@ -68,7 +70,7 @@ export default function EmailPreview({
               title="Email preview"
               sandbox=""
               srcDoc={html}
-              className="h-[620px] w-full border-0 bg-white"
+              className={frameClassName ?? "h-[620px] w-full border-0 bg-white"}
             />
           )}
         </div>

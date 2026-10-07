@@ -654,13 +654,20 @@ export async function updateWorkOrder(
     await applyAssignmentSideEffects(workOrder, assignee);
     await workOrder.save();
     await saveWorkOrderAgreements(workOrder);
+    const warnings: string[] = [];
     try {
       await syncWorkOrderInvoice(workOrder);
     } catch (syncErr) {
       console.error("syncWorkOrderInvoice failed:", syncErr);
+      const detail =
+        syncErr instanceof Error && syncErr.message ? syncErr.message : "";
+      warnings.push(
+        detail
+          ? `The work order was saved, but its invoice was not updated: ${detail}`
+          : "The work order was saved, but its invoice was not updated.",
+      );
     }
 
-    const warnings: string[] = [];
     if (
       assignee &&
       workOrder.assignedUserRef &&

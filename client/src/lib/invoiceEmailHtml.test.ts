@@ -3,11 +3,14 @@ import { describe, it } from "node:test";
 import type { CustomerContact, InvoiceItem } from "@/lib/api";
 import {
   hasValidContactEmail,
+  hasValidContactPhone,
   invoiceEmailBodyHtml,
   invoiceEmailSubject,
+  invoiceSmsBody,
   isInvoicePayable,
   messagingContactFromInvoice,
   pickInvoiceEmailContact,
+  pickInvoicePhoneContact,
 } from "./invoiceEmailHtml";
 
 function contact(partial: Partial<CustomerContact> & { _id: string }): CustomerContact {
@@ -73,6 +76,27 @@ const invoice = {
 describe("invoiceEmailHtml", () => {
   it("builds a subject from the invoice number", () => {
     assert.equal(invoiceEmailSubject(invoice), "Invoice INV-100");
+  });
+
+  it("builds a short text with the total and due date", () => {
+    const body = invoiceSmsBody(invoice);
+    assert.match(body, /^Hi \{\{first_name\}\}, invoice INV-100 is ready\./);
+    assert.match(body, /Total due: \$250\.00\./);
+    assert.match(body, / Due /);
+    const withoutDue = invoiceSmsBody({ ...invoice, dueDate: null });
+    assert.doesNotMatch(withoutDue, / Due /);
+  });
+
+  it("picks the preferred or primary contact with a phone number", () => {
+    assert.equal(hasValidContactPhone("12"), false);
+    assert.equal(hasValidContactPhone("386-631-8982"), true);
+    const contacts = [
+      contact({ _id: "c1", phone: "12", isPrimary: true }),
+      contact({ _id: "c2", phone: "3866311111" }),
+      contact({ _id: "c3", phone: "3866318982", isPrimary: true }),
+    ];
+    assert.equal(pickInvoicePhoneContact(contacts)?._id, "c3");
+    assert.equal(pickInvoicePhoneContact(contacts, "c2")?._id, "c2");
   });
 
   it("embeds invoice details without tables and escapes HTML", () => {

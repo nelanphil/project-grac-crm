@@ -16,7 +16,9 @@ import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
   deleteWorkOrder,
+  getInvoices,
   getWorkOrder,
+  InvoiceItem,
   updateWorkOrder,
   WorkOrderListItem,
 } from "@/lib/api";
@@ -44,6 +46,8 @@ function WorkOrderDetailContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
+  const [invoiceListVersion, setInvoiceListVersion] = useState(0);
 
   useEffect(() => {
     if (!token || !id) {
@@ -58,6 +62,21 @@ function WorkOrderDetailContent() {
       )
       .finally(() => setLoading(false));
   }, [token, id]);
+
+  useEffect(() => {
+    if (!token || !id) return;
+    let cancelled = false;
+    getInvoices(token, { workOrderRef: id })
+      .then(({ invoices }) => {
+        if (!cancelled) setViewInvoiceId(pickRelatedWorkOrderInvoice(invoices));
+      })
+      .catch(() => {
+        if (!cancelled) setViewInvoiceId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, id, invoiceListVersion]);
 
   const backLink = (
     <DashboardBackLink
@@ -148,6 +167,7 @@ function WorkOrderDetailContent() {
         token={token}
         workOrderRef={order._id}
         sourcePaid={order.paid}
+        onCreated={() => setInvoiceListVersion((version) => version + 1)}
       />
     ) : null;
 
@@ -156,6 +176,14 @@ function WorkOrderDetailContent() {
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         {backLink}
         <div className="flex flex-wrap gap-2">
+          {viewInvoiceId ? (
+            <Link
+              href={`/dashboard/orders/detail?id=${viewInvoiceId}`}
+              className="rounded-lg border border-neutral-300 px-3 py-2 text-sm"
+            >
+              View invoice
+            </Link>
+          ) : null}
           {order.customerRef ? (
             <Link
               href={`/dashboard/customers/detail?id=${order.customerRef}`}
@@ -184,6 +212,14 @@ function WorkOrderDetailContent() {
       {error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 print:hidden">
           {error}
+        </div>
+      ) : null}
+
+      {order.warnings && order.warnings.length > 0 ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 print:hidden">
+          {order.warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
         </div>
       ) : null}
 
@@ -256,4 +292,10 @@ function WorkOrderDetailContent() {
       )}
     </div>
   );
+}
+
+function pickRelatedWorkOrderInvoice(invoices: InvoiceItem[]): string | null {
+  const viewable = invoices.filter((invoice) => invoice.status !== "void");
+  const open = viewable.find((invoice) => invoice.status === "open");
+  return (open ?? viewable[0])?._id ?? null;
 }

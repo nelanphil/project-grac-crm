@@ -141,6 +141,23 @@ export const messagingSendSchema = z
     path: ["threadId"],
   });
 
+const invoiceTemplateIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-fA-F0-9]{24}$/, "Invalid message template")
+  .nullable();
+
+export const invoiceMessageDefaultsSchema = z
+  .object({
+    emailTemplateId: invoiceTemplateIdSchema.optional(),
+    smsTemplateId: invoiceTemplateIdSchema.optional(),
+  })
+  .refine(
+    (data) =>
+      data.emailTemplateId !== undefined || data.smsTemplateId !== undefined,
+    { message: "Choose a template to update" },
+  );
+
 export const messagingCallSchema = z.object({
   contactId: z.string().trim().min(1),
   twilioAccountId: z.string().trim().min(1).optional(),

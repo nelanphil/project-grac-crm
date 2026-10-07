@@ -580,26 +580,20 @@ export async function syncWorkOrderInvoice(
   options?: { backfilled?: boolean },
 ): Promise<SyncWorkOrderInvoiceResult> {
   const amountCents = dollarsToCents(wo.total || 0);
-  const open = await findOpenInvoiceForWorkOrder(wo._id);
-
-  if (!wo.paid && amountCents <= 0) {
-    if (open) {
-      open.status = "void";
-      await open.save();
-      return { action: "voided", invoice: open };
-    }
-    return { action: "skipped" };
-  }
-
-  if (amountCents <= 0) {
-    return { action: "skipped" };
-  }
 
   if (wo.paid) {
-    if (open) {
-      await markInvoicePaid({ invoice: open });
-      return { action: "paid", invoice: open };
+    const unpaid = await Invoice.find({
+      workOrderRef: wo._id,
+      status: { $in: ["open", "draft", "failed"] },
+    });
+    if (unpaid.length > 0) {
+      let last: IInvoice | undefined;
+      for (const invoice of unpaid) {
+        last = await markInvoicePaid({ invoice });
+      }
+      return { action: "paid", invoice: last };
     }
+    if (amountCents <= 0) return { action: "skipped" };
     const existing = await Invoice.findOne({
       workOrderRef: wo._id,
       status: { $ne: "void" },
@@ -614,6 +608,16 @@ export async function syncWorkOrderInvoice(
       if (err instanceof InvoiceAmountError) return { action: "skipped" };
       throw err;
     }
+  }
+
+  if (amountCents <= 0) {
+    const open = await findOpenInvoiceForWorkOrder(wo._id);
+    if (open) {
+      open.status = "void";
+      await open.save();
+      return { action: "voided", invoice: open };
+    }
+    return { action: "skipped" };
   }
 
   try {

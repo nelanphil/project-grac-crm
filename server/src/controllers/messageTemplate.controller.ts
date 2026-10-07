@@ -10,9 +10,14 @@ import {
 } from "../models/mongo/MessageTemplate";
 import {
   createMessageTemplateSchema,
+  invoiceMessageDefaultsSchema,
   updateMessageTemplateSchema,
   SMS_BODY_MAX,
 } from "../schemas/messageTemplate.schema";
+import {
+  INVOICE_MESSAGE_SETTINGS_SLUG,
+  InvoiceMessageSettings,
+} from "../models/mongo/InvoiceMessageSettings";
 import {
   DEFAULT_EMAIL_CHROME,
   EmailChrome,
@@ -291,5 +296,111 @@ export async function deleteMessageTemplate(
   } catch (err) {
     console.error("DELETE /message-templates error:", err);
     res.status(500).json({ message: "Failed to delete message template" });
+  }
+}
+
+function templateKind(template: { templateType?: string | null }): "email" | "sms" {
+  return template.templateType === "email" ? "email" : "sms";
+}
+
+async function activeTemplateId(
+  id: Types.ObjectId | null | undefined,
+  kind: "email" | "sms",
+): Promise<string | null> {
+  if (!id) return null;
+  const template = await MessageTemplate.findOne({
+    _id: id,
+    deletedAt: null,
+  })
+    .select("templateType")
+    .lean();
+  if (!template || templateKind(template) !== kind) return null;
+  return String(id);
+}
+
+// GET /message-templates/invoice-defaults
+export async function getInvoiceMessageDefaults(
+  _req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const doc = await InvoiceMessageSettings.findOne({
+      slug: INVOICE_MESSAGE_SETTINGS_SLUG,
+    }).lean();
+    const [emailTemplateId, smsTemplateId] = await Promise.all([
+      activeTemplateId(doc?.emailTemplateRef, "email"),
+      activeTemplateId(doc?.smsTemplateRef, "sms"),
+    ]);
+    res.json({ emailTemplateId, smsTemplateId });
+  } catch (err) {
+    console.error("GET /message-templates/invoice-defaults error:", err);
+    res.status(500).json({ message: "Failed to load invoice message defaults" });
+  }
+}
+
+// PUT /message-templates/invoice-defaults
+export async function saveInvoiceMessageDefaults(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  const parsed = invoiceMessageDefaultsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: parsed.error.issues[0]?.message || "Validation failed",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  try {
+    const update: Record<string, unknown> = {
+      slug: INVOICE_MESSAGE_SETTINGS_SLUG,
+    };
+
+    if (parsed.data.emailTemplateId !== undefined) {
+      if (parsed.data.emailTemplateId === null) {
+        update.emailTemplateRef = null;
+      } else {
+        const template = await MessageTemplate.findOne({
+          _id: parsed.data.emailTemplateId,
+          deletedAt: null,
+        });
+        if (!template || templateKind(template) !== "email") {
+          res.status(400).json({ message: "Choose an email template" });
+          return;
+        }
+        update.emailTemplateRef = template._id;
+      }
+    }
+
+    if (parsed.data.smsTemplateId !== undefined) {
+      if (parsed.data.smsTemplateId === null) {
+        update.smsTemplateRef = null;
+      } else {
+        const template = await MessageTemplate.findOne({
+          _id: parsed.data.smsTemplateId,
+          deletedAt: null,
+        });
+        if (!template || templateKind(template) !== "sms") {
+          res.status(400).json({ message: "Choose a text template" });
+          return;
+        }
+        update.smsTemplateRef = template._id;
+      }
+    }
+
+    const doc = await InvoiceMessageSettings.findOneAndUpdate(
+      { slug: INVOICE_MESSAGE_SETTINGS_SLUG },
+      { $set: update },
+      { new: true, upsert: true },
+    );
+    const [emailTemplateId, smsTemplateId] = await Promise.all([
+      activeTemplateId(doc.emailTemplateRef, "email"),
+      activeTemplateId(doc.smsTemplateRef, "sms"),
+    ]);
+    res.json({ emailTemplateId, smsTemplateId });
+  } catch (err) {
+    console.error("PUT /message-templates/invoice-defaults error:", err);
+    res.status(500).json({ message: "Failed to save invoice message defaults" });
   }
 }

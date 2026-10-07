@@ -3,10 +3,16 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Download, Mail } from "lucide-react";
+import { Download } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import InvoiceDocument from "@/components/billing/InvoiceDocument";
+import {
+  InvoiceSendButtons,
+  InvoiceSendEditor,
+  InvoiceSendPreview,
+  useInvoiceCustomerSend,
+} from "@/components/billing/InvoiceCustomerSend";
 import {
   canToggleInvoiceStatus,
   InvoiceStatusChangeWarning,
@@ -52,6 +58,7 @@ function InvoiceDetailContent() {
   const [paying, setPaying] = useState(false);
   const [confirmingStatus, setConfirmingStatus] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
+  const send = useInvoiceCustomerSend(invoice, canEmail && !isCustomer);
 
   useEffect(() => {
     if (!token || !id) {
@@ -163,7 +170,11 @@ function InvoiceDetailContent() {
   const canToggle = !isCustomer && canWrite && canToggleInvoiceStatus(invoice);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 print:max-w-none print:space-y-0">
+    <div
+      className={`space-y-4 print:max-w-none print:space-y-0 ${
+        send.composerOpen ? "w-full max-w-none" : "mx-auto max-w-5xl"
+      }`}
+    >
       <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <DashboardBackLink
           fallbackHref="/dashboard/orders"
@@ -199,25 +210,7 @@ function InvoiceDetailContent() {
               Pay now
             </Link>
           ) : canEmail ? (
-            invoice.customerRef ? (
-              <Link
-                href={`/dashboard/messaging?tab=email&invoiceId=${invoice._id}`}
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 sm:w-auto"
-              >
-                <Mail className="h-4 w-4" />
-                Email
-              </Link>
-            ) : (
-              <button
-                type="button"
-                disabled
-                title="This invoice has no customer to email."
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white opacity-60 sm:w-auto"
-              >
-                <Mail className="h-4 w-4" />
-                Email
-              </button>
-            )
+            <InvoiceSendButtons send={send} />
           ) : canPay ? (
             <button
               type="button"
@@ -250,7 +243,27 @@ function InvoiceDetailContent() {
         </div>
       ) : null}
 
-      <InvoiceDocument invoice={invoice} isCustomer={isCustomer} />
+      <div
+        className={
+          send.composerOpen
+            ? "grid items-start gap-4 print:block lg:grid-cols-2 xl:grid-cols-3"
+            : undefined
+        }
+      >
+        <div
+          className={
+            send.composerOpen ? "min-w-0 lg:col-span-2 xl:col-span-1" : undefined
+          }
+        >
+          <InvoiceDocument invoice={invoice} isCustomer={isCustomer} />
+        </div>
+        {send.composerOpen ? (
+          <>
+            <InvoiceSendEditor send={send} />
+            <InvoiceSendPreview send={send} />
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

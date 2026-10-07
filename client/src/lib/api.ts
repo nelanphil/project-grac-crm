@@ -5066,6 +5066,40 @@ export interface MessagingWebhookInfo {
   }>;
 }
 
+export interface InvoiceMessageDefaults {
+  emailTemplateId: string | null;
+  smsTemplateId: string | null;
+}
+
+export async function getInvoiceMessageDefaults(
+  token: string,
+): Promise<InvoiceMessageDefaults> {
+  return authRequest<InvoiceMessageDefaults>(
+    "/message-templates/invoice-defaults",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function saveInvoiceMessageDefaults(
+  token: string,
+  data: {
+    emailTemplateId?: string | null;
+    smsTemplateId?: string | null;
+  },
+): Promise<InvoiceMessageDefaults> {
+  return authRequest<InvoiceMessageDefaults>(
+    "/message-templates/invoice-defaults",
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
 export async function getMessageTemplates(
   token: string,
   options?: { includeDeleted?: boolean; templateType?: MessageTemplateType },

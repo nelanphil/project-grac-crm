@@ -683,7 +683,7 @@ export default function TechnicianHomeDashboard() {
       }`}
     >
       <div className="space-y-3">
-        <h2 className="text-2xl font-bold text-[var(--staff-ink)]">To Do</h2>
+        <h2 className="text-2xl font-bold text-[var(--staff-ink)]">Schedule</h2>
         <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4">
           <div className="min-w-0 overflow-hidden">
             {canSwitchTechnicians && technicians.length > 0 ? (

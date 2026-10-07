@@ -270,7 +270,9 @@ export default function StaffBriefingHome() {
     useAuthStore((s) => s.hasPermission("messages:read"));
   const firstName = user?.first_name?.trim() || "";
 
-  const [tab, setTab] = useState<BriefingTab>("reminders");
+  const [tab, setTab] = useState<BriefingTab>(
+    canSeeInbox ? "inbox" : "reminders",
+  );
   const [reminders, setReminders] = useState<ReminderListItem[] | null>(null);
   const [reminderTotal, setReminderTotal] = useState(0);
   const [reminderError, setReminderError] = useState<string | null>(null);
@@ -433,9 +435,25 @@ export default function StaffBriefingHome() {
             <>
               <div
                 role="tablist"
-                aria-label="Reminders, recent notes, and inbox"
+                aria-label="Inbox, reminders, and recent notes"
                 className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1"
               >
+                {canSeeInbox ? (
+                  <button
+                    type="button"
+                    role="tab"
+                    id="briefing-tab-inbox"
+                    aria-selected={tab === "inbox"}
+                    aria-controls="briefing-panel"
+                    onClick={() => setTab("inbox")}
+                    className={tabClass(tab === "inbox")}
+                  >
+                    Inbox
+                    {inbox ? (
+                      <span className="ml-1 font-medium">({inbox.length})</span>
+                    ) : null}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   role="tab"
@@ -461,22 +479,6 @@ export default function StaffBriefingHome() {
                 >
                   Recent notes
                 </button>
-                {canSeeInbox ? (
-                  <button
-                    type="button"
-                    role="tab"
-                    id="briefing-tab-inbox"
-                    aria-selected={tab === "inbox"}
-                    aria-controls="briefing-panel"
-                    onClick={() => setTab("inbox")}
-                    className={tabClass(tab === "inbox")}
-                  >
-                    Inbox
-                    {inbox ? (
-                      <span className="ml-1 font-medium">({inbox.length})</span>
-                    ) : null}
-                  </button>
-                ) : null}
               </div>
               <div className="shrink-0">{tabAction}</div>
             </>
