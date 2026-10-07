@@ -12,8 +12,20 @@ import { User } from "../models/mongo/User";
 import {
   messagingCallSchema,
   messagingPreviewSchema,
+  messagingRescheduleSchema,
+  messagingScheduleSchema,
   messagingSendSchema,
+  SCHEDULED_MESSAGE_STATUS_FILTERS,
+  type MessagingSendInput,
 } from "../schemas/messageTemplate.schema";
+import {
+  ScheduledMessageSend,
+  type ScheduledMessageStatus,
+} from "../models/mongo/ScheduledMessageSend";
+import {
+  parseFutureScheduledAt,
+  ScheduledAtError,
+} from "../utils/scheduledEmail";
 import {
   MERGE_FIELDS,
   templateUsesPaymentLink,
@@ -230,40 +242,35 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-// POST /messaging/send
-export async function sendMessages(
-  req: AuthRequest,
-  res: Response,
-): Promise<void> {
-  try {
-    const parsed = messagingSendSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({
-        message: "Validation failed",
-        errors: parsed.error.flatten().fieldErrors,
-      });
-      return;
-    }
+export class MessagingDispatchError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "MessagingDispatchError";
+    this.status = status;
+  }
+}
 
-    const data = parsed.data;
+export async function dispatchMessagingBatch(
+  data: MessagingSendInput,
+  options: { userId?: string | null; apiBase: string },
+) {
     let bodyTemplate = data.body?.trim() ?? "";
     let templateOfferId: string | null = null;
 
     if (data.templateId) {
       if (!Types.ObjectId.isValid(data.templateId)) {
-        res.status(400).json({ message: "Invalid templateId" });
-        return;
+        throw new MessagingDispatchError(400, "Invalid templateId");
       }
       const template = await MessageTemplate.findById(data.templateId);
       if (!template || template.deletedAt) {
-        res.status(404).json({ message: "Message template not found" });
-        return;
+        throw new MessagingDispatchError(404, "Message template not found");
       }
       if (template.templateType === "email") {
-        res.status(400).json({
-          message: "Cannot send an email template as SMS",
-        });
-        return;
+        throw new MessagingDispatchError(
+          400,
+          "Cannot send an email template as SMS",
+        );
       }
       templateOfferId = template.offerContractTemplateId
         ? String(template.offerContractTemplateId)
@@ -279,8 +286,7 @@ export async function sendMessages(
         : templateOfferId;
 
     if (!bodyTemplate.trim()) {
-      res.status(400).json({ message: "Message body is empty" });
-      return;
+      throw new MessagingDispatchError(400, "Message body is empty");
     }
 
     let account;
@@ -293,8 +299,7 @@ export async function sendMessages(
         err instanceof TwilioServiceError
           ? err.message
           : "Failed to resolve Twilio account";
-      res.status(400).json({ message });
-      return;
+      throw new MessagingDispatchError(400, message);
     }
 
     const scope =
@@ -304,12 +309,10 @@ export async function sendMessages(
 
     const uniqueContactIds = [...new Set(data.contactIds)];
     const templateRef = data.templateId ?? null;
-    const userId = req.user?.id;
+    const userId = options.userId ?? null;
     const mediaUrls = data.mediaUrls ?? [];
     const channel = mediaUrls.length > 0 ? ("mms" as const) : ("sms" as const);
-    const apiBase =
-      process.env.PUBLIC_API_URL?.replace(/\/$/, "") ||
-      `${req.protocol}://${req.get("host")}`;
+    const apiBase = options.apiBase.replace(/\/$/, "");
     const statusCallbackUrl = buildStatusCallbackUrl(
       apiBase,
       account.accountSid,
@@ -526,17 +529,368 @@ export async function sendMessages(
     const sent = results.filter((r) => r.status === "sent").length;
     const failed = results.filter((r) => r.status === "failed").length;
 
-    res.json({
+    return {
       results,
       summary: { total: results.length, sent, failed },
       fromNumber,
       twilioAccountId: String(account._id),
       accountSid: account.accountSid,
       channel,
+    };
+}
+
+function messagingErrorResponse(err: unknown, res: Response): boolean {
+  if (
+    err instanceof MessagingDispatchError ||
+    err instanceof ScheduledAtError
+  ) {
+    res.status(err.status).json({ message: err.message });
+    return true;
+  }
+  return false;
+}
+
+function requestApiBase(req: AuthRequest): string {
+  return (
+    process.env.PUBLIC_API_URL?.replace(/\/$/, "") ||
+    `${req.protocol}://${req.get("host")}`
+  );
+}
+
+async function twilioAccountNameMap(ids: string[]) {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length === 0) return new Map<string, string>();
+  const rows = await TwilioAccount.find({ _id: { $in: unique } })
+    .select("friendlyName")
+    .lean();
+  return new Map(rows.map((row) => [String(row._id), row.friendlyName]));
+}
+
+function toPublicScheduledMessage(
+  doc: object,
+  accountFriendlyName?: string,
+) {
+  const record = doc as Record<string, unknown>;
+  const contactIds = Array.isArray(record.contactIds)
+    ? (record.contactIds as unknown[]).map(String)
+    : [];
+  const mediaUrls = Array.isArray(record.mediaUrls)
+    ? (record.mediaUrls as unknown[]).map(String)
+    : [];
+  return {
+    _id: String(record._id),
+    contactIds,
+    recipientCount: contactIds.length,
+    body: record.body ?? "",
+    fromNumber: record.fromNumber ?? "",
+    mediaUrls,
+    twilioAccountRef: record.twilioAccountRef
+      ? String(record.twilioAccountRef)
+      : null,
+    accountFriendlyName: accountFriendlyName ?? null,
+    includePaymentLink: Boolean(record.includePaymentLink),
+    offerContractTemplateId: record.offerContractTemplateId
+      ? String(record.offerContractTemplateId)
+      : null,
+    offerContractOverrides: Array.isArray(record.offerContractOverrides)
+      ? (
+          record.offerContractOverrides as {
+            contactId?: unknown;
+            contractTemplateId?: unknown;
+          }[]
+        ).map((row) => ({
+          contactId: String(row.contactId ?? ""),
+          contractTemplateId: row.contractTemplateId
+            ? String(row.contractTemplateId)
+            : null,
+        }))
+      : [],
+    scheduledAt: record.scheduledAt,
+    status: record.status,
+    summary: record.summary ?? null,
+    errorMessage: record.errorMessage ?? null,
+    cancelledAt: record.cancelledAt ?? null,
+    createdByUserRef: record.createdByUserRef
+      ? String(record.createdByUserRef)
+      : null,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
+// POST /messaging/send
+export async function sendMessages(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const parsed = messagingSendSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: "Validation failed",
+        errors: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const result = await dispatchMessagingBatch(parsed.data, {
+      userId: req.user?.id ?? null,
+      apiBase: requestApiBase(req),
     });
+    res.json(result);
   } catch (err) {
+    if (messagingErrorResponse(err, res)) return;
     console.error("POST /messaging/send error:", err);
     res.status(500).json({ message: "Failed to send messages" });
+  }
+}
+
+// POST /messaging/schedule
+export async function scheduleMessages(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const parsed = messagingScheduleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: "Validation failed",
+        errors: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const data = parsed.data;
+    const scheduledAt = parseFutureScheduledAt(data.scheduledAt);
+    let bodyTemplate = data.body?.trim() ?? "";
+    let templateOfferId: string | null = null;
+
+    if (data.templateId) {
+      if (!Types.ObjectId.isValid(data.templateId)) {
+        res.status(400).json({ message: "Invalid templateId" });
+        return;
+      }
+      const template = await MessageTemplate.findById(data.templateId);
+      if (!template || template.deletedAt) {
+        res.status(404).json({ message: "Message template not found" });
+        return;
+      }
+      if (template.templateType === "email") {
+        res.status(400).json({
+          message: "Cannot send an email template as SMS",
+        });
+        return;
+      }
+      templateOfferId = template.offerContractTemplateId
+        ? String(template.offerContractTemplateId)
+        : null;
+      if (!bodyTemplate) bodyTemplate = template.body ?? "";
+    }
+
+    if (!bodyTemplate.trim()) {
+      res.status(400).json({ message: "Message body is empty" });
+      return;
+    }
+
+    let account;
+    let fromNumber: string;
+    try {
+      account = await getTwilioAccountForSend(data.twilioAccountId);
+      fromNumber = resolveFromNumber(account, data.fromNumber);
+    } catch (err) {
+      const message =
+        err instanceof TwilioServiceError
+          ? err.message
+          : "Failed to resolve Twilio account";
+      res.status(400).json({ message });
+      return;
+    }
+
+    const offerContractTemplateId =
+      data.offerContractTemplateId !== undefined
+        ? data.offerContractTemplateId
+        : templateOfferId;
+    const userId = req.user?.id ? new Types.ObjectId(req.user.id) : null;
+
+    const row = await ScheduledMessageSend.create({
+      contactIds: [...new Set(data.contactIds)],
+      body: bodyTemplate,
+      templateRef: data.templateId ? new Types.ObjectId(data.templateId) : null,
+      twilioAccountRef: account._id,
+      fromNumber,
+      mediaUrls: data.mediaUrls ?? [],
+      renewalYear: data.renewalYear ?? null,
+      renewalMonth: data.renewalMonth ?? null,
+      includePaymentLink: data.includePaymentLink === true,
+      offerContractTemplateId: offerContractTemplateId
+        ? new Types.ObjectId(offerContractTemplateId)
+        : null,
+      offerContractOverrides: (data.offerContractOverrides ?? []).map(
+        (override) => ({
+          contactId: override.contactId,
+          contractTemplateId: override.contractTemplateId
+            ? new Types.ObjectId(override.contractTemplateId)
+            : null,
+        }),
+      ),
+      scheduledAt,
+      status: "scheduled",
+      createdByUserRef: userId,
+    });
+
+    res.status(201).json({
+      scheduled: toPublicScheduledMessage(
+        row.toObject(),
+        account.friendlyName,
+      ),
+    });
+  } catch (err) {
+    if (messagingErrorResponse(err, res)) return;
+    console.error("POST /messaging/schedule error:", err);
+    res.status(500).json({ message: "Failed to schedule messages" });
+  }
+}
+
+// GET /messaging/scheduled
+export async function listScheduledMessages(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "25"), 10) || 25;
+    const pageSize = PAGE_SIZES.has(pageSizeRaw) ? pageSizeRaw : 25;
+
+    const statusRaw = String(req.query.status ?? "scheduled");
+    const filter: Record<string, unknown> = {};
+    if (statusRaw !== "all") {
+      if (
+        !SCHEDULED_MESSAGE_STATUS_FILTERS.includes(
+          statusRaw as (typeof SCHEDULED_MESSAGE_STATUS_FILTERS)[number],
+        )
+      ) {
+        res.status(400).json({ message: "Invalid status filter" });
+        return;
+      }
+      filter.status = statusRaw as ScheduledMessageStatus;
+    }
+
+    const [total, rows] = await Promise.all([
+      ScheduledMessageSend.countDocuments(filter),
+      ScheduledMessageSend.find(filter)
+        .sort({ scheduledAt: 1, createdAt: -1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize)
+        .lean(),
+    ]);
+
+    const names = await twilioAccountNameMap(
+      rows.map((row) => String(row.twilioAccountRef)),
+    );
+
+    res.json({
+      scheduled: rows.map((row) =>
+        toPublicScheduledMessage(
+          row,
+          names.get(String(row.twilioAccountRef)),
+        ),
+      ),
+      total,
+      page,
+      pageSize,
+    });
+  } catch (err) {
+    console.error("GET /messaging/scheduled error:", err);
+    res.status(500).json({ message: "Failed to list scheduled messages" });
+  }
+}
+
+// PATCH /messaging/scheduled/:id
+export async function rescheduleMessages(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!Types.ObjectId.isValid(String(req.params.id))) {
+      res.status(400).json({ message: "Invalid scheduled message id" });
+      return;
+    }
+    const parsed = messagingRescheduleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: "Validation failed",
+        errors: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const scheduledAt = parseFutureScheduledAt(parsed.data.scheduledAt);
+    const row = await ScheduledMessageSend.findById(req.params.id);
+    if (!row) {
+      res.status(404).json({ message: "Scheduled message not found" });
+      return;
+    }
+    if (row.status !== "scheduled") {
+      res.status(400).json({
+        message: "Only upcoming scheduled messages can be rescheduled",
+      });
+      return;
+    }
+
+    row.scheduledAt = scheduledAt;
+    await row.save();
+
+    const names = await twilioAccountNameMap([String(row.twilioAccountRef)]);
+    res.json({
+      scheduled: toPublicScheduledMessage(
+        row.toObject(),
+        names.get(String(row.twilioAccountRef)),
+      ),
+    });
+  } catch (err) {
+    if (messagingErrorResponse(err, res)) return;
+    console.error("PATCH /messaging/scheduled/:id error:", err);
+    res.status(500).json({ message: "Failed to reschedule message" });
+  }
+}
+
+// POST /messaging/scheduled/:id/cancel
+export async function cancelScheduledMessages(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!Types.ObjectId.isValid(String(req.params.id))) {
+      res.status(400).json({ message: "Invalid scheduled message id" });
+      return;
+    }
+
+    const row = await ScheduledMessageSend.findById(req.params.id);
+    if (!row) {
+      res.status(404).json({ message: "Scheduled message not found" });
+      return;
+    }
+    if (row.status !== "scheduled") {
+      res.status(400).json({
+        message: "Only upcoming scheduled messages can be cancelled",
+      });
+      return;
+    }
+
+    row.status = "cancelled";
+    row.cancelledAt = new Date();
+    await row.save();
+
+    const names = await twilioAccountNameMap([String(row.twilioAccountRef)]);
+    res.json({
+      scheduled: toPublicScheduledMessage(
+        row.toObject(),
+        names.get(String(row.twilioAccountRef)),
+      ),
+    });
+  } catch (err) {
+    console.error("POST /messaging/scheduled/:id/cancel error:", err);
+    res.status(500).json({ message: "Failed to cancel scheduled message" });
   }
 }
 

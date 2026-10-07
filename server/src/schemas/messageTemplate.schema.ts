@@ -101,45 +101,88 @@ export const messagingPreviewSchema = z
     },
   );
 
-export const messagingSendSchema = z
-  .object({
-    contactIds: z.array(z.string().trim().min(1)).min(1).max(200),
-    body: z.string().max(1600).optional(),
-    templateId: z.string().trim().min(1).optional(),
-    threadId: z.string().trim().min(1).optional(),
-    twilioAccountId: z.string().trim().min(1).optional(),
-    fromNumber: z.string().trim().min(1).optional(),
-    mediaUrls: z
-      .array(z.string().trim().url().max(2000))
-      .max(10)
-      .optional()
-      .default([]),
-    renewalYear: z.number().int().min(1970).max(2100).optional(),
-    renewalMonth: z.number().int().min(1).max(12).optional(),
-    includePaymentLink: z.boolean().optional(),
-    offerContractTemplateId: offerContractTemplateIdSchema.optional(),
-    offerContractOverrides: z
-      .array(offerContractOverrideSchema)
-      .max(200)
-      .optional(),
-  })
-  .refine((data) => Boolean(data.body?.trim()) || Boolean(data.templateId), {
-    message: "Either body or templateId is required",
-    path: ["body"],
-  })
-  .refine(
-    (data) =>
-      (data.renewalYear === undefined && data.renewalMonth === undefined) ||
-      (data.renewalYear !== undefined && data.renewalMonth !== undefined),
-    {
-      message: "Both renewalYear and renewalMonth are required together",
+const messagingSendObject = z.object({
+  contactIds: z.array(z.string().trim().min(1)).min(1).max(200),
+  body: z.string().max(1600).optional(),
+  templateId: z.string().trim().min(1).optional(),
+  threadId: z.string().trim().min(1).optional(),
+  twilioAccountId: z.string().trim().min(1).optional(),
+  fromNumber: z.string().trim().min(1).optional(),
+  mediaUrls: z
+    .array(z.string().trim().url().max(2000))
+    .max(10)
+    .optional()
+    .default([]),
+  renewalYear: z.number().int().min(1970).max(2100).optional(),
+  renewalMonth: z.number().int().min(1).max(12).optional(),
+  includePaymentLink: z.boolean().optional(),
+  offerContractTemplateId: offerContractTemplateIdSchema.optional(),
+  offerContractOverrides: z
+    .array(offerContractOverrideSchema)
+    .max(200)
+    .optional(),
+});
+
+function refineMessagingSend(
+  data: {
+    body?: string;
+    templateId?: string;
+    renewalYear?: number;
+    renewalMonth?: number;
+    threadId?: string;
+    contactIds: string[];
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (!data.body?.trim() && !data.templateId) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["body"],
+      message: "Either body or templateId is required",
+    });
+  }
+  const hasYear = data.renewalYear !== undefined;
+  const hasMonth = data.renewalMonth !== undefined;
+  if (hasYear !== hasMonth) {
+    ctx.addIssue({
+      code: "custom",
       path: ["renewalMonth"],
-    },
-  )
-  .refine((data) => !data.threadId || data.contactIds.length === 1, {
-    message: "threadId can only be used when sending to a single contact",
-    path: ["threadId"],
-  });
+      message: "Both renewalYear and renewalMonth are required together",
+    });
+  }
+  if (data.threadId && data.contactIds.length !== 1) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["threadId"],
+      message: "threadId can only be used when sending to a single contact",
+    });
+  }
+}
+
+export const messagingSendSchema = messagingSendObject.superRefine(
+  refineMessagingSend,
+);
+
+export type MessagingSendInput = z.infer<typeof messagingSendSchema>;
+
+export const messagingScheduleSchema = messagingSendObject
+  .extend({
+    scheduledAt: z.string().trim().min(1),
+  })
+  .superRefine(refineMessagingSend);
+
+export const messagingRescheduleSchema = z.object({
+  scheduledAt: z.string().trim().min(1),
+});
+
+export const SCHEDULED_MESSAGE_STATUS_FILTERS = [
+  "scheduled",
+  "sending",
+  "sent",
+  "cancelled",
+  "failed",
+  "all",
+] as const;
 
 const invoiceTemplateIdSchema = z
   .string()

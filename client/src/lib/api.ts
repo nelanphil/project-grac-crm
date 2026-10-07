@@ -5215,6 +5215,126 @@ export async function previewMessagingMessage(
   });
 }
 
+export type ScheduledMessageStatus =
+  | "scheduled"
+  | "sending"
+  | "sent"
+  | "cancelled"
+  | "failed";
+
+export interface ScheduledMessageItem {
+  _id: string;
+  contactIds: string[];
+  recipientCount: number;
+  body: string;
+  fromNumber: string;
+  mediaUrls: string[];
+  twilioAccountRef: string | null;
+  accountFriendlyName: string | null;
+  includePaymentLink: boolean;
+  scheduledAt: string;
+  status: ScheduledMessageStatus;
+  summary: {
+    total: number;
+    sent: number;
+    failed: number;
+  } | null;
+  errorMessage: string | null;
+  cancelledAt: string | null;
+  createdByUserRef: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function scheduleMessagingMessages(
+  token: string,
+  data: {
+    contactIds: string[];
+    body?: string;
+    templateId?: string;
+    twilioAccountId?: string;
+    fromNumber?: string;
+    mediaUrls?: string[];
+    renewalYear?: number;
+    renewalMonth?: number;
+    includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
+    offerContractOverrides?: {
+      contactId: string;
+      contractTemplateId: string | null;
+    }[];
+    scheduledAt: string;
+  },
+): Promise<{ scheduled: ScheduledMessageItem }> {
+  return authRequest<{ scheduled: ScheduledMessageItem }>(
+    "/messaging/schedule",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function getScheduledMessages(
+  token: string,
+  options?: {
+    status?: ScheduledMessageStatus | "all";
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  scheduled: ScheduledMessageItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (options?.status) params.set("status", options.status);
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
+  const qs = params.toString();
+  return authRequest<{
+    scheduled: ScheduledMessageItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/messaging/scheduled${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function rescheduleMessagingMessages(
+  token: string,
+  id: string,
+  scheduledAt: string,
+): Promise<{ scheduled: ScheduledMessageItem }> {
+  return authRequest<{ scheduled: ScheduledMessageItem }>(
+    `/messaging/scheduled/${id}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ scheduledAt }),
+    },
+  );
+}
+
+export async function cancelScheduledMessage(
+  token: string,
+  id: string,
+): Promise<{ scheduled: ScheduledMessageItem }> {
+  return authRequest<{ scheduled: ScheduledMessageItem }>(
+    `/messaging/scheduled/${id}/cancel`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export async function sendMessagingMessages(
   token: string,
   data: {

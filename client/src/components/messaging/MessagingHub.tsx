@@ -9,8 +9,8 @@ import {
   MessageTemplateItem,
   MessageTemplateType,
   MessagingContactItem,
-  MessagingSendResponse,
   ScheduledEmailItem,
+  ScheduledMessageItem,
   TwilioAccountItem,
   ContractTemplateItem,
   createMessageTemplate,
@@ -28,7 +28,7 @@ import {
   searchEmailContacts,
   searchMessagingContacts,
   scheduleEmailMessages,
-  sendMessagingMessages,
+  scheduleMessagingMessages,
   updateMessageTemplate,
 } from "@/lib/api";
 import {
@@ -55,6 +55,7 @@ import CreatePanel from "./CreatePanel";
 import EmailCreatePanel from "./EmailCreatePanel";
 import { EmailBodyEditorHandle } from "./EmailBodyEditor";
 import ScheduledEmailsPanel from "./ScheduledEmailsPanel";
+import ScheduledMessagesPanel from "./ScheduledMessagesPanel";
 import SentEmailsPanel from "./SentEmailsPanel";
 import TemplatesPanel from "./TemplatesPanel";
 import InboxPanel from "./InboxPanel";
@@ -72,7 +73,8 @@ type MessagingTab =
   | "email"
   | "threads"
   | "sent-emails"
-  | "scheduled-emails";
+  | "scheduled-emails"
+  | "scheduled-messages";
 
 function templateTypeOf(template: MessageTemplateItem): MessageTemplateType {
   return template.templateType === "email" ? "email" : "sms";
@@ -104,7 +106,8 @@ function messagingTabFromQuery(tab: string | null): MessagingTab {
     tab === "create" ||
     tab === "email" ||
     tab === "sent-emails" ||
-    tab === "scheduled-emails"
+    tab === "scheduled-emails" ||
+    tab === "scheduled-messages"
   ) {
     return tab;
   }
@@ -254,6 +257,10 @@ export default function MessagingHub() {
     formatLocalDate(new Date()),
   );
   const [emailScheduleTime, setEmailScheduleTime] = useState("");
+  const [messageScheduleDate, setMessageScheduleDate] = useState(() =>
+    formatLocalDate(new Date()),
+  );
+  const [messageScheduleTime, setMessageScheduleTime] = useState("");
 
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [loadingContacts, setLoadingContacts] = useState(false);
@@ -264,9 +271,8 @@ export default function MessagingHub() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [emailConfirmOpen, setEmailConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sendResult, setSendResult] = useState<MessagingSendResponse | null>(
-    null,
-  );
+  const [messageScheduleResult, setMessageScheduleResult] =
+    useState<ScheduledMessageItem | null>(null);
   const [emailScheduleResult, setEmailScheduleResult] =
     useState<ScheduledEmailItem | null>(null);
 
@@ -1094,7 +1100,9 @@ export default function MessagingHub() {
     setSmsOfferContractTemplateId(null);
     setSmsOfferContractOverrides({});
     setError(null);
-    setSendResult(null);
+    setMessageScheduleResult(null);
+    setMessageScheduleDate(formatLocalDate(new Date()));
+    setMessageScheduleTime("");
     setResetSignal((n) => n + 1);
   }
 
@@ -1195,7 +1203,7 @@ export default function MessagingHub() {
     }
   }
 
-  async function handleSend() {
+  async function handleMessageSchedule() {
     if (!token) return;
     if (selectedIds.size === 0) {
       setError("Select at least one contact.");
@@ -1209,6 +1217,18 @@ export default function MessagingHub() {
       setError("Select a Twilio account and from number.");
       return;
     }
+    if (!messageScheduleDate || !messageScheduleTime) {
+      setError("Choose a date and time to schedule this message.");
+      return;
+    }
+    const scheduledAt = localDateTimeToIso(
+      messageScheduleDate,
+      messageScheduleTime,
+    );
+    if (!isEmailScheduleTimeValid(scheduledAt)) {
+      setError("Scheduled time must be at least 1 minute in the future.");
+      return;
+    }
 
     const mediaUrls = mediaUrlsRaw
       .split(/[\n,]+/)
@@ -1217,9 +1237,9 @@ export default function MessagingHub() {
 
     setSending(true);
     setError(null);
-    setSendResult(null);
+    setMessageScheduleResult(null);
     try {
-      const result = await sendMessagingMessages(token, {
+      const result = await scheduleMessagingMessages(token, {
         contactIds: [...selectedIds],
         body,
         templateId: selectedTemplateId ?? undefined,
@@ -1236,12 +1256,13 @@ export default function MessagingHub() {
             contractTemplateId,
           }),
         ),
+        scheduledAt,
       });
-      setSendResult(result);
+      setMessageScheduleResult(result.scheduled);
       setConfirmOpen(false);
     } catch (err) {
       setError(
-        err instanceof ApiError ? err.message : "Failed to send messages.",
+        err instanceof ApiError ? err.message : "Failed to schedule messages.",
       );
     } finally {
       setSending(false);
@@ -1323,6 +1344,7 @@ export default function MessagingHub() {
             ["templates", "Templates"],
             ["create", "Message Wizard"],
             ["email", "Email Wizard"],
+            ["scheduled-messages", "Scheduled Messages"],
             ["scheduled-emails", "Scheduled Emails"],
             ["sent-emails", "Sent Emails"],
           ] as const
@@ -1510,14 +1532,22 @@ export default function MessagingHub() {
           confirmOpen={confirmOpen}
           onOpenConfirm={() => setConfirmOpen(true)}
           onCloseConfirm={() => setConfirmOpen(false)}
-          onConfirmSend={handleSend}
+          onConfirmSchedule={handleMessageSchedule}
           onCancelFlow={resetCreateFlow}
+          scheduleDate={messageScheduleDate}
+          scheduleTime={messageScheduleTime}
+          onScheduleDateChange={setMessageScheduleDate}
+          onScheduleTimeChange={setMessageScheduleTime}
           previewText={previewText}
           previewContactLabel={previewContactLabel}
           previewSample={previewSample}
           error={error}
-          sendResult={sendResult}
-          onDismissSendResult={() => setSendResult(null)}
+          scheduleResult={messageScheduleResult}
+          onDismissScheduleResult={() => setMessageScheduleResult(null)}
+          onViewScheduled={() => {
+            setMessageScheduleResult(null);
+            setActiveTab("scheduled-messages");
+          }}
           showPaymentLinkColumn={smsUsesPaymentLink}
           includePaymentLink={smsIncludePaymentLink}
           onIncludePaymentLinkChange={setSmsIncludePaymentLink}
@@ -1668,6 +1698,8 @@ export default function MessagingHub() {
             setActiveTab("scheduled-emails");
           }}
         />
+      ) : activeTab === "scheduled-messages" ? (
+        <ScheduledMessagesPanel token={token} />
       ) : activeTab === "scheduled-emails" ? (
         <ScheduledEmailsPanel token={token} />
       ) : activeTab === "sent-emails" ? (

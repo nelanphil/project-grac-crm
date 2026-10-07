@@ -5,22 +5,27 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  CalendarClock,
   Check,
   CheckSquare,
   Loader2,
-  MessageSquare,
   Square,
 } from "lucide-react";
 import {
   MergeFieldItem,
   MessageTemplateItem,
   MessagingContactItem,
-  MessagingSendResponse,
+  ScheduledMessageItem,
   ThreadConflictCheck,
   TwilioAccountItem,
   checkMessagingThreadConflict,
   formatTwilioLine,
 } from "@/lib/api";
+import {
+  formatPrettyDateTime,
+  isEmailScheduleTimeValid,
+  localDateTimeToIso,
+} from "@/lib/schedule";
 import {
   formatCustomerName,
   formatCustomerRecordName,
@@ -49,8 +54,9 @@ const MONTH_NAMES = [
 const STEPS = [
   { key: "recipients", label: "Recipients" },
   { key: "message", label: "Message" },
-  { key: "account", label: "Account" },
-  { key: "review", label: "Review & send" },
+  { key: "account", label: "Configuration" },
+  { key: "review", label: "Review" },
+  { key: "schedule", label: "Schedule & Send" },
 ] as const;
 
 function formatPhone(phone: string | undefined | null): string {
@@ -202,16 +208,22 @@ type CreatePanelProps = {
   confirmOpen: boolean;
   onOpenConfirm: () => void;
   onCloseConfirm: () => void;
-  onConfirmSend: () => void;
+  onConfirmSchedule: () => void;
   onCancelFlow: () => void;
+
+  scheduleDate: string;
+  scheduleTime: string;
+  onScheduleDateChange: (value: string) => void;
+  onScheduleTimeChange: (value: string) => void;
 
   previewText: string;
   previewContactLabel?: string;
   previewSample: boolean;
 
   error: string | null;
-  sendResult: MessagingSendResponse | null;
-  onDismissSendResult: () => void;
+  scheduleResult: ScheduledMessageItem | null;
+  onDismissScheduleResult: () => void;
+  onViewScheduled: () => void;
 
   showPaymentLinkColumn?: boolean;
   includePaymentLink?: boolean;
@@ -270,14 +282,19 @@ export default function CreatePanel({
   confirmOpen,
   onOpenConfirm,
   onCloseConfirm,
-  onConfirmSend,
+  onConfirmSchedule,
   onCancelFlow,
+  scheduleDate,
+  scheduleTime,
+  onScheduleDateChange,
+  onScheduleTimeChange,
   previewText,
   previewContactLabel,
   previewSample,
   error,
-  sendResult,
-  onDismissSendResult,
+  scheduleResult,
+  onDismissScheduleResult,
+  onViewScheduled,
   showPaymentLinkColumn = false,
   includePaymentLink = false,
   onIncludePaymentLinkChange,
@@ -337,6 +354,22 @@ export default function CreatePanel({
   }, [token, selectedIds, effectiveFromNumber]);
 
   const step = STEPS[stepIndex].key;
+  const selectedAccount = accounts.find((a) => a._id === accountId);
+  const scheduleIso =
+    scheduleDate && scheduleTime
+      ? localDateTimeToIso(scheduleDate, scheduleTime)
+      : null;
+  const scheduleValid = scheduleIso
+    ? isEmailScheduleTimeValid(scheduleIso)
+    : false;
+  const fromLabel = effectiveFromNumber
+    ? formatTwilioLine(
+        selectedAccount?.phoneNumbers.find(
+          (line) => line.phoneNumber === effectiveFromNumber,
+        )?.label,
+        effectiveFromNumber,
+      )
+    : "—";
 
   const nextDisabled =
     (step === "recipients" && selectedIds.size === 0) ||
@@ -357,8 +390,6 @@ export default function CreatePanel({
     setStepIndex((s) => Math.max(0, s - 1));
   }
 
-  const selectedAccount = accounts.find((a) => a._id === accountId);
-
   return (
     <div className="space-y-4">
       <h2 className="text-sm font-semibold text-brand-dark">Message Wizard</h2>
@@ -368,30 +399,32 @@ export default function CreatePanel({
         </div>
       ) : null}
 
-      {sendResult ? (
+      {scheduleResult ? (
         <div className="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm">
           <p className="font-medium text-brand-dark">
-            Send complete — {sendResult.summary.sent} sent,{" "}
-            {sendResult.summary.failed} failed
+            Scheduled for {formatPrettyDateTime(scheduleResult.scheduledAt)} —{" "}
+            {scheduleResult.recipientCount} recipient
+            {scheduleResult.recipientCount === 1 ? "" : "s"}
           </p>
-          {sendResult.summary.failed > 0 ? (
-            <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-neutral-600">
-              {sendResult.results
-                .filter((r) => r.status === "failed")
-                .map((r) => (
-                  <li key={r.contactId}>
-                    {r.contactId}: {r.error || "Failed"}
-                  </li>
-                ))}
-            </ul>
-          ) : null}
-          <button
-            type="button"
-            className="mt-2 text-xs font-medium text-brand-orange hover:underline"
-            onClick={onDismissSendResult}
-          >
-            Dismiss
-          </button>
+          <p className="mt-1 line-clamp-2 text-xs text-neutral-500">
+            {scheduleResult.body || "Untitled"}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-3">
+            <button
+              type="button"
+              className="text-xs font-medium text-brand-orange hover:underline"
+              onClick={onViewScheduled}
+            >
+              View scheduled messages
+            </button>
+            <button
+              type="button"
+              className="text-xs font-medium text-neutral-500 hover:underline"
+              onClick={onDismissScheduleResult}
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -1022,28 +1055,15 @@ export default function CreatePanel({
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <button
                 type="button"
-                disabled={
-                  sending ||
-                  selectedIds.size === 0 ||
-                  !accountId ||
-                  !effectiveFromNumber ||
-                  !body.trim()
-                }
-                onClick={onOpenConfirm}
-                className="btn-primary inline-flex flex-1 items-center justify-center gap-1.5 disabled:opacity-60"
-              >
-                <MessageSquare className="h-4 w-4" />
-                Send to {selectedIds.size}
-                {mediaUrlsRaw.trim() ? " (MMS)" : ""}
-              </button>
-              <button
-                type="button"
                 onClick={onCancelFlow}
                 className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
               >
                 Cancel
               </button>
             </div>
+            <p className="mt-3 text-xs text-neutral-500">
+              Next: choose when to send.
+            </p>
           </div>
 
           <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
@@ -1181,6 +1201,118 @@ export default function CreatePanel({
         </div>
       ) : null}
 
+      {step === "schedule" ? (
+        <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold text-brand-dark">
+            Schedule & Send
+          </h2>
+          <p className="mb-4 text-sm text-neutral-600">
+            Choose a date and time in Eastern Time. This message will send
+            automatically then — there is no send-now option in the wizard.
+          </p>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-sm">
+                  <span className="mb-1 block text-xs font-medium text-neutral-500">
+                    Date
+                  </span>
+                  <input
+                    type="date"
+                    value={scheduleDate}
+                    onChange={(e) => onScheduleDateChange(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="mb-1 block text-xs font-medium text-neutral-500">
+                    Time (Eastern)
+                  </span>
+                  <input
+                    type="time"
+                    value={scheduleTime}
+                    onChange={(e) => onScheduleTimeChange(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+                  />
+                </label>
+              </div>
+              {scheduleDate && scheduleTime && !scheduleValid ? (
+                <p className="text-xs text-red-600">
+                  Choose a time at least 1 minute in the future.
+                </p>
+              ) : null}
+              <dl className="space-y-2 text-sm">
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                  <dt className="text-neutral-500">Recipients</dt>
+                  <dd className="font-medium text-brand-dark">
+                    {selectedIds.size} selected
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                  <dt className="text-neutral-500">From</dt>
+                  <dd className="text-right font-medium text-brand-dark">
+                    {fromLabel}
+                  </dd>
+                </div>
+                {mediaUrlsRaw.trim() ? (
+                  <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                    <dt className="text-neutral-500">Media</dt>
+                    <dd className="font-medium text-brand-dark">MMS attached</dd>
+                  </div>
+                ) : null}
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                  <dt className="text-neutral-500">Sends at</dt>
+                  <dd className="text-right font-medium text-brand-dark">
+                    {scheduleValid && scheduleIso
+                      ? formatPrettyDateTime(scheduleIso)
+                      : "—"}
+                  </dd>
+                </div>
+              </dl>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  type="button"
+                  disabled={
+                    sending ||
+                    !scheduleValid ||
+                    selectedIds.size === 0 ||
+                    !accountId ||
+                    !effectiveFromNumber ||
+                    !body.trim()
+                  }
+                  onClick={onOpenConfirm}
+                  className="btn-primary inline-flex flex-1 items-center justify-center gap-1.5 disabled:opacity-60"
+                >
+                  <CalendarClock className="h-4 w-4" />
+                  Schedule send
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancelFlow}
+                  className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div className="border-t border-neutral-100 pt-6 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-6">
+              <h3 className="text-sm font-semibold text-brand-dark">
+                Phone preview
+              </h3>
+              <p className="mb-4 mt-1 text-xs text-neutral-500">
+                Same preview as Review. Recipients, merge fields, and payment
+                links are resolved when the message actually sends.
+              </p>
+              <PhonePreview
+                message={previewText}
+                contactLabel={previewContactLabel}
+                isSample={previewSample}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* Step navigation */}
       <div className="flex items-center justify-between">
         <button
@@ -1191,7 +1323,7 @@ export default function CreatePanel({
         >
           Back
         </button>
-        {step !== "review" ? (
+        {step !== "schedule" ? (
           <button
             type="button"
             onClick={goNext}
@@ -1204,18 +1336,24 @@ export default function CreatePanel({
         ) : null}
       </div>
 
-      {/* Confirm dialog */}
       {confirmOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
             <h3 className="text-lg font-semibold text-brand-dark">
-              Confirm bulk send
+              Confirm scheduled send
             </h3>
             <p className="mt-2 text-sm text-neutral-600">
-              Send this message to <strong>{selectedIds.size}</strong>{" "}
+              Schedule this message to <strong>{selectedIds.size}</strong>{" "}
               recipient
               {selectedIds.size === 1 ? "" : "s"} from{" "}
-              <strong>{effectiveFromNumber}</strong>?
+              <strong>{fromLabel}</strong>
+              {scheduleValid && scheduleIso ? (
+                <>
+                  {" "}
+                  at <strong>{formatPrettyDateTime(scheduleIso)}</strong>
+                </>
+              ) : null}
+              ?
             </p>
             <p className="mt-2 rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600 whitespace-pre-wrap">
               {previewText || body}
@@ -1232,15 +1370,15 @@ export default function CreatePanel({
               <button
                 type="button"
                 className="btn-primary inline-flex items-center gap-1.5 disabled:opacity-60"
-                onClick={onConfirmSend}
-                disabled={sending}
+                onClick={onConfirmSchedule}
+                disabled={sending || !scheduleValid}
               >
                 {sending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <MessageSquare className="h-4 w-4" />
+                  <CalendarClock className="h-4 w-4" />
                 )}
-                Send now
+                Schedule send
               </button>
             </div>
           </div>

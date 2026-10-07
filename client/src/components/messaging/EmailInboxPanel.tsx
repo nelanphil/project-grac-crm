@@ -466,7 +466,7 @@ export default function EmailInboxPanel({
                         key={message.uid}
                         className={`border-b border-[var(--staff-border)] ${
                           active
-                            ? "border-l-2 border-l-brand-orange bg-orange-50"
+                            ? "conversation-row-active border-l-2 border-l-brand-orange"
                             : ""
                         }`}
                       >

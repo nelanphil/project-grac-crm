@@ -10,6 +10,10 @@ import {
   searchMessagingContacts,
   previewMessage,
   sendMessages,
+  scheduleMessages,
+  listScheduledMessages,
+  rescheduleMessages,
+  cancelScheduledMessages,
   placeCall,
   listCommunications,
   listThreads,
@@ -65,6 +69,22 @@ router.patch(
 router.get("/webhook-info", requirePermission("messages:read"), getWebhookInfo);
 router.post("/preview", requirePermission("messages:read"), previewMessage);
 router.post("/send", requirePermission("messages:write"), sendMessages);
+router.post("/schedule", requirePermission("messages:write"), scheduleMessages);
+router.get(
+  "/scheduled",
+  requirePermission("messages:read"),
+  listScheduledMessages,
+);
+router.patch(
+  "/scheduled/:id",
+  requirePermission("messages:write"),
+  rescheduleMessages,
+);
+router.post(
+  "/scheduled/:id/cancel",
+  requirePermission("messages:write"),
+  cancelScheduledMessages,
+);
 router.post("/calls", requirePermission("messages:write"), placeCall);
 
 export default router;
