@@ -674,6 +674,22 @@ export interface UserHomeLocation {
   lng: number | null;
 }
 
+/** A Google-confirmed city a technician covers. */
+export interface ServiceCity {
+  city: string;
+  state: string;
+  placeId: string;
+  lat: number | null;
+  lng: number | null;
+}
+
+export interface CitySuggestion {
+  placeId: string;
+  label: string;
+  city: string;
+  state: string;
+}
+
 export interface WeeklyDayHours {
   enabled: boolean;
   start: string;
@@ -722,6 +738,7 @@ export interface UserListItem {
   territories: UserTerritories;
   homeLocation: UserHomeLocation;
   weeklyHours: UserWeeklyHours;
+  serviceCities: ServiceCity[];
   scheduleExceptions: ScheduleException[];
   lastLoginAt?: string | null;
   lastLoginLocation?: UserLoginLocation | null;
@@ -754,6 +771,7 @@ export async function createUser(
     territories?: UserTerritories;
     weeklyHours?: UserWeeklyHours;
     homeLocation?: UserHomeLocation;
+    serviceCities?: ServiceCity[];
     scheduleExceptions?: ScheduleException[];
   },
 ): Promise<{ user: UserListItem; temporaryPassword?: string }> {
@@ -784,6 +802,7 @@ export async function updateUser(
     territories?: UserTerritories;
     weeklyHours?: UserWeeklyHours;
     homeLocation?: UserHomeLocation;
+    serviceCities?: ServiceCity[];
     scheduleExceptions?: ScheduleException[];
   },
 ): Promise<{ user: UserListItem }> {
@@ -2230,11 +2249,12 @@ export async function geocodeMissingScheduleAddresses(
 
 export async function getScheduleQueue(
   token: string,
-  opts?: { from?: string; to?: string },
+  opts?: { from?: string; to?: string; includeUndated?: boolean },
 ): Promise<ScheduleQueue> {
   const params = new URLSearchParams();
   if (opts?.from) params.set("from", opts.from);
   if (opts?.to) params.set("to", opts.to);
+  if (opts?.includeUndated) params.set("includeUndated", "1");
   const qs = params.toString();
   return authRequest<ScheduleQueue>(
     `/schedule/queue${qs ? `?${qs}` : ""}`,
@@ -2305,6 +2325,36 @@ export async function getTechnicians(
   );
 }
 
+export async function suggestServiceCities(
+  token: string,
+  query: string,
+  state: string,
+): Promise<{ suggestions: CitySuggestion[] }> {
+  const params = new URLSearchParams({ q: query, state });
+  return authRequest<{ suggestions: CitySuggestion[] }>(
+    `/schedule/city-suggestions?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function resolveServiceCity(
+  token: string,
+  placeId: string,
+  state: string,
+): Promise<{ city: ServiceCity }> {
+  const params = new URLSearchParams({ placeId, state });
+  return authRequest<{ city: ServiceCity }>(
+    `/schedule/city-details?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export async function getScheduleStaff(
   token: string,
   from: string,
@@ -2337,6 +2387,33 @@ export interface ScheduleSuggestion {
   driveFrom: "previousJob" | "home" | "unknown";
   driveFromLabel: string;
   driveKnown: boolean;
+  /** True when the job's city is one of this technician's service cities. */
+  inTerritory?: boolean;
+}
+
+export interface ScheduleRecommendation {
+  userId: string;
+  first_name: string;
+  last_name: string;
+  reason: string;
+}
+
+export async function getScheduleRecommendations(
+  token: string,
+  data: { date: string; workOrderIds: string[] },
+): Promise<{
+  date: string;
+  recommendations: Array<{
+    workOrderId: string;
+    recommendation: ScheduleRecommendation | null;
+    technicians: ScheduleRecommendation[];
+  }>;
+}> {
+  return authRequest("/schedule/recommendations", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
 }
 
 export async function suggestScheduleAssignee(

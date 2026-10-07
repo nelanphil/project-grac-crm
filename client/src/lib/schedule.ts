@@ -1,4 +1,5 @@
 import type {
+  ServiceCity,
   UserHomeLocation,
   UserWeeklyHours,
   WeekdayKey,
@@ -348,6 +349,21 @@ export function weeklyHoursSummary(hours: UserWeeklyHours): string {
   const days = enabledKeys.map((key) => WEEKDAY_LABELS[key].slice(0, 3)).join(", ");
   if (same) return `${days} ${first.start}–${first.end}`;
   return `${enabledKeys.length} days set`;
+}
+
+/** Compact coverage label, e.g. "FL (3), GA (1)". */
+export function serviceTerritorySummary(
+  cities: ServiceCity[] | null | undefined,
+): string {
+  if (!cities?.length) return "—";
+  const counts = new Map<string, number>();
+  for (const city of cities) {
+    const state = city.state.trim().toUpperCase();
+    if (!state) continue;
+    counts.set(state, (counts.get(state) ?? 0) + 1);
+  }
+  if (counts.size === 0) return "—";
+  return [...counts.entries()].map(([state, count]) => `${state} (${count})`).join(", ");
 }
 
 export function workOrderLocalDate(job: {

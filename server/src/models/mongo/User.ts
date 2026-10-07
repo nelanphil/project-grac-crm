@@ -22,6 +22,16 @@ export interface IUserTerritories {
   zips: string[];
 }
 
+/** A city a technician covers. Used later to recommend assignees. */
+export interface IServiceCity {
+  city: string;
+  /** Two-letter US state code. */
+  state: string;
+  placeId: string;
+  lat: number | null;
+  lng: number | null;
+}
+
 export interface IUser extends Document {
   email: string;
   password_hash: string;
@@ -50,6 +60,8 @@ export interface IUser extends Document {
   schedulable: boolean;
   homeLocation: IUserHomeLocation;
   weeklyHours: IWeeklyHours;
+  /** Cities this technician covers, grouped in the UI by state. */
+  serviceCities: IServiceCity[];
   scheduleExceptions: IScheduleException[];
   /** When the user accepted the Terms of Service. */
   termsAcceptedAt: Date | null;
@@ -134,6 +146,17 @@ const homeLocationSchema = new Schema<IUserHomeLocation>(
     city: { type: String, default: "" },
     state: { type: String, default: "" },
     zip: { type: String, default: "" },
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
+  },
+  { _id: false },
+);
+
+const serviceCitySchema = new Schema<IServiceCity>(
+  {
+    city: { type: String, required: true, trim: true },
+    state: { type: String, required: true, trim: true, uppercase: true },
+    placeId: { type: String, required: true, trim: true },
     lat: { type: Number, default: null },
     lng: { type: Number, default: null },
   },
@@ -229,6 +252,7 @@ const userSchema = new Schema<IUser>(
       type: weeklyHoursSchema,
       default: () => defaultWeeklyHours(false),
     },
+    serviceCities: { type: [serviceCitySchema], default: [] },
     scheduleExceptions: { type: [scheduleExceptionSchema], default: [] },
     termsAcceptedAt: { type: Date, default: null },
     privacyAcceptedAt: { type: Date, default: null },

@@ -1,12 +1,14 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Pencil } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
   getRoles,
   getUsers,
   RoleItem,
+  ServiceCity,
   updateUser,
   UserHomeLocation,
   UserListItem,
@@ -17,10 +19,12 @@ import UsernameDisplay from "@/components/ui/UsernameDisplay";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import StaffWorkHoursForm from "@/components/schedule/StaffWorkHoursForm";
+import ServiceTerritoryField from "@/components/schedule/ServiceTerritoryField";
 import { normalizeRoles, userHasCapability } from "@/lib/dashboard-role";
 import {
   defaultWeeklyHours,
   emptyHomeLocation,
+  serviceTerritorySummary,
   weeklyHoursSummary,
 } from "@/lib/schedule";
 
@@ -36,6 +40,7 @@ export default function TechniciansTab() {
     defaultWeeklyHours(true),
   );
   const [home, setHome] = useState<UserHomeLocation>(emptyHomeLocation());
+  const [serviceCities, setServiceCities] = useState<ServiceCity[]>([]);
   const [homeValidating, setHomeValidating] = useState(false);
   const [homeMsg, setHomeMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -74,6 +79,7 @@ export default function TechniciansTab() {
     setEditing(user);
     setWeeklyHours(user.weeklyHours ?? defaultWeeklyHours(true));
     setHome(user.homeLocation ?? emptyHomeLocation());
+    setServiceCities(user.serviceCities ?? []);
     setHomeMsg(null);
     setSaveError(null);
   }
@@ -137,6 +143,7 @@ export default function TechniciansTab() {
       const { user } = await updateUser(token, editing._id, {
         weeklyHours,
         homeLocation: home,
+        serviceCities,
       });
       setUsers((prev) => prev.map((u) => (u._id === user._id ? user : u)));
       closeEdit();
@@ -166,7 +173,7 @@ export default function TechniciansTab() {
         <h2 className="text-lg font-semibold text-brand-dark">Technicians</h2>
         <p className="mt-0.5 text-sm text-neutral-500">
           Staff with the Technician role. Assign that role under Users, then set
-          hours and home location here.
+          hours, home location, and territory here.
         </p>
       </div>
 
@@ -198,15 +205,20 @@ export default function TechniciansTab() {
                     label="Home"
                     value={user.homeLocation?.city || "—"}
                   />
+                  <DataField
+                    label="Territory"
+                    value={serviceTerritorySummary(user.serviceCities)}
+                  />
                 </>
               }
               actions={
                 <button
                   type="button"
                   onClick={() => openEdit(user)}
-                  className="text-xs font-medium text-brand-orange hover:underline"
+                  className="rounded-md p-1.5 text-brand-orange hover:bg-orange-50"
+                  aria-label="Edit technician"
                 >
-                  Edit hours
+                  <Pencil className="h-4 w-4" />
                 </button>
               }
             />
@@ -227,6 +239,9 @@ export default function TechniciansTab() {
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Home
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Territory
                     </th>
                     <th className="px-6 py-3" />
                   </tr>
@@ -252,13 +267,17 @@ export default function TechniciansTab() {
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {user.homeLocation?.city || "—"}
                       </td>
+                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                        {serviceTerritorySummary(user.serviceCities)}
+                      </td>
                       <td className="px-6 py-4 text-right whitespace-nowrap">
                         <button
                           type="button"
                           onClick={() => openEdit(user)}
-                          className="text-xs font-medium text-brand-orange hover:underline"
+                          className="rounded-md p-1.5 text-brand-orange hover:bg-orange-50"
+                          aria-label="Edit technician"
                         >
-                          Edit hours
+                          <Pencil className="h-4 w-4" />
                         </button>
                       </td>
                     </tr>
@@ -272,13 +291,13 @@ export default function TechniciansTab() {
 
       {editing && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-3 py-3 sm:px-4 sm:py-6">
-          <div className="flex w-full max-w-lg max-h-[min(92dvh,920px)] flex-col overflow-hidden rounded-xl bg-white shadow-xl">
+          <div className="flex w-full max-w-xl max-h-[min(92dvh,920px)] flex-col overflow-hidden rounded-xl bg-white shadow-xl">
             <div className="shrink-0 border-b border-neutral-100 px-4 py-4 sm:px-6">
               <h3 className="text-lg font-semibold text-brand-dark">
                 {editing.first_name} {editing.last_name}
               </h3>
               <p className="mt-0.5 text-sm text-neutral-500">
-                Weekly hours and home location for dispatch and routing.
+                Weekly hours, home location, and service territory.
               </p>
             </div>
             <form
@@ -291,6 +310,7 @@ export default function TechniciansTab() {
                 </div>
               )}
               <StaffWorkHoursForm
+                key={editing._id}
                 weeklyHours={weeklyHours}
                 home={home}
                 onPatchWeekly={(day, patch) =>
@@ -305,6 +325,12 @@ export default function TechniciansTab() {
                 onBlurHome={() => void validateHome()}
                 homeValidating={homeValidating}
                 homeMsg={homeMsg}
+              />
+              <ServiceTerritoryField
+                key={`${editing._id}-territory`}
+                token={token}
+                cities={serviceCities}
+                onChange={setServiceCities}
               />
               <div className="flex justify-end gap-2 pt-2">
                 <button

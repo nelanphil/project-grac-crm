@@ -13,6 +13,7 @@ import {
   listScheduleQueue,
   staffDisplayName,
   suggestAssignees,
+  recommendAssignees,
   placeWorkOrder,
   startOptionsForWorkOrder,
   toPublicStaff,
@@ -21,6 +22,9 @@ import {
 } from "../services/schedule.service";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { User, activeUserFilter } from "../models/mongo/User";
+import { isUsStateCode } from "../constants/usStates";
+import { getActiveGoogleApiKey } from "../utils/googleAddressValidator";
+import { resolveUsCity, suggestUsCities } from "../utils/googlePlaces";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -49,6 +53,11 @@ const suggestSchema = z.object({
   workOrderId: z.string().min(1),
   date: z.string().regex(localDateRe),
   estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
+});
+
+const recommendationsSchema = z.object({
+  date: z.string().regex(localDateRe),
+  workOrderIds: z.array(z.string().min(1)).max(200),
 });
 
 const placeSchema = z.object({
@@ -80,10 +89,14 @@ export async function getScheduleQueue(
       return;
     }
 
+    const includeUndated =
+      req.query.includeUndated === "1" || req.query.includeUndated === "true";
     const queue = await listScheduleQueue({
       dispatcher: isDispatcherRole(req.user),
       userId: req.user.id,
-      ...(from && to ? { from, to } : {}),
+      ...(from && to
+        ? { from, to, ...(includeUndated ? { includeUndated: true } : {}) }
+        : {}),
     });
     res.json(queue);
   } catch (err) {
@@ -262,6 +275,36 @@ export async function postScheduleSuggest(
     }
     console.error("POST /schedule/suggest error:", err);
     res.status(500).json({ message: "Failed to suggest technicians" });
+  }
+}
+
+export async function postScheduleRecommendations(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isDispatcherRole(req.user)) {
+      res.status(403).json({ message: "Insufficient role" });
+      return;
+    }
+    if (!req.user?.permissions.includes("jobs:write")) {
+      res.status(403).json({ message: "Missing permission: jobs:write" });
+      return;
+    }
+
+    const parsed = recommendationsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const result = await recommendAssignees(parsed.data);
+    res.json(result);
+  } catch (err) {
+    console.error("POST /schedule/recommendations error:", err);
+    res.status(500).json({ message: "Failed to recommend technicians" });
   }
 }
 
@@ -543,5 +586,78 @@ export async function postScheduleGeocodeMissing(
   } catch (err) {
     console.error("POST /schedule/geocode-missing error:", err);
     res.status(500).json({ message: "Failed to geocode addresses" });
+  }
+}
+
+const MISSING_GOOGLE_KEY =
+  "Google API key is not configured. Add one in Control Panel → API Services.";
+
+export async function getCitySuggestions(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const state =
+      typeof req.query.state === "string" ? req.query.state.trim().toUpperCase() : "";
+    if (!isUsStateCode(state)) {
+      res.status(400).json({ message: "state must be a US state code" });
+      return;
+    }
+    if (query.length < 2) {
+      res.json({ suggestions: [] });
+      return;
+    }
+
+    const apiKey = await getActiveGoogleApiKey();
+    if (!apiKey) {
+      res.status(503).json({ message: MISSING_GOOGLE_KEY });
+      return;
+    }
+
+    const result = await suggestUsCities({ apiKey, query, state });
+    if (!result.ok) {
+      res.status(result.status).json({ message: result.message });
+      return;
+    }
+    res.json({ suggestions: result.suggestions });
+  } catch (err) {
+    console.error("GET /schedule/city-suggestions error:", err);
+    res.status(500).json({ message: "Failed to search cities" });
+  }
+}
+
+export async function getCityDetails(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const placeId = typeof req.query.placeId === "string" ? req.query.placeId.trim() : "";
+    const state =
+      typeof req.query.state === "string" ? req.query.state.trim().toUpperCase() : "";
+    if (!placeId) {
+      res.status(400).json({ message: "placeId is required" });
+      return;
+    }
+    if (!isUsStateCode(state)) {
+      res.status(400).json({ message: "state must be a US state code" });
+      return;
+    }
+
+    const apiKey = await getActiveGoogleApiKey();
+    if (!apiKey) {
+      res.status(503).json({ message: MISSING_GOOGLE_KEY });
+      return;
+    }
+
+    const result = await resolveUsCity({ apiKey, placeId, state });
+    if (!result.ok) {
+      res.status(result.status).json({ message: result.message });
+      return;
+    }
+    res.json({ city: result.city });
+  } catch (err) {
+    console.error("GET /schedule/city-details error:", err);
+    res.status(500).json({ message: "Failed to look up city" });
   }
 }

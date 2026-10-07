@@ -9,12 +9,15 @@ import {
   getScheduleStaff,
   getScheduleTechnicians,
   postScheduleSuggest,
+  postScheduleRecommendations,
   postSchedulePlace,
   getScheduleStartOptions,
   postScheduleGeocodeMissing,
   getScheduleRoute,
   postScheduleRoutePlan,
   postScheduleRouteApply,
+  getCitySuggestions,
+  getCityDetails,
 } from "../controllers/schedule.controller";
 
 const router = Router();
@@ -35,6 +38,12 @@ router.get("/technicians", (req, res: Response) =>
 
 router.post("/suggest", requirePermission("jobs:write"), (req, res: Response) =>
   postScheduleSuggest(req as AuthRequest, res),
+);
+
+router.post(
+  "/recommendations",
+  requirePermission("jobs:write"),
+  (req, res: Response) => postScheduleRecommendations(req as AuthRequest, res),
 );
 
 router.post("/place", requirePermission("jobs:write"), (req, res: Response) =>
@@ -67,6 +76,18 @@ router.post(
   "/geocode-missing",
   requirePermission("jobs:read"),
   (req, res: Response) => postScheduleGeocodeMissing(req as AuthRequest, res),
+);
+
+router.get(
+  "/city-suggestions",
+  requirePermission("jobs:read"),
+  (req, res: Response) => getCitySuggestions(req as AuthRequest, res),
+);
+
+router.get(
+  "/city-details",
+  requirePermission("jobs:read"),
+  (req, res: Response) => getCityDetails(req as AuthRequest, res),
 );
 
 export default router;

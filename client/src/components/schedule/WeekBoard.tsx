@@ -1,11 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import type { CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { createPortal } from "react-dom";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { MapPin } from "lucide-react";
-import type { ScheduleStaffMember, WorkOrderListItem } from "@/lib/api";
+import { Check, MapPin } from "lucide-react";
+import type {
+  ScheduleRecommendation,
+  ScheduleStaffMember,
+  WorkOrderListItem,
+} from "@/lib/api";
 import {
   BOARD_HOUR_END,
   BOARD_HOUR_START,
@@ -24,10 +35,120 @@ const HOURS = Array.from(
   (_, i) => BOARD_HOUR_START + i,
 );
 
+function personName(
+  person?: { first_name?: string; last_name?: string } | null,
+): string {
+  return [person?.first_name, person?.last_name].filter(Boolean).join(" ");
+}
+
+function TechnicianAssignMenu({
+  x,
+  y,
+  technicians,
+  assignedId,
+  onPick,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  technicians: ScheduleRecommendation[];
+  assignedId: string;
+  onPick: (userId: string) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
+    const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }, [x, y, technicians]);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    function onPointer(event: PointerEvent) {
+      if (ref.current?.contains(event.target as Node)) return;
+      onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("scroll", onClose, true);
+    window.addEventListener("resize", onClose);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      role="menu"
+      aria-label="Assign technician"
+      style={{ left: x, top: y }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.preventDefault()}
+      className="fixed z-[80] w-64 overflow-hidden rounded-xl border border-neutral-200 bg-white py-1 shadow-lg"
+    >
+      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+        Assign technician
+      </div>
+      {technicians.length === 0 ? (
+        <p className="px-3 py-2 text-xs text-neutral-500">
+          No technicians available
+        </p>
+      ) : (
+        technicians.map((tech) => {
+          const name = personName(tech);
+          const current = tech.userId === assignedId;
+          return (
+            <button
+              key={tech.userId}
+              type="button"
+              role="menuitem"
+              onClick={() => onPick(tech.userId)}
+              className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-neutral-50"
+            >
+              <Check
+                className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
+                  current ? "text-emerald-600" : "text-transparent"
+                }`}
+                aria-hidden
+              />
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-medium text-brand-dark">
+                  {name || "Technician"}
+                </span>
+                {tech.reason ? (
+                  <span className="block truncate text-[11px] text-neutral-500">
+                    {tech.reason}
+                  </span>
+                ) : null}
+              </span>
+            </button>
+          );
+        })
+      )}
+    </div>,
+    document.body,
+  );
+}
+
 function UnscheduledCardShell({
   order,
   selected,
   onSelect,
+  recommendation,
+  technicians,
+  onAssignTechnician,
   isDragging,
   setNodeRef,
   style,
@@ -36,6 +157,9 @@ function UnscheduledCardShell({
   order: WorkOrderListItem;
   selected: boolean;
   onSelect: () => void;
+  recommendation?: ScheduleRecommendation | null;
+  technicians?: ScheduleRecommendation[];
+  onAssignTechnician?: (userId: string) => void;
   isDragging?: boolean;
   setNodeRef?: (node: HTMLElement | null) => void;
   style?: CSSProperties;
@@ -47,11 +171,25 @@ function UnscheduledCardShell({
   const href = workOrderViewHref(order);
   const windowLabel = formatTimeWindow(order.startTime, order.endTime);
   const accent = jobAccent(order);
+  const assignedName = personName(order.assignee);
+  const recommendedName = recommendation ? personName(recommendation) : "";
+  const assignedId = order.assignee?._id ?? order.assignedUserRef ?? "";
+  const recommendedMatches = Boolean(
+    recommendation && assignedId === recommendation.userId,
+  );
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const closeMenu = () => setMenu(null);
 
   return (
     <div
       ref={setNodeRef}
       style={style}
+      onContextMenu={(event) => {
+        if (!onAssignTechnician) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setMenu({ x: event.clientX, y: event.clientY });
+      }}
       className={`flex w-full gap-2.5 rounded-xl border bg-neutral-50 px-3 py-2.5 text-left text-xs transition-colors hover:border-neutral-300 ${
         selected
           ? "border-brand-orange ring-1 ring-brand-orange"
@@ -107,6 +245,25 @@ function UnscheduledCardShell({
               .filter(Boolean)
               .join(" · ")}
           </div>
+          {assignedName ? (
+            <div className="mt-1 truncate text-neutral-500">
+              Assigned: {assignedName}
+            </div>
+          ) : null}
+          {recommendedName ? (
+            <div className="mt-0.5 flex items-center gap-1 text-neutral-500">
+              {recommendedMatches ? (
+                <Check
+                  className="h-3 w-3 shrink-0 text-emerald-600"
+                  aria-hidden
+                />
+              ) : null}
+              <span className="truncate">
+                Recommended: {recommendedName}
+                {recommendation?.reason ? ` · ${recommendation.reason}` : ""}
+              </span>
+            </div>
+          ) : null}
         </button>
         {href ? (
           <Link
@@ -118,6 +275,19 @@ function UnscheduledCardShell({
           </Link>
         ) : null}
       </div>
+      {menu && onAssignTechnician ? (
+        <TechnicianAssignMenu
+          x={menu.x}
+          y={menu.y}
+          technicians={technicians ?? []}
+          assignedId={assignedId}
+          onPick={(userId) => {
+            closeMenu();
+            onAssignTechnician(userId);
+          }}
+          onClose={closeMenu}
+        />
+      ) : null}
     </div>
   );
 }
@@ -126,11 +296,17 @@ function DraggableUnscheduledCard({
   order,
   selected,
   onSelect,
+  recommendation,
+  technicians,
+  onAssignTechnician,
   lift = false,
 }: {
   order: WorkOrderListItem;
   selected: boolean;
   onSelect: () => void;
+  recommendation?: ScheduleRecommendation | null;
+  technicians?: ScheduleRecommendation[];
+  onAssignTechnician?: (userId: string) => void;
   lift?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
@@ -145,6 +321,9 @@ function DraggableUnscheduledCard({
       order={order}
       selected={selected}
       onSelect={onSelect}
+      recommendation={recommendation}
+      technicians={technicians}
+      onAssignTechnician={onAssignTechnician}
       isDragging={isDragging}
       setNodeRef={setNodeRef}
       style={style}
@@ -159,12 +338,18 @@ export function UnscheduledCard({
   onSelect,
   draggable = true,
   lift = false,
+  recommendation,
+  technicians,
+  onAssignTechnician,
 }: {
   order: WorkOrderListItem;
   selected: boolean;
   onSelect: () => void;
   draggable?: boolean;
   lift?: boolean;
+  recommendation?: ScheduleRecommendation | null;
+  technicians?: ScheduleRecommendation[];
+  onAssignTechnician?: (userId: string) => void;
 }) {
   if (!draggable || Boolean(order.scheduledStart)) {
     return (
@@ -172,6 +357,9 @@ export function UnscheduledCard({
         order={order}
         selected={selected}
         onSelect={onSelect}
+        recommendation={recommendation}
+        technicians={technicians}
+        onAssignTechnician={onAssignTechnician}
       />
     );
   }
@@ -180,6 +368,9 @@ export function UnscheduledCard({
       order={order}
       selected={selected}
       onSelect={onSelect}
+      recommendation={recommendation}
+      technicians={technicians}
+      onAssignTechnician={onAssignTechnician}
       lift={lift}
     />
   );
@@ -273,7 +464,7 @@ function StaffRow({
     "?";
 
   return (
-    <div className="grid grid-cols-[5.5rem_1fr] border-b border-neutral-200/70 last:border-b-0 md:grid-cols-[11rem_1fr]">
+    <div className="grid h-full min-h-[60px] flex-1 grid-cols-[5.5rem_1fr] border-b border-neutral-200/70 last:border-b-0 md:grid-cols-[11rem_1fr]">
       <div className="flex items-center justify-between gap-1.5 px-2 py-2 md:px-3">
         <div className="flex min-w-0 items-center gap-2">
           <span
@@ -353,9 +544,9 @@ export default function WeekBoard({
   }
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-neutral-200 bg-white shadow-sm">
-      <div className="min-w-[36rem] md:min-w-[720px]">
-        <div className="grid grid-cols-[5.5rem_1fr] border-b border-neutral-200 md:grid-cols-[11rem_1fr]">
+    <div className="flex h-full min-h-0 flex-col overflow-x-auto rounded-2xl border border-neutral-200 bg-white shadow-sm">
+      <div className="flex min-h-0 min-w-[36rem] flex-1 flex-col md:min-w-[720px]">
+        <div className="grid shrink-0 grid-cols-[5.5rem_1fr] border-b border-neutral-200 md:grid-cols-[11rem_1fr]">
           <div className="px-2 py-2.5 text-[11px] font-medium text-neutral-400 md:px-3">
             Technician
           </div>

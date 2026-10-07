@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isFloridaCounty } from "../constants/floridaCounties";
+import { isUsStateCode } from "../constants/usStates";
 
 const usernameField = z
   .union([
@@ -67,6 +68,50 @@ const homeLocationSchema = z
   })
   .optional();
 
+const SERVICE_CITY_LIMIT = 200;
+
+const serviceCitySchema = z.object({
+  city: z.string().trim().min(1).max(120),
+  state: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .refine(isUsStateCode, "State must be a US state code"),
+  placeId: z.string().trim().min(1).max(300),
+  lat: z.number().finite().nullable().optional(),
+  lng: z.number().finite().nullable().optional(),
+});
+
+const serviceCitiesSchema = z
+  .array(serviceCitySchema)
+  .max(SERVICE_CITY_LIMIT, `A technician can cover at most ${SERVICE_CITY_LIMIT} cities`)
+  .transform((cities) => {
+    const seen = new Set<string>();
+    const unique: Array<{
+      city: string;
+      state: string;
+      placeId: string;
+      lat: number | null;
+      lng: number | null;
+    }> = [];
+    for (const city of cities) {
+      const placeKey = `id:${city.placeId}`;
+      const nameKey = `name:${city.city.toLowerCase()}|${city.state}`;
+      if (seen.has(placeKey) || seen.has(nameKey)) continue;
+      seen.add(placeKey);
+      seen.add(nameKey);
+      unique.push({
+        city: city.city,
+        state: city.state,
+        placeId: city.placeId,
+        lat: typeof city.lat === "number" ? city.lat : null,
+        lng: typeof city.lng === "number" ? city.lng : null,
+      });
+    }
+    return unique;
+  })
+  .optional();
+
 const scheduleExceptionSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
   type: z.enum(["off", "custom"]),
@@ -101,6 +146,7 @@ export const createUserSchema = z
     schedulable: z.boolean().optional(),
     weeklyHours: weeklyHoursSchema,
     homeLocation: homeLocationSchema,
+    serviceCities: serviceCitiesSchema,
     scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
   })
   .refine((data) => Boolean(data.role || (data.roles && data.roles.length > 0)), {
@@ -127,6 +173,7 @@ export const updateUserSchema = z.object({
   schedulable: z.boolean().optional(),
   weeklyHours: weeklyHoursSchema,
   homeLocation: homeLocationSchema,
+  serviceCities: serviceCitiesSchema,
   scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
 });
 

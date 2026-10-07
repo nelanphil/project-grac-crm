@@ -80,6 +80,12 @@ type LeanUser = {
   homeLocation?: HomeLocation | null;
   weeklyHours?: WeeklyHours | null;
   scheduleExceptions?: ScheduleException[] | null;
+  serviceCities?: Array<{
+    city?: string;
+    state?: string;
+    lat?: number | null;
+    lng?: number | null;
+  }> | null;
 };
 
 export type PublicStaff = {
@@ -375,7 +381,7 @@ export async function listSchedulableStaff(): Promise<LeanUser[]> {
     schedulable: true,
   })
     .select(
-      "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions",
+      "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions serviceCities",
     )
     .sort({ last_name: 1, first_name: 1 })
     .lean();
@@ -550,6 +556,44 @@ export async function hydrateMissingAddressCoordinates(
   return updated;
 }
 
+/** Miles from a service-city center that still counts as covering that area. */
+const TERRITORY_NEAR_MILES = 15;
+
+function territoryTier(
+  cities:
+    | Array<{
+        city?: string;
+        state?: string;
+        lat?: unknown;
+        lng?: unknown;
+      }>
+    | null
+    | undefined,
+  jobCity: string,
+  jobState: string,
+  jobCoords: LatLng | null,
+): 0 | 1 | 2 {
+  const city = jobCity.trim().toLowerCase();
+  const state = jobState.trim().toLowerCase();
+  const list = cities ?? [];
+  if (city && state) {
+    const exact = list.some(
+      (entry) =>
+        (entry.city ?? "").trim().toLowerCase() === city &&
+        (entry.state ?? "").trim().toLowerCase() === state,
+    );
+    if (exact) return 0;
+  }
+  if (jobCoords) {
+    for (const entry of list) {
+      const coords = latLngFrom(entry);
+      if (!coords) continue;
+      if (haversineMiles(jobCoords, coords) <= TERRITORY_NEAR_MILES) return 1;
+    }
+  }
+  return 2;
+}
+
 export type SuggestCandidate = {
   userId: string;
   first_name: string;
@@ -565,6 +609,8 @@ export type SuggestCandidate = {
   driveFrom: "previousJob" | "home" | "unknown";
   driveFromLabel: string;
   driveKnown: boolean;
+  /** True when the job's city is one of this technician's service cities. */
+  inTerritory: boolean;
 };
 
 function emptyDriveFields(): Pick<
@@ -603,10 +649,20 @@ export async function suggestAssignees(opts: {
   const geocodeCache = new Map<string, LatLng | null>();
 
   let dest: LatLng | null = null;
+  let jobCity = "";
+  let jobState = "";
+  const rememberPlace = (
+    site: { city?: string | null; state?: string | null } | null | undefined,
+  ) => {
+    if (!site) return;
+    if (!jobCity && site.city) jobCity = site.city.trim();
+    if (!jobState && site.state) jobState = site.state.trim();
+  };
   if (workOrder.addressRef) {
     const site = await CustomerAddress.findById(workOrder.addressRef)
       .select("lat lng address city state zip")
       .lean();
+    rememberPlace(site);
     dest = addressCoords(site);
     if (!dest && site) {
       dest = await geocodeToLatLng(site, geocodeCache);
@@ -625,6 +681,7 @@ export async function suggestAssignees(opts: {
       .sort({ isPrimary: -1 })
       .select("lat lng address city state zip")
       .lean();
+    rememberPlace(fallback);
     dest = addressCoords(fallback);
     if (!dest && fallback) {
       dest = await geocodeToLatLng(fallback, geocodeCache);
@@ -727,8 +784,17 @@ export async function suggestAssignees(opts: {
   }
 
   const suggestions: SuggestCandidate[] = [];
+  const tierByUser = new Map<string, number>();
 
   for (const tech of staff) {
+    const tier = territoryTier(
+      tech.serviceCities,
+      jobCity,
+      jobState,
+      dest,
+    );
+    tierByUser.set(String(tech._id), tier);
+    const inTerritory = tier === 0;
     const window = resolveDayWindow(
       tech.weeklyHours,
       tech.scheduleExceptions,
@@ -748,6 +814,7 @@ export async function suggestAssignees(opts: {
         fits: false,
         reason: window.off ? "Marked off this day" : "Not working this weekday",
         driveSource: "none",
+        inTerritory,
         ...emptyDriveFields(),
       });
       continue;
@@ -873,10 +940,14 @@ export async function suggestAssignees(opts: {
       driveFrom,
       driveFromLabel,
       driveKnown,
+      inTerritory,
     });
   }
 
   suggestions.sort((a, b) => {
+    const aTier = tierByUser.get(a.userId) ?? 2;
+    const bTier = tierByUser.get(b.userId) ?? 2;
+    if (aTier !== bTier) return aTier - bTier;
     if (a.fits !== b.fits) return a.fits ? -1 : 1;
     if (a.driveKnown !== b.driveKnown) return a.driveKnown ? -1 : 1;
     if (a.driveKnown && b.driveKnown && a.driveMinutes !== b.driveMinutes) {
@@ -890,6 +961,318 @@ export async function suggestAssignees(opts: {
     date: opts.date,
     estimatedMinutes,
     suggestions,
+  };
+}
+
+export type AssigneeRecommendation = {
+  userId: string;
+  first_name: string;
+  last_name: string;
+  reason: string;
+};
+
+function recommendationReason(pick: {
+  tier: number;
+  fits: boolean;
+  miles: number;
+  kind: "job" | "home" | null;
+}): string {
+  const parts: string[] = [];
+  if (pick.tier === 0) parts.push("In territory");
+  else if (pick.tier === 1) parts.push("Near territory");
+  if (pick.kind && Number.isFinite(pick.miles)) {
+    const rounded = Math.round(pick.miles);
+    const miles = rounded < 1 ? "<1" : String(rounded);
+    parts.push(
+      pick.kind === "job"
+        ? `${miles} mi from another job`
+        : `${miles} mi from home`,
+    );
+  }
+  if (!pick.fits) parts.push("day is full");
+  return parts.join(" · ") || "Available";
+}
+
+function occupiedMinutes(
+  jobs: Array<{ scheduledStart?: Date | null; scheduledEnd?: Date | null }>,
+): number {
+  return jobs.reduce((sum, job) => {
+    if (!job.scheduledStart || !job.scheduledEnd) return sum;
+    return (
+      sum +
+      Math.max(
+        0,
+        Math.round(
+          (new Date(job.scheduledEnd).getTime() -
+            new Date(job.scheduledStart).getTime()) /
+            60000,
+        ),
+      )
+    );
+  }, 0);
+}
+
+/**
+ * Cheap assignee pick for a list of work orders. Uses territory cities,
+ * straight-line distance to home and that day's jobs, and remaining capacity.
+ * Does not call Google for drive times.
+ */
+export async function recommendAssignees(opts: {
+  date: string;
+  workOrderIds: string[];
+}): Promise<{
+  date: string;
+  recommendations: Array<{
+    workOrderId: string;
+    recommendation: AssigneeRecommendation | null;
+    /** Best match first. */
+    technicians: AssigneeRecommendation[];
+  }>;
+}> {
+  const ids = [
+    ...new Set(
+      opts.workOrderIds.filter((id) => mongoose.Types.ObjectId.isValid(id)),
+    ),
+  ].slice(0, 200);
+
+  if (ids.length === 0) {
+    return { date: opts.date, recommendations: [] };
+  }
+
+  const [workOrders, staff] = await Promise.all([
+    WorkOrder.find({ _id: { $in: ids } })
+      .select(
+        "addressRef customerRef workOrderTypeRef estimatedMinutes laborHours",
+      )
+      .lean(),
+    listSchedulableStaff(),
+  ]);
+
+  const typeIds = [
+    ...new Set(
+      workOrders
+        .map((wo) => wo.workOrderTypeRef?.toString())
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const types =
+    typeIds.length > 0
+      ? await WorkOrderType.find({ _id: { $in: typeIds } })
+          .select("qualifiedUserRefs")
+          .lean()
+      : [];
+  const qualifiedByType = new Map(
+    types.map((type) => [
+      type._id.toString(),
+      (type.qualifiedUserRefs ?? []).map((id) => id.toString()),
+    ]),
+  );
+
+  const addressIds = new Set<string>();
+  const fallbackCustomerIds: string[] = [];
+  for (const wo of workOrders) {
+    if (wo.addressRef) addressIds.add(wo.addressRef.toString());
+    else if (wo.customerRef) fallbackCustomerIds.push(wo.customerRef.toString());
+  }
+
+  const { start: dayStart, end: dayEnd } = rangeUtc(opts.date, opts.date);
+  const dayJobs =
+    staff.length > 0
+      ? await WorkOrder.find({
+          assignedUserRef: { $in: staff.map((tech) => tech._id) },
+          scheduledStart: { $gte: dayStart, $lte: dayEnd },
+          completed: { $ne: true },
+          $or: [
+            { appointmentCanceledAt: null },
+            { appointmentCanceledAt: { $exists: false } },
+          ],
+        })
+          .select("assignedUserRef scheduledStart scheduledEnd addressRef")
+          .lean()
+      : [];
+
+  for (const job of dayJobs) {
+    if (job.addressRef) addressIds.add(job.addressRef.toString());
+  }
+
+  const [addresses, fallbacks] = await Promise.all([
+    addressIds.size > 0
+      ? CustomerAddress.find({ _id: { $in: [...addressIds] } })
+          .select("_id lat lng city state")
+          .lean()
+      : [],
+    fallbackCustomerIds.length > 0
+      ? CustomerAddress.find({ customerRef: { $in: fallbackCustomerIds } })
+          .sort({ isPrimary: -1 })
+          .select("_id customerRef lat lng city state")
+          .lean()
+      : [],
+  ]);
+
+  const addressById = new Map(
+    addresses.map((address) => [address._id.toString(), address]),
+  );
+  const fallbackByCustomer = new Map<string, (typeof fallbacks)[number]>();
+  for (const address of fallbacks) {
+    const key = address.customerRef?.toString() ?? "";
+    if (key && !fallbackByCustomer.has(key)) fallbackByCustomer.set(key, address);
+  }
+
+  type JobSite = {
+    city: string;
+    state: string;
+    coords: LatLng | null;
+  };
+  const siteFrom = (
+    address:
+      | { city?: string | null; state?: string | null; lat?: unknown; lng?: unknown }
+      | null
+      | undefined,
+  ): JobSite => ({
+    city: (address?.city ?? "").trim(),
+    state: (address?.state ?? "").trim(),
+    coords: addressCoords(address ?? null),
+  });
+
+  const dayJobsByUser = new Map<
+    string,
+    Array<{
+      id: string;
+      scheduledStart: Date | null;
+      scheduledEnd: Date | null;
+      coords: LatLng | null;
+    }>
+  >();
+  for (const job of dayJobs) {
+    const key = job.assignedUserRef?.toString() ?? "";
+    if (!key) continue;
+    const address = job.addressRef
+      ? addressById.get(job.addressRef.toString())
+      : undefined;
+    const list = dayJobsByUser.get(key) ?? [];
+    list.push({
+      id: job._id.toString(),
+      scheduledStart: job.scheduledStart ? new Date(job.scheduledStart) : null,
+      scheduledEnd: job.scheduledEnd ? new Date(job.scheduledEnd) : null,
+      coords: addressCoords(address ?? null),
+    });
+    dayJobsByUser.set(key, list);
+  }
+
+  const ranked = new Map<string, AssigneeRecommendation[]>();
+
+  for (const wo of workOrders) {
+    const site = wo.addressRef
+      ? siteFrom(addressById.get(wo.addressRef.toString()))
+      : siteFrom(
+          wo.customerRef
+            ? fallbackByCustomer.get(wo.customerRef.toString())
+            : null,
+        );
+    const estimated = estimatedMinutesForWorkOrder(wo);
+    const qualifiedIds = wo.workOrderTypeRef
+      ? (qualifiedByType.get(wo.workOrderTypeRef.toString()) ?? [])
+      : [];
+    let candidates = staff;
+    if (qualifiedIds.length > 0) {
+      const matched = staff.filter((tech) =>
+        qualifiedIds.includes(String(tech._id)),
+      );
+      if (matched.length > 0) candidates = matched;
+    }
+
+    const picks: Array<{
+      tech: LeanUser;
+      tier: number;
+      fits: boolean;
+      miles: number;
+      kind: "job" | "home" | null;
+    }> = [];
+
+    for (const tech of candidates) {
+      const window = resolveDayWindow(
+        tech.weeklyHours,
+        tech.scheduleExceptions,
+        opts.date,
+      );
+      const range = windowToUtcRange(opts.date, window);
+      if (!range) continue;
+
+      const existing = (dayJobsByUser.get(String(tech._id)) ?? []).filter(
+        (job) => job.id !== wo._id.toString(),
+      );
+      const windowMinutes = Math.round(
+        (range.end.getTime() - range.start.getTime()) / 60000,
+      );
+      const remaining = Math.max(
+        0,
+        windowMinutes - occupiedMinutes(existing),
+      );
+      const tier = territoryTier(
+        tech.serviceCities,
+        site.city,
+        site.state,
+        site.coords,
+      );
+
+      let miles = Number.POSITIVE_INFINITY;
+      let kind: "job" | "home" | null = null;
+      const home = homeCoords(tech.homeLocation);
+      if (home && site.coords) {
+        miles = haversineMiles(site.coords, home);
+        kind = "home";
+      }
+      if (site.coords) {
+        for (const job of existing) {
+          if (!job.coords) continue;
+          const distance = haversineMiles(site.coords, job.coords);
+          if (distance < miles) {
+            miles = distance;
+            kind = "job";
+          }
+        }
+      }
+
+      picks.push({
+        tech,
+        tier,
+        fits: remaining >= estimated,
+        miles,
+        kind,
+      });
+    }
+
+    picks.sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      if (a.fits !== b.fits) return a.fits ? -1 : 1;
+      const aKnown = Number.isFinite(a.miles);
+      const bKnown = Number.isFinite(b.miles);
+      if (aKnown !== bKnown) return aKnown ? -1 : 1;
+      if (aKnown && bKnown && a.miles !== b.miles) return a.miles - b.miles;
+      return staffDisplayName(a.tech).localeCompare(staffDisplayName(b.tech));
+    });
+
+    ranked.set(
+      wo._id.toString(),
+      picks.map((pick) => ({
+        userId: String(pick.tech._id),
+        first_name: pick.tech.first_name,
+        last_name: pick.tech.last_name,
+        reason: recommendationReason(pick),
+      })),
+    );
+  }
+
+  return {
+    date: opts.date,
+    recommendations: ids.map((id) => {
+      const technicians = ranked.get(id) ?? [];
+      return {
+        workOrderId: id,
+        recommendation: technicians[0] ?? null,
+        technicians,
+      };
+    }),
   };
 }
 
@@ -1934,6 +2317,8 @@ export async function listScheduleQueue(opts: {
   userId: string;
   from?: string;
   to?: string;
+  /** With a date range, also return unscheduled work orders that have no date. */
+  includeUndated?: boolean;
 }): Promise<ScheduleQueue> {
   const today = formatLocalDate(new Date());
   const { start: todayStart, end: todayEnd } = rangeUtc(today, today);
@@ -1956,9 +2341,16 @@ export async function listScheduleQueue(opts: {
   const unscheduledFilter: Record<string, unknown> = {
     ...base,
     scheduledStart: null,
-    ...(dateWindow ?? {}),
   };
-  if (!dateWindow) {
+  if (dateWindow && opts.includeUndated) {
+    unscheduledFilter.$or = [
+      dateWindow,
+      { date: null },
+      { date: { $exists: false } },
+    ];
+  } else if (dateWindow) {
+    Object.assign(unscheduledFilter, dateWindow);
+  } else {
     unscheduledFilter.$or = [
       { appointmentCanceledAt: null },
       { appointmentCanceledAt: { $exists: false } },

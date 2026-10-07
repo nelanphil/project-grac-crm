@@ -67,9 +67,11 @@ export default function MonthCalendar({
   );
   const monthKey = start.slice(0, 7);
 
+  const rows = totalCells / 7;
+
   return (
-    <div className="min-w-0 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-      <div className="grid grid-cols-7 border-b border-neutral-200 text-center text-[11px] text-neutral-400">
+    <div className="flex h-full min-h-[28rem] min-w-0 flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm lg:min-h-0">
+      <div className="grid shrink-0 grid-cols-7 border-b border-neutral-200 text-center text-[11px] text-neutral-400">
         {WEEKDAYS.map((d) => (
           <div key={d} className="py-2.5">
             <span className="sm:hidden">{d.slice(0, 1)}</span>
@@ -77,7 +79,10 @@ export default function MonthCalendar({
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-7">
+      <div
+        className="grid min-h-0 flex-1 grid-cols-7"
+        style={{ gridTemplateRows: `repeat(${rows}, minmax(4.5rem, 1fr))` }}
+      >
         {cells.map((date, index) => {
           const inMonth = date.slice(0, 7) === monthKey;
           const dayJobs = inMonth ? (byDate.get(date) ?? []) : [];
@@ -91,7 +96,7 @@ export default function MonthCalendar({
             <div
               key={date}
               onClick={() => onSelectDate(date)}
-              className={`group relative flex min-h-16 cursor-pointer flex-col gap-1 p-1 transition-colors sm:min-h-[6.5rem] sm:p-1.5 ${
+              className={`group relative flex h-full min-h-0 cursor-pointer flex-col gap-1 overflow-hidden p-1 transition-colors sm:p-1.5 ${
                 lastCol ? "" : "border-r"
               } ${lastRow ? "" : "border-b"} border-neutral-200/70 ${
                 selected ? "bg-neutral-100" : "hover:bg-neutral-50"
@@ -131,7 +136,7 @@ export default function MonthCalendar({
               </div>
               <button
                 type="button"
-                aria-label={`Open ${date} on the technician board${
+                aria-label={`Show ${date} in the job list${
                   dayJobs.length
                     ? `, ${dayJobs.length} job${dayJobs.length === 1 ? "" : "s"}`
                     : ""

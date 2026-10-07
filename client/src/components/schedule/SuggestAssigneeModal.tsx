@@ -73,6 +73,11 @@ export default function SuggestAssigneeModal({
                 <div className="text-sm font-medium text-brand-dark">
                   {s.first_name} {s.last_name}
                 </div>
+                {s.inTerritory ? (
+                  <div className="mt-0.5 text-xs font-medium text-emerald-700">
+                    In territory
+                  </div>
+                ) : null}
                 <div className="mt-0.5 text-xs font-medium text-neutral-700">
                   {proximityLine(s)}
                 </div>

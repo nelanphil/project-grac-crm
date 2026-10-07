@@ -19,7 +19,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -27,12 +27,14 @@ import {
   applyScheduleRoute,
   geocodeMissingScheduleAddresses,
   getScheduleQueue,
+  getScheduleRecommendations,
   getScheduleStaff,
   getScheduleStartOptions,
   placeScheduleWorkOrder,
   planScheduleRoute,
   type PlannedRoute,
   type RouteObjective,
+  ScheduleRecommendation,
   ScheduleStartOptions,
   ScheduleStaffMember,
   ScheduleSuggestion,
@@ -56,7 +58,6 @@ import {
   isDispatcherRole,
   localDateTimeToIso,
   minutesToHhMm,
-  shiftMonth,
   startOfMonth,
   startOfWeekSunday,
   workOrderLocalDate,
@@ -79,8 +80,6 @@ import Segmented from "@/components/schedule/Segmented";
 type ViewMode = "week" | "month";
 type MonthMode = "calendar" | "table";
 type SurfaceMode = "calendar" | "map";
-type RailFilter = "current" | "unscheduled";
-type RailDateOrder = "asc" | "desc";
 
 function dropMinutes(event: DragEndEvent): number | null {
   const over = event.over;
@@ -222,37 +221,15 @@ async function fetchBoardData(
   };
 }
 
-async function fetchRailMonth(token: string, from: string, to: string) {
+async function fetchRailDay(token: string, day: string) {
   const [queue, board] = await Promise.all([
-    getScheduleQueue(token, { from, to }),
-    getScheduleStaff(token, from, to),
+    getScheduleQueue(token, { from: day, to: day, includeUndated: true }),
+    getScheduleStaff(token, day, day),
   ]);
   return {
     unscheduled: queue.unscheduled,
     scheduled: board.workOrders,
   };
-}
-
-type RailDayGroup = {
-  key: string;
-  label: string;
-  jobs: WorkOrderListItem[];
-};
-
-function sortRailJobs(
-  jobs: WorkOrderListItem[],
-  order: RailDateOrder,
-): WorkOrderListItem[] {
-  const direction = order === "asc" ? 1 : -1;
-  return [...jobs].sort((a, b) => {
-    const aDate = workOrderLocalDate(a);
-    const bDate = workOrderLocalDate(b);
-    if (!aDate && !bDate) return compareWithinDay(a, b);
-    if (!aDate) return 1;
-    if (!bDate) return -1;
-    if (aDate !== bDate) return aDate.localeCompare(bDate) * direction;
-    return compareWithinDay(a, b);
-  });
 }
 
 function compareWithinDay(a: WorkOrderListItem, b: WorkOrderListItem): number {
@@ -262,198 +239,59 @@ function compareWithinDay(a: WorkOrderListItem, b: WorkOrderListItem): number {
   return (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? "");
 }
 
-function groupJobsByDay(
-  jobs: WorkOrderListItem[],
-  order: RailDateOrder,
-): RailDayGroup[] {
-  const groups: RailDayGroup[] = [];
-  for (const job of sortRailJobs(jobs, order)) {
-    const date = workOrderLocalDate(job);
-    const key = date ?? "none";
-    const last = groups[groups.length - 1];
-    if (last && last.key === key) {
-      last.jobs.push(job);
-      continue;
-    }
-    groups.push({
-      key,
-      label: date ? formatWeekdayDate(date) : "No date",
-      jobs: [job],
-    });
-  }
-  return groups;
-}
-
-function RailFilterTip({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <span className="group/tip relative">
-      {children}
-      <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 hidden w-48 -translate-x-1/2 rounded-md bg-neutral-800 px-2 py-1.5 text-center text-[11px] font-normal leading-snug text-white opacity-0 shadow-lg transition-opacity md:block md:group-hover/tip:opacity-100">
-        {label}
-      </span>
-    </span>
-  );
-}
-
 function ScheduleRail({
-  jobs,
-  filter,
-  onFilter,
-  month,
-  monthLabel,
-  onMonth,
-  dateOrder,
-  onDateOrder,
+  dayLabel,
+  dayJobs,
+  undatedJobs,
+  recommendations,
   loading,
   selectedId,
   onSelect,
   onSuggest,
+  onAssignTechnician,
   suggesting,
   canSuggest,
   draggable,
   liftDrag = false,
 }: {
-  jobs: WorkOrderListItem[];
-  filter: RailFilter;
-  onFilter: (filter: RailFilter) => void;
-  month: string;
-  monthLabel: string;
-  onMonth: (month: string) => void;
-  dateOrder: RailDateOrder;
-  onDateOrder: (order: RailDateOrder) => void;
+  dayLabel: string;
+  dayJobs: WorkOrderListItem[];
+  undatedJobs: WorkOrderListItem[];
+  recommendations: Record<string, ScheduleRecommendation[]>;
   loading: boolean;
   selectedId: string | null;
   onSelect: (job: WorkOrderListItem) => void;
   onSuggest: () => void;
+  onAssignTechnician?: (job: WorkOrderListItem, userId: string) => void;
   suggesting: boolean;
   canSuggest: boolean;
   draggable: boolean;
   liftDrag?: boolean;
 }) {
-  const groups = useMemo(
-    () => groupJobsByDay(jobs, dateOrder),
-    [jobs, dateOrder],
-  );
-  const newestFirst = dateOrder === "desc";
+  const empty = dayJobs.length === 0 && undatedJobs.length === 0;
 
   return (
-    <aside className="flex max-h-[44rem] min-h-0 flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm">
+    <aside className="flex h-full max-h-[44rem] min-h-0 flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm lg:max-h-none">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-semibold text-brand-dark">Upcoming</h2>
+        <h2 className="text-base font-semibold text-brand-dark">{dayLabel}</h2>
         <button
           type="button"
-          aria-pressed={newestFirst}
-          aria-label={
-            newestFirst
-              ? "Showing newest dates first. Show oldest first."
-              : "Showing oldest dates first. Show newest first."
-          }
-          title={newestFirst ? "Newest first" : "Oldest first"}
-          onClick={() => onDateOrder(newestFirst ? "asc" : "desc")}
-          className="rounded-lg border border-neutral-200 p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+          disabled={!canSuggest || suggesting}
+          onClick={onSuggest}
+          className="shrink-0 text-xs font-medium text-brand-orange hover:underline disabled:opacity-40"
         >
-          {newestFirst ? (
-            <ArrowUp className="h-3.5 w-3.5" aria-hidden />
-          ) : (
-            <ArrowDown className="h-3.5 w-3.5" aria-hidden />
-          )}
+          {suggesting ? "Suggesting…" : "Suggest tech"}
         </button>
-      </div>
-      <div className="space-y-2">
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="Previous month"
-            onClick={() => onMonth(shiftMonth(month, -1))}
-            className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
-          </button>
-          <input
-            type="month"
-            value={month}
-            aria-label="Filter jobs by month and year"
-            onChange={(event) => {
-              if (event.target.value) onMonth(event.target.value);
-            }}
-            className="min-w-0 flex-1 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1 text-xs text-brand-dark"
-          />
-          <button
-            type="button"
-            aria-label="Next month"
-            onClick={() => onMonth(shiftMonth(month, 1))}
-            className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
-          >
-            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-          </button>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-100 p-0.5 text-xs">
-            <RailFilterTip
-              label={`All work orders in ${monthLabel}. Unscheduled jobs are listed first within each day.`}
-            >
-              <button
-                type="button"
-                aria-pressed={filter === "current"}
-                onClick={() => onFilter("current")}
-                className={`rounded-md px-2.5 py-1 font-medium ${
-                  filter === "current"
-                    ? "bg-white text-brand-dark shadow-sm ring-1 ring-neutral-200"
-                    : "text-neutral-500 hover:text-brand-dark"
-                }`}
-              >
-                Current
-              </button>
-            </RailFilterTip>
-            <RailFilterTip
-              label={`Only work orders in ${monthLabel} that still need a time slot.`}
-            >
-              <button
-                type="button"
-                aria-pressed={filter === "unscheduled"}
-                onClick={() => onFilter("unscheduled")}
-                className={`rounded-md px-2.5 py-1 font-medium ${
-                  filter === "unscheduled"
-                    ? "bg-white text-brand-dark shadow-sm ring-1 ring-neutral-200"
-                    : "text-neutral-500 hover:text-brand-dark"
-                }`}
-              >
-                Unscheduled
-              </button>
-            </RailFilterTip>
-          </div>
-          <button
-            type="button"
-            disabled={!canSuggest || suggesting}
-            onClick={onSuggest}
-            className="text-xs font-medium text-brand-orange hover:underline disabled:opacity-40"
-          >
-            {suggesting ? "Suggesting…" : "Suggest tech"}
-          </button>
-        </div>
       </div>
       {loading ? (
         <p className="text-xs text-neutral-400">Loading work orders…</p>
-      ) : jobs.length === 0 ? (
-        <p className="text-xs text-neutral-400">
-          {filter === "unscheduled"
-            ? `No unscheduled work orders in ${monthLabel}.`
-            : `No work orders in ${monthLabel}.`}
-        </p>
+      ) : empty ? (
+        <p className="text-xs text-neutral-400">No work orders on {dayLabel}.</p>
       ) : (
         <div className="-mx-1 min-h-0 space-y-3 overflow-y-auto px-1">
-          {groups.map((group) => (
-            <section key={group.key} className="space-y-2">
-              <h3 className="sticky top-0 z-10 bg-white py-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                {group.label}
-              </h3>
-              {group.jobs.map((order) => (
+          {dayJobs.length > 0 ? (
+            <section className="space-y-2">
+              {dayJobs.map((order) => (
                 <UnscheduledCard
                   key={order._id}
                   order={order}
@@ -461,10 +299,41 @@ function ScheduleRail({
                   onSelect={() => onSelect(order)}
                   draggable={draggable}
                   lift={liftDrag}
+                  recommendation={recommendations[order._id]?.[0] ?? null}
+                  technicians={recommendations[order._id] ?? []}
+                  onAssignTechnician={
+                    onAssignTechnician
+                      ? (userId) => onAssignTechnician(order, userId)
+                      : undefined
+                  }
                 />
               ))}
             </section>
-          ))}
+          ) : null}
+          {undatedJobs.length > 0 ? (
+            <section className="space-y-2">
+              <h3 className="sticky top-0 z-10 bg-white py-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                No date
+              </h3>
+              {undatedJobs.map((order) => (
+                <UnscheduledCard
+                  key={order._id}
+                  order={order}
+                  selected={selectedId === order._id}
+                  onSelect={() => onSelect(order)}
+                  draggable={draggable}
+                  lift={liftDrag}
+                  recommendation={recommendations[order._id]?.[0] ?? null}
+                  technicians={recommendations[order._id] ?? []}
+                  onAssignTechnician={
+                    onAssignTechnician
+                      ? (userId) => onAssignTechnician(order, userId)
+                      : undefined
+                  }
+                />
+              ))}
+            </section>
+          ) : null}
         </div>
       )}
     </aside>
@@ -506,6 +375,7 @@ function ScheduleHeader({
 }) {
   const showDays = view === "week" || surface === "map";
   const monthOnly = view === "month" && surface === "calendar";
+  const showLayout = surface === "calendar";
   const titleUnit = monthOnly ? "month" : "day";
   const rangeLabel =
     weekDays.length > 0
@@ -601,21 +471,31 @@ function ScheduleHeader({
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <Segmented<"today" | ViewMode>
+          <button
+            type="button"
+            aria-pressed={selectedDate === today}
+            disabled={selectedDate === today}
+            onClick={onToday}
+            className={`whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-100 ${
+              selectedDate === today
+                ? "border-neutral-200 bg-white text-brand-dark shadow-sm ring-1 ring-neutral-200"
+                : "border-neutral-200 bg-neutral-100 text-neutral-500 hover:text-brand-dark"
+            }`}
+          >
+            Today
+          </button>
+          <Segmented<ViewMode>
             ariaLabel="Calendar range"
-            value={
-              view === "week" && selectedDate === today ? "today" : view
-            }
-            onChange={(id) => (id === "today" ? onToday() : onView(id))}
+            value={view}
+            onChange={onView}
             options={[
-              { id: "today", label: "Today" },
               { id: "week", label: "Week" },
               { id: "month", label: "Month" },
             ]}
           />
-          {monthOnly && (
+          {showLayout && (
             <Segmented<MonthMode>
-              ariaLabel="Month layout"
+              ariaLabel="Calendar layout"
               value={monthMode}
               onChange={onMonthMode}
               options={[
@@ -705,11 +585,11 @@ function ScheduleSplit({
     }
   }
 
-  if (!sidebar) return <>{children}</>;
+  if (!sidebar) return <div className="min-h-0 flex-1">{children}</div>;
 
   return (
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch lg:gap-1">
-      <div className="min-w-0 flex-1">{children}</div>
+    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch lg:gap-1">
+      <div className="h-full min-h-0 min-w-0 flex-1">{children}</div>
       <div
         role="separator"
         aria-orientation="vertical"
@@ -725,7 +605,7 @@ function ScheduleSplit({
         <span className="absolute inset-y-8 left-1/2 w-1 -translate-x-1/2 rounded-full bg-neutral-200 group-hover:bg-brand-orange group-focus:bg-brand-orange" />
       </div>
       <div
-        className="w-full min-w-0 lg:w-[var(--schedule-rail-width)] lg:shrink-0"
+        className="h-full w-full min-w-0 lg:w-[var(--schedule-rail-width)] lg:shrink-0"
         style={{ "--schedule-rail-width": `${width}px` } as CSSProperties}
       >
         {sidebar}
@@ -751,10 +631,6 @@ export default function CalendarTab({
   const [view, setView] = useState<ViewMode>("week");
   const [monthMode, setMonthMode] = useState<MonthMode>("calendar");
   const [surface, setSurface] = useState<SurfaceMode>("calendar");
-  const [railFilter, setRailFilter] = useState<RailFilter>("current");
-  const [railDateOrder, setRailDateOrder] = useState<RailDateOrder>("asc");
-  const [railMonth, setRailMonth] = useState(() => today.slice(0, 7));
-
   const [staff, setStaff] = useState<ScheduleStaffMember[]>([]);
   const [jobs, setJobs] = useState<WorkOrderListItem[]>([]);
   const [calendarUnscheduled, setCalendarUnscheduled] = useState<
@@ -764,6 +640,14 @@ export default function CalendarTab({
   const [railScheduled, setRailScheduled] = useState<WorkOrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [railLoading, setRailLoading] = useState(true);
+  const [railLoadedFor, setRailLoadedFor] = useState(selectedDate);
+  if (railLoadedFor !== selectedDate) {
+    setRailLoadedFor(selectedDate);
+    setRailLoading(true);
+  }
+  const [recommendations, setRecommendations] = useState<
+    Record<string, ScheduleRecommendation[]>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
 
@@ -886,22 +770,68 @@ export default function CalendarTab({
     return { from: monthStart, to: monthEnd };
   }, [view, weekStart, weekEnd, monthStart, monthEnd]);
 
-  const railFrom = `${railMonth}-01`;
-  const railTo = addDays(railFrom, daysInMonth(railFrom) - 1);
-  const railMonthLabel = formatMonthYear(railMonth);
-
   const weekDays = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
     [weekStart],
   );
 
-  const railListJobs = useMemo(
+  const railListJobs = useMemo(() => {
+    const dated = uniqueJobs(railScheduled, railJobs)
+      .filter((job) => workOrderLocalDate(job) === selectedDate)
+      .sort(compareWithinDay);
+    const undated = railJobs.filter((job) => !workOrderLocalDate(job));
+    return { dated, undated };
+  }, [railJobs, railScheduled, selectedDate]);
+  const railRecommendationKey = useMemo(
     () =>
-      railFilter === "unscheduled"
-        ? railJobs
-        : uniqueJobs(railScheduled, railJobs),
-    [railFilter, railJobs, railScheduled],
+      [...railListJobs.dated, ...railListJobs.undated]
+        .map(
+          (job) =>
+            `${job._id}:${job.assignedUserRef ?? ""}:${job.scheduledStart ?? ""}`,
+        )
+        .join("|"),
+    [railListJobs],
   );
+
+  const recommendationsEnabled = Boolean(
+    token && dispatcher && canWrite && railRecommendationKey,
+  );
+
+  useEffect(() => {
+    if (!token || !dispatcher || !canWrite || !railRecommendationKey) return;
+    const ids = [
+      ...new Set(
+        railRecommendationKey
+          .split("|")
+          .map((row) => row.split(":")[0] ?? "")
+          .filter(Boolean),
+      ),
+    ];
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void getScheduleRecommendations(token, {
+      date: selectedDate,
+      workOrderIds: ids,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        const next: Record<string, ScheduleRecommendation[]> = {};
+        for (const row of result.recommendations) {
+          next[row.workOrderId] = row.technicians?.length
+            ? row.technicians
+            : row.recommendation
+              ? [row.recommendation]
+              : [];
+        }
+        setRecommendations(next);
+      })
+      .catch(() => {
+        if (!cancelled) setRecommendations({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, dispatcher, canWrite, selectedDate, railRecommendationKey]);
   const mapJobs = useMemo(
     () => uniqueJobs(jobs, calendarUnscheduled, railJobs),
     [jobs, calendarUnscheduled, railJobs],
@@ -1002,7 +932,7 @@ export default function CalendarTab({
       const [board, rail] = await Promise.all([
         fetchBoardData(token, range.from, range.to, dispatcher),
         dispatcher
-          ? fetchRailMonth(token, railFrom, railTo)
+          ? fetchRailDay(token, selectedDate)
           : Promise.resolve(null),
       ]);
       setStaff(board.staff);
@@ -1021,7 +951,7 @@ export default function CalendarTab({
       setLoading(false);
       setRailLoading(false);
     }
-  }, [token, range.from, range.to, dispatcher, railFrom, railTo]);
+  }, [token, range.from, range.to, dispatcher, selectedDate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1064,7 +994,7 @@ export default function CalendarTab({
     setRailLoading(true);
     void (async () => {
       try {
-        const data = await fetchRailMonth(token, railFrom, railTo);
+        const data = await fetchRailDay(token, selectedDate);
         if (cancelled) return;
         setRailJobs(data.unscheduled);
         setRailScheduled(data.scheduled);
@@ -1081,7 +1011,7 @@ export default function CalendarTab({
     return () => {
       cancelled = true;
     };
-  }, [token, dispatcher, railFrom, railTo]);
+  }, [token, dispatcher, selectedDate]);
 
   useEffect(() => {
     if (surface !== "map" || !token || !dispatcher) return;
@@ -1144,6 +1074,29 @@ export default function CalendarTab({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
+
+  async function assignRailTechnician(
+    job: WorkOrderListItem,
+    userId: string,
+  ) {
+    if (!token || !canWrite) return;
+    const current = job.assignee?._id ?? job.assignedUserRef ?? "";
+    if (current === userId) return;
+    setSaving(true);
+    setWarning(null);
+    try {
+      await updateWorkOrder(token, job._id, { assignedUserRef: userId });
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to assign technician.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function assignJob(
     workOrderId: string,
@@ -1542,28 +1495,23 @@ export default function CalendarTab({
     }
   }
 
-  const monthJobs =
-    view === "month" ? uniqueJobs(jobs, calendarUnscheduled) : jobs;
-  function changeRailMonth(next: string) {
-    if (next === railMonth) return;
-    setRailLoading(true);
-    setRailMonth(next);
-  }
+  const rangeJobs = uniqueJobs(jobs, calendarUnscheduled);
 
   const rail = dispatcher ? (
     <ScheduleRail
-      jobs={railListJobs}
-      filter={railFilter}
-      onFilter={setRailFilter}
-      month={railMonth}
-      monthLabel={railMonthLabel}
-      onMonth={changeRailMonth}
-      dateOrder={railDateOrder}
-      onDateOrder={setRailDateOrder}
+      dayLabel={formatWeekdayDate(selectedDate)}
+      dayJobs={railListJobs.dated}
+      undatedJobs={railListJobs.undated}
+      recommendations={
+        recommendationsEnabled ? recommendations : {}
+      }
       loading={railLoading}
       selectedId={selectedRailJob?._id ?? null}
       onSelect={selectRailJob}
       onSuggest={() => void handleSuggest()}
+      onAssignTechnician={
+        canWrite ? (job, userId) => void assignRailTechnician(job, userId) : undefined
+      }
       suggesting={suggesting}
       canSuggest={Boolean(
         selectedRailJob && !selectedRailJob.scheduledStart,
@@ -1580,7 +1528,7 @@ export default function CalendarTab({
   const editingViewHref = editingJob ? workOrderViewHref(editingJob) : null;
 
   return (
-    <div className="space-y-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
       <ScheduleHeader
         view={view}
         surface={surface}
@@ -1590,7 +1538,6 @@ export default function CalendarTab({
         monthStart={monthStart}
         weekDays={weekDays}
         onToday={() => {
-          setView("week");
           setAnchorDate(today);
           setSelectedDate(today);
         }}
@@ -1633,7 +1580,9 @@ export default function CalendarTab({
 
       {loading ? (
         <p className="text-sm text-neutral-500">Loading schedule…</p>
-      ) : surface === "map" ? (
+      ) : (
+      <div className="flex min-h-0 flex-1 flex-col">
+      {surface === "map" ? (
         <DndContext
           key="schedule-map"
           sensors={sensors}
@@ -1749,11 +1698,31 @@ export default function CalendarTab({
                   selected={false}
                   onSelect={() => {}}
                   draggable={false}
+                  recommendation={
+                    recommendationsEnabled
+                      ? (recommendations[draggingJob._id]?.[0] ?? null)
+                      : undefined
+                  }
                 />
               </div>
             ) : null}
           </DragOverlay>
         </DndContext>
+      ) : view === "week" && monthMode === "table" ? (
+        <ScheduleSplit sidebar={rail}>
+          <div className="h-full min-h-0 overflow-auto">
+            <MonthTable
+              jobs={rangeJobs}
+              emptyLabel="No work orders this week."
+              onJobClick={(job) => {
+                setEditingJob(job);
+                setDurationDraft(
+                  job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                );
+              }}
+            />
+          </div>
+        </ScheduleSplit>
       ) : view === "week" ? (
         <DndContext
           key="schedule-week"
@@ -1761,61 +1730,67 @@ export default function CalendarTab({
           onDragEnd={(e) => void handleDragEnd(e)}
         >
           <ScheduleSplit sidebar={rail}>
-            <WeekBoard
-              staff={staff}
-              jobs={jobs}
-              selectedDate={selectedDate}
-              dispatcher={dispatcher && canWrite}
-              onJobClick={(job) => {
-                setEditingJob(job);
-                setDurationDraft(
-                  job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
-                );
-              }}
-              onMap={(userId) => {
-                setRouteTechId(userId);
-                setSurface("map");
-                setMapJobFilter("scheduled");
-                setAddedUnscheduledIds([]);
-                setManualOrder(null);
-                setRouteLocks({});
-                setRoutePlan(null);
-                setRouteMessage(null);
-              }}
-            />
+            <div className="h-full min-h-0">
+              <WeekBoard
+                staff={staff}
+                jobs={jobs}
+                selectedDate={selectedDate}
+                dispatcher={dispatcher && canWrite}
+                onJobClick={(job) => {
+                  setEditingJob(job);
+                  setDurationDraft(
+                    job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                  );
+                }}
+                onMap={(userId) => {
+                  setRouteTechId(userId);
+                  setSurface("map");
+                  setMapJobFilter("scheduled");
+                  setAddedUnscheduledIds([]);
+                  setManualOrder(null);
+                  setRouteLocks({});
+                  setRoutePlan(null);
+                  setRouteMessage(null);
+                }}
+              />
+            </div>
           </ScheduleSplit>
         </DndContext>
       ) : (
         <ScheduleSplit sidebar={rail}>
           {monthMode === "calendar" ? (
-            <MonthCalendar
-              monthDate={anchorDate}
-              jobs={monthJobs}
-              selectedDate={selectedDate}
-              onSelectDate={(date) => {
-                setSelectedDate(date);
-                setView("week");
-                setAnchorDate(date);
-              }}
-              onJobClick={(job) => {
-                setEditingJob(job);
-                setDurationDraft(
-                  job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
-                );
-              }}
-            />
+            <div className="h-full min-h-0">
+              <MonthCalendar
+                monthDate={anchorDate}
+                jobs={rangeJobs}
+                selectedDate={selectedDate}
+                onSelectDate={(date) => {
+                  setSelectedDate(date);
+                }}
+                onJobClick={(job) => {
+                  setEditingJob(job);
+                  setDurationDraft(
+                    job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                  );
+                }}
+              />
+            </div>
           ) : (
-            <MonthTable
-              jobs={monthJobs}
-              onJobClick={(job) => {
-                setEditingJob(job);
-                setDurationDraft(
-                  job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
-                );
-              }}
-            />
+            <div className="h-full min-h-0 overflow-auto">
+              <MonthTable
+                jobs={rangeJobs}
+                onJobClick={(job) => {
+                  setEditingJob(job);
+                  setDurationDraft(
+                    job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                  );
+                }}
+              />
+            </div>
           )}
         </ScheduleSplit>
+      )}
+      </div>
       )}
 
       {suggestions && selectedRailJob && !selectedRailJob.scheduledStart && (

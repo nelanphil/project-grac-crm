@@ -11,6 +11,7 @@ import {
   IUserLoginLocation,
   IWeeklyHours,
   IScheduleException,
+  IServiceCity,
 } from "../models/mongo/User";
 import { Role } from "../models/mongo/Role";
 import { JobRole } from "../models/mongo/JobRole";
@@ -85,6 +86,17 @@ function formatHomeLocation(
     lat: typeof loc?.lat === "number" ? loc.lat : null,
     lng: typeof loc?.lng === "number" ? loc.lng : null,
   };
+}
+
+function formatServiceCities(cities?: IServiceCity[] | null): IServiceCity[] {
+  if (!cities?.length) return [];
+  return cities.map((city) => ({
+    city: city.city ?? "",
+    state: (city.state ?? "").toUpperCase(),
+    placeId: city.placeId ?? "",
+    lat: typeof city.lat === "number" ? city.lat : null,
+    lng: typeof city.lng === "number" ? city.lng : null,
+  }));
 }
 
 function formatWeeklyHours(hours?: IWeeklyHours | null): IWeeklyHours {
@@ -166,6 +178,7 @@ function formatUser(
     schedulable?: boolean;
     homeLocation?: IUserHomeLocation | null;
     weeklyHours?: IWeeklyHours | null;
+    serviceCities?: IServiceCity[] | null;
     scheduleExceptions?: IScheduleException[] | null;
     lastLoginAt?: Date | null;
     lastLoginLocation?: IUserLoginLocation | null;
@@ -195,6 +208,7 @@ function formatUser(
     territories: formatTerritories(user.territories),
     homeLocation: formatHomeLocation(user.homeLocation),
     weeklyHours: formatWeeklyHours(user.weeklyHours),
+    serviceCities: formatServiceCities(user.serviceCities),
     scheduleExceptions: user.scheduleExceptions ?? [],
     lastLoginAt: user.lastLoginAt ?? null,
     lastLoginLocation: user.lastLoginLocation ?? null,
@@ -415,6 +429,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
     }
 
     const scheduleExceptions = parsed.data.scheduleExceptions ?? [];
+    const serviceCities = parsed.data.serviceCities ?? [];
 
     let user;
     let restored = false;
@@ -432,6 +447,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
       reuse.territories = territories;
       reuse.weeklyHours = weeklyHours;
       reuse.homeLocation = homeLocation;
+      reuse.serviceCities = serviceCities;
       reuse.scheduleExceptions = scheduleExceptions;
       reuse.deletedAt = null;
       if (username !== undefined) {
@@ -461,6 +477,7 @@ export async function createUser(req: AuthRequest, res: Response): Promise<void>
         territories,
         weeklyHours,
         homeLocation,
+        serviceCities,
         scheduleExceptions,
       });
       if (username !== undefined && username !== "" && username !== null) {
@@ -714,6 +731,10 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
         return;
       }
       user.homeLocation = geo.location;
+    }
+
+    if (parsed.data.serviceCities !== undefined) {
+      user.serviceCities = parsed.data.serviceCities;
     }
 
     if (parsed.data.scheduleExceptions !== undefined) {

@@ -23,7 +23,7 @@ function SchedulePageInner() {
   ];
 
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-5 lg:h-[calc(100dvh-7.25rem)] lg:min-h-0 lg:-mb-20">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 pb-3">
         <div className="flex min-w-0 items-center gap-2 text-sm">
           <CalendarDays className="h-4 w-4 shrink-0 text-neutral-500" aria-hidden />
@@ -44,8 +44,16 @@ function SchedulePageInner() {
         )}
       </div>
 
-      {tab === "calendar" && <CalendarTab />}
-      {tab === "technicians" && dispatcher && <TechniciansTab />}
+      {tab === "calendar" && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <CalendarTab />
+        </div>
+      )}
+      {tab === "technicians" && dispatcher && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <TechniciansTab />
+        </div>
+      )}
     </div>
   );
 }
