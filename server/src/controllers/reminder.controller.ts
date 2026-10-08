@@ -12,6 +12,12 @@ const PAGE_SIZES = [50, 150, 250] as const;
 const SORT_KEYS = ["note", "ticket", "customer", "created", "completed"] as const;
 type ReminderSortKey = (typeof SORT_KEYS)[number];
 
+type PopulatedAuthor = {
+  _id: Types.ObjectId;
+  first_name?: string;
+  last_name?: string;
+};
+
 export interface ReminderListItem {
   id: string;
   source: "work-order" | "estimate";
@@ -19,8 +25,17 @@ export interface ReminderListItem {
   ticketId: string;
   ticketNumber: string;
   customerName: string;
+  authorName: string;
   createdAt: string;
   completed: boolean;
+}
+
+function authorNameFrom(authorId: unknown): string {
+  const author = authorId as Partial<PopulatedAuthor> | null;
+  return [author?.first_name, author?.last_name]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" ");
 }
 
 function escapeRegex(value: string): string {
@@ -136,10 +151,12 @@ export async function listReminders(
 
     const [workOrderNotes, estimateNotes] = await Promise.all([
       WorkOrderNote.find(workOrderQuery)
-        .select("content workOrderRef createdAt reminderCompletions")
+        .select("content workOrderRef createdAt reminderCompletions authorId")
+        .populate("authorId", "first_name last_name")
         .lean(),
       EstimateNote.find(estimateQuery)
-        .select("content estimateRef createdAt reminderCompletions")
+        .select("content estimateRef createdAt reminderCompletions authorId")
+        .populate("authorId", "first_name last_name")
         .lean(),
     ]);
 
@@ -182,6 +199,7 @@ export async function listReminders(
             ? displayTicketNumber(order)
             : String(note.workOrderRef).slice(-6),
           customerName: order?.customerName || "",
+          authorName: authorNameFrom(note.authorId),
           createdAt: new Date(note.createdAt).toISOString(),
           completed: isCompleted(note.reminderCompletions, req.user!.id),
         };
@@ -197,6 +215,7 @@ export async function listReminders(
             ? displayTicketNumber(estimate)
             : String(note.estimateRef).slice(-6),
           customerName: estimate?.customerName || "",
+          authorName: authorNameFrom(note.authorId),
           createdAt: new Date(note.createdAt).toISOString(),
           completed: isCompleted(note.reminderCompletions, req.user!.id),
         };

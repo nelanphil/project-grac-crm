@@ -295,6 +295,7 @@ export default function ProductEditorFields({
         >
           <option value="part">Part</option>
           <option value="labor">Labor</option>
+          <option value="equipment">Equipment</option>
           <option value="contract">Contract</option>
         </select>
       </label>

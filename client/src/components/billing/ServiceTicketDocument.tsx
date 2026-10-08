@@ -6,7 +6,7 @@ import {
   formatDiscountSummary,
   type TicketContractDiscount,
 } from "@/lib/productDiscounts";
-import { SERVICE_TICKET_TERMS } from "@/lib/service-ticket";
+import { SERVICE_TICKET_TERMS, ticketProductKindPrefix } from "@/lib/service-ticket";
 
 function formatMoney(amount: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -51,7 +51,7 @@ export type ServiceTicketView = {
     unitPrice?: number;
     amount: number;
     lineType?: "product" | "note" | "agreement";
-    kind?: "part" | "labor" | "contract";
+    kind?: "part" | "labor" | "contract" | "equipment";
   }>;
   totalParts: number;
   totalLabor: number;
@@ -246,7 +246,7 @@ export default function ServiceTicketDocument({
                     {part.partNumber}
                     {part.description ? (
                       <span className="ml-2 text-neutral-500">
-                        {part.kind === "labor" ? "Labor · " : ""}
+                        {ticketProductKindPrefix(part.kind)}
                         {part.description}
                       </span>
                     ) : null}

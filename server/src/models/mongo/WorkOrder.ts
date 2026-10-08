@@ -7,7 +7,7 @@ export interface IWorkOrderPart {
   contractTemplateRef?: Types.ObjectId | null;
   enrolledContractRef?: Types.ObjectId | null;
   lineType: "product" | "note" | "agreement";
-  kind: "part" | "labor";
+  kind: "part" | "labor" | "equipment";
   partNumber: string;
   description: string;
   quantity: number;
@@ -95,7 +95,7 @@ const workOrderPartSchema = new Schema<IWorkOrderPart>(
       enum: ["product", "note", "agreement"],
       default: "product",
     },
-    kind: { type: String, enum: ["part", "labor"], default: "part" },
+    kind: { type: String, enum: ["part", "labor", "equipment"], default: "part" },
     partNumber: { type: String, default: "" },
     description: { type: String, default: "" },
     quantity: { type: Number, default: 0 },

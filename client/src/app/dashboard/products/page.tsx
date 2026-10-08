@@ -73,6 +73,7 @@ function PriceDisplay({
 function kindLabel(kind: ProductKind): string {
   if (kind === "labor") return "Labor";
   if (kind === "contract") return "Contract";
+  if (kind === "equipment") return "Equipment";
   return "Part";
 }
 
@@ -82,7 +83,9 @@ function KindBadge({ kind }: { kind: ProductKind }) {
       ? "bg-sky-50 text-sky-800 ring-sky-600/20"
       : kind === "contract"
         ? "bg-emerald-50 text-emerald-800 ring-emerald-600/20"
-        : "bg-amber-50 text-amber-800 ring-amber-600/20";
+        : kind === "equipment"
+          ? "bg-violet-50 text-violet-800 ring-violet-600/20"
+          : "bg-amber-50 text-amber-800 ring-amber-600/20";
   return (
     <span
       className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tone}`}
@@ -240,7 +243,12 @@ function ProductsContent() {
       productNumber: uppercaseText(product.productNumber ?? ""),
       name: uppercaseText(product.name),
       manufacturer: product.manufacturer?._id ?? "",
-      kind: product.kind === "labor" || product.kind === "contract" ? product.kind : "part",
+      kind:
+        product.kind === "labor" ||
+        product.kind === "contract" ||
+        product.kind === "equipment"
+          ? product.kind
+          : "part",
       listPrice: moneyString(listPriceOf(product)),
       cost: moneyString(product.cost ?? 0),
       strikeThroughPrice:
@@ -325,7 +333,7 @@ function ProductsContent() {
         <div>
           <h1 className="text-2xl font-bold text-brand-dark">Products</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            Parts, labor, and contracts used on estimates and work orders.
+            Parts, labor, contracts, and equipment used on estimates and work orders.
           </p>
         </div>
         {canWrite ? (

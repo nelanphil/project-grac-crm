@@ -396,9 +396,15 @@ export function workOrderInvoiceLineItems(wo: {
         ? "Agreement"
         : part.kind === "labor"
           ? "Labor"
-          : "Part");
+          : part.kind === "equipment"
+            ? "Equipment"
+            : "Part");
+    const kindPrefix =
+      part.lineType !== "agreement" && part.kind === "equipment" && part.description?.trim()
+        ? "Equipment · "
+        : "";
     items.push({
-      description: `${qty}${label}${part.partNumber && part.description ? ` (${part.partNumber})` : ""}`,
+      description: `${qty}${kindPrefix}${label}${part.partNumber && part.description ? ` (${part.partNumber})` : ""}`,
       amountCents: cents,
     });
   }

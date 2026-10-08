@@ -2,7 +2,6 @@ import { Response } from "express";
 import mongoose from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { WorkOrder } from "../models/mongo/WorkOrder";
-import { WorkOrderType } from "../models/mongo/WorkOrderType";
 import { Estimate } from "../models/mongo/Estimate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
@@ -28,6 +27,7 @@ import {
 } from "../services/schedule.service";
 import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
+import { resolveTicketWorkOrderType } from "../services/ticketWorkOrderType";
 import { syncWorkOrderInvoice } from "../services/invoice.service";
 import { addMinutes, formatLocalDate } from "../utils/scheduleTime";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
@@ -77,30 +77,6 @@ async function enrichWithAddress(
 
 function hasJobsPermission(req: AuthRequest, permission: string): boolean {
   return Boolean(req.user?.permissions.includes(permission));
-}
-
-async function resolveWorkOrderTypeRef(
-  value: string | null | undefined,
-): Promise<
-  | { ok: true; skip: true }
-  | { ok: true; skip: false; ref: mongoose.Types.ObjectId | null }
-  | { ok: false; message: string }
-> {
-  if (value === undefined) return { ok: true, skip: true };
-  if (value === null || value === "") {
-    return { ok: true, skip: false, ref: null };
-  }
-  if (!mongoose.Types.ObjectId.isValid(value)) {
-    return { ok: false, message: "Invalid workOrderTypeRef" };
-  }
-  const type = await WorkOrderType.findOne({
-    _id: value,
-    deletedAt: null,
-  }).select("_id");
-  if (!type) {
-    return { ok: false, message: "Work order type not found" };
-  }
-  return { ok: true, skip: false, ref: type._id };
 }
 
 // GET /work-orders?customerId=&addressId=&from=&to=&assignedUserId=&unscheduled=
@@ -406,14 +382,16 @@ export async function createWorkOrder(
       customer,
     );
 
-    const typeRef = await resolveWorkOrderTypeRef(data.workOrderTypeRef);
+    const typeRef = await resolveTicketWorkOrderType({
+      requestedRef: data.workOrderTypeRef,
+      parts: workOrder.parts,
+      emptyWithoutEquipment: "service",
+    });
     if (!typeRef.ok) {
       res.status(400).json({ message: typeRef.message });
       return;
     }
-    if (!typeRef.skip) {
-      workOrder.workOrderTypeRef = typeRef.ref;
-    }
+    workOrder.workOrderTypeRef = typeRef.ref;
 
     if (data.assignedUserRef) {
       const assignee = await loadSchedulableAssignee(data.assignedUserRef);
@@ -553,12 +531,22 @@ export async function updateWorkOrder(
       workOrder.endTime = parsed.data.endTime?.trim() || "";
     }
 
-    const typeRef = await resolveWorkOrderTypeRef(parsed.data.workOrderTypeRef);
-    if (!typeRef.ok) {
-      res.status(400).json({ message: typeRef.message });
-      return;
-    }
-    if (!typeRef.skip) {
+    if (
+      parsed.data.workOrderTypeRef !== undefined ||
+      parsed.data.parts !== undefined
+    ) {
+      const typeRef = await resolveTicketWorkOrderType({
+        requestedRef:
+          parsed.data.workOrderTypeRef !== undefined
+            ? parsed.data.workOrderTypeRef
+            : workOrder.workOrderTypeRef?.toString() ?? null,
+        parts: workOrder.parts,
+        emptyWithoutEquipment: "service",
+      });
+      if (!typeRef.ok) {
+        res.status(400).json({ message: typeRef.message });
+        return;
+      }
       workOrder.workOrderTypeRef = typeRef.ref;
     }
 

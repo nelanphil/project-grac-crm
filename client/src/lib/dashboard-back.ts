@@ -28,6 +28,7 @@ const PATH_LABELS: { prefix: string; label: string }[] = [
   { prefix: "/dashboard/orders", label: "Back to invoices" },
   { prefix: "/dashboard/contracts/edit", label: "Back to contract" },
   { prefix: "/dashboard/contracts", label: "Back to contracts" },
+  { prefix: "/dashboard/schedule/technician", label: "Back to technician" },
   { prefix: "/dashboard/schedule", label: "Back to schedule" },
   { prefix: "/dashboard/leads", label: "Back to leads" },
   { prefix: "/dashboard/contact", label: "Back to contact" },

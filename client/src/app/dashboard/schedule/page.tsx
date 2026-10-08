@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -12,10 +13,24 @@ import Segmented from "@/components/schedule/Segmented";
 type TabId = "calendar" | "technicians";
 
 function SchedulePageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const user = useAuthStore((s) => s.user);
   const dispatcher = isDispatcherRole(user);
+  const tab: TabId =
+    dispatcher && searchParams.get("tab") === "technicians"
+      ? "technicians"
+      : "calendar";
 
-  const [tab, setTab] = useState<TabId>("calendar");
+  function selectTab(next: TabId) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "technicians") params.set("tab", "technicians");
+    else params.delete("tab");
+    const qs = params.toString();
+    router.replace(qs ? `/dashboard/schedule?${qs}` : "/dashboard/schedule", {
+      scroll: false,
+    });
+  }
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "calendar", label: "Schedule Wizard" },
@@ -38,7 +53,7 @@ function SchedulePageInner() {
           <Segmented<TabId>
             ariaLabel="Schedule section"
             value={tab}
-            onChange={setTab}
+            onChange={selectTab}
             options={tabs}
           />
         )}
@@ -61,7 +76,9 @@ function SchedulePageInner() {
 export default function SchedulePage() {
   return (
     <AuthGuard>
-      <SchedulePageInner />
+      <Suspense fallback={<p className="text-sm text-neutral-500">Loading…</p>}>
+        <SchedulePageInner />
+      </Suspense>
     </AuthGuard>
   );
 }

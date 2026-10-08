@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import {
   ApiError,
   CitySuggestion,
+  CityZone,
   resolveServiceCity,
   ServiceCity,
   suggestServiceCities,
 } from "@/lib/api";
 import { US_STATE_CODES, US_STATES } from "@/lib/constants";
+import ServiceTerritoryMap from "@/components/schedule/ServiceTerritoryMap";
 
 const STATE_NAME_BY_CODE: Record<string, string> = Object.fromEntries(
   US_STATES.map((name) => [US_STATE_CODES[name], name]),
@@ -220,6 +222,7 @@ export default function ServiceTerritoryField({
 }) {
   const [extraStates, setExtraStates] = useState<string[]>([]);
   const [pendingState, setPendingState] = useState("");
+  const [pickedState, setPickedState] = useState<string | null>(null);
 
   const states = useMemo(() => {
     const ordered: string[] = [];
@@ -232,56 +235,123 @@ export default function ServiceTerritoryField({
     return ordered;
   }, [cities, extraStates]);
 
+  const activeState =
+    pickedState && states.includes(pickedState) ? pickedState : (states[0] ?? null);
+
   const availableStates = US_STATES.filter(
     (name) => !states.includes(US_STATE_CODES[name]),
   );
 
+  const citiesRef = useRef(cities);
+  useEffect(() => {
+    citiesRef.current = cities;
+  }, [cities]);
+
+  function addCity(city: ServiceCity): boolean {
+    const current = citiesRef.current;
+    if (current.some((existing) => sameCity(existing, city))) return false;
+    const next = [...current, city];
+    citiesRef.current = next;
+    onChange(next);
+    return true;
+  }
+
+  function removeCity(placeId: string) {
+    const next = citiesRef.current.filter((city) => city.placeId !== placeId);
+    citiesRef.current = next;
+    onChange(next);
+  }
+
+  async function addCityFromZone(zone: CityZone) {
+    if (!token) throw new Error("Sign in to add cities.");
+    const wanted = zone.name.trim().toLowerCase();
+    if (
+      citiesRef.current.some(
+        (city) =>
+          city.state === zone.state && city.city.trim().toLowerCase() === wanted,
+      )
+    ) {
+      return;
+    }
+    try {
+      const { suggestions } = await suggestServiceCities(token, zone.name, zone.state);
+      const match = suggestions.find(
+        (suggestion) => suggestion.city.trim().toLowerCase() === wanted,
+      );
+      if (match) {
+        const { city } = await resolveServiceCity(token, match.placeId, zone.state);
+        if (city.city.trim().toLowerCase() === wanted) {
+          addCity(city);
+          return;
+        }
+      }
+    } catch (err) {
+      if (!zone.geoid) throw err;
+    }
+    if (!zone.geoid) {
+      throw new Error(`Could not match ${zone.name} to a Google city.`);
+    }
+    addCity({
+      city: zone.name,
+      state: zone.state,
+      placeId: `census:${zone.geoid}`,
+      lat: zone.lat,
+      lng: zone.lng,
+    });
+  }
+
   function addState() {
     if (!pendingState || states.includes(pendingState)) return;
     setExtraStates((current) => [...current, pendingState]);
+    setPickedState(pendingState);
     setPendingState("");
   }
 
   function removeState(stateCode: string) {
     setExtraStates((current) => current.filter((state) => state !== stateCode));
-    onChange(cities.filter((city) => city.state !== stateCode));
+    const next = citiesRef.current.filter((city) => city.state !== stateCode);
+    citiesRef.current = next;
+    onChange(next);
   }
 
   return (
-    <div className="space-y-2">
-      <div>
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <div className="shrink-0">
         <p className="text-xs font-medium text-neutral-600">Territory</p>
         <p className="mt-0.5 text-xs text-neutral-400">
-          Add cities this technician covers. Pick a suggestion so the city
+          Add a state, then click a city area or pick a suggestion so the city
           matches Google. The scheduler can use this list later.
         </p>
       </div>
 
-      {states.length === 0 && (
-        <p className="text-xs text-neutral-400">No cities yet.</p>
-      )}
+      <ServiceTerritoryMap
+        states={states}
+        activeState={activeState}
+        cities={cities}
+        onAddCity={addCity}
+        onAddCityFromZone={addCityFromZone}
+        onRemoveCity={removeCity}
+        onActiveStateChange={setPickedState}
+      />
 
-      <div className="space-y-2">
+      <div className="shrink-0 space-y-2 xl:max-h-44 xl:overflow-y-auto">
+        {states.length === 0 && (
+          <p className="text-xs text-neutral-400">No cities yet.</p>
+        )}
         {states.map((stateCode) => (
           <StateCityGroup
             key={stateCode}
             stateCode={stateCode}
             cities={cities}
             token={token}
-            onAdd={(city) => {
-              if (cities.some((existing) => sameCity(existing, city))) return false;
-              onChange([...cities, city]);
-              return true;
-            }}
-            onRemoveCity={(placeId) =>
-              onChange(cities.filter((city) => city.placeId !== placeId))
-            }
+            onAdd={addCity}
+            onRemoveCity={removeCity}
             onRemoveState={() => removeState(stateCode)}
           />
         ))}
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex shrink-0 gap-2">
         <select
           value={pendingState}
           onChange={(e) => setPendingState(e.target.value)}

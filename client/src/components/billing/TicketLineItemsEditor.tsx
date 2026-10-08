@@ -49,6 +49,7 @@ import {
   emptyPartRow,
   insertEmptyProductBelow,
   partAmount,
+  ticketProductKindPrefix,
 } from "@/lib/service-ticket";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -92,7 +93,12 @@ function ticketFieldsForProduct(
       priceOverridden: false,
     };
   }
-  const kind = product.kind === "labor" ? "labor" : "part";
+  const kind =
+    product.kind === "labor"
+      ? "labor"
+      : product.kind === "equipment"
+        ? "equipment"
+        : "part";
   return {
     lineType: "product",
     productRef: product._id,
@@ -103,7 +109,9 @@ function ticketFieldsForProduct(
     kind,
     quantity: qty,
     listPrice: String(listPrice),
-    unitPrice: String(discountedUnitPrice(listPrice, kind, discounts)),
+    unitPrice: String(
+      discountedUnitPrice(listPrice, kind === "labor" ? "labor" : "part", discounts),
+    ),
     priceOverridden: false,
   };
 }
@@ -210,12 +218,22 @@ function ProductSuggestMenu({
       {products.map((product) => {
         const listPrice = catalogListPrice(product);
         const isContract = product.kind === "contract";
-        const kind = product.kind === "labor" ? "labor" : "part";
+        const kindLabel =
+          product.kind === "labor"
+            ? "Labor"
+            : product.kind === "equipment"
+              ? "Equipment"
+              : isContract
+                ? "Contract"
+                : "Part";
         const unitPrice = isContract
           ? listPrice
-          : discountedUnitPrice(listPrice, kind, discounts);
+          : discountedUnitPrice(
+              listPrice,
+              product.kind === "labor" ? "labor" : "part",
+              discounts,
+            );
         const strike = product.strikeThroughPrice > 0;
-        const kindLabel = isContract ? "Contract" : kind === "labor" ? "Labor" : "Part";
         return (
           <li key={product._id}>
             <button
@@ -827,7 +845,7 @@ function SortableLineRow({
           />
           {row.description ? (
             <p className="mt-0.5 text-[11px] text-neutral-500">
-              {row.kind === "labor" ? "Labor · " : ""}
+              {ticketProductKindPrefix(row.kind)}
               {row.description}
             </p>
           ) : null}

@@ -2,7 +2,7 @@ import mongoose, { Schema, Document, Types } from "mongoose";
 import { ProductDiscounts } from "../../utils/productDiscounts";
 import { productDiscountsSchema } from "./productDiscounts";
 
-export const PRODUCT_KINDS = ["part", "labor", "contract"] as const;
+export const PRODUCT_KINDS = ["part", "labor", "contract", "equipment"] as const;
 export type ProductKind = (typeof PRODUCT_KINDS)[number];
 
 export interface IProduct extends Document {

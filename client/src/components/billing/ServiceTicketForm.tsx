@@ -28,11 +28,15 @@ import {
   TicketVariant,
   applyDiscountsToParts,
   emptyTicketForm,
+  hasEquipmentProductLines,
+  nextTicketWorkOrderType,
   ticketToPayload,
   ticketTotals,
+  workOrderTypeSaveIssue,
 } from "@/lib/service-ticket";
 import { useAuthStore } from "@/store/useAuthStore";
 import { timeWindowError } from "@/lib/schedule";
+import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
 import TicketLineItemsEditor from "@/components/billing/TicketLineItemsEditor";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 
@@ -103,6 +107,7 @@ export default function ServiceTicketForm({
   const [techResults, setTechResults] = useState<TechnicianListItem[]>([]);
   const [techConflict, setTechConflict] = useState(false);
   const [workOrderTypes, setWorkOrderTypes] = useState<WorkOrderTypeItem[]>([]);
+  const [workOrderTypesLoaded, setWorkOrderTypesLoaded] = useState(false);
   const lastAppliedSiteKey = useRef(
     ticketSiteKey(initial ?? emptyTicketForm()),
   );
@@ -155,11 +160,46 @@ export default function ServiceTicketForm({
   }, [token, customerQuery]);
 
   useEffect(() => {
-    if (!token || variant !== "work-order") return;
+    if (!token) return;
+    let cancelled = false;
     getWorkOrderTypes(token)
-      .then(({ types }) => setWorkOrderTypes(types))
-      .catch(() => setWorkOrderTypes([]));
-  }, [token, variant]);
+      .then(({ types }) => {
+        if (!cancelled) setWorkOrderTypes(types);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkOrderTypes([]);
+      })
+      .finally(() => {
+        if (!cancelled) setWorkOrderTypesLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const hasEquipmentNow = hasEquipmentProductLines(form.parts);
+  if (workOrderTypes.length > 0) {
+    const nextType = nextTicketWorkOrderType({
+      variant,
+      hadEquipment: form.trackedEquipment,
+      hasEquipment: hasEquipmentNow,
+      workOrderTypeRef: form.workOrderTypeRef,
+      workOrderTypeLabel: form.workOrderTypeLabel,
+      types: workOrderTypes,
+    });
+    if (
+      nextType.workOrderTypeRef !== form.workOrderTypeRef ||
+      nextType.workOrderTypeLabel !== form.workOrderTypeLabel ||
+      form.trackedEquipment !== hasEquipmentNow
+    ) {
+      setForm({
+        ...form,
+        workOrderTypeRef: nextType.workOrderTypeRef,
+        workOrderTypeLabel: nextType.workOrderTypeLabel,
+        trackedEquipment: hasEquipmentNow,
+      });
+    }
+  }
 
   useEffect(() => {
     if (!token || techQuery.trim().length < 2) {
@@ -352,6 +392,17 @@ export default function ServiceTicketForm({
     if (variant === "work-order" && timeWindowError(form.startTime, form.endTime)) {
       return;
     }
+    if (
+      workOrderTypeSaveIssue({
+        variant,
+        parts: form.parts,
+        workOrderTypeRef: form.workOrderTypeRef,
+        types: workOrderTypes,
+        typesLoaded: workOrderTypesLoaded,
+      }).blocked
+    ) {
+      return;
+    }
     await onSubmit(ticketToPayload(form));
   }
 
@@ -368,6 +419,14 @@ export default function ServiceTicketForm({
   const equipmentFieldsLocked = Boolean(customer && existingEquipmentSelected);
   const windowError =
     variant === "work-order" ? timeWindowError(form.startTime, form.endTime) : null;
+  const hasEquipmentLines = hasEquipmentProductLines(form.parts);
+  const typeSaveIssue = workOrderTypeSaveIssue({
+    variant,
+    parts: form.parts,
+    workOrderTypeRef: form.workOrderTypeRef,
+    types: workOrderTypes,
+    typesLoaded: workOrderTypesLoaded,
+  });
 
   return (
     <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6 print:hidden">
@@ -424,7 +483,7 @@ export default function ServiceTicketForm({
               </Field>
             </>
           ) : null}
-          {variant === "work-order" ? (
+          {variant === "work-order" && !hasEquipmentLines ? (
             <Field label="Type">
               <select
                 value={form.workOrderTypeRef ?? ""}
@@ -438,7 +497,6 @@ export default function ServiceTicketForm({
                 }}
                 className={inputClass}
               >
-                <option value="">None</option>
                 {workOrderTypes.map((type) => (
                   <option key={type._id} value={type._id}>
                     {type.label}
@@ -699,18 +757,35 @@ export default function ServiceTicketForm({
         </div>
 
         <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-start">
-          <TicketLineItemsEditor
-            parts={form.parts}
-            discounts={discountRules}
-            onChange={(parts) => patch({ parts })}
-            banner={
-              discountBanner ? (
-                <p className="text-[11px] font-normal normal-case tracking-normal text-sky-800">
-                  {discountBanner}
-                </p>
-              ) : null
-            }
-          />
+          <div className="min-w-0 flex-1 space-y-3">
+            <TicketLineItemsEditor
+              parts={form.parts}
+              discounts={discountRules}
+              onChange={(parts) => patch({ parts })}
+              banner={
+                discountBanner ? (
+                  <p className="text-[11px] font-normal normal-case tracking-normal text-sky-800">
+                    {discountBanner}
+                  </p>
+                ) : null
+              }
+            />
+            {hasEquipmentLines ? (
+              <EquipmentWorkOrderTypeChoice
+                types={workOrderTypes}
+                value={form.workOrderTypeRef}
+                message={typeSaveIssue.message}
+                onChange={(type) =>
+                  patch({
+                    workOrderTypeRef: type._id,
+                    workOrderTypeLabel: type.label,
+                  })
+                }
+              />
+            ) : typeSaveIssue.message ? (
+              <p className="text-sm text-red-700">{typeSaveIssue.message}</p>
+            ) : null}
+          </div>
 
           <div className="w-full shrink-0 space-y-2 rounded border border-neutral-200 p-3 text-sm lg:w-72">
             {discountBanner ? (
@@ -837,7 +912,7 @@ export default function ServiceTicketForm({
             {extraActions}
             <button
               type="submit"
-              disabled={submitting || !form.customerId}
+              disabled={submitting || !form.customerId || typeSaveIssue.blocked}
               className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
             >
               {submitting ? "Saving…" : submitLabel}

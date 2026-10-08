@@ -35,7 +35,7 @@ const estimateTemplatePartSchema = new Schema<IEstimatePart>(
       enum: ["product", "note", "agreement"],
       default: "product",
     },
-    kind: { type: String, enum: ["part", "labor"], default: "part" },
+    kind: { type: String, enum: ["part", "labor", "equipment"], default: "part" },
     partNumber: { type: String, default: "" },
     description: { type: String, default: "" },
     quantity: { type: Number, default: 0 },

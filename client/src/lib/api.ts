@@ -1880,6 +1880,7 @@ export interface ReminderListItem {
   ticketId: string;
   ticketNumber: string;
   customerName: string;
+  authorName: string;
   createdAt: string;
   completed: boolean;
 }
@@ -1983,7 +1984,7 @@ export async function deleteNoteTemplate(
 }
 
 export type TicketLineType = "product" | "note" | "agreement";
-export type ProductKind = "part" | "labor" | "contract";
+export type ProductKind = "part" | "labor" | "contract" | "equipment";
 
 export interface WorkOrderPart {
   productRef?: string | null;
@@ -2348,6 +2349,62 @@ export async function resolveServiceCity(
   const params = new URLSearchParams({ placeId, state });
   return authRequest<{ city: ServiceCity }>(
     `/schedule/city-details?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+/** A selectable map zone: a Census place plus its nearest share of unclaimed area. */
+export interface CityZone {
+  name: string;
+  state: string;
+  kind: "city" | "cdp";
+  geoid: string;
+  lat: number | null;
+  lng: number | null;
+}
+
+export interface CityBoundaryCollection {
+  type: "FeatureCollection";
+  features: Array<{
+    type: "Feature";
+    properties: CityZone;
+    geometry: {
+      type: "Polygon" | "MultiPolygon";
+      coordinates: number[][][] | number[][][][];
+    };
+  }>;
+}
+
+export async function getCityBoundaries(
+  token: string,
+  state: string,
+): Promise<CityBoundaryCollection> {
+  const params = new URLSearchParams({ state });
+  return authRequest<CityBoundaryCollection>(
+    `/schedule/city-boundaries?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function resolveServiceCityAt(
+  token: string,
+  lat: number,
+  lng: number,
+  state: string,
+): Promise<{ city: ServiceCity }> {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lng: String(lng),
+    state,
+  });
+  return authRequest<{ city: ServiceCity }>(
+    `/schedule/city-at-point?${params.toString()}`,
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
@@ -3544,6 +3601,8 @@ export interface EstimateItem {
   addressRef?: string | null;
   equipmentRef?: string | null;
   workOrderRef?: string | null;
+  workOrderTypeRef?: string | null;
+  workOrderType?: { _id: string; label: string } | null;
   descPerform: string;
   laborHours: number;
   date: string | null;

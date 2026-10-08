@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
 import ServiceTicketDocument, {
   type ServiceTicketView,
 } from "@/components/billing/ServiceTicketDocument";
@@ -9,13 +10,18 @@ import TicketLineItemsEditor from "@/components/billing/TicketLineItemsEditor";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 import {
   ApiError,
+  getWorkOrderTypes,
   updateWorkOrder,
   type WorkOrderListItem,
+  type WorkOrderTypeItem,
 } from "@/lib/api";
 import { isDispatcherRole, type RoleLike } from "@/lib/dashboard-role";
 import {
+  hasEquipmentProductLines,
+  nextTicketWorkOrderType,
   ticketFromRecord,
   ticketToPayload,
+  workOrderTypeSaveIssue,
   type TicketPartRow,
 } from "@/lib/service-ticket";
 
@@ -223,15 +229,71 @@ export function MobileWorkOrderPanel({
   onSaved: (order: WorkOrderListItem) => void;
 }) {
   const [parts, setParts] = useState<TicketPartRow[]>([]);
+  const [workOrderTypeRef, setWorkOrderTypeRef] = useState<string | null>(null);
+  const [workOrderTypeLabel, setWorkOrderTypeLabel] = useState("");
+  const [trackedEquipment, setTrackedEquipment] = useState(false);
+  const [workOrderTypes, setWorkOrderTypes] = useState<WorkOrderTypeItem[]>([]);
+  const [workOrderTypesLoaded, setWorkOrderTypesLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!order) return;
+    const form = ticketFromRecord(order);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setParts(ticketFromRecord(order).parts);
+    setParts(form.parts);
+    setWorkOrderTypeRef(form.workOrderTypeRef);
+    setWorkOrderTypeLabel(form.workOrderTypeLabel);
+    setTrackedEquipment(form.trackedEquipment);
     setSaveError(null);
   }, [order]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    getWorkOrderTypes(token)
+      .then(({ types }) => {
+        if (!cancelled) setWorkOrderTypes(types);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkOrderTypes([]);
+      })
+      .finally(() => {
+        if (!cancelled) setWorkOrderTypesLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const hasEquipmentLines = hasEquipmentProductLines(parts);
+  if (workOrderTypes.length > 0) {
+    const nextType = nextTicketWorkOrderType({
+      variant: "work-order",
+      hadEquipment: trackedEquipment,
+      hasEquipment: hasEquipmentLines,
+      workOrderTypeRef,
+      workOrderTypeLabel,
+      types: workOrderTypes,
+    });
+    if (trackedEquipment !== hasEquipmentLines) {
+      setTrackedEquipment(hasEquipmentLines);
+    }
+    if (
+      nextType.workOrderTypeRef !== workOrderTypeRef ||
+      nextType.workOrderTypeLabel !== workOrderTypeLabel
+    ) {
+      setWorkOrderTypeRef(nextType.workOrderTypeRef);
+      setWorkOrderTypeLabel(nextType.workOrderTypeLabel);
+    }
+  }
+  const typeSaveIssue = workOrderTypeSaveIssue({
+    variant: "work-order",
+    parts,
+    workOrderTypeRef,
+    types: workOrderTypes,
+    typesLoaded: workOrderTypesLoaded,
+  });
 
   return (
     <section className="min-w-0 space-y-4 rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] p-4">
@@ -255,16 +317,36 @@ export function MobileWorkOrderPanel({
             {canWrite ? (
               <>
                 <TicketLineItemsEditor parts={parts} onChange={setParts} />
+                {hasEquipmentLines ? (
+                  <EquipmentWorkOrderTypeChoice
+                    types={workOrderTypes}
+                    value={workOrderTypeRef}
+                    message={typeSaveIssue.message}
+                    onChange={(type) => {
+                      setWorkOrderTypeRef(type._id);
+                      setWorkOrderTypeLabel(type.label);
+                    }}
+                  />
+                ) : typeSaveIssue.message ? (
+                  <p className="text-sm text-red-700">{typeSaveIssue.message}</p>
+                ) : null}
                 {saveError ? (
                   <p className="text-sm text-red-700">{saveError}</p>
                 ) : null}
                 <button
                   type="button"
-                  disabled={saving}
+                  disabled={saving || typeSaveIssue.blocked}
                   onClick={() => {
+                    if (typeSaveIssue.blocked) return;
                     setSaving(true);
                     setSaveError(null);
-                    const form = { ...ticketFromRecord(order), parts };
+                    const form = {
+                      ...ticketFromRecord(order),
+                      parts,
+                      workOrderTypeRef,
+                      workOrderTypeLabel,
+                      trackedEquipment: hasEquipmentLines,
+                    };
                     void saveWorkOrder(token, order, ticketToPayload(form), user)
                       .then(onSaved)
                       .catch((err: unknown) => {

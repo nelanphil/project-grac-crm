@@ -1,32 +1,15 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Pencil } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
-import {
-  ApiError,
-  getRoles,
-  getUsers,
-  RoleItem,
-  ServiceCity,
-  updateUser,
-  UserHomeLocation,
-  UserListItem,
-  UserWeeklyHours,
-  validateCustomerAddress,
-} from "@/lib/api";
+import { ApiError, getRoles, getUsers, RoleItem, UserListItem } from "@/lib/api";
 import UsernameDisplay from "@/components/ui/UsernameDisplay";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
-import StaffWorkHoursForm from "@/components/schedule/StaffWorkHoursForm";
-import ServiceTerritoryField from "@/components/schedule/ServiceTerritoryField";
 import { normalizeRoles, userHasCapability } from "@/lib/dashboard-role";
-import {
-  defaultWeeklyHours,
-  emptyHomeLocation,
-  serviceTerritorySummary,
-  weeklyHoursSummary,
-} from "@/lib/schedule";
+import { serviceTerritorySummary, weeklyHoursSummary } from "@/lib/schedule";
 
 export default function TechniciansTab() {
   const token = useAuthStore((s) => s.token);
@@ -34,17 +17,6 @@ export default function TechniciansTab() {
   const [roleList, setRoleList] = useState<RoleItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const [editing, setEditing] = useState<UserListItem | null>(null);
-  const [weeklyHours, setWeeklyHours] = useState<UserWeeklyHours>(
-    defaultWeeklyHours(true),
-  );
-  const [home, setHome] = useState<UserHomeLocation>(emptyHomeLocation());
-  const [serviceCities, setServiceCities] = useState<ServiceCity[]>([]);
-  const [homeValidating, setHomeValidating] = useState(false);
-  const [homeMsg, setHomeMsg] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -73,87 +45,6 @@ export default function TechniciansTab() {
 
   function formatUserRoles(user: UserListItem): string {
     return normalizeRoles(user).map(getRoleLabel).join(", ");
-  }
-
-  function openEdit(user: UserListItem) {
-    setEditing(user);
-    setWeeklyHours(user.weeklyHours ?? defaultWeeklyHours(true));
-    setHome(user.homeLocation ?? emptyHomeLocation());
-    setServiceCities(user.serviceCities ?? []);
-    setHomeMsg(null);
-    setSaveError(null);
-  }
-
-  function closeEdit() {
-    setEditing(null);
-    setSaveError(null);
-    setHomeMsg(null);
-  }
-
-  async function validateHome() {
-    if (!token) return;
-    const street = home.address.trim();
-    if (!street) {
-      setHomeMsg(null);
-      setHome(emptyHomeLocation());
-      return;
-    }
-    setHomeValidating(true);
-    setHomeMsg(null);
-    try {
-      const result = await validateCustomerAddress(token, {
-        address: street,
-        city: home.city.trim(),
-        state: home.state.trim(),
-        zip: home.zip.trim(),
-      });
-      if (!result.valid || !result.address) {
-        setHomeMsg(result.message || "Home address could not be validated.");
-        return;
-      }
-      const matched = result.address;
-      setHome({
-        address: matched.address,
-        city: matched.city,
-        state: matched.state,
-        zip: matched.zip,
-        lat: result.coordinates?.lat ?? null,
-        lng: result.coordinates?.lng ?? null,
-      });
-      setHomeMsg(
-        result.coordinates
-          ? "Home address verified."
-          : "Address verified (no map coordinates).",
-      );
-    } catch (err) {
-      setHomeMsg(
-        err instanceof ApiError ? err.message : "Address validation failed.",
-      );
-    } finally {
-      setHomeValidating(false);
-    }
-  }
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!token || !editing) return;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      const { user } = await updateUser(token, editing._id, {
-        weeklyHours,
-        homeLocation: home,
-        serviceCities,
-      });
-      setUsers((prev) => prev.map((u) => (u._id === user._id ? user : u)));
-      closeEdit();
-    } catch (err) {
-      setSaveError(
-        err instanceof ApiError ? err.message : "Failed to save hours.",
-      );
-    } finally {
-      setSaving(false);
-    }
   }
 
   if (loading) {
@@ -212,14 +103,13 @@ export default function TechniciansTab() {
                 </>
               }
               actions={
-                <button
-                  type="button"
-                  onClick={() => openEdit(user)}
-                  className="rounded-md p-1.5 text-brand-orange hover:bg-orange-50"
+                <Link
+                  href={`/dashboard/schedule/technician?id=${user._id}`}
+                  className="inline-flex rounded-md p-1.5 text-brand-orange hover:bg-orange-50"
                   aria-label="Edit technician"
                 >
                   <Pencil className="h-4 w-4" />
-                </button>
+                </Link>
               }
             />
           ))}
@@ -271,14 +161,13 @@ export default function TechniciansTab() {
                         {serviceTerritorySummary(user.serviceCities)}
                       </td>
                       <td className="px-6 py-4 text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => openEdit(user)}
-                          className="rounded-md p-1.5 text-brand-orange hover:bg-orange-50"
+                        <Link
+                          href={`/dashboard/schedule/technician?id=${user._id}`}
+                          className="inline-flex rounded-md p-1.5 text-brand-orange hover:bg-orange-50"
                           aria-label="Edit technician"
                         >
                           <Pencil className="h-4 w-4" />
-                        </button>
+                        </Link>
                       </td>
                     </tr>
                   ))}
@@ -288,70 +177,6 @@ export default function TechniciansTab() {
           }
         />
       </div>
-
-      {editing && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-3 py-3 sm:px-4 sm:py-6">
-          <div className="flex w-full max-w-xl max-h-[min(92dvh,920px)] flex-col overflow-hidden rounded-xl bg-white shadow-xl">
-            <div className="shrink-0 border-b border-neutral-100 px-4 py-4 sm:px-6">
-              <h3 className="text-lg font-semibold text-brand-dark">
-                {editing.first_name} {editing.last_name}
-              </h3>
-              <p className="mt-0.5 text-sm text-neutral-500">
-                Weekly hours, home location, and service territory.
-              </p>
-            </div>
-            <form
-              onSubmit={(e) => void handleSubmit(e)}
-              className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 space-y-4"
-            >
-              {saveError && (
-                <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-                  {saveError}
-                </div>
-              )}
-              <StaffWorkHoursForm
-                key={editing._id}
-                weeklyHours={weeklyHours}
-                home={home}
-                onPatchWeekly={(day, patch) =>
-                  setWeeklyHours((hours) => ({
-                    ...hours,
-                    [day]: { ...hours[day], ...patch },
-                  }))
-                }
-                onChangeHome={(patch) =>
-                  setHome((current) => ({ ...current, ...patch }))
-                }
-                onBlurHome={() => void validateHome()}
-                homeValidating={homeValidating}
-                homeMsg={homeMsg}
-              />
-              <ServiceTerritoryField
-                key={`${editing._id}-territory`}
-                token={token}
-                cities={serviceCities}
-                onChange={setServiceCities}
-              />
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={closeEdit}
-                  className="rounded-md px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="btn-primary text-sm px-4 py-2 disabled:opacity-60"
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

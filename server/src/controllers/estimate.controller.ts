@@ -19,6 +19,7 @@ import { estimatedMinutesForWorkOrder } from "../services/schedule.service";
 import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
 import { syncWorkOrderInvoice } from "../services/invoice.service";
+import { resolveTicketWorkOrderType } from "../services/ticketWorkOrderType";
 
 const ESTIMATE_STATUS_GROUPS = {
   active: ["draft", "sent"],
@@ -36,6 +37,8 @@ function toPublic(doc: Record<string, unknown>) {
     addressRef: doc.addressRef?.toString?.() ?? doc.addressRef ?? null,
     equipmentRef: doc.equipmentRef?.toString?.() ?? doc.equipmentRef ?? null,
     workOrderRef: doc.workOrderRef?.toString?.() ?? doc.workOrderRef ?? null,
+    workOrderTypeRef:
+      doc.workOrderTypeRef?.toString?.() ?? doc.workOrderTypeRef ?? null,
     contractRef: doc.contractRef?.toString?.() ?? doc.contractRef ?? null,
   };
 }
@@ -189,6 +192,16 @@ export async function createEstimate(
       data,
       customer,
     );
+    const typeRef = await resolveTicketWorkOrderType({
+      requestedRef: data.workOrderTypeRef,
+      parts: estimate.parts,
+      emptyWithoutEquipment: "clear",
+    });
+    if (!typeRef.ok) {
+      res.status(400).json({ message: typeRef.message });
+      return;
+    }
+    estimate.workOrderTypeRef = typeRef.ref;
     await estimate.save();
 
     logNotificationAsync({
@@ -249,6 +262,21 @@ export async function updateEstimate(
       data,
       customer,
     );
+    if (data.workOrderTypeRef !== undefined || data.parts !== undefined) {
+      const typeRef = await resolveTicketWorkOrderType({
+        requestedRef:
+          data.workOrderTypeRef !== undefined
+            ? data.workOrderTypeRef
+            : estimate.workOrderTypeRef?.toString() ?? null,
+        parts: estimate.parts,
+        emptyWithoutEquipment: "clear",
+      });
+      if (!typeRef.ok) {
+        res.status(400).json({ message: typeRef.message });
+        return;
+      }
+      estimate.workOrderTypeRef = typeRef.ref;
+    }
     await estimate.save();
 
     logNotificationAsync({
@@ -338,6 +366,16 @@ export async function convertEstimate(
         laborHours: estimate.laborHours,
       }),
     });
+    const typeRef = await resolveTicketWorkOrderType({
+      requestedRef: estimate.workOrderTypeRef?.toString() ?? null,
+      parts: estimate.parts,
+      emptyWithoutEquipment: "service",
+    });
+    if (!typeRef.ok) {
+      res.status(400).json({ message: typeRef.message });
+      return;
+    }
+    workOrder.workOrderTypeRef = typeRef.ref;
     await workOrder.save();
     await saveWorkOrderAgreements(workOrder);
     await syncWorkOrderInvoice(workOrder);

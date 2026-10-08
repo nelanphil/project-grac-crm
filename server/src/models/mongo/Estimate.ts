@@ -16,7 +16,7 @@ export interface IEstimatePart {
   contractTemplateRef?: Types.ObjectId | null;
   enrolledContractRef?: Types.ObjectId | null;
   lineType: "product" | "note" | "agreement";
-  kind: "part" | "labor";
+  kind: "part" | "labor" | "equipment";
   partNumber: string;
   description: string;
   quantity: number;
@@ -34,6 +34,7 @@ export interface IEstimate extends Document {
   addressRef?: Types.ObjectId | null;
   equipmentRef?: Types.ObjectId | null;
   workOrderRef?: Types.ObjectId | null;
+  workOrderTypeRef?: Types.ObjectId | null;
   contractRef?: Types.ObjectId | null;
   contractDiscount?: TicketContractDiscount | null;
   descPerform: string;
@@ -89,7 +90,7 @@ const estimatePartSchema = new Schema<IEstimatePart>(
       enum: ["product", "note", "agreement"],
       default: "product",
     },
-    kind: { type: String, enum: ["part", "labor"], default: "part" },
+    kind: { type: String, enum: ["part", "labor", "equipment"], default: "part" },
     partNumber: { type: String, default: "" },
     description: { type: String, default: "" },
     quantity: { type: Number, default: 0 },
@@ -125,6 +126,12 @@ const estimateSchema = new Schema<IEstimate>(
     workOrderRef: {
       type: Schema.Types.ObjectId,
       ref: "WorkOrder",
+      default: null,
+      index: true,
+    },
+    workOrderTypeRef: {
+      type: Schema.Types.ObjectId,
+      ref: "WorkOrderType",
       default: null,
       index: true,
     },

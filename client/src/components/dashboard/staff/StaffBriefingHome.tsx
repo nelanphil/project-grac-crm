@@ -324,7 +324,11 @@ export default function StaffBriefingHome() {
     ])
       .then(([openInvoices, failedInvoices]) => {
         if (cancelled) return;
-        setPayments([...openInvoices, ...failedInvoices].sort(comparePending));
+        setPayments(
+          [...openInvoices, ...failedInvoices]
+            .filter((invoice) => invoice.sourceType !== "contract_renewal")
+            .sort(comparePending),
+        );
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -509,7 +513,12 @@ export default function StaffBriefingHome() {
                       key={`${item.source}-${item.id}`}
                       href={ticketHref(item)}
                       text={excerpt(item.content)}
-                      meta={[item.ticketNumber, item.customerName]
+                      meta={[
+                        item.authorName || "Staff",
+                        item.ticketNumber,
+                        item.customerName,
+                        formatWhen(item.createdAt),
+                      ]
                         .filter(Boolean)
                         .join(" · ")}
                     />

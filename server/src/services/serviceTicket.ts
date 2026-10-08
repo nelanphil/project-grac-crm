@@ -21,7 +21,7 @@ export function defaultLaborTotal(laborHours: number): number {
 }
 
 export type TicketLineType = "product" | "note" | "agreement";
-export type TicketProductKind = "part" | "labor";
+export type TicketProductKind = "part" | "labor" | "equipment";
 
 export interface TicketPartInput {
   productRef?: string | null;
@@ -72,7 +72,11 @@ export function normalizeParts(
     .map((part) => {
       const lineType = lineTypeOf(part.lineType);
       const kind: TicketProductKind =
-        lineType === "product" && part.kind === "labor" ? "labor" : "part";
+        lineType === "product" && part.kind === "labor"
+          ? "labor"
+          : lineType === "product" && part.kind === "equipment"
+            ? "equipment"
+            : "part";
       if (lineType === "note") {
         return {
           productRef: null,

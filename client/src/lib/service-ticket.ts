@@ -12,7 +12,17 @@ export const LABOR_BLOCK_RATE = 75;
 
 export type TicketVariant = "work-order" | "estimate";
 export type TicketLineType = "product" | "note" | "agreement";
-export type TicketProductKind = "part" | "labor";
+export type TicketProductKind = "part" | "labor" | "equipment";
+
+export const SERVICE_WORK_ORDER_TYPE_SLUG = "service";
+export const NEW_INSTALL_WORK_ORDER_TYPE_SLUG = "new-install";
+export const SWAP_WORK_ORDER_TYPE_SLUG = "swap";
+
+export type WorkOrderTypeChoice = {
+  _id: string;
+  label: string;
+  slug: string;
+};
 
 export interface TicketPartRow {
   id: string;
@@ -38,6 +48,8 @@ export interface TicketFormState {
   assignedUserRef: string | null;
   workOrderTypeRef: string | null;
   workOrderTypeLabel: string;
+  /** True once this form has shown an equipment line, so removing the last one can reset the type. */
+  trackedEquipment: boolean;
   customerRef: string;
   customerId: number | null;
   addressRef: string;
@@ -163,6 +175,7 @@ export function emptyTicketForm(): TicketFormState {
     assignedUserRef: null,
     workOrderTypeRef: null,
     workOrderTypeLabel: "",
+    trackedEquipment: false,
     customerRef: "",
     customerId: null,
     addressRef: "",
@@ -220,7 +233,9 @@ export function applyDiscountsToParts(
     if (!row.listPrice && !row.unitPrice) return row;
     return {
       ...row,
-      unitPrice: String(discountedUnitPrice(list, row.kind, rules)),
+      unitPrice: String(
+        discountedUnitPrice(list, row.kind === "labor" ? "labor" : "part", rules),
+      ),
     };
   });
 }
@@ -232,6 +247,112 @@ export function partAmount(row: TicketPartRow): number {
 
 export function hasLaborProductLines(parts: TicketPartRow[]): boolean {
   return parts.some((row) => row.lineType === "product" && row.kind === "labor");
+}
+
+export function hasEquipmentProductLines(
+  parts: Array<{ lineType?: string; kind?: string }>,
+): boolean {
+  return parts.some(
+    (row) => (row.lineType ?? "product") === "product" && row.kind === "equipment",
+  );
+}
+
+export function ticketProductKindPrefix(kind: string | undefined): string {
+  if (kind === "labor") return "Labor · ";
+  if (kind === "equipment") return "Equipment · ";
+  return "";
+}
+
+export function nextTicketWorkOrderType(opts: {
+  variant: TicketVariant;
+  hadEquipment: boolean;
+  hasEquipment: boolean;
+  workOrderTypeRef: string | null;
+  workOrderTypeLabel: string;
+  types: WorkOrderTypeChoice[];
+}): { workOrderTypeRef: string | null; workOrderTypeLabel: string } {
+  const service = opts.types.find((type) => type.slug === SERVICE_WORK_ORDER_TYPE_SLUG);
+  const install = opts.types.find(
+    (type) => type.slug === NEW_INSTALL_WORK_ORDER_TYPE_SLUG,
+  );
+  const swap = opts.types.find((type) => type.slug === SWAP_WORK_ORDER_TYPE_SLUG);
+  const allowed = new Set(
+    [install?._id, swap?._id].filter((id): id is string => Boolean(id)),
+  );
+
+  if (opts.hasEquipment) {
+    if (opts.workOrderTypeRef && allowed.has(opts.workOrderTypeRef)) {
+      const selected =
+        opts.workOrderTypeRef === install?._id ? install : swap;
+      return {
+        workOrderTypeRef: opts.workOrderTypeRef,
+        workOrderTypeLabel: selected?.label || opts.workOrderTypeLabel,
+      };
+    }
+    return { workOrderTypeRef: null, workOrderTypeLabel: "" };
+  }
+
+  if (opts.variant === "estimate" || opts.hadEquipment) {
+    if (opts.variant === "estimate") {
+      return { workOrderTypeRef: null, workOrderTypeLabel: "" };
+    }
+    if (service) {
+      return { workOrderTypeRef: service._id, workOrderTypeLabel: service.label };
+    }
+    return { workOrderTypeRef: null, workOrderTypeLabel: "" };
+  }
+
+  if (!opts.workOrderTypeRef && service) {
+    return { workOrderTypeRef: service._id, workOrderTypeLabel: service.label };
+  }
+
+  return {
+    workOrderTypeRef: opts.workOrderTypeRef,
+    workOrderTypeLabel: opts.workOrderTypeLabel,
+  };
+}
+
+export function workOrderTypeSaveIssue(opts: {
+  variant: TicketVariant;
+  parts: Array<{ lineType?: string; kind?: string }>;
+  workOrderTypeRef: string | null;
+  types: WorkOrderTypeChoice[];
+  typesLoaded: boolean;
+}): { blocked: boolean; message: string | null } {
+  const hasEquipment = hasEquipmentProductLines(opts.parts);
+  if (!opts.typesLoaded) {
+    const waiting =
+      hasEquipment || (opts.variant === "work-order" && !opts.workOrderTypeRef);
+    return { blocked: waiting, message: null };
+  }
+
+  if (hasEquipment) {
+    const install = opts.types.find(
+      (type) => type.slug === NEW_INSTALL_WORK_ORDER_TYPE_SLUG,
+    );
+    const swap = opts.types.find((type) => type.slug === SWAP_WORK_ORDER_TYPE_SLUG);
+    if (!install || !swap) {
+      return {
+        blocked: true,
+        message: "Add New Install and Swap work order types in Control Panel.",
+      };
+    }
+    const chosen =
+      opts.workOrderTypeRef === install._id || opts.workOrderTypeRef === swap._id;
+    return { blocked: !chosen, message: null };
+  }
+
+  if (opts.variant === "work-order" && !opts.workOrderTypeRef) {
+    const service = opts.types.some(
+      (type) => type.slug === SERVICE_WORK_ORDER_TYPE_SLUG,
+    );
+    return {
+      blocked: true,
+      message: service ? null : "Add a Service work order type in Control Panel.",
+    };
+  }
+
+  return { blocked: false, message: null };
 }
 
 export function ticketTotals(form: TicketFormState) {
@@ -429,7 +550,12 @@ export function ticketFromRecord(record: {
         : part.lineType === "agreement"
           ? ("agreement" as const)
           : ("product" as const),
-    kind: part.lineType === "product" && part.kind === "labor" ? ("labor" as const) : ("part" as const),
+    kind:
+      part.lineType === "product" && part.kind === "labor"
+        ? ("labor" as const)
+        : part.lineType === "product" && part.kind === "equipment"
+          ? ("equipment" as const)
+          : ("part" as const),
     productRef: part.productRef ?? "",
     contractTemplateRef: part.contractTemplateRef ?? "",
     enrolledContractRef: part.enrolledContractRef ?? "",
@@ -451,6 +577,9 @@ export function ticketFromRecord(record: {
     workOrderTypeRef:
       record.workOrderTypeRef ?? record.workOrderType?._id ?? null,
     workOrderTypeLabel: record.workOrderType?.label ?? "",
+    trackedEquipment: parts.some(
+      (row) => row.lineType === "product" && row.kind === "equipment",
+    ),
     customerRef: record.customerRef ?? "",
     customerId: record.customerId ?? null,
     addressRef: record.addressRef ?? "",

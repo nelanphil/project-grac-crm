@@ -24,7 +24,15 @@ import { WorkOrder } from "../models/mongo/WorkOrder";
 import { User, activeUserFilter } from "../models/mongo/User";
 import { isUsStateCode } from "../constants/usStates";
 import { getActiveGoogleApiKey } from "../utils/googleAddressValidator";
-import { resolveUsCity, suggestUsCities } from "../utils/googlePlaces";
+import {
+  resolveUsCity,
+  resolveUsCityAt,
+  suggestUsCities,
+} from "../utils/googlePlaces";
+import {
+  CityBoundaryError,
+  cityBoundariesForState,
+} from "../services/cityBoundaries";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -659,5 +667,73 @@ export async function getCityDetails(
   } catch (err) {
     console.error("GET /schedule/city-details error:", err);
     res.status(500).json({ message: "Failed to look up city" });
+  }
+}
+
+export async function getCityAtPoint(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const lat = Number(req.query.lat);
+    const lng = Number(req.query.lng);
+    const state =
+      typeof req.query.state === "string" ? req.query.state.trim().toUpperCase() : "";
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      lat < -90 ||
+      lat > 90 ||
+      lng < -180 ||
+      lng > 180
+    ) {
+      res.status(400).json({ message: "lat and lng must be valid coordinates" });
+      return;
+    }
+    if (!isUsStateCode(state)) {
+      res.status(400).json({ message: "state must be a US state code" });
+      return;
+    }
+
+    const apiKey = await getActiveGoogleApiKey();
+    if (!apiKey) {
+      res.status(503).json({ message: MISSING_GOOGLE_KEY });
+      return;
+    }
+
+    const result = await resolveUsCityAt({ apiKey, lat, lng, state });
+    if (!result.ok) {
+      res.status(result.status).json({ message: result.message });
+      return;
+    }
+    res.json({ city: result.city });
+  } catch (err) {
+    console.error("GET /schedule/city-at-point error:", err);
+    res.status(500).json({ message: "Failed to look up city" });
+  }
+}
+
+export async function getCityBoundaries(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const state =
+      typeof req.query.state === "string" ? req.query.state.trim().toUpperCase() : "";
+    if (!isUsStateCode(state)) {
+      res.status(400).json({ message: "state must be a US state code" });
+      return;
+    }
+    const geojson = await cityBoundariesForState(state);
+    res.json(geojson);
+  } catch (err) {
+    if (err instanceof CityBoundaryError) {
+      res.status(err.status).json({ message: err.message });
+      return;
+    }
+    console.error("GET /schedule/city-boundaries error:", err);
+    res.status(503).json({
+      message: "City boundaries are unavailable. Click the map to add a city.",
+    });
   }
 }

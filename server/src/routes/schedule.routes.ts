@@ -18,6 +18,8 @@ import {
   postScheduleRouteApply,
   getCitySuggestions,
   getCityDetails,
+  getCityAtPoint,
+  getCityBoundaries,
 } from "../controllers/schedule.controller";
 
 const router = Router();
@@ -88,6 +90,18 @@ router.get(
   "/city-details",
   requirePermission("jobs:read"),
   (req, res: Response) => getCityDetails(req as AuthRequest, res),
+);
+
+router.get(
+  "/city-at-point",
+  requirePermission("jobs:read"),
+  (req, res: Response) => getCityAtPoint(req as AuthRequest, res),
+);
+
+router.get(
+  "/city-boundaries",
+  requirePermission("jobs:read"),
+  (req, res: Response) => getCityBoundaries(req as AuthRequest, res),
 );
 
 export default router;

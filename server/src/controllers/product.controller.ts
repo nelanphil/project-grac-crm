@@ -26,7 +26,13 @@ import { normalizeProductDiscounts } from "../utils/productDiscounts";
 import { syncContractTemplateForProduct } from "../services/syncContractProduct";
 
 function asProductKind(value: unknown): ProductKind {
-  if (value === "labor" || value === "contract") return value;
+  if (
+    value === "labor" ||
+    value === "contract" ||
+    value === "equipment"
+  ) {
+    return value;
+  }
   return "part";
 }
 

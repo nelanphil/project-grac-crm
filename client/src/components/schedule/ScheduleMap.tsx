@@ -19,7 +19,7 @@ const UNSCHEDULED_COLOR = "#f36c21";
 const SCHEDULED_COLOR = "#2563eb";
 const HOME_COLOR = "#404040";
 
-const DARK_MAP_STYLES: google.maps.MapTypeStyle[] = [
+export const DARK_MAP_STYLES: google.maps.MapTypeStyle[] = [
   { elementType: "geometry", stylers: [{ color: "#1f1c1a" }] },
   { elementType: "labels.text.fill", stylers: [{ color: "#a89c93" }] },
   { elementType: "labels.text.stroke", stylers: [{ color: "#1a1715" }] },
@@ -61,7 +61,7 @@ function isDarkTheme(): boolean {
   return document.documentElement.dataset.theme === "dark";
 }
 
-function mapStylesForTheme(): google.maps.MapTypeStyle[] | null {
+export function mapStylesForTheme(): google.maps.MapTypeStyle[] | null {
   return isDarkTheme() ? DARK_MAP_STYLES : null;
 }
 

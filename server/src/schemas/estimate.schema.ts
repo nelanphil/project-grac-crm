@@ -15,6 +15,7 @@ export const createEstimateSchema = z
     customerId: z.coerce.number().int().positive(),
     addressRef: objectIdOrNull,
     equipmentRef: objectIdOrNull,
+    workOrderTypeRef: objectIdOrNull,
     descPerform: z.string().optional(),
     date: z.union([z.string(), z.null()]).optional(),
     tech: z.string().optional(),
