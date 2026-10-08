@@ -7,11 +7,6 @@
     "@tiptap/extension-underline": "^3.31.2",
     "@tiptap/pm": "^3.31.2",
     "@tiptap/react": "^3.31.2",
-    "@tiptap/starter-kit": "^3.31.2",
-    "d3-delaunay": "^5.3.0",
-    "polygon-clipping": "^0.15.7"
-  },
-  "devDependencies": {
-    "@types/d3-delaunay": "^5.3.4"
+    "@tiptap/starter-kit": "^3.31.2"
   }
 }
