@@ -37,6 +37,7 @@ import {
 } from "../utils/checkoutKey";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { listVisibleWorkOrderNotes } from "./workOrderNote.controller";
+import { roundMoney } from "../services/serviceTicket";
 import {
   computeTaxAmount,
   normalizeTaxRatePercent,
@@ -676,6 +677,20 @@ export async function updateInvoiceTax(
     invoice.taxCents = taxCents;
     invoice.taxOverridden = taxOverridden;
     await invoice.save();
+
+    if (invoice.workOrderRef) {
+      const workOrder = await WorkOrder.findById(invoice.workOrderRef);
+      if (workOrder) {
+        const preTax = roundMoney(
+          (Number(workOrder.subtotal) || 0) + (Number(workOrder.shipping) || 0),
+        );
+        workOrder.taxRate = taxRatePercent;
+        workOrder.tax = roundMoney(taxCents / 100);
+        workOrder.taxOverridden = taxOverridden;
+        workOrder.total = roundMoney(preTax + workOrder.tax);
+        await workOrder.save();
+      }
+    }
 
     logNotificationAsync({
       entityType: "invoice",

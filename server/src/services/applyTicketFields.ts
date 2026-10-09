@@ -11,10 +11,7 @@ import {
   normalizeParts,
   TicketPartInput,
 } from "./serviceTicket";
-import {
-  getTaxRatePercent,
-  normalizeTaxRatePercent,
-} from "./taxSettings";
+import { normalizeTaxRatePercent } from "./taxSettings";
 import {
   hasAnyDiscount,
   normalizeProductDiscounts,
@@ -203,7 +200,7 @@ export async function applyTicketMoney(
   if (body.taxRate !== undefined) {
     target.taxRate = normalizeTaxRatePercent(body.taxRate);
   } else if (typeof target.taxRate !== "number") {
-    target.taxRate = await getTaxRatePercent();
+    target.taxRate = 0;
   }
   if (body.taxOverridden !== undefined) {
     target.taxOverridden = body.taxOverridden;

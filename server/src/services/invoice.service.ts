@@ -673,20 +673,43 @@ export async function syncWorkOrderInvoice(
     const lineItems = invoiceLineItemsForWorkOrder(wo, amountCents);
     const tax = invoiceTaxFromWorkOrder(wo);
     const customerRef = await resolveCustomerRefForWorkOrder(wo);
+    const keepInvoiceTax = Boolean(invoice.taxOverridden);
+    const nextTax = keepInvoiceTax
+      ? {
+          taxRatePercent: Number(invoice.taxRatePercent) || 0,
+          taxCents: Number(invoice.taxCents) || 0,
+          taxOverridden: true,
+        }
+      : tax;
+    const nextAmountCents = keepInvoiceTax
+      ? Math.max(
+          dollarsToCents(wo.total || 0) - dollarsToCents(wo.tax || 0),
+          0,
+        ) + nextTax.taxCents
+      : amountCents;
     const needsCustomer = Boolean(customerRef && !invoice.customerRef);
-    const needsAmount = invoice.amountCents !== amountCents;
+    const needsAmount = invoice.amountCents !== nextAmountCents;
     const needsLines = lineItemsChanged(invoice.lineItems ?? [], lineItems);
     const needsTax =
-      (invoice.taxRatePercent ?? 0) !== tax.taxRatePercent ||
-      (invoice.taxCents ?? 0) !== tax.taxCents ||
-      Boolean(invoice.taxOverridden) !== tax.taxOverridden;
+      !keepInvoiceTax &&
+      ((invoice.taxRatePercent ?? 0) !== tax.taxRatePercent ||
+        (invoice.taxCents ?? 0) !== tax.taxCents ||
+        Boolean(invoice.taxOverridden) !== tax.taxOverridden);
     if (needsCustomer || needsAmount || needsLines || needsTax) {
       if (customerRef) invoice.customerRef = customerRef;
-      invoice.amountCents = amountCents;
+      if (typeof invoice.originalAmountCents === "number") {
+        invoice.originalAmountCents = nextAmountCents;
+        invoice.amountCents = Math.max(
+          nextAmountCents - (Number(invoice.discountCents) || 0),
+          0,
+        );
+      } else {
+        invoice.amountCents = nextAmountCents;
+      }
       invoice.lineItems = lineItems;
-      invoice.taxRatePercent = tax.taxRatePercent;
-      invoice.taxCents = tax.taxCents;
-      invoice.taxOverridden = tax.taxOverridden;
+      invoice.taxRatePercent = nextTax.taxRatePercent;
+      invoice.taxCents = nextTax.taxCents;
+      invoice.taxOverridden = nextTax.taxOverridden;
       await invoice.save();
       return { action: "updated", invoice };
     }

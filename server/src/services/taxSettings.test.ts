@@ -5,6 +5,7 @@ import {
   applyTaxToPreTaxCents,
   computeTaxAmount,
   normalizeTaxRatePercent,
+  preTaxCents,
   snapshotDocumentTax,
 } from "./taxSettings";
 
@@ -36,6 +37,9 @@ describe("taxSettings", () => {
       applyTaxToPreTaxCents(10000, { taxRatePercent: 7.5, taxCents: 750 }),
       10750,
     );
+    assert.equal(preTaxCents(10750, 750), 10000);
+    assert.equal(preTaxCents(10000, 0), 10000);
+    assert.equal(preTaxCents(500, 800), 0);
   });
 
   it("adds computed tax into ticket totals unless overridden", () => {

@@ -6,6 +6,7 @@ import {
 } from "../models/mongo/DiscountCode";
 import { DiscountRedemption } from "../models/mongo/DiscountRedemption";
 import { Invoice, IInvoice } from "../models/mongo/Invoice";
+import { preTaxCents } from "./taxSettings";
 
 export const PENDING_REDEMPTION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -21,6 +22,7 @@ export class DiscountError extends Error {
 
 export type DiscountQuoteItem = {
   amountCents: number;
+  taxCents?: number;
   sourceType: string;
 };
 
@@ -163,7 +165,7 @@ export async function quoteDiscount(input: {
     isItemEligible(doc, item.sourceType),
   );
   const eligibleCents = eligible.reduce(
-    (sum, item) => sum + (item.amountCents || 0),
+    (sum, item) => sum + preTaxCents(item.amountCents, item.taxCents),
     0,
   );
   if (eligible.length === 0 || eligibleCents <= 0) {
@@ -217,7 +219,7 @@ export async function createPendingRedemption(input: {
   const allocMap = allocateDiscount(
     input.invoices.map((invoice) => ({
       id: String(invoice._id),
-      amountCents: invoice.amountCents || 0,
+      amountCents: preTaxCents(invoice.amountCents, invoice.taxCents),
       eligible: isItemEligible({ appliesTo }, invoice.sourceType),
     })),
     input.quote.discountCents,

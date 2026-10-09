@@ -160,6 +160,7 @@ function uniqueObjectIds(ids: string[] | undefined): Types.ObjectId[] {
 
 export type CheckoutQuoteItem = {
   amountCents: number;
+  taxCents?: number;
   sourceType: string;
 };
 
@@ -236,6 +237,7 @@ async function resolveCheckoutSelection(input: {
 
   const quoteItems: CheckoutQuoteItem[] = invoices.map((invoice) => ({
     amountCents: invoice.amountCents || 0,
+    taxCents: invoice.taxCents || 0,
     sourceType: invoice.sourceType,
   }));
 
@@ -243,6 +245,7 @@ async function resolveCheckoutSelection(input: {
     for (const wo of workOrders) {
       quoteItems.push({
         amountCents: dollarsToCents(wo.total || 0),
+        taxCents: dollarsToCents(wo.tax || 0),
         sourceType: "work_order",
       });
     }
@@ -319,6 +322,7 @@ async function resolveCheckoutSelection(input: {
     unpaid,
     quoteItems: unpaid.map((invoice) => ({
       amountCents: invoice.amountCents || 0,
+      taxCents: invoice.taxCents || 0,
       sourceType: invoice.sourceType,
     })),
     customerRef: [...customerRefs][0] ?? null,

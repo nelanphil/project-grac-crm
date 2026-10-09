@@ -64,3 +64,11 @@ export function applyTaxToPreTaxCents(
 ): number {
   return Math.max(0, Math.round(preTaxCents) + tax.taxCents);
 }
+
+/** Tax-inclusive total minus snapshotted tax. Used as the percent-discount base. */
+export function preTaxCents(amountCents: number, taxCents = 0): number {
+  return Math.max(
+    Math.round(Number(amountCents) || 0) - Math.round(Number(taxCents) || 0),
+    0,
+  );
+}
