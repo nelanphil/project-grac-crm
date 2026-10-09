@@ -11,7 +11,7 @@ type MintedLink = { payUrl: string; invoiceId: string } | null;
 
 /**
  * Same offer-then-mint sequence as staff email, but the URL is the short
- * `/p/{code}` link. Offer failures are skipped so the text can still send.
+ * `/checkout/?p={code}` link. Offer failures are skipped so the text can still send.
  */
 export async function resolveSmsPaymentUrl(input: {
   contactId: string;

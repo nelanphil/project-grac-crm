@@ -674,7 +674,7 @@ export default function TechnicianHomeDashboard() {
         desktopMap
           ? "flex h-full min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:items-stretch"
           : split
-            ? "pb-6 lg:flex lg:h-full lg:min-h-0 lg:items-start lg:gap-6 lg:overflow-hidden lg:pb-0"
+            ? "pb-6 lg:flex lg:h-full lg:min-h-0 lg:items-stretch lg:gap-6 lg:overflow-hidden lg:pb-0"
             : "pb-6"
       }`}
     >
@@ -771,7 +771,7 @@ export default function TechnicianHomeDashboard() {
       ) : null}
     </div>
     {split ? (
-      <div className="min-w-0 flex-1 lg:sticky lg:top-4 lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
+      <div className="min-w-0 flex-1 lg:min-h-0 lg:overflow-y-auto">
         <DesktopWorkOrderPanel
           order={order}
           loading={orderLoading}

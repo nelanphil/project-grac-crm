@@ -8,6 +8,7 @@ import ServiceTicketDocument, {
 import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
 import TicketLineItemsEditor from "@/components/billing/TicketLineItemsEditor";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
+import WorkOrderInvoiceSend from "@/components/dashboard/staff/WorkOrderInvoiceSend";
 import {
   ApiError,
   getWorkOrderTypes,
@@ -182,6 +183,7 @@ export function DesktopWorkOrderPanel({
           />
         )
       ) : null}
+      {order && token ? <WorkOrderInvoiceSend order={order} token={token} /> : null}
     </section>
   );
 }
@@ -376,6 +378,7 @@ export function MobileWorkOrderPanel({
             userRole={user}
             fallbackContent={order.descPerformed}
           />
+          <WorkOrderInvoiceSend order={order} token={token} />
         </>
       ) : null}
     </section>

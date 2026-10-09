@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  buildShortPaymentUrl,
   isReservedPayCode,
   isValidPayCode,
   mintPayCode,
@@ -18,6 +19,14 @@ describe("pay codes", () => {
       assert.equal(isValidPayCode(code), true);
       assert.equal(isReservedPayCode(code), false);
     }
+  });
+
+  it("puts the short code on the static checkout page", () => {
+    const code = mintPayCode();
+    const url = new URL(buildShortPaymentUrl(code));
+    assert.equal(url.pathname, "/checkout/");
+    assert.equal(url.searchParams.get("p"), code);
+    assert.equal(code.length, 8);
   });
 
   it("rejects reserved preview codes", () => {

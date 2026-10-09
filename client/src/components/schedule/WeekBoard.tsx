@@ -67,11 +67,17 @@ function personName(
   return [person?.first_name, person?.last_name].filter(Boolean).join(" ");
 }
 
+function weekdayFromDayLabel(dayLabel: string): string {
+  const name = dayLabel.split(",")[0]?.trim();
+  return name || "that day";
+}
+
 function TechnicianAssignMenu({
   x,
   y,
   technicians,
   assignedId,
+  dayLabel,
   onPick,
   onClose,
 }: {
@@ -79,10 +85,14 @@ function TechnicianAssignMenu({
   y: number;
   technicians: ScheduleRecommendation[];
   assignedId: string;
+  dayLabel: string;
   onPick: (userId: string) => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [pending, setPending] = useState<ScheduleRecommendation | null>(null);
+  const working = technicians.filter((tech) => tech.available);
+  const offSchedule = technicians.filter((tech) => !tech.available);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -92,7 +102,7 @@ function TechnicianAssignMenu({
     const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
-  }, [x, y, technicians]);
+  }, [x, y, technicians, pending]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -114,6 +124,49 @@ function TechnicianAssignMenu({
     };
   }, [onClose]);
 
+  function renderTech(tech: ScheduleRecommendation, muted: boolean) {
+    const name = personName(tech);
+    const current = tech.userId === assignedId;
+    return (
+      <button
+        key={tech.userId}
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          if (!tech.available) {
+            setPending(tech);
+            return;
+          }
+          onPick(tech.userId);
+        }}
+        className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-neutral-50"
+      >
+        <Check
+          className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
+            current ? "text-emerald-600" : "text-transparent"
+          }`}
+          aria-hidden
+        />
+        <span className="min-w-0">
+          <span
+            className={`block truncate text-xs font-medium ${
+              muted ? "text-neutral-500" : "text-brand-dark"
+            }`}
+          >
+            {name || "Technician"}
+          </span>
+          {tech.reason ? (
+            <span className="block truncate text-[11px] text-neutral-500">
+              {tech.reason}
+            </span>
+          ) : null}
+        </span>
+      </button>
+    );
+  }
+
+  const pendingName = personName(pending) || "This technician";
+
   return createPortal(
     <div
       ref={ref}
@@ -122,46 +175,65 @@ function TechnicianAssignMenu({
       style={{ left: x, top: y }}
       onPointerDown={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.preventDefault()}
-      className="fixed z-[80] w-64 overflow-hidden rounded-xl border border-neutral-200 bg-white py-1 shadow-lg"
+      className={`fixed z-[80] overflow-hidden rounded-xl border border-neutral-200 bg-white py-1 shadow-lg ${
+        pending ? "w-72" : "flex max-h-80 w-64 flex-col"
+      }`}
     >
-      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-        Assign technician
-      </div>
-      {technicians.length === 0 ? (
-        <p className="px-3 py-2 text-xs text-neutral-500">
-          No technicians available
-        </p>
-      ) : (
-        technicians.map((tech) => {
-          const name = personName(tech);
-          const current = tech.userId === assignedId;
-          return (
+      {pending ? (
+        <>
+          <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+            Override schedule
+          </div>
+          <div className="mx-2 mb-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+            {pendingName} isn&apos;t scheduled to work{" "}
+            {weekdayFromDayLabel(dayLabel)}. Continuing will override their
+            schedule.
+          </div>
+          <div className="flex justify-end gap-2 px-2 pb-2">
             <button
-              key={tech.userId}
               type="button"
-              role="menuitem"
-              onClick={() => onPick(tech.userId)}
-              className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-neutral-50"
+              onClick={() => setPending(null)}
+              className="rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-50"
             >
-              <Check
-                className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
-                  current ? "text-emerald-600" : "text-transparent"
-                }`}
-                aria-hidden
-              />
-              <span className="min-w-0">
-                <span className="block truncate text-xs font-medium text-brand-dark">
-                  {name || "Technician"}
-                </span>
-                {tech.reason ? (
-                  <span className="block truncate text-[11px] text-neutral-500">
-                    {tech.reason}
-                  </span>
-                ) : null}
-              </span>
+              Back
             </button>
-          );
-        })
+            <button
+              type="button"
+              onClick={() => {
+                if (!pending) return;
+                onPick(pending.userId);
+              }}
+              className="btn-primary px-2.5 py-1 text-xs"
+            >
+              Assign anyway
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+            Assign technician
+          </div>
+          <div className="min-h-0 overflow-y-auto">
+            {technicians.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-neutral-500">
+                No technicians available
+              </p>
+            ) : (
+              <>
+                {working.map((tech) => renderTech(tech, false))}
+                {offSchedule.length > 0 ? (
+                  <>
+                    <div className="mt-1 border-t border-neutral-100 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                      Not scheduled to work
+                    </div>
+                    {offSchedule.map((tech) => renderTech(tech, true))}
+                  </>
+                ) : null}
+              </>
+            )}
+          </div>
+        </>
       )}
     </div>,
     document.body,
@@ -174,6 +246,7 @@ function UnscheduledCardShell({
   onSelect,
   recommendation,
   technicians,
+  dayLabel = "",
   onAssignTechnician,
   onUnschedule,
   isDragging,
@@ -186,6 +259,7 @@ function UnscheduledCardShell({
   onSelect: () => void;
   recommendation?: ScheduleRecommendation | null;
   technicians?: ScheduleRecommendation[];
+  dayLabel?: string;
   onAssignTechnician?: (userId: string) => void;
   onUnschedule?: () => void;
   isDragging?: boolean;
@@ -367,6 +441,7 @@ function UnscheduledCardShell({
           y={menu.y}
           technicians={technicians ?? []}
           assignedId={assignedId}
+          dayLabel={dayLabel}
           onPick={(userId) => {
             closeMenu();
             onAssignTechnician(userId);
@@ -384,6 +459,7 @@ function DraggableUnscheduledCard({
   onSelect,
   recommendation,
   technicians,
+  dayLabel,
   onAssignTechnician,
   onUnschedule,
   lift = false,
@@ -393,6 +469,7 @@ function DraggableUnscheduledCard({
   onSelect: () => void;
   recommendation?: ScheduleRecommendation | null;
   technicians?: ScheduleRecommendation[];
+  dayLabel?: string;
   onAssignTechnician?: (userId: string) => void;
   onUnschedule?: () => void;
   lift?: boolean;
@@ -411,6 +488,7 @@ function DraggableUnscheduledCard({
       onSelect={onSelect}
       recommendation={recommendation}
       technicians={technicians}
+      dayLabel={dayLabel}
       onAssignTechnician={onAssignTechnician}
       onUnschedule={onUnschedule}
       isDragging={isDragging}
@@ -429,6 +507,7 @@ export function UnscheduledCard({
   lift = false,
   recommendation,
   technicians,
+  dayLabel,
   onAssignTechnician,
   onUnschedule,
 }: {
@@ -439,6 +518,7 @@ export function UnscheduledCard({
   lift?: boolean;
   recommendation?: ScheduleRecommendation | null;
   technicians?: ScheduleRecommendation[];
+  dayLabel?: string;
   onAssignTechnician?: (userId: string) => void;
   onUnschedule?: () => void;
 }) {
@@ -451,6 +531,7 @@ export function UnscheduledCard({
         onSelect={onSelect}
         recommendation={recommendation}
         technicians={technicians}
+        dayLabel={dayLabel}
         onAssignTechnician={onAssignTechnician}
         onUnschedule={onUnschedule}
       />
@@ -463,6 +544,7 @@ export function UnscheduledCard({
       onSelect={onSelect}
       recommendation={recommendation}
       technicians={technicians}
+      dayLabel={dayLabel}
       onAssignTechnician={onAssignTechnician}
       onUnschedule={onUnschedule}
       lift={lift}

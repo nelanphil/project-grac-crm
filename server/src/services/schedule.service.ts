@@ -8,14 +8,18 @@ import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { customerDisplayName } from "./notification.service";
 import {
   addMinutes,
+  DEFAULT_DAY_END,
+  DEFAULT_DAY_START,
   DEFAULT_ESTIMATED_MINUTES,
   defaultWeeklyHours,
   formatLocalDate,
+  isHhMm,
   localDateToUtc,
   rangesOverlap,
   resolveDayWindow,
   SCHEDULE_TIMEZONE,
   windowToUtcRange,
+  type DayWindow,
   type HomeLocation,
   type WeeklyHours,
   type ScheduleException,
@@ -674,6 +678,8 @@ export type SuggestCandidate = {
   driveMinutes: number;
   remainingMinutes: number;
   existingJobCount: number;
+  /** False when this date is outside the technician's working schedule. */
+  available: boolean;
   fits: boolean;
   reason: string;
   driveSource: "google" | "haversine" | "none";
@@ -697,6 +703,29 @@ function formatShortAddress(addr: {
 } | null): string {
   if (!addr) return "";
   return [addr.address?.trim(), addr.city?.trim()].filter(Boolean).join(", ");
+}
+
+/**
+ * Hours used to propose a start. When the technician is not scheduled, fall
+ * back to their usual clock times so an override still has a concrete slot.
+ */
+function proposalRange(
+  localDate: string,
+  window: DayWindow,
+): { start: Date; end: Date; available: boolean } | null {
+  const scheduled = windowToUtcRange(localDate, window);
+  if (scheduled) return { ...scheduled, available: true };
+
+  const startHhmm = isHhMm(window.start) ? window.start : DEFAULT_DAY_START;
+  const endHhmm = isHhMm(window.end) ? window.end : DEFAULT_DAY_END;
+  let start = localDateToUtc(localDate, startHhmm);
+  let end = localDateToUtc(localDate, endHhmm);
+  if (end.getTime() <= start.getTime()) {
+    start = localDateToUtc(localDate, DEFAULT_DAY_START);
+    end = localDateToUtc(localDate, DEFAULT_DAY_END);
+  }
+  if (end.getTime() <= start.getTime()) return null;
+  return { start, end, available: false };
 }
 
 export async function suggestAssignees(opts: {
@@ -850,8 +879,8 @@ export async function suggestAssignees(opts: {
       tech.scheduleExceptions,
       opts.date,
     );
-    const range = windowToUtcRange(opts.date, window);
-    if (!range) {
+    const proposed = proposalRange(opts.date, window);
+    if (!proposed) {
       suggestions.push({
         userId: String(tech._id),
         first_name: tech.first_name,
@@ -861,6 +890,7 @@ export async function suggestAssignees(opts: {
         driveMinutes: 0,
         remainingMinutes: 0,
         existingJobCount: 0,
+        available: false,
         fits: false,
         reason: window.off ? "Marked off this day" : "Not working this weekday",
         driveSource: "none",
@@ -869,6 +899,8 @@ export async function suggestAssignees(opts: {
       });
       continue;
     }
+    const range = proposed;
+    const available = proposed.available;
 
     const existing = jobsByUser.get(String(tech._id)) ?? [];
     const occupiedMinutes = existing.reduce((sum, job) => {
@@ -943,7 +975,7 @@ export async function suggestAssignees(opts: {
 
     const proposedStart = addMinutes(lastEnd, driveMinutes);
     const proposedEnd = addMinutes(proposedStart, estimatedMinutes);
-    const fits =
+    const withinHours =
       proposedStart.getTime() >= range.start.getTime() &&
       proposedEnd.getTime() <= range.end.getTime() &&
       remainingMinutes >= estimatedMinutes + driveMinutes &&
@@ -958,9 +990,12 @@ export async function suggestAssignees(opts: {
             new Date(job.scheduledEnd),
           ),
       );
+    const fits = available && withinHours;
 
     let reason: string;
-    if (fits && driveKnown) {
+    if (!available) {
+      reason = window.off ? "Marked off this day" : "Not working this weekday";
+    } else if (fits && driveKnown) {
       reason =
         driveFrom === "previousJob"
           ? `${driveMinutes} min from last job`
@@ -984,6 +1019,7 @@ export async function suggestAssignees(opts: {
       driveMinutes,
       remainingMinutes,
       existingJobCount: existing.length,
+      available,
       fits,
       reason,
       driveSource,
@@ -995,6 +1031,7 @@ export async function suggestAssignees(opts: {
   }
 
   suggestions.sort((a, b) => {
+    if (a.available !== b.available) return a.available ? -1 : 1;
     const aTier = tierByUser.get(a.userId) ?? 2;
     const bTier = tierByUser.get(b.userId) ?? 2;
     if (aTier !== bTier) return aTier - bTier;
@@ -1018,15 +1055,19 @@ export type AssigneeRecommendation = {
   userId: string;
   first_name: string;
   last_name: string;
+  /** False when this date is outside the technician's working schedule. */
+  available: boolean;
   reason: string;
 };
 
 function recommendationReason(pick: {
   tier: number;
   fits: boolean;
+  available: boolean;
   miles: number;
   kind: "job" | "home" | null;
 }): string {
+  if (!pick.available) return "Not working this day";
   const parts: string[] = [];
   if (pick.tier === 0) parts.push("In territory");
   else if (pick.tier === 1) parts.push("Near territory");
@@ -1235,6 +1276,7 @@ export async function recommendAssignees(opts: {
       tech: LeanUser;
       tier: number;
       fits: boolean;
+      available: boolean;
       miles: number;
       kind: "job" | "home" | null;
     }> = [];
@@ -1246,14 +1288,14 @@ export async function recommendAssignees(opts: {
         opts.date,
       );
       const range = windowToUtcRange(opts.date, window);
-      if (!range) continue;
+      const available = range != null;
 
       const existing = (dayJobsByUser.get(String(tech._id)) ?? []).filter(
         (job) => job.id !== wo._id.toString(),
       );
-      const windowMinutes = Math.round(
-        (range.end.getTime() - range.start.getTime()) / 60000,
-      );
+      const windowMinutes = range
+        ? Math.round((range.end.getTime() - range.start.getTime()) / 60000)
+        : 0;
       const remaining = Math.max(
         0,
         windowMinutes - occupiedMinutes(existing),
@@ -1286,13 +1328,15 @@ export async function recommendAssignees(opts: {
       picks.push({
         tech,
         tier,
-        fits: remaining >= estimated,
+        available,
+        fits: available && remaining >= estimated,
         miles,
         kind,
       });
     }
 
     picks.sort((a, b) => {
+      if (a.available !== b.available) return a.available ? -1 : 1;
       if (a.tier !== b.tier) return a.tier - b.tier;
       if (a.fits !== b.fits) return a.fits ? -1 : 1;
       const aKnown = Number.isFinite(a.miles);
@@ -1308,6 +1352,7 @@ export async function recommendAssignees(opts: {
         userId: String(pick.tech._id),
         first_name: pick.tech.first_name,
         last_name: pick.tech.last_name,
+        available: pick.available,
         reason: recommendationReason(pick),
       })),
     );
@@ -1319,7 +1364,7 @@ export async function recommendAssignees(opts: {
       const technicians = ranked.get(id) ?? [];
       return {
         workOrderId: id,
-        recommendation: technicians[0] ?? null,
+        recommendation: technicians.find((tech) => tech.available) ?? null,
         technicians,
       };
     }),

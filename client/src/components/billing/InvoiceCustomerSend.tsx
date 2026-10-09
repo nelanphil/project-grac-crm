@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Mail, MessageSquare } from "lucide-react";
+import { AlertTriangle, Mail, MessageSquare, Send } from "lucide-react";
 import EmailPreview from "@/components/messaging/EmailPreview";
 import EmailBodyEditor from "@/components/messaging/EmailBodyEditor";
 import PhonePreview from "@/components/messaging/PhonePreview";
@@ -639,8 +639,12 @@ export function InvoiceSendButtons({ send }: { send: InvoiceSendController }) {
 }
 
 export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
+  const [confirmingChannel, setConfirmingChannel] = useState<Channel | null>(
+    null,
+  );
   if (!send.channel) return null;
   const isEmail = send.channel === "email";
+  const confirming = confirmingChannel === send.channel && send.canSend;
   const templates = send.templates.filter((template) =>
     isEmail
       ? templateKind(template) === "email"
@@ -832,7 +836,7 @@ export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
           Sent to {send.recipientLabel}.
         </p>
       ) : null}
-      <div className="mt-3">
+      <div className="mt-4">
         {send.sent ? (
           <button
             type="button"
@@ -841,13 +845,49 @@ export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
           >
             Done
           </button>
+        ) : confirming ? (
+          <div
+            role="alertdialog"
+            aria-label={isEmail ? "Confirm sending email" : "Confirm sending text"}
+            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-3"
+          >
+            <p className="flex items-start gap-2 text-sm text-amber-900">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              <span>
+                This will immediately {isEmail ? "email" : "text"} this invoice
+                to <span className="font-medium">{send.recipientLabel}</span>.
+                Click OK to continue.
+              </span>
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => {
+                  setConfirmingChannel(null);
+                  void send.send();
+                }}
+                className="inline-flex items-center justify-center rounded-md bg-brand-orange px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+              >
+                OK
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingChannel(null)}
+                className="inline-flex items-center justify-center rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         ) : (
           <button
             type="button"
             disabled={!send.canSend}
-            onClick={() => void send.send()}
-            className="rounded-md bg-brand-dark px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
+            onClick={() => setConfirmingChannel(send.channel)}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-brand-orange px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
           >
+            <Send className="h-4 w-4" aria-hidden />
             {send.sending
               ? "Sending…"
               : isEmail

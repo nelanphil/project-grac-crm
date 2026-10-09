@@ -275,6 +275,12 @@ async function fetchRailDay(token: string, day: string) {
   };
 }
 
+function recommendedTechnician(
+  list: ScheduleRecommendation[] | undefined,
+): ScheduleRecommendation | null {
+  return list?.find((tech) => tech.available) ?? null;
+}
+
 function compareWithinDay(a: WorkOrderListItem, b: WorkOrderListItem): number {
   const aScheduled = a.scheduledStart ? 1 : 0;
   const bScheduled = b.scheduledStart ? 1 : 0;
@@ -372,8 +378,11 @@ function ScheduleRail({
                   onSelect={() => onSelect(order)}
                   draggable={draggable}
                   lift={liftDrag}
-                  recommendation={recommendations[order._id]?.[0] ?? null}
+                  recommendation={recommendedTechnician(
+                    recommendations[order._id],
+                  )}
                   technicians={recommendations[order._id] ?? []}
+                  dayLabel={dayLabel}
                   onAssignTechnician={
                     onAssignTechnician
                       ? (userId) => onAssignTechnician(order, userId)
@@ -399,8 +408,11 @@ function ScheduleRail({
                   onSelect={() => onSelect(order)}
                   draggable={draggable}
                   lift={liftDrag}
-                  recommendation={recommendations[order._id]?.[0] ?? null}
+                  recommendation={recommendedTechnician(
+                    recommendations[order._id],
+                  )}
                   technicians={recommendations[order._id] ?? []}
+                  dayLabel={dayLabel}
                   onAssignTechnician={
                     onAssignTechnician
                       ? (userId) => onAssignTechnician(order, userId)
@@ -1840,7 +1852,7 @@ export default function CalendarTab({
                   draggable={false}
                   recommendation={
                     recommendationsEnabled
-                      ? (recommendations[draggingJob._id]?.[0] ?? null)
+                      ? recommendedTechnician(recommendations[draggingJob._id])
                       : undefined
                   }
                 />

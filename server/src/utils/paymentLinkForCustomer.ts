@@ -147,7 +147,7 @@ export async function mintPaymentLinkForCustomer(
 }
 
 /**
- * Stable short payment URL (`/p/{payCode}`) for SMS. Same payable rules as
+ * Stable short payment URL (`/checkout/?p={payCode}`) for SMS. Same payable rules as
  * the full checkout link. Does not remint the code on later sends.
  */
 export async function mintShortPaymentLinkForCustomer(

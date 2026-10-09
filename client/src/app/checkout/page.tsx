@@ -7,6 +7,7 @@ import {
   ApiError,
   CheckoutCart,
   getCheckoutByKey,
+  getCheckoutKeyByPayCode,
   previewCheckoutDiscountByKey,
   startCheckoutByKey,
 } from "@/lib/api";
@@ -21,30 +22,84 @@ export default function PublicCheckoutPage() {
 
 function PublicCheckoutContent() {
   const searchParams = useSearchParams();
-  const key = (searchParams.get("c") ?? "").trim();
+  const queryKey = (searchParams.get("c") ?? "").trim();
+  const payCode = (searchParams.get("p") ?? "").trim();
   const preselectInvoiceId = searchParams.get("invoiceId") ?? undefined;
   const preselectWorkOrderId = searchParams.get("workOrderId") ?? undefined;
 
-  const [cart, setCart] = useState<CheckoutCart | null>(null);
-  const [loading, setLoading] = useState(Boolean(key));
-  const [error, setError] = useState<string | null>(
-    key ? null : "Checkout link is missing.",
+  const [resolved, setResolved] = useState<{ code: string; key: string } | null>(
+    null,
   );
+  const [failedCode, setFailedCode] = useState<{
+    code: string;
+    message: string;
+  } | null>(null);
+  const [loaded, setLoaded] = useState<{
+    key: string;
+    cart: CheckoutCart;
+  } | null>(null);
+  const [failedCart, setFailedCart] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
   const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
+
+  const resolvedPayKey =
+    !queryKey && resolved?.code === payCode ? resolved.key : "";
+  const key = queryKey || resolvedPayKey;
+  const resolveError =
+    !queryKey && failedCode?.code === payCode ? failedCode.message : null;
+  const cart = loaded?.key === key ? loaded.cart : null;
+  const cartError = failedCart?.key === key ? failedCart.message : null;
+  const resolving = Boolean(
+    payCode && !queryKey && !resolvedPayKey && !resolveError,
+  );
+  const loading = resolving || Boolean(key && !cart && !cartError);
+  const error =
+    payError ??
+    (!queryKey && !payCode
+      ? "Checkout link is missing."
+      : (resolveError ?? cartError));
+
+  useEffect(() => {
+    if (queryKey || !payCode) return;
+    let cancelled = false;
+    getCheckoutKeyByPayCode(payCode)
+      .then((checkoutKey) => {
+        if (!cancelled) setResolved({ code: payCode, key: checkoutKey });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setFailedCode({
+          code: payCode,
+          message:
+            err instanceof ApiError ? err.message : "Checkout link not found.",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [queryKey, payCode]);
 
   useEffect(() => {
     if (!key) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
     getCheckoutByKey(key)
-      .then(setCart)
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : "Checkout link not found.",
-        ),
-      )
-      .finally(() => setLoading(false));
+      .then((next) => {
+        if (!cancelled) setLoaded({ key, cart: next });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setFailedCart({
+          key,
+          message:
+            err instanceof ApiError ? err.message : "Checkout link not found.",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [key]);
 
   async function handlePay(
@@ -53,7 +108,7 @@ function PublicCheckoutContent() {
     discountCode?: string,
   ) {
     setPaying(true);
-    setError(null);
+    setPayError(null);
     try {
       const { url } = await startCheckoutByKey(key, {
         invoiceIds,
@@ -62,7 +117,7 @@ function PublicCheckoutContent() {
       });
       window.location.href = url;
     } catch (err) {
-      setError(
+      setPayError(
         err instanceof ApiError ? err.message : "Failed to start checkout.",
       );
       setPaying(false);

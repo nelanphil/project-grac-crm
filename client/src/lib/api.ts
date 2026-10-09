@@ -2440,6 +2440,8 @@ export interface ScheduleSuggestion {
   driveMinutes: number;
   remainingMinutes: number;
   existingJobCount: number;
+  /** False when this date is outside the technician's working schedule. */
+  available: boolean;
   fits: boolean;
   reason: string;
   driveSource: "google" | "haversine" | "none";
@@ -2454,6 +2456,8 @@ export interface ScheduleRecommendation {
   userId: string;
   first_name: string;
   last_name: string;
+  /** False when this date is outside the technician's working schedule. */
+  available: boolean;
   reason: string;
 }
 
@@ -3123,6 +3127,18 @@ export async function confirmCheckoutPayment(data: {
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+export async function getCheckoutKeyByPayCode(code: string): Promise<string> {
+  const data = await authRequest<{ checkoutKey?: string }>(
+    `/checkout/code/${encodeURIComponent(code)}`,
+    { method: "GET" },
+  );
+  const checkoutKey = data.checkoutKey?.trim() ?? "";
+  if (!checkoutKey) {
+    throw new ApiError("Checkout link not found.", 404);
+  }
+  return checkoutKey;
 }
 
 export async function getCheckoutByKey(key: string): Promise<CheckoutCart> {

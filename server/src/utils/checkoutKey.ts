@@ -56,8 +56,14 @@ export function sampleCheckoutUrl(): string {
   return buildCheckoutUrl("sample-preview");
 }
 
+/**
+ * Short SMS payment URL on the static checkout page. A `/p/{code}` path 404s
+ * on the static host, which only exports `/p/preview`.
+ */
 export function buildShortPaymentUrl(code: string): string {
-  return `${env.clientUrl.replace(/\/$/, "")}/p/${code}`;
+  const params = new URLSearchParams();
+  params.set("p", code);
+  return `${env.clientUrl.replace(/\/$/, "")}/checkout/?${params.toString()}`;
 }
 
 export function sampleShortPaymentUrl(): string {
