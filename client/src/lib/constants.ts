@@ -22,18 +22,21 @@ export const NAV_LINKS = [
 export const SERVICES = [
   {
     title: "Installation",
+    href: "/generator-installation",
     description:
       "Expert standby generator installation for natural gas and propane systems, sized for your home or business.",
     icon: "install",
   },
   {
     title: "Repairs",
+    href: "/generator-repair",
     description:
       "Factory-trained technicians diagnose and repair Generac home standby generators fast.",
     icon: "repair",
   },
   {
     title: "Maintenance & Monitoring",
+    href: "/generator-maintenance",
     description:
       "Preventative maintenance and remote monitoring so we catch issues before they become costly breakdowns.",
     icon: "monitor",
@@ -165,6 +168,7 @@ export const SERVICE_AREAS = {
     "Sanford",
     "Ocala",
     "Daytona Beach",
+    "New Smyrna Beach",
     "The Villages",
     "Lake Mary",
     "Deltona",
@@ -187,10 +191,11 @@ export const SERVICE_AREAS = {
 
 export const FOOTER_LINKS = {
   Services: [
-    { label: "Installation", href: "/#services" },
-    { label: "Repairs", href: "/#services" },
-    { label: "Maintenance", href: "/#services" },
-    { label: "Emergency Service", href: "/#faq" },
+    { label: "Generator Service", href: "/generator-service" },
+    { label: "Installation", href: "/generator-installation" },
+    { label: "Repairs", href: "/generator-repair" },
+    { label: "Maintenance", href: "/generator-maintenance" },
+    { label: "Generac Service", href: "/generac-generator-service" },
   ],
   Company: [
     { label: "Why Choose Us", href: "/#why-us" },

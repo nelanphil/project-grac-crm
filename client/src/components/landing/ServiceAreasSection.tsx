@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { SERVICE_AREAS } from "@/lib/constants";
+import { cityPath, citySlug } from "@/lib/seo/site";
 
 export default function ServiceAreasSection() {
   return (
@@ -22,8 +24,13 @@ export default function ServiceAreasSection() {
             </h3>
             <ul className="mt-6 grid grid-cols-2 gap-x-4 gap-y-3">
               {SERVICE_AREAS.central.map((city) => (
-                <li key={city} className="text-neutral-600">
-                  {city}
+                <li key={city}>
+                  <Link
+                    href={cityPath(citySlug(city))}
+                    className="text-neutral-600 underline-offset-2 hover:text-brand-orange hover:underline"
+                  >
+                    {city}
+                  </Link>
                 </li>
               ))}
             </ul>
@@ -34,8 +41,13 @@ export default function ServiceAreasSection() {
             </h3>
             <ul className="mt-6 grid grid-cols-2 gap-x-4 gap-y-3">
               {SERVICE_AREAS.south.map((city) => (
-                <li key={city} className="text-neutral-600">
-                  {city}
+                <li key={city}>
+                  <Link
+                    href={cityPath(citySlug(city))}
+                    className="text-neutral-600 underline-offset-2 hover:text-brand-orange hover:underline"
+                  >
+                    {city}
+                  </Link>
                 </li>
               ))}
             </ul>
