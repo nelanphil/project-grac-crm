@@ -51,8 +51,9 @@ function assignedToUser(job: WorkOrderListItem, userId: string): boolean {
   return typeof job.assignedUserRef === "string" && job.assignedUserRef === userId;
 }
 
-function isOpenAppointment(job: WorkOrderListItem): boolean {
-  return !job.completed && !job.appointmentCanceledAt;
+/** Same appointments the schedule board draws: anything still placed on a calendar. */
+function isScheduledAppointment(job: WorkOrderListItem): boolean {
+  return Boolean(job.scheduledStart);
 }
 
 function startMillis(job: WorkOrderListItem): number {
@@ -240,6 +241,11 @@ function AppointmentCard({
           >
             {selected ? "Close" : "Open"}
           </button>
+          {job.completed ? (
+            <span className={`${SWATCH} bg-emerald-50 text-emerald-800 ring-emerald-200`}>
+              Complete
+            </span>
+          ) : null}
           {canWrite && job.paid ? (
             <span className={`${SWATCH} bg-emerald-50 text-emerald-800 ring-emerald-200`}>
               Paid
@@ -254,7 +260,7 @@ function AppointmentCard({
               Mark paid
             </button>
           ) : null}
-          {canWrite ? (
+          {canWrite && !job.completed ? (
             <button
               type="button"
               onClick={() => onAsk("complete")}
@@ -390,7 +396,7 @@ export default function TechnicianHomeDashboard() {
           workOrders
             .filter(
               (job) =>
-                assignedToUser(job, subjectId) && isOpenAppointment(job),
+                assignedToUser(job, subjectId) && isScheduledAppointment(job),
             )
             .sort(compareJobs),
         );
@@ -563,8 +569,11 @@ export default function TechnicianHomeDashboard() {
     try {
       if (action === "complete") {
         await updateWorkOrder(token, id, { completed: true });
-        setJobs((current) => current.filter((job) => job._id !== id));
-        setSelectedId((current) => (current === id ? null : current));
+        setJobs((current) =>
+          current.map((job) =>
+            job._id === id ? { ...job, completed: true } : job,
+          ),
+        );
       } else {
         await updateWorkOrder(token, id, { paid: true });
         setJobs((current) =>
@@ -614,7 +623,9 @@ export default function TechnicianHomeDashboard() {
 
   function handleOrderSaved(updated: WorkOrderListItem) {
     setOrder(updated);
-    if (updated.completed || updated.appointmentCanceledAt) {
+    const stillScheduled =
+      assignedToUser(updated, subjectId) && isScheduledAppointment(updated);
+    if (!stillScheduled) {
       setJobs((current) => current.filter((job) => job._id !== updated._id));
       setSelectedId(null);
       return;
@@ -625,8 +636,15 @@ export default function TechnicianHomeDashboard() {
           ? {
               ...job,
               paid: updated.paid,
+              completed: updated.completed,
               customerName: updated.customerName,
               descPerform: updated.descPerform,
+              scheduledStart: updated.scheduledStart,
+              scheduledEnd: updated.scheduledEnd,
+              estimatedMinutes: updated.estimatedMinutes,
+              appointmentCanceledAt: updated.appointmentCanceledAt,
+              assignedUserRef: updated.assignedUserRef,
+              assignee: updated.assignee,
             }
           : job,
       ),
