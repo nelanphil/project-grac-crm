@@ -396,27 +396,35 @@ function LeafBody({
       );
     case "totals": {
       const hasDiscount = Boolean(invoice.discountCents && invoice.discountCents > 0);
-      const subtotal = invoice.originalAmountCents ?? invoice.amountCents;
+      const taxCents = invoice.taxCents ?? 0;
+      const taxInclusive = invoice.originalAmountCents ?? invoice.amountCents;
+      const subtotal = Math.max(taxInclusive - taxCents, 0);
       const total = hasDiscount
-        ? Math.max(subtotal - (invoice.discountCents ?? 0), 0)
+        ? Math.max(taxInclusive - (invoice.discountCents ?? 0), 0)
         : invoice.amountCents;
+      const taxLabel =
+        invoice.taxRatePercent && invoice.taxRatePercent > 0
+          ? `Tax (${invoice.taxRatePercent}%)`
+          : "Tax";
       return (
         <div className="ml-auto w-full max-w-xs">
+          <div className="flex justify-between gap-4" style={invoiceTextCss(block.labelStyle)}>
+            <span>Subtotal</span>
+            <span>{formatMoney(subtotal)}</span>
+          </div>
           {hasDiscount ? (
-            <>
-              <div className="flex justify-between gap-4" style={invoiceTextCss(block.labelStyle)}>
-                <span>Subtotal</span>
-                <span>{formatMoney(subtotal)}</span>
-              </div>
-              <div
-                className="mt-2 flex justify-between gap-4"
-                style={invoiceTextCss(block.labelStyle)}
-              >
-                <span>Discount{invoice.discountCode ? ` ${invoice.discountCode}` : ""}</span>
-                <span>−{formatMoney(invoice.discountCents ?? 0)}</span>
-              </div>
-            </>
+            <div
+              className="mt-2 flex justify-between gap-4"
+              style={invoiceTextCss(block.labelStyle)}
+            >
+              <span>Discount{invoice.discountCode ? ` ${invoice.discountCode}` : ""}</span>
+              <span>−{formatMoney(invoice.discountCents ?? 0)}</span>
+            </div>
           ) : null}
+          <div className="mt-2 flex justify-between gap-4" style={invoiceTextCss(block.labelStyle)}>
+            <span>{taxLabel}</span>
+            <span>{formatMoney(taxCents)}</span>
+          </div>
           <div className="mt-3 flex justify-between gap-4" style={invoiceTextCss(block.valueStyle)}>
             <span>{block.totalLabel}</span>
             <span>{formatMoney(total)}</span>

@@ -16,6 +16,7 @@ import {
   getContractsForCustomer,
   getCustomer,
   getCustomers,
+  getTaxSettings,
   getTechnicians,
   getWorkOrderTypes,
   WorkOrderTypeItem,
@@ -78,6 +79,16 @@ function formatMoney(amount: number): string {
     style: "currency",
     currency: "USD",
   }).format(amount || 0);
+}
+
+function formatTaxRate(rate: number): string {
+  const rounded = Math.round(rate * 10000) / 10000;
+  return `${rounded}%`;
+}
+
+function taxInputValue(amount: number): string {
+  if (!amount) return "";
+  return String(amount);
 }
 
 function serializeTicket(form: TicketFormState): string {
@@ -147,6 +158,27 @@ export default function ServiceTicketForm({
       lastAppliedSiteKey.current = ticketSiteKey(initial);
     }
   }, [initial, autoSaving, recordId]);
+
+  useEffect(() => {
+    if (!token || recordId) return;
+    if (form.taxOverridden || form.taxRate !== "") return;
+    let cancelled = false;
+    getTaxSettings(token)
+      .then(({ settings }) => {
+        if (cancelled) return;
+        setForm((prev) => {
+          if (prev.taxRate !== "" || prev.taxOverridden) return prev;
+          return {
+            ...prev,
+            taxRate: String(settings.ratePercent ?? 0),
+          };
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [token, recordId, form.taxRate, form.taxOverridden]);
 
   useEffect(() => {
     if (!token || !form.customerRef) return;
@@ -918,6 +950,19 @@ export default function ServiceTicketForm({
               <input
                 value={form.shipping}
                 onChange={(e) => patch({ shipping: e.target.value })}
+                className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span>
+                Tax
+                {totals.taxRate > 0 ? ` (${formatTaxRate(totals.taxRate)})` : ""}
+              </span>
+              <input
+                value={form.taxOverridden ? form.tax : taxInputValue(totals.tax)}
+                onChange={(e) =>
+                  patch({ tax: e.target.value, taxOverridden: true })
+                }
                 className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
               />
             </div>

@@ -10,6 +10,7 @@ import RecaptchaCredentialsCard from "@/components/control-panel/RecaptchaCreden
 import PaymentProvidersCard from "@/components/control-panel/PaymentProvidersCard";
 import WorkOrderTypesCard from "@/components/control-panel/WorkOrderTypesCard";
 import NoteTemplatesCard from "@/components/control-panel/NoteTemplatesCard";
+import TaxSettingsCard from "@/components/control-panel/TaxSettingsCard";
 import MobileTabBar from "@/components/ui/MobileTabBar";
 
 type TabId = "payments" | "communications" | "api-services" | "work-orders";
@@ -112,7 +113,10 @@ function ControlPanelContent() {
             </div>
           }
         >
-          <PaymentProvidersCard />
+          <div className="space-y-6">
+            <TaxSettingsCard />
+            <PaymentProvidersCard />
+          </div>
         </Suspense>
       )}
 

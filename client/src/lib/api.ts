@@ -2029,6 +2029,9 @@ export interface WorkOrderListItem {
   miscExp?: number;
   subtotal?: number;
   shipping?: number;
+  taxRate?: number;
+  tax?: number;
+  taxOverridden?: boolean;
   paid: boolean;
   completed: boolean;
   laborHours?: number;
@@ -2093,6 +2096,9 @@ export type ServiceTicketPayload = {
   laborOverridden?: boolean;
   miscExp?: number;
   shipping?: number;
+  taxRate?: number;
+  tax?: number;
+  taxOverridden?: boolean;
   parts?: WorkOrderPart[];
   customerName?: string;
   customerAddress?: string;
@@ -2849,6 +2855,9 @@ export interface InvoiceItem {
   originalAmountCents?: number | null;
   discountCode?: string | null;
   discountCents?: number;
+  taxRatePercent?: number;
+  taxCents?: number;
+  taxOverridden?: boolean;
   currency: string;
   status: InvoiceStatus;
   dueDate: string | null;
@@ -3063,6 +3072,18 @@ export async function reopenInvoice(
   return authRequest<{ invoice: InvoiceItem }>(`/invoices/${id}/reopen`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function updateInvoiceTax(
+  token: string,
+  id: string,
+  data: { taxCents?: number; taxRatePercent?: number },
+): Promise<{ invoice: InvoiceItem }> {
+  return authRequest<{ invoice: InvoiceItem }>(`/invoices/${id}/tax`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
   });
 }
 
@@ -3721,6 +3742,9 @@ export interface EstimateItem {
   miscExp: number;
   subtotal: number;
   shipping: number;
+  taxRate?: number;
+  tax?: number;
+  taxOverridden?: boolean;
   total: number;
   signatureDataUrl?: string;
   signedAt?: string | null;
@@ -4888,6 +4912,30 @@ export async function deleteRecaptchaCredentials(
   return authRequest<{ message: string }>("/recaptcha-credentials", {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface TaxSettingsItem {
+  ratePercent: number;
+}
+
+export async function getTaxSettings(
+  token: string,
+): Promise<{ settings: TaxSettingsItem }> {
+  return authRequest<{ settings: TaxSettingsItem }>("/tax-settings", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function saveTaxSettings(
+  token: string,
+  data: { ratePercent: number },
+): Promise<{ settings: TaxSettingsItem }> {
+  return authRequest<{ settings: TaxSettingsItem }>("/tax-settings", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
   });
 }
 

@@ -12,6 +12,7 @@ import {
   markInvoicePaidByStaff,
   reopenInvoiceByStaff,
   startInvoiceCheckout,
+  updateInvoiceTax,
 } from "../controllers/invoice.controller";
 
 const router = Router();
@@ -22,6 +23,11 @@ router.get("/", getInvoices);
 router.get("/:id", getInvoiceById);
 
 router.post("/", requirePermission("contracts:write"), createInvoice);
+router.patch(
+  "/:id/tax",
+  requirePermission("contracts:write"),
+  updateInvoiceTax,
+);
 router.post(
   "/bulk-status",
   requirePermission("contracts:write"),

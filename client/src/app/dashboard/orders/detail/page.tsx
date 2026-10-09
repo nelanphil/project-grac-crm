@@ -26,6 +26,7 @@ import {
   markInvoicePaid,
   reopenInvoice,
   startInvoiceCheckout,
+  updateInvoiceTax,
 } from "@/lib/api";
 
 export default function InvoiceDetailPage() {
@@ -51,11 +52,14 @@ function InvoiceDetailContent() {
   const isCustomer = isCustomerRole(user);
   const canEmail = hasRole("admin", "super-admin");
   const canWrite = useAuthStore((s) => s.hasPermission("contracts:write"));
+  const canEditTax = canWrite;
 
   const [invoice, setInvoice] = useState<InvoiceItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+  const [taxDraft, setTaxDraft] = useState("");
+  const [savingTax, setSavingTax] = useState(false);
   const [confirmingStatus, setConfirmingStatus] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
   const send = useInvoiceCustomerSend(invoice, canEmail && !isCustomer);
@@ -69,7 +73,10 @@ function InvoiceDetailContent() {
     setLoading(true);
     setError(null);
     getInvoice(token, id)
-      .then(({ invoice: inv }) => setInvoice(inv))
+      .then(({ invoice: inv }) => {
+        setInvoice(inv);
+        setTaxDraft(((inv.taxCents ?? 0) / 100).toFixed(2));
+      })
       .catch((err) =>
         setError(
           err instanceof ApiError ? err.message : "Failed to load invoice.",
@@ -112,6 +119,30 @@ function InvoiceDetailContent() {
         err instanceof ApiError ? err.message : "Failed to start checkout.",
       );
       setPaying(false);
+    }
+  }
+
+  async function handleSaveTax() {
+    if (!token || !invoice) return;
+    const dollars = Number(taxDraft);
+    if (!Number.isFinite(dollars) || dollars < 0) {
+      setError("Enter a valid tax amount.");
+      return;
+    }
+    setSavingTax(true);
+    setError(null);
+    try {
+      const { invoice: next } = await updateInvoiceTax(token, invoice._id, {
+        taxCents: Math.round(dollars * 100),
+      });
+      setInvoice(next);
+      setTaxDraft(((next.taxCents ?? 0) / 100).toFixed(2));
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to update tax.",
+      );
+    } finally {
+      setSavingTax(false);
     }
   }
 
@@ -240,6 +271,34 @@ function InvoiceDetailContent() {
       ) : error ? (
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 print:hidden">
           {error}
+        </div>
+      ) : null}
+
+      {!isCustomer &&
+      canEditTax &&
+      (invoice.status === "open" ||
+        invoice.status === "draft" ||
+        invoice.status === "failed") ? (
+        <div className="flex flex-wrap items-center gap-2 print:hidden">
+          <label className="text-sm text-neutral-600" htmlFor="invoice-tax-amount">
+            Tax
+          </label>
+          <input
+            id="invoice-tax-amount"
+            value={taxDraft}
+            onChange={(e) => setTaxDraft(e.target.value)}
+            inputMode="decimal"
+            aria-label="Tax amount"
+            className="w-24 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
+          />
+          <button
+            type="button"
+            disabled={savingTax}
+            onClick={() => void handleSaveTax()}
+            className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
+          >
+            {savingTax ? "Saving…" : "Update tax"}
+          </button>
         </div>
       ) : null}
 

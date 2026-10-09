@@ -11,6 +11,7 @@ import {
   normalizeParts,
   TicketPartInput,
 } from "./serviceTicket";
+import { normalizeTaxRatePercent } from "./taxSettings";
 import {
   hasAnyDiscount,
   normalizeProductDiscounts,
@@ -48,6 +49,9 @@ export type TicketBodyFields = TicketSnapshotFields & {
   laborOverridden?: boolean;
   miscExp?: number;
   shipping?: number;
+  taxRate?: number;
+  tax?: number;
+  taxOverridden?: boolean;
   parts?: TicketPartInput[];
   signatureDataUrl?: string | null;
   signedByName?: string;
@@ -160,7 +164,7 @@ export async function resolveTicketSnapshot(opts: {
   };
 }
 
-export function applyTicketMoney(
+export async function applyTicketMoney(
   target: {
     parts: unknown;
     laborHours: number;
@@ -172,12 +176,15 @@ export function applyTicketMoney(
     miscExp: number;
     subtotal: number;
     shipping: number;
+    taxRate?: number;
+    tax?: number;
+    taxOverridden?: boolean;
     total: number;
     contractRef?: unknown;
     contractDiscount?: TicketContractDiscount | null;
   },
   body: TicketBodyFields,
-): void {
+): Promise<void> {
   if (body.parts !== undefined) {
     target.parts = partsForDoc(normalizeParts(body.parts));
   }
@@ -190,6 +197,18 @@ export function applyTicketMoney(
   }
   if (body.miscExp !== undefined) target.miscExp = body.miscExp;
   if (body.shipping !== undefined) target.shipping = body.shipping;
+  if (body.taxRate !== undefined) {
+    target.taxRate = normalizeTaxRatePercent(body.taxRate);
+  } else if (typeof target.taxRate !== "number") {
+    target.taxRate = 0;
+  }
+  if (body.taxOverridden !== undefined) {
+    target.taxOverridden = body.taxOverridden;
+  } else if (body.tax !== undefined) {
+    target.taxOverridden = true;
+  } else if (target.taxOverridden == null) {
+    target.taxOverridden = false;
+  }
   if (body.contractRef !== undefined) {
     target.contractRef = asObjectId(body.contractRef);
   }
@@ -221,6 +240,9 @@ export function applyTicketMoney(
     laborOverridden: target.laborOverridden,
     miscExp: target.miscExp,
     shipping: target.shipping,
+    taxRate: target.taxRate,
+    tax: body.tax ?? target.tax,
+    taxOverridden: target.taxOverridden,
     contractDiscount: target.contractDiscount ?? undefined,
   });
   target.totalParts = totals.totalParts;
@@ -229,6 +251,9 @@ export function applyTicketMoney(
   target.miscExp = totals.miscExp;
   target.subtotal = totals.subtotal;
   target.shipping = totals.shipping;
+  target.taxRate = totals.taxRate;
+  target.tax = totals.tax;
+  target.taxOverridden = totals.taxOverridden;
   target.total = totals.total;
 }
 
@@ -397,7 +422,7 @@ export async function applyTicketFields(
   Object.assign(target, snapshot);
   await backfillBlankAddressState(target.addressRef, snapshot.customerState);
 
-  applyTicketMoney(
+  await applyTicketMoney(
     target as {
       parts: unknown;
       laborHours: number;
@@ -409,6 +434,9 @@ export async function applyTicketFields(
       miscExp: number;
       subtotal: number;
       shipping: number;
+      taxRate?: number;
+      tax?: number;
+      taxOverridden?: boolean;
       total: number;
       contractRef?: unknown;
       contractDiscount?: TicketContractDiscount | null;

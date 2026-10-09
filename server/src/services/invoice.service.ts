@@ -13,6 +13,12 @@ import { promoteTemporaryContract } from "../utils/temporaryContractOffer";
 import { SCHEDULE_TIMEZONE } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
 import { PaymentProviderName } from "../models/mongo/PaymentProviderAccount";
+import {
+  computeTaxAmount,
+  getTaxRatePercent,
+  snapshotDocumentTax,
+  taxCentsFromDollars,
+} from "./taxSettings";
 
 export type ApplyRenewalInput = {
   contract: IContract;
@@ -300,6 +306,10 @@ export type WorkOrderInvoiceSource = {
   totalLabor?: number;
   miscExp?: number;
   shipping?: number;
+  subtotal?: number;
+  taxRate?: number;
+  tax?: number;
+  taxOverridden?: boolean;
   total?: number;
   descPerform?: string;
   number?: string;
@@ -307,6 +317,28 @@ export type WorkOrderInvoiceSource = {
   date?: Date | null;
   updatedAt?: Date;
 };
+
+function invoiceTaxFromWorkOrder(wo: WorkOrderInvoiceSource) {
+  return snapshotDocumentTax({
+    taxRatePercent: wo.taxRate,
+    taxDollars: wo.tax,
+    taxOverridden: wo.taxOverridden,
+  });
+}
+
+export async function invoiceTaxFromCurrentRate(
+  preTaxCents: number,
+): Promise<{
+  taxRatePercent: number;
+  taxCents: number;
+  taxOverridden: boolean;
+}> {
+  const taxRatePercent = await getTaxRatePercent();
+  const taxCents = taxCentsFromDollars(
+    computeTaxAmount(preTaxCents / 100, taxRatePercent),
+  );
+  return { taxRatePercent, taxCents, taxOverridden: false };
+}
 
 export async function resolveCustomerRefForWorkOrder(
   wo: WorkOrderInvoiceSource,
@@ -487,6 +519,7 @@ export async function ensureOpenInvoiceForWorkOrder(
     amountCents,
     options?.description,
   );
+  const tax = invoiceTaxFromWorkOrder(wo);
 
   const issuedAt = new Date();
   const invoice = await Invoice.create({
@@ -502,6 +535,9 @@ export async function ensureOpenInvoiceForWorkOrder(
     dueDate: null,
     issuedAt,
     metadata: {},
+    taxRatePercent: tax.taxRatePercent,
+    taxCents: tax.taxCents,
+    taxOverridden: tax.taxOverridden,
   });
 
   logNotificationAsync({
@@ -536,6 +572,7 @@ export async function createPaidInvoiceForWorkOrder(
   }
 
   const lineItems = invoiceLineItemsForWorkOrder(wo, amountCents);
+  const tax = invoiceTaxFromWorkOrder(wo);
   const issuedAt =
     wo.date instanceof Date
       ? wo.date
@@ -556,6 +593,9 @@ export async function createPaidInvoiceForWorkOrder(
     issuedAt,
     paidAt: issuedAt,
     metadata: options?.backfilled ? { backfilled: true } : {},
+    taxRatePercent: tax.taxRatePercent,
+    taxCents: tax.taxCents,
+    taxOverridden: tax.taxOverridden,
   });
 
   logNotificationAsync({
@@ -631,14 +671,45 @@ export async function syncWorkOrderInvoice(
     if (created) return { action: "created", invoice };
 
     const lineItems = invoiceLineItemsForWorkOrder(wo, amountCents);
+    const tax = invoiceTaxFromWorkOrder(wo);
     const customerRef = await resolveCustomerRefForWorkOrder(wo);
+    const keepInvoiceTax = Boolean(invoice.taxOverridden);
+    const nextTax = keepInvoiceTax
+      ? {
+          taxRatePercent: Number(invoice.taxRatePercent) || 0,
+          taxCents: Number(invoice.taxCents) || 0,
+          taxOverridden: true,
+        }
+      : tax;
+    const nextAmountCents = keepInvoiceTax
+      ? Math.max(
+          dollarsToCents(wo.total || 0) - dollarsToCents(wo.tax || 0),
+          0,
+        ) + nextTax.taxCents
+      : amountCents;
     const needsCustomer = Boolean(customerRef && !invoice.customerRef);
-    const needsAmount = invoice.amountCents !== amountCents;
+    const needsAmount = invoice.amountCents !== nextAmountCents;
     const needsLines = lineItemsChanged(invoice.lineItems ?? [], lineItems);
-    if (needsCustomer || needsAmount || needsLines) {
+    const needsTax =
+      !keepInvoiceTax &&
+      ((invoice.taxRatePercent ?? 0) !== tax.taxRatePercent ||
+        (invoice.taxCents ?? 0) !== tax.taxCents ||
+        Boolean(invoice.taxOverridden) !== tax.taxOverridden);
+    if (needsCustomer || needsAmount || needsLines || needsTax) {
       if (customerRef) invoice.customerRef = customerRef;
-      invoice.amountCents = amountCents;
+      if (typeof invoice.originalAmountCents === "number") {
+        invoice.originalAmountCents = nextAmountCents;
+        invoice.amountCents = Math.max(
+          nextAmountCents - (Number(invoice.discountCents) || 0),
+          0,
+        );
+      } else {
+        invoice.amountCents = nextAmountCents;
+      }
       invoice.lineItems = lineItems;
+      invoice.taxRatePercent = nextTax.taxRatePercent;
+      invoice.taxCents = nextTax.taxCents;
+      invoice.taxOverridden = nextTax.taxOverridden;
       await invoice.save();
       return { action: "updated", invoice };
     }

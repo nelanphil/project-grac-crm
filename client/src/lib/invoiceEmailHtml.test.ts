@@ -108,6 +108,8 @@ describe("invoiceEmailHtml", () => {
     assert.doesNotMatch(html, /<table/);
     assert.match(html, /Total due:/);
     assert.match(html, /Discount SAVE/);
+    assert.match(html, /Tax/);
+    assert.match(html, /Subtotal:/);
   });
 
   it("includes visible work order notes without HTML injection", () => {
