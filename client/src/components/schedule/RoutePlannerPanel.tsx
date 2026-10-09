@@ -81,26 +81,28 @@ function formatStopWindow(arrival?: string | null, departure?: string | null): s
   return `${formatLocalClock(start)}–${formatLocalClock(end)}`;
 }
 
-type RoutePlannerPanelProps = {
-  staff: Array<{ _id: string; first_name: string; last_name: string }>;
-  techId: string | null;
-  onTech: (id: string) => void;
-  techLocked: boolean;
-  filter: MapJobFilter;
-  onFilter: (value: MapJobFilter) => void;
-  allowUnscheduled: boolean;
+type StaffPerson = { _id: string; first_name: string; last_name: string };
+
+type MapRouteToolbarProps = {
   roundTrip: boolean;
   onRoundTrip: (value: boolean) => void;
   objective: RouteObjective;
   onObjective: (value: RouteObjective) => void;
   onOptimize: () => void;
-  onApply: () => void;
-  canApply: boolean;
+  canOptimize: boolean;
   optimizing: boolean;
-  applying: boolean;
-  planning: boolean;
   message: string | null;
   warnings: string[];
+};
+
+type TechnicianRoutePaneProps = {
+  staff: StaffPerson[];
+  techId: string | null;
+  onTech: (id: string) => void;
+  filter: MapJobFilter;
+  roundTrip: boolean;
+  optimizing: boolean;
+  planning: boolean;
   jobs: RoutePlannerJob[];
   stops: ScheduleRouteStop[];
   legs: ScheduleRouteLeg[];
@@ -161,26 +163,68 @@ function formatLeg(minutes: number, meters: number): string {
   return `${minutes} min · ${formatMiles(meters)}`;
 }
 
-export default function RoutePlannerPanel({
-  staff,
-  techId,
-  onTech,
-  techLocked,
-  filter,
-  onFilter,
-  allowUnscheduled,
+export function MapRouteToolbar({
   roundTrip,
   onRoundTrip,
   objective,
   onObjective,
   onOptimize,
-  onApply,
-  canApply,
+  canOptimize,
   optimizing,
-  applying,
-  planning,
   message,
   warnings,
+}: MapRouteToolbarProps) {
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm text-neutral-700">
+          <input
+            type="checkbox"
+            checked={roundTrip}
+            onChange={(event) => onRoundTrip(event.target.checked)}
+            className="accent-[var(--color-brand-orange)]"
+          />
+          Round trip
+        </label>
+        <Segmented<RouteObjective>
+          ariaLabel="Route objective"
+          value={objective}
+          onChange={onObjective}
+          options={[
+            { id: "time", label: "Shortest time" },
+            { id: "distance", label: "Shortest distance" },
+          ]}
+        />
+        <button
+          type="button"
+          disabled={!canOptimize || optimizing}
+          onClick={onOptimize}
+          className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm font-medium text-brand-dark hover:bg-neutral-100 disabled:opacity-40"
+        >
+          {optimizing ? "Optimizing…" : "Optimize"}
+        </button>
+      </div>
+      {message && <p className="text-sm text-red-600">{message}</p>}
+      {warnings.map((warning) => (
+        <p
+          key={warning}
+          className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+        >
+          {warning}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+export function TechnicianRoutePane({
+  staff,
+  techId,
+  onTech,
+  filter,
+  roundTrip,
+  optimizing,
+  planning,
   jobs,
   stops,
   legs,
@@ -198,7 +242,7 @@ export default function RoutePlannerPanel({
   locks,
   onToggleLock,
   onLockTime,
-}: RoutePlannerPanelProps) {
+}: TechnicianRoutePaneProps) {
   const [routeListHeight, setRouteListHeight] = useRouteListHeight();
   const routeListHeightRef = useRef(routeListHeight);
   const routeListDragCleanup = useRef<(() => void) | null>(null);
@@ -256,81 +300,22 @@ export default function RoutePlannerPanel({
     roundTrip && stops.at(-1)?.kind === "home" ? legs.at(-1) : undefined;
   const routed = new Set(orderedWorkOrderIds);
 
-  return (
-    <div className="space-y-3 rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          value={techId ?? ""}
-          disabled={techLocked}
-          onChange={(event) => onTech(event.target.value)}
-          className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm text-brand-dark disabled:opacity-60"
-        >
-          {!techLocked && <option value="">Select technician</option>}
-          {staff.map((person) => (
-            <option key={person._id} value={person._id}>
-              {person.first_name} {person.last_name}
-            </option>
-          ))}
-        </select>
-        {allowUnscheduled && (
-          <Segmented<MapJobFilter>
-            ariaLabel="Map pins"
-            value={filter}
-            onChange={onFilter}
-            options={[
-              { id: "scheduled", label: "Scheduled" },
-              { id: "unscheduled", label: "Unscheduled" },
-            ]}
-          />
-        )}
-        <label className="inline-flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm text-neutral-700">
-          <input
-            type="checkbox"
-            checked={roundTrip}
-            onChange={(event) => onRoundTrip(event.target.checked)}
-            className="accent-[var(--color-brand-orange)]"
-          />
-          Round trip
-        </label>
-        <Segmented<RouteObjective>
-          ariaLabel="Route objective"
-          value={objective}
-          onChange={onObjective}
-          options={[
-            { id: "time", label: "Shortest time" },
-            { id: "distance", label: "Shortest distance" },
-          ]}
-        />
-        <div className="flex items-center gap-2 sm:ml-auto">
-          <button
-            type="button"
-            disabled={!techId || jobs.length < 2 || optimizing || applying}
-            onClick={onOptimize}
-            className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-sm font-medium text-brand-dark hover:bg-neutral-100 disabled:opacity-40"
-          >
-            {optimizing ? "Optimizing…" : "Optimize"}
-          </button>
-          {canApply && (
-            <button
-              type="button"
-              disabled={!techId || jobs.length === 0 || optimizing || applying || planning}
-              onClick={onApply}
-              className="btn-primary px-3 py-1.5 text-sm disabled:opacity-40"
-            >
-              {applying ? "Applying…" : "Apply to this day"}
-            </button>
-          )}
-        </div>
-      </div>
+  const busy = optimizing || removing;
 
-      {allowUnscheduled && (
-        <div className="overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
-          <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-neutral-200 px-3 py-2 text-[11px] font-medium text-neutral-400">
-            <span>Technician</span>
-            <span>Today</span>
-          </div>
-          <div className="max-h-36 overflow-y-auto">
-            {staff.map((person) => (
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
+        <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-neutral-200 px-3 py-2 text-[11px] font-medium text-neutral-400">
+          <span>Technician</span>
+          <span>Today</span>
+        </div>
+        <div className="max-h-48 overflow-y-auto">
+          {staff.length === 0 ? (
+            <p className="px-3 py-4 text-xs text-neutral-500">
+              No technicians on the board.
+            </p>
+          ) : (
+            staff.map((person) => (
               <TechDropRow
                 key={person._id}
                 person={person}
@@ -338,37 +323,26 @@ export default function RoutePlannerPanel({
                 selected={person._id === techId}
                 onSelect={() => onTech(person._id)}
               />
-            ))}
-          </div>
+            ))
+          )}
         </div>
-      )}
+      </div>
 
       {!techId && (
         <p className="text-sm text-neutral-500">
           Select a technician, or drop an appointment on one.
         </p>
       )}
-      {allowUnscheduled && (
-        <p className="text-xs text-neutral-500">
-          Drag an appointment onto a technician, the route, or the map.
-          Lock a stop to keep its time while the other stops are optimized.
-          {filter === "unscheduled"
-            ? " Click an unscheduled job to add or remove it."
-            : ""}
-        </p>
-      )}
+      <p className="text-xs text-neutral-500">
+        Drag an appointment onto a technician, the route, or the map.
+        Lock a stop to keep its time while the other stops are optimized.
+        {filter === "unscheduled"
+          ? " Click an unscheduled job to add or remove it."
+          : ""}
+      </p>
       {planning && (
         <p className="text-xs text-neutral-500">Updating route…</p>
       )}
-      {message && <p className="text-sm text-red-600">{message}</p>}
-      {warnings.map((warning) => (
-        <p
-          key={warning}
-          className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
-        >
-          {warning}
-        </p>
-      ))}
 
       {techId && (
         <div
@@ -455,7 +429,7 @@ export default function RoutePlannerPanel({
                         ? `Unlock ${job.label}`
                         : `Lock ${job.label} at this time`
                     }
-                    disabled={optimizing || applying || removing}
+                    disabled={busy}
                     onClick={() => onToggleLock(job.id)}
                     className={`rounded p-1 hover:bg-neutral-100 disabled:opacity-30 ${
                       lockedTime ? "text-brand-orange" : "text-neutral-500"
@@ -470,7 +444,7 @@ export default function RoutePlannerPanel({
                   <button
                     type="button"
                     aria-label={`Move ${job.label} up`}
-                    disabled={index === 0 || optimizing || applying || removing}
+                    disabled={index === 0 || busy}
                     onClick={() => onMove(job.id, -1)}
                     className="rounded p-1 text-neutral-500 hover:bg-neutral-100 disabled:opacity-30"
                   >
@@ -479,7 +453,7 @@ export default function RoutePlannerPanel({
                   <button
                     type="button"
                     aria-label={`Move ${job.label} down`}
-                    disabled={index === jobs.length - 1 || optimizing || applying || removing}
+                    disabled={index === jobs.length - 1 || busy}
                     onClick={() => onMove(job.id, 1)}
                     className="rounded p-1 text-neutral-500 hover:bg-neutral-100 disabled:opacity-30"
                   >
@@ -489,7 +463,7 @@ export default function RoutePlannerPanel({
                     <button
                       type="button"
                       aria-label={`Remove ${job.label} from this route`}
-                      disabled={optimizing || applying || removing}
+                      disabled={busy}
                       onClick={() => onRemove(job.id)}
                       className="rounded p-1 text-neutral-500 hover:bg-neutral-100 hover:text-red-600 disabled:opacity-30"
                     >

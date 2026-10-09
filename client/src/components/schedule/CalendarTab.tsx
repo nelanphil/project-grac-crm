@@ -24,7 +24,6 @@ import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
   cancelWorkOrderAppointment,
-  applyScheduleRoute,
   geocodeMissingScheduleAddresses,
   getScheduleQueue,
   getScheduleRecommendations,
@@ -51,13 +50,14 @@ import {
   formatAddressLine,
   formatLocalDate,
   formatLocalTime,
-  formatLongDate,
   formatMonthYear,
   formatPrettyDate,
   formatWeekdayDate,
   isDispatcherRole,
   localDateTimeToIso,
   minutesToHhMm,
+  normalizeTimeOfDay,
+  shiftMonth,
   startOfMonth,
   startOfWeekSunday,
   workOrderLocalDate,
@@ -69,8 +69,9 @@ import WeekBoard, {
 import MonthCalendar from "@/components/schedule/MonthCalendar";
 import MonthTable from "@/components/schedule/MonthTable";
 import SuggestAssigneeModal from "@/components/schedule/SuggestAssigneeModal";
-import RoutePlannerPanel, {
-  type MapJobFilter,
+import {
+  MapRouteToolbar,
+  TechnicianRoutePane,
 } from "@/components/schedule/RoutePlannerPanel";
 import ScheduleMap, {
   jobHasCoordinates,
@@ -239,6 +240,8 @@ function compareWithinDay(a: WorkOrderListItem, b: WorkOrderListItem): number {
   return (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? "");
 }
 
+type MapRailPane = "appointments" | "technicians";
+
 function ScheduleRail({
   dayLabel,
   dayJobs,
@@ -249,10 +252,15 @@ function ScheduleRail({
   onSelect,
   onSuggest,
   onAssignTechnician,
+  onUnschedule,
   suggesting,
   canSuggest,
   draggable,
   liftDrag = false,
+  pane,
+  onPane,
+  technicianPane,
+  routeControls,
 }: {
   dayLabel: string;
   dayJobs: WorkOrderListItem[];
@@ -263,27 +271,50 @@ function ScheduleRail({
   onSelect: (job: WorkOrderListItem) => void;
   onSuggest: () => void;
   onAssignTechnician?: (job: WorkOrderListItem, userId: string) => void;
+  onUnschedule?: (job: WorkOrderListItem) => void;
   suggesting: boolean;
   canSuggest: boolean;
   draggable: boolean;
   liftDrag?: boolean;
+  pane?: MapRailPane;
+  onPane?: (pane: MapRailPane) => void;
+  technicianPane?: ReactNode;
+  routeControls?: ReactNode;
 }) {
   const empty = dayJobs.length === 0 && undatedJobs.length === 0;
+  const showTechnicians = pane === "technicians" && technicianPane;
 
   return (
     <aside className="flex h-full max-h-[44rem] min-h-0 flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm lg:max-h-none">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-base font-semibold text-brand-dark">{dayLabel}</h2>
-        <button
-          type="button"
-          disabled={!canSuggest || suggesting}
-          onClick={onSuggest}
-          className="shrink-0 text-xs font-medium text-brand-orange hover:underline disabled:opacity-40"
-        >
-          {suggesting ? "Suggesting…" : "Suggest tech"}
-        </button>
+        {showTechnicians ? null : (
+          <button
+            type="button"
+            disabled={!canSuggest || suggesting}
+            onClick={onSuggest}
+            className="shrink-0 text-xs font-medium text-brand-orange hover:underline disabled:opacity-40"
+          >
+            {suggesting ? "Suggesting…" : "Suggest tech"}
+          </button>
+        )}
       </div>
-      {loading ? (
+      {onPane ? (
+        <Segmented<MapRailPane>
+          ariaLabel="Schedule list"
+          size="sm"
+          value={pane ?? "appointments"}
+          onChange={onPane}
+          options={[
+            { id: "appointments", label: "Appointments" },
+            { id: "technicians", label: "Technicians" },
+          ]}
+        />
+      ) : null}
+      {routeControls}
+      {showTechnicians ? (
+        technicianPane
+      ) : loading ? (
         <p className="text-xs text-neutral-400">Loading work orders…</p>
       ) : empty ? (
         <p className="text-xs text-neutral-400">No work orders on {dayLabel}.</p>
@@ -305,6 +336,9 @@ function ScheduleRail({
                     onAssignTechnician
                       ? (userId) => onAssignTechnician(order, userId)
                       : undefined
+                  }
+                  onUnschedule={
+                    onUnschedule ? () => onUnschedule(order) : undefined
                   }
                 />
               ))}
@@ -330,6 +364,9 @@ function ScheduleRail({
                       ? (userId) => onAssignTechnician(order, userId)
                       : undefined
                   }
+                  onUnschedule={
+                    onUnschedule ? () => onUnschedule(order) : undefined
+                  }
                 />
               ))}
             </section>
@@ -348,7 +385,6 @@ function ScheduleHeader({
   monthMode,
   today,
   selectedDate,
-  monthStart,
   weekDays,
   onToday,
   onView,
@@ -363,7 +399,6 @@ function ScheduleHeader({
   monthMode: MonthMode;
   today: string;
   selectedDate: string;
-  monthStart: string;
   weekDays: string[];
   onToday: () => void;
   onView: (view: ViewMode) => void;
@@ -374,9 +409,7 @@ function ScheduleHeader({
   onSelectDay: (day: string) => void;
 }) {
   const showDays = view === "week" || surface === "map";
-  const monthOnly = view === "month" && surface === "calendar";
   const showLayout = surface === "calendar";
-  const titleUnit = monthOnly ? "month" : "day";
   const rangeLabel =
     weekDays.length > 0
       ? `${formatPrettyDate(weekDays[0]!)} – ${formatPrettyDate(weekDays[weekDays.length - 1]!)}`
@@ -384,34 +417,32 @@ function ScheduleHeader({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <h2 className="min-w-0 text-2xl font-semibold tracking-tight text-brand-dark break-words">
-            {monthOnly
-              ? formatMonthYear(monthStart.slice(0, 7))
-              : formatLongDate(selectedDate)}
+      <div className="relative flex items-center justify-center">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="Previous month"
+            onClick={() => onStepTitle(-1)}
+            className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+          </button>
+          <h2 className="text-2xl font-semibold tracking-tight text-brand-dark">
+            {formatMonthYear(selectedDate.slice(0, 7))}
           </h2>
-          <div className="flex shrink-0 items-center">
-            <button
-              type="button"
-              aria-label={`Previous ${titleUnit}`}
-              onClick={() => onStepTitle(-1)}
-              className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
-            >
-              <ChevronLeft className="h-4 w-4" aria-hidden />
-            </button>
-            <button
-              type="button"
-              aria-label={`Next ${titleUnit}`}
-              onClick={() => onStepTitle(1)}
-              className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
-            >
-              <ChevronRight className="h-4 w-4" aria-hidden />
-            </button>
-          </div>
+          <button
+            type="button"
+            aria-label="Next month"
+            onClick={() => onStepTitle(1)}
+            className="rounded-md p-1 text-neutral-500 hover:bg-neutral-100 hover:text-brand-dark"
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </button>
         </div>
         {showDays && rangeLabel ? (
-          <span className="text-xs text-neutral-500">{rangeLabel}</span>
+          <span className="absolute right-0 hidden text-xs text-neutral-500 sm:block">
+            {rangeLabel}
+          </span>
         ) : null}
       </div>
 
@@ -484,15 +515,17 @@ function ScheduleHeader({
           >
             Today
           </button>
-          <Segmented<ViewMode>
-            ariaLabel="Calendar range"
-            value={view}
-            onChange={onView}
-            options={[
-              { id: "week", label: "Week" },
-              { id: "month", label: "Month" },
-            ]}
-          />
+          {surface !== "map" && (
+            <Segmented<ViewMode>
+              ariaLabel="Calendar range"
+              value={view}
+              onChange={onView}
+              options={[
+                { id: "week", label: "Week" },
+                { id: "month", label: "Month" },
+              ]}
+            />
+          )}
           {showLayout && (
             <Segmented<MonthMode>
               ariaLabel="Calendar layout"
@@ -667,7 +700,7 @@ export default function CalendarTab({
   );
   const [suggesting, setSuggesting] = useState(false);
 
-  const [mapJobFilter, setMapJobFilter] = useState<MapJobFilter>("scheduled");
+  const [mapRailPane, setMapRailPane] = useState<MapRailPane>("appointments");
   const [routeTechId, setRouteTechId] = useState<string | null>(null);
   const [roundTrip, setRoundTrip] = useState(true);
   const [routeObjective, setRouteObjective] = useState<RouteObjective>("time");
@@ -681,11 +714,14 @@ export default function CalendarTab({
   const [routePlan, setRoutePlan] = useState<PlannedRoute | null>(null);
   const [routePlanning, setRoutePlanning] = useState(false);
   const [routeOptimizing, setRouteOptimizing] = useState(false);
-  const [routeApplying, setRouteApplying] = useState(false);
   const [routeMessage, setRouteMessage] = useState<string | null>(null);
   const [draggingJobId, setDraggingJobId] = useState<string | null>(null);
   const planSeq = useRef(0);
   const optimizeLock = useRef(false);
+  const railOrderRef = useRef<{ date: string; ids: string[] }>({
+    date: "",
+    ids: [],
+  });
   const effectiveTechId = !dispatcher && user?.id ? user.id : routeTechId;
 
   const editingId = editingJob?._id ?? null;
@@ -766,9 +802,11 @@ export default function CalendarTab({
   const monthEnd = addDays(monthStart, daysInMonth(monthStart) - 1);
 
   const range = useMemo(() => {
-    if (view === "week") return { from: weekStart, to: weekEnd };
+    if (view === "week" || surface === "map") {
+      return { from: weekStart, to: weekEnd };
+    }
     return { from: monthStart, to: monthEnd };
-  }, [view, weekStart, weekEnd, monthStart, monthEnd]);
+  }, [view, surface, weekStart, weekEnd, monthStart, monthEnd]);
 
   const weekDays = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
@@ -776,10 +814,27 @@ export default function CalendarTab({
   );
 
   const railListJobs = useMemo(() => {
-    const dated = uniqueJobs(railScheduled, railJobs)
-      .filter((job) => workOrderLocalDate(job) === selectedDate)
-      .sort(compareWithinDay);
+    const incoming = uniqueJobs(railScheduled, railJobs).filter(
+      (job) => workOrderLocalDate(job) === selectedDate,
+    );
     const undated = railJobs.filter((job) => !workOrderLocalDate(job));
+    const byId = new Map(incoming.map((job) => [job._id, job]));
+    const sameDay = railOrderRef.current.date === selectedDate;
+    const kept = (sameDay ? railOrderRef.current.ids : []).filter((id) =>
+      byId.has(id),
+    );
+    const seen = new Set(kept);
+    const newcomers = incoming
+      .filter((job) => !seen.has(job._id))
+      .sort(compareWithinDay);
+    const dated = [
+      ...kept.map((id) => byId.get(id)!),
+      ...newcomers,
+    ];
+    railOrderRef.current = {
+      date: selectedDate,
+      ids: dated.map((job) => job._id),
+    };
     return { dated, undated };
   }, [railJobs, railScheduled, selectedDate]);
   const railRecommendationKey = useMemo(
@@ -1081,11 +1136,53 @@ export default function CalendarTab({
   ) {
     if (!token || !canWrite) return;
     const current = job.assignee?._id ?? job.assignedUserRef ?? "";
-    if (current === userId) return;
+    const alreadyScheduled =
+      Boolean(job.scheduledStart) &&
+      current === userId &&
+      workOrderLocalDate(job) === selectedDate;
+    if (alreadyScheduled) return;
     setSaving(true);
     setWarning(null);
+    setError(null);
     try {
-      await updateWorkOrder(token, job._id, { assignedUserRef: userId });
+      const result = await suggestScheduleAssignee(token, {
+        workOrderId: job._id,
+        date: selectedDate,
+        estimatedMinutes: job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+      });
+      const suggestion = result.suggestions.find((item) => item.userId === userId);
+      if (!suggestion?.proposedStart) {
+        setError(
+          suggestion?.reason || "This technician is not available that day.",
+        );
+        return;
+      }
+      let scheduledStart = suggestion.proposedStart;
+      const windowStart = normalizeTimeOfDay(job.startTime);
+      if (windowStart) {
+        const windowIso = localDateTimeToIso(selectedDate, windowStart);
+        if (new Date(windowIso).getTime() > new Date(scheduledStart).getTime()) {
+          scheduledStart = windowIso;
+        }
+      }
+      const placed = await placeScheduleWorkOrder(token, {
+        workOrderId: job._id,
+        assignedUserRef: userId,
+        date: selectedDate,
+        scheduledStart,
+        estimatedMinutes: job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+      });
+      if (placed.warnings?.length) {
+        setWarning(placed.warnings.join(" "));
+      }
+      const updatedJob = placed.workOrders.find((item) => item._id === job._id);
+      if (updatedJob) {
+        setSelectedRailJob((prev) =>
+          prev?._id === job._id ? updatedJob : prev,
+        );
+      }
+      setSuggestions(null);
+      setRouteTechId(userId);
       await load();
     } catch (err) {
       setError(
@@ -1226,20 +1323,6 @@ export default function CalendarTab({
 
   function selectRailJob(job: WorkOrderListItem) {
     setSelectedRailJob(job);
-    if (
-      surface !== "map" ||
-      mapJobFilter !== "unscheduled" ||
-      !dispatcher ||
-      !effectiveTechId ||
-      job.scheduledStart
-    ) {
-      return;
-    }
-    setAddedUnscheduledIds((current) =>
-      current.includes(job._id)
-        ? current.filter((id) => id !== job._id)
-        : [...current, job._id],
-    );
   }
 
   function toggleRouteLock(id: string) {
@@ -1299,15 +1382,11 @@ export default function CalendarTab({
     setConfirmingRemoveId(id);
   }
 
-  async function confirmRemoveRouteStop(id: string) {
+  async function unscheduleWorkOrder(id: string) {
     if (!dispatcher || !canWrite || unscheduling || !token) return;
-    if (!stopIsScheduledOnDay(id)) {
-      forgetRouteStop(id);
-      setConfirmingRemoveId(null);
-      return;
-    }
     setUnscheduling(true);
     setRouteMessage(null);
+    setError(null);
     try {
       await updateWorkOrder(token, id, {
         scheduledStart: null,
@@ -1315,9 +1394,10 @@ export default function CalendarTab({
       });
       forgetRouteStop(id);
       setConfirmingRemoveId(null);
+      setSelectedRailJob((prev) => (prev?._id === id ? null : prev));
       await load();
     } catch (err) {
-      setRouteMessage(
+      setError(
         err instanceof ApiError
           ? err.message
           : "Failed to unschedule work order.",
@@ -1325,6 +1405,16 @@ export default function CalendarTab({
     } finally {
       setUnscheduling(false);
     }
+  }
+
+  async function confirmRemoveRouteStop(id: string) {
+    if (!dispatcher || !canWrite || unscheduling || !token) return;
+    if (!stopIsScheduledOnDay(id)) {
+      forgetRouteStop(id);
+      setConfirmingRemoveId(null);
+      return;
+    }
+    await unscheduleWorkOrder(id);
   }
 
   function moveRouteStop(id: string, direction: -1 | 1) {
@@ -1397,39 +1487,6 @@ export default function CalendarTab({
     return () => window.clearTimeout(timer);
   }, [surface, effectiveTechId, routeStopKey, roundTrip, runPlan, routeStopIds.length]);
 
-  async function applyRoute() {
-    if (!token || !effectiveTechId || routeStopIds.length === 0 || !canWrite) return;
-    const tech = staff.find((person) => person._id === effectiveTechId);
-    const name = tech
-      ? `${tech.first_name} ${tech.last_name}`
-      : "this technician";
-    const confirmed = window.confirm(
-      `Assign this route to ${name} on ${formatPrettyDate(selectedDate)} and rewrite start times for the day?`,
-    );
-    if (!confirmed) return;
-    setRouteApplying(true);
-    setRouteMessage(null);
-    setWarning(null);
-    try {
-      const applied = await applyScheduleRoute(token, {
-        userId: effectiveTechId,
-        date: selectedDate,
-        orderedWorkOrderIds: routeStopIds,
-        lockedStops: activeRouteLocks,
-      });
-      if (applied.warnings?.length) setWarning(applied.warnings.join(" "));
-      setAddedUnscheduledIds([]);
-      setManualOrder(null);
-      await load();
-    } catch (err) {
-      setRouteMessage(
-        err instanceof ApiError ? err.message : "Failed to apply route.",
-      );
-    } finally {
-      setRouteApplying(false);
-    }
-  }
-
   async function saveDuration() {
     if (!token || !editingJob) return;
     setSaving(true);
@@ -1497,6 +1554,64 @@ export default function CalendarTab({
 
   const rangeJobs = uniqueJobs(jobs, calendarUnscheduled);
 
+  function selectRouteTech(id: string) {
+    setRouteTechId(id || null);
+    setAddedUnscheduledIds([]);
+    setManualOrder(null);
+    setRouteLocks({});
+    setRoutePlan(null);
+    setRouteMessage(null);
+    setConfirmingRemoveId(null);
+  }
+
+  const routePlannerJobs = routeStopIds.map((id) => {
+    const stop = routeTotalsMatch
+      ? routePlan?.stops.find((item) => item.workOrderId === id)
+      : undefined;
+    const order = jobById.get(id);
+    return {
+      id,
+      label: order?.customerName || "Work order",
+      arrival: stop?.arrival,
+      departure: stop?.departure,
+      startTime: order?.startTime,
+      endTime: order?.endTime,
+    };
+  });
+
+  const technicianPane = (
+    <TechnicianRoutePane
+      staff={staff}
+      techId={effectiveTechId}
+      onTech={selectRouteTech}
+      filter="scheduled"
+      roundTrip={roundTrip}
+      optimizing={routeOptimizing}
+      planning={routePlanning}
+      jobs={routePlannerJobs}
+      stops={routeTotalsMatch ? (routePlan?.stops ?? []) : []}
+      legs={routeTotalsMatch ? (routePlan?.route?.legs ?? []) : []}
+      orderedWorkOrderIds={
+        routeTotalsMatch ? (routePlan?.orderedWorkOrderIds ?? []) : []
+      }
+      totalMinutes={routePlan?.route?.durationMinutes}
+      totalMeters={routePlan?.route?.distanceMeters}
+      showTotals={Boolean(routeTotalsMatch && routePlan?.route)}
+      onMove={moveRouteStop}
+      onRemove={
+        dispatcher && canWrite ? requestRemoveRouteStop : undefined
+      }
+      confirmingRemoveId={confirmingRemoveId}
+      onConfirmRemove={(id) => void confirmRemoveRouteStop(id)}
+      onCancelRemove={() => setConfirmingRemoveId(null)}
+      removing={unscheduling}
+      dayCounts={jobsTodayByTech}
+      locks={routeLocks}
+      onToggleLock={toggleRouteLock}
+      onLockTime={setRouteLockTime}
+    />
+  );
+
   const rail = dispatcher ? (
     <ScheduleRail
       dayLabel={formatWeekdayDate(selectedDate)}
@@ -1512,6 +1627,14 @@ export default function CalendarTab({
       onAssignTechnician={
         canWrite ? (job, userId) => void assignRailTechnician(job, userId) : undefined
       }
+      onUnschedule={
+        canWrite
+          ? (job) => {
+              if (!job.scheduledStart || unscheduling) return;
+              void unscheduleWorkOrder(job._id);
+            }
+          : undefined
+      }
       suggesting={suggesting}
       canSuggest={Boolean(
         selectedRailJob && !selectedRailJob.scheduledStart,
@@ -1523,6 +1646,26 @@ export default function CalendarTab({
           : view === "week" && surface === "calendar")
       }
       liftDrag={surface === "map"}
+      pane={surface === "map" ? mapRailPane : undefined}
+      onPane={surface === "map" ? setMapRailPane : undefined}
+      technicianPane={surface === "map" ? technicianPane : undefined}
+      routeControls={
+        surface === "map" ? (
+          <MapRouteToolbar
+            roundTrip={roundTrip}
+            onRoundTrip={setRoundTrip}
+            objective={routeObjective}
+            onObjective={setRouteObjective}
+            onOptimize={() => void runPlan(true)}
+            canOptimize={Boolean(effectiveTechId) && routeStopIds.length >= 2}
+            optimizing={routeOptimizing}
+            message={routeMessage}
+            warnings={
+              routeTotalsMatch ? (routePlan?.warnings ?? []) : []
+            }
+          />
+        ) : undefined
+      }
     />
   ) : null;
   const editingViewHref = editingJob ? workOrderViewHref(editingJob) : null;
@@ -1535,7 +1678,6 @@ export default function CalendarTab({
         monthMode={monthMode}
         today={today}
         selectedDate={selectedDate}
-        monthStart={monthStart}
         weekDays={weekDays}
         onToday={() => {
           setAnchorDate(today);
@@ -1545,14 +1687,12 @@ export default function CalendarTab({
         onSurface={setSurface}
         onMonthMode={setMonthMode}
         onStepTitle={(direction) => {
-          if (view === "month" && surface === "calendar") {
-            const next =
-              direction < 0 ? addDays(monthStart, -1) : addDays(monthEnd, 1);
-            setAnchorDate(next);
-            setSelectedDate(startOfMonth(next));
-            return;
-          }
-          const next = addDays(selectedDate, direction);
+          const month = shiftMonth(selectedDate.slice(0, 7), direction);
+          const day = Math.min(
+            Number(selectedDate.slice(8)),
+            daysInMonth(`${month}-01`),
+          );
+          const next = `${month}-${String(day).padStart(2, "0")}`;
           setAnchorDate(next);
           setSelectedDate(next);
         }}
@@ -1597,87 +1737,18 @@ export default function CalendarTab({
             void handleDragEnd(event);
           }}
         >
-        <div className="space-y-3">
+        <div className="flex min-h-0 flex-1 flex-col">
           {geocodingPins && (
             <p className="text-xs text-neutral-500">
               Locating jobs on the map…
             </p>
           )}
           <ScheduleSplit sidebar={rail}>
-            <div className="space-y-3">
-              <RoutePlannerPanel
-                staff={staff}
-                techId={effectiveTechId}
-                onTech={(id) => {
-                  setRouteTechId(id || null);
-                  setAddedUnscheduledIds([]);
-                  setManualOrder(null);
-                  setRouteLocks({});
-                  setRoutePlan(null);
-                  setRouteMessage(null);
-                  setConfirmingRemoveId(null);
-                }}
-                techLocked={!dispatcher}
-                filter={mapJobFilter}
-                onFilter={setMapJobFilter}
-                allowUnscheduled={dispatcher}
-                roundTrip={roundTrip}
-                onRoundTrip={setRoundTrip}
-                objective={routeObjective}
-                onObjective={setRouteObjective}
-                onOptimize={() => void runPlan(true)}
-                onApply={() => void applyRoute()}
-                canApply={dispatcher && canWrite}
-                optimizing={routeOptimizing}
-                applying={routeApplying}
-                planning={routePlanning}
-                message={routeMessage}
-                warnings={
-                  routeTotalsMatch ? (routePlan?.warnings ?? []) : []
-                }
-                jobs={routeStopIds.map((id) => {
-                  const stop = routeTotalsMatch
-                    ? routePlan?.stops.find((item) => item.workOrderId === id)
-                    : undefined;
-                  const order = jobById.get(id);
-                  return {
-                    id,
-                    label: order?.customerName || "Work order",
-                    arrival: stop?.arrival,
-                    departure: stop?.departure,
-                    startTime: order?.startTime,
-                    endTime: order?.endTime,
-                  };
-                })}
-                stops={routeTotalsMatch ? (routePlan?.stops ?? []) : []}
-                legs={routeTotalsMatch ? (routePlan?.route?.legs ?? []) : []}
-                orderedWorkOrderIds={
-                  routeTotalsMatch ? (routePlan?.orderedWorkOrderIds ?? []) : []
-                }
-                totalMinutes={routePlan?.route?.durationMinutes}
-                totalMeters={routePlan?.route?.distanceMeters}
-                showTotals={Boolean(routeTotalsMatch && routePlan?.route)}
-                onMove={moveRouteStop}
-                onRemove={
-                  dispatcher && canWrite ? requestRemoveRouteStop : undefined
-                }
-                confirmingRemoveId={confirmingRemoveId}
-                onConfirmRemove={(id) => void confirmRemoveRouteStop(id)}
-                onCancelRemove={() => setConfirmingRemoveId(null)}
-                removing={unscheduling}
-                dayCounts={jobsTodayByTech}
-                locks={routeLocks}
-                onToggleLock={toggleRouteLock}
-                onLockTime={setRouteLockTime}
-              />
+            <div className="flex h-full min-h-0 flex-col">
               <ScheduleMap
-                unscheduled={
-                  dispatcher && mapJobFilter === "unscheduled"
-                    ? unscheduledPins
-                    : addedJobs
-                }
+                unscheduled={addedJobs}
                 scheduled={dayJobs}
-                pinMode={mapJobFilter}
+                pinMode="scheduled"
                 selectedId={selectedRailJob?._id ?? null}
                 onSelect={selectRailJob}
                 routeStops={
@@ -1686,6 +1757,7 @@ export default function CalendarTab({
                 encodedPolyline={
                   routeTotalsMatch ? routePlan?.route?.encodedPolyline : undefined
                 }
+                surfaceClassName="h-full min-h-[24rem] flex-1"
               />
             </div>
           </ScheduleSplit>
@@ -1745,7 +1817,6 @@ export default function CalendarTab({
                 onMap={(userId) => {
                   setRouteTechId(userId);
                   setSurface("map");
-                  setMapJobFilter("scheduled");
                   setAddedUnscheduledIds([]);
                   setManualOrder(null);
                   setRouteLocks({});

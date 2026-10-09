@@ -6,7 +6,9 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
@@ -29,6 +31,23 @@ import {
   nyDateParts,
   workOrderViewHref,
 } from "@/lib/schedule";
+
+const NARROW_SCHEDULE_QUERY = "(max-width: 1023px)";
+const SWIPE_THRESHOLD = 64;
+
+function subscribeNarrowSchedule(onChange: () => void) {
+  const media = window.matchMedia(NARROW_SCHEDULE_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+function useNarrowSchedule(): boolean {
+  return useSyncExternalStore(
+    subscribeNarrowSchedule,
+    () => window.matchMedia(NARROW_SCHEDULE_QUERY).matches,
+    () => false,
+  );
+}
 
 const HOURS = Array.from(
   { length: BOARD_HOUR_END - BOARD_HOUR_START },
@@ -149,6 +168,7 @@ function UnscheduledCardShell({
   recommendation,
   technicians,
   onAssignTechnician,
+  onUnschedule,
   isDragging,
   setNodeRef,
   style,
@@ -160,6 +180,7 @@ function UnscheduledCardShell({
   recommendation?: ScheduleRecommendation | null;
   technicians?: ScheduleRecommendation[];
   onAssignTechnician?: (userId: string) => void;
+  onUnschedule?: () => void;
   isDragging?: boolean;
   setNodeRef?: (node: HTMLElement | null) => void;
   style?: CSSProperties;
@@ -179,11 +200,54 @@ function UnscheduledCardShell({
   );
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const closeMenu = () => setMenu(null);
+  const narrow = useNarrowSchedule();
+  const swipe = useRef<{
+    x: number;
+    y: number;
+    pointerId: number;
+  } | null>(null);
+  const suppressClick = useRef(false);
+
+  function onSwipePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!narrow || event.button !== 0) return;
+    swipe.current = {
+      x: event.clientX,
+      y: event.clientY,
+      pointerId: event.pointerId,
+    };
+  }
+
+  function onSwipePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const start = swipe.current;
+    swipe.current = null;
+    if (!narrow || !start || start.pointerId !== event.pointerId) return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) < Math.abs(dy)) return;
+    suppressClick.current = true;
+    if (dx > 0) {
+      if (!onAssignTechnician) return;
+      setMenu({ x: event.clientX, y: event.clientY });
+      return;
+    }
+    if (order.scheduledStart && onUnschedule) onUnschedule();
+  }
 
   return (
     <div
       ref={setNodeRef}
-      style={style}
+      style={{ ...style, touchAction: narrow ? "pan-y" : style?.touchAction }}
+      onPointerDown={onSwipePointerDown}
+      onPointerUp={onSwipePointerUp}
+      onPointerCancel={() => {
+        swipe.current = null;
+      }}
+      onClickCapture={(event) => {
+        if (!suppressClick.current) return;
+        suppressClick.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
       onContextMenu={(event) => {
         if (!onAssignTechnician) return;
         event.preventDefault();
@@ -202,19 +266,62 @@ function UnscheduledCardShell({
         style={{ backgroundColor: accent }}
       />
       <div className="min-w-0 flex-1">
-        <button
-          type="button"
-          {...(dragHandle?.listeners ?? {})}
-          {...(dragHandle?.attributes ?? {})}
-          onClick={onSelect}
-          className="w-full text-left"
-        >
-          <div className="flex items-start justify-between gap-2">
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            {...(dragHandle?.listeners ?? {})}
+            {...(dragHandle?.attributes ?? {})}
+            onClick={onSelect}
+            className="min-w-0 flex-1 text-left"
+          >
             <div className="truncate text-[13px] font-semibold text-brand-dark">
               {order.customerName || "Customer"}
             </div>
+            <div className="mt-0.5 truncate text-neutral-500">
+              {[
+                order.address?.city?.trim() || order.customerCity?.trim() || "—",
+                order.workOrderType?.label,
+                minutesToLabel(order.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </div>
+            {order.scheduleNote ? (
+              <div className="mt-1 line-clamp-2 text-neutral-600">
+                {order.scheduleNote}
+              </div>
+            ) : null}
+            <div className="mt-1 text-neutral-400">
+              {[
+                order.date ? formatMonthDayYear(order.date.slice(0, 10)) : "No date",
+                windowLabel,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </div>
+            {assignedName ? (
+              <div className="mt-1 truncate text-neutral-500">
+                Assigned: {assignedName}
+              </div>
+            ) : null}
+            {recommendedName && !order.scheduledStart ? (
+              <div className="mt-0.5 flex items-center gap-1 text-neutral-500">
+                {recommendedMatches ? (
+                  <Check
+                    className="h-3 w-3 shrink-0 text-emerald-600"
+                    aria-hidden
+                  />
+                ) : null}
+                <span className="truncate">
+                  Recommended: {recommendedName}
+                  {recommendation?.reason ? ` · ${recommendation.reason}` : ""}
+                </span>
+              </div>
+            ) : null}
+          </button>
+          <div className="flex shrink-0 flex-col items-end gap-1">
             <span
-              className={`shrink-0 rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide ${
+              className={`rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide ${
                 order.scheduledStart
                   ? "bg-blue-500/15 text-blue-500"
                   : "bg-brand-orange/15 text-brand-orange"
@@ -222,49 +329,21 @@ function UnscheduledCardShell({
             >
               {order.scheduledStart ? "Scheduled" : "Unscheduled"}
             </span>
+            {order.scheduledStart && !narrow && onUnschedule ? (
+              <button
+                type="button"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onUnschedule();
+                }}
+                className="text-[11px] font-medium text-brand-orange hover:underline"
+              >
+                Cancel
+              </button>
+            ) : null}
           </div>
-          <div className="mt-0.5 truncate text-neutral-500">
-            {[
-              order.address?.city?.trim() || order.customerCity?.trim() || "—",
-              order.workOrderType?.label,
-              minutesToLabel(order.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES),
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </div>
-          {order.scheduleNote ? (
-            <div className="mt-1 line-clamp-2 text-neutral-600">
-              {order.scheduleNote}
-            </div>
-          ) : null}
-          <div className="mt-1 text-neutral-400">
-            {[
-              order.date ? formatMonthDayYear(order.date.slice(0, 10)) : "No date",
-              windowLabel,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </div>
-          {assignedName ? (
-            <div className="mt-1 truncate text-neutral-500">
-              Assigned: {assignedName}
-            </div>
-          ) : null}
-          {recommendedName ? (
-            <div className="mt-0.5 flex items-center gap-1 text-neutral-500">
-              {recommendedMatches ? (
-                <Check
-                  className="h-3 w-3 shrink-0 text-emerald-600"
-                  aria-hidden
-                />
-              ) : null}
-              <span className="truncate">
-                Recommended: {recommendedName}
-                {recommendation?.reason ? ` · ${recommendation.reason}` : ""}
-              </span>
-            </div>
-          ) : null}
-        </button>
+        </div>
         {href ? (
           <Link
             href={href}
@@ -299,6 +378,7 @@ function DraggableUnscheduledCard({
   recommendation,
   technicians,
   onAssignTechnician,
+  onUnschedule,
   lift = false,
 }: {
   order: WorkOrderListItem;
@@ -307,6 +387,7 @@ function DraggableUnscheduledCard({
   recommendation?: ScheduleRecommendation | null;
   technicians?: ScheduleRecommendation[];
   onAssignTechnician?: (userId: string) => void;
+  onUnschedule?: () => void;
   lift?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
@@ -324,6 +405,7 @@ function DraggableUnscheduledCard({
       recommendation={recommendation}
       technicians={technicians}
       onAssignTechnician={onAssignTechnician}
+      onUnschedule={onUnschedule}
       isDragging={isDragging}
       setNodeRef={setNodeRef}
       style={style}
@@ -341,6 +423,7 @@ export function UnscheduledCard({
   recommendation,
   technicians,
   onAssignTechnician,
+  onUnschedule,
 }: {
   order: WorkOrderListItem;
   selected: boolean;
@@ -350,8 +433,10 @@ export function UnscheduledCard({
   recommendation?: ScheduleRecommendation | null;
   technicians?: ScheduleRecommendation[];
   onAssignTechnician?: (userId: string) => void;
+  onUnschedule?: () => void;
 }) {
-  if (!draggable || Boolean(order.scheduledStart)) {
+  const narrow = useNarrowSchedule();
+  if (!draggable || narrow || Boolean(order.scheduledStart)) {
     return (
       <UnscheduledCardShell
         order={order}
@@ -360,6 +445,7 @@ export function UnscheduledCard({
         recommendation={recommendation}
         technicians={technicians}
         onAssignTechnician={onAssignTechnician}
+        onUnschedule={onUnschedule}
       />
     );
   }
@@ -371,6 +457,7 @@ export function UnscheduledCard({
       recommendation={recommendation}
       technicians={technicians}
       onAssignTechnician={onAssignTechnician}
+      onUnschedule={onUnschedule}
       lift={lift}
     />
   );
