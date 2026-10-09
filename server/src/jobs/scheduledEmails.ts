@@ -46,6 +46,17 @@ export async function runScheduledEmailJob(): Promise<{
           renewalYear: row.renewalYear,
           renewalMonth: row.renewalMonth,
           includePaymentLink: row.includePaymentLink,
+          offerContractTemplateId: row.offerContractTemplateId
+            ? String(row.offerContractTemplateId)
+            : null,
+          offerContractOverrides: (row.offerContractOverrides ?? []).map(
+            (override) => ({
+              contactId: override.contactId,
+              contractTemplateId: override.contractTemplateId
+                ? String(override.contractTemplateId)
+                : null,
+            }),
+          ),
           createdByUserId: row.createdByUserRef
             ? String(row.createdByUserRef)
             : null,

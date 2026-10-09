@@ -20,8 +20,22 @@ const estimateTemplatePartSchema = new Schema<IEstimatePart>(
       ref: "Product",
       default: null,
     },
-    lineType: { type: String, enum: ["product", "note"], default: "product" },
-    kind: { type: String, enum: ["part", "labor"], default: "part" },
+    contractTemplateRef: {
+      type: Schema.Types.ObjectId,
+      ref: "ContractTemplate",
+      default: null,
+    },
+    enrolledContractRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Contract",
+      default: null,
+    },
+    lineType: {
+      type: String,
+      enum: ["product", "note", "agreement"],
+      default: "product",
+    },
+    kind: { type: String, enum: ["part", "labor", "equipment"], default: "part" },
     partNumber: { type: String, default: "" },
     description: { type: String, default: "" },
     quantity: { type: Number, default: 0 },
@@ -39,7 +53,7 @@ const estimateTemplateSchema = new Schema<IEstimateTemplate>(
     descPerform: { type: String, default: "" },
     laborHours: { type: Number, default: 0 },
     parts: { type: [estimateTemplatePartSchema], default: [] },
-    isDefault: { type: Boolean, default: false, index: true },
+    isDefault: { type: Boolean, default: false },
     createdBy: {
       type: Schema.Types.ObjectId,
       ref: "User",

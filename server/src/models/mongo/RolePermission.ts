@@ -1,5 +1,6 @@
 import mongoose, { Schema, Document } from "mongoose";
 import { UserRole } from "./User";
+import { Role } from "./Role";
 
 export interface IRolePermission extends Document {
   role: UserRole;
@@ -32,6 +33,7 @@ const ALL_PERMISSIONS = [
   "reports:read",
   "integrations:read", "integrations:write", "integrations:delete",
   "messages:read", "messages:write",
+  "job-roles:manage",
 ];
 
 const DEFAULT_PERMISSIONS: [UserRole, string][] = [
@@ -72,9 +74,7 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "integrations:delete"],
   ["admin", "messages:read"],
   ["admin", "messages:write"],
-
-  // owner — same as admin but also permissions management
-  ...ALL_PERMISSIONS.map((p): [UserRole, string] => ["owner", p]),
+  ["admin", "job-roles:manage"],
 
   // manager — leads, accounts, customers, jobs; read users
   ["manager", "leads:read"],
@@ -97,18 +97,6 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["manager", "discounts:write"],
   ["manager", "reports:read"],
 
-  // tech — read/write jobs and customers; read leads
-  ["tech", "leads:read"],
-  ["tech", "customers:read"],
-  ["tech", "contracts:read"],
-  ["tech", "contracts:write"],
-  ["tech", "jobs:read"],
-  ["tech", "jobs:write"],
-  ["tech", "estimates:read"],
-  ["tech", "estimates:write"],
-  ["tech", "products:read"],
-  ["tech", "discounts:read"],
-
   // agent — read-only leads, accounts, customers
   ["agent", "leads:read"],
   ["agent", "accounts:read"],
@@ -119,8 +107,18 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
 ];
 
 export async function getPermissionsForRole(role: UserRole): Promise<string[]> {
-  const docs = await RolePermission.find({ role }).select("permission -_id").lean();
-  return docs.map((d) => d.permission);
+  return getPermissionsForRoles([role]);
+}
+
+export async function getPermissionsForRoles(
+  roles: UserRole[],
+): Promise<string[]> {
+  const slugs = [...new Set(roles.filter(Boolean))];
+  if (slugs.length === 0) return [];
+  const docs = await RolePermission.find({ role: { $in: slugs } })
+    .select("permission -_id")
+    .lean();
+  return [...new Set(docs.map((d) => d.permission))];
 }
 
 /**
@@ -150,13 +148,8 @@ const CONTRACT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "contracts:read"],
   ["admin", "contracts:write"],
   ["admin", "contracts:delete"],
-  ["owner", "contracts:read"],
-  ["owner", "contracts:write"],
-  ["owner", "contracts:delete"],
   ["manager", "contracts:read"],
   ["manager", "contracts:write"],
-  ["tech", "contracts:read"],
-  ["tech", "contracts:write"],
   ["agent", "contracts:read"],
 ];
 
@@ -178,9 +171,6 @@ const INTEGRATIONS_PERMISSIONS: [UserRole, string][] = [
   ["admin", "integrations:read"],
   ["admin", "integrations:write"],
   ["admin", "integrations:delete"],
-  ["owner", "integrations:read"],
-  ["owner", "integrations:write"],
-  ["owner", "integrations:delete"],
 ];
 
 /** Insert integrations permissions for existing deployments (idempotent). */
@@ -199,8 +189,6 @@ const MESSAGES_PERMISSIONS: [UserRole, string][] = [
   ["super-admin", "messages:write"],
   ["admin", "messages:read"],
   ["admin", "messages:write"],
-  ["owner", "messages:read"],
-  ["owner", "messages:write"],
 ];
 
 /** Insert messaging permissions for existing deployments (idempotent). */
@@ -221,13 +209,8 @@ const ESTIMATE_PERMISSIONS: [UserRole, string][] = [
   ["admin", "estimates:read"],
   ["admin", "estimates:write"],
   ["admin", "estimates:delete"],
-  ["owner", "estimates:read"],
-  ["owner", "estimates:write"],
-  ["owner", "estimates:delete"],
   ["manager", "estimates:read"],
   ["manager", "estimates:write"],
-  ["tech", "estimates:read"],
-  ["tech", "estimates:write"],
 ];
 
 export async function ensureEstimatePermissions(): Promise<void> {
@@ -247,12 +230,8 @@ const PRODUCT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "products:read"],
   ["admin", "products:write"],
   ["admin", "products:delete"],
-  ["owner", "products:read"],
-  ["owner", "products:write"],
-  ["owner", "products:delete"],
   ["manager", "products:read"],
   ["manager", "products:write"],
-  ["tech", "products:read"],
 ];
 
 export async function ensureProductPermissions(): Promise<void> {
@@ -272,12 +251,8 @@ const DISCOUNT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "discounts:read"],
   ["admin", "discounts:write"],
   ["admin", "discounts:delete"],
-  ["owner", "discounts:read"],
-  ["owner", "discounts:write"],
-  ["owner", "discounts:delete"],
   ["manager", "discounts:read"],
   ["manager", "discounts:write"],
-  ["tech", "discounts:read"],
 ];
 
 export async function ensureDiscountPermissions(): Promise<void> {
@@ -287,5 +262,86 @@ export async function ensureDiscountPermissions(): Promise<void> {
       { $setOnInsert: { role, permission } },
       { upsert: true },
     );
+  }
+}
+
+const JOB_ROLE_PERMISSIONS: [UserRole, string][] = [
+  ["super-admin", "job-roles:manage"],
+  ["admin", "job-roles:manage"],
+];
+
+/** Insert job-role management for existing deployments (idempotent). */
+export async function ensureJobRolePermissions(): Promise<void> {
+  for (const [role, permission] of JOB_ROLE_PERMISSIONS) {
+    await RolePermission.updateOne(
+      { role, permission },
+      { $setOnInsert: { role, permission } },
+      { upsert: true },
+    );
+  }
+}
+
+/**
+ * Sidebar links each role could see before nav permissions existed.
+ * New links are not added here; they stay hidden until a super-admin grants them.
+ * Inserts only, so a later removal is kept.
+ */
+const NAV_GRANT_RULES: {
+  href: string;
+  includeRoles?: string[];
+  excludeRoles?: string[];
+}[] = [
+  { href: "/dashboard/leads", excludeRoles: ["customer"] },
+  { href: "/dashboard/messaging", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/control-panel", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/customers", excludeRoles: ["customer"] },
+  { href: "/dashboard/contact", excludeRoles: ["customer"] },
+  { href: "/dashboard/contracts", excludeRoles: ["customer"] },
+  { href: "/dashboard/products", excludeRoles: ["customer"] },
+  { href: "/dashboard/discount-codes", excludeRoles: ["customer"] },
+  { href: "/dashboard/territory", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/users", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/users/roles", includeRoles: ["super-admin"] },
+  { href: "/dashboard/users/job-roles", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/admin", includeRoles: ["super-admin"] },
+  { href: "/dashboard" },
+  { href: "/dashboard/checkout", includeRoles: ["customer"] },
+  {
+    href: "/dashboard/financials",
+    excludeRoles: ["customer"],
+    includeRoles: ["admin", "super-admin", "manager"],
+  },
+  { href: "/dashboard/orders" },
+  { href: "/dashboard/work-orders", excludeRoles: ["customer", "agent"] },
+  { href: "/dashboard/estimates", excludeRoles: ["customer", "agent"] },
+  {
+    href: "/dashboard/estimates/templates",
+    excludeRoles: ["customer", "agent"],
+  },
+  { href: "/dashboard/schedule", excludeRoles: ["customer", "agent"] },
+  { href: "/dashboard/settings" },
+];
+
+function legacyRoleSeesNav(
+  rule: (typeof NAV_GRANT_RULES)[number],
+  role: string,
+): boolean {
+  if (rule.excludeRoles?.includes(role)) return false;
+  if (rule.includeRoles) return rule.includeRoles.includes(role);
+  return true;
+}
+
+export async function ensureNavPermissions(): Promise<void> {
+  const roles = await Role.find({ deletedAt: null }).select("slug").lean();
+  for (const { slug } of roles) {
+    for (const rule of NAV_GRANT_RULES) {
+      if (!legacyRoleSeesNav(rule, slug)) continue;
+      const permission = `nav:${rule.href}`;
+      await RolePermission.updateOne(
+        { role: slug, permission },
+        { $setOnInsert: { role: slug, permission } },
+        { upsert: true },
+      );
+    }
   }
 }

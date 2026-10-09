@@ -4,6 +4,7 @@ import {
   requirePermission,
 } from "../middleware/auth.middleware";
 import {
+  bulkUpdateInvoiceStatus,
   createInvoice,
   createInvoicePayLink,
   getInvoiceById,
@@ -26,6 +27,11 @@ router.patch(
   "/:id/tax",
   requirePermission("contracts:write"),
   updateInvoiceTax,
+);
+router.post(
+  "/bulk-status",
+  requirePermission("contracts:write"),
+  bulkUpdateInvoiceStatus,
 );
 router.post("/:id/checkout", startInvoiceCheckout);
 router.post(

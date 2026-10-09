@@ -8,7 +8,11 @@ import { ContractTemplate } from "../models/mongo/ContractTemplate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact } from "../models/mongo/CustomerContact";
-import { createInvoiceSchema, updateInvoiceTaxSchema } from "../schemas/invoice.schema";
+import {
+  bulkInvoiceStatusSchema,
+  createInvoiceSchema,
+  updateInvoiceTaxSchema,
+} from "../schemas/invoice.schema";
 import {
   dollarsToCents,
   ensureOpenInvoiceForWorkOrder,
@@ -38,17 +42,10 @@ import {
   normalizeTaxRatePercent,
   taxCentsFromDollars,
 } from "../services/taxSettings";
+import { isStaffRole } from "../utils/roles";
+import { buildTokenSearchFilter } from "../utils/textSearch";
 
 export { resolveCustomerRefsForAuthUser };
-
-const STAFF_ROLES = new Set([
-  "admin",
-  "super-admin",
-  "owner",
-  "manager",
-  "tech",
-  "dispatcher",
-]);
 
 function toPublicInvoice(doc: IInvoice | Record<string, unknown>) {
   const d =
@@ -206,8 +203,8 @@ async function enrichInvoiceDetail(invoice: {
   };
 }
 
-function isStaff(role?: string): boolean {
-  return Boolean(role && STAFF_ROLES.has(role));
+function isStaff(user: Parameters<typeof isStaffRole>[0]): boolean {
+  return isStaffRole(user);
 }
 
 export { mintPayToken } from "../utils/payToken";
@@ -221,24 +218,28 @@ function escapeRegex(value: string): string {
 async function customerRefsMatchingSearch(
   search: string,
 ): Promise<Types.ObjectId[]> {
-  const re = new RegExp(escapeRegex(search), "i");
   const digits = search.replace(/\D/g, "");
-  const customerOr: Record<string, unknown>[] = [
-    { accountName: re },
-    { first: re },
-    { last: re },
-    { email: re },
-    { phone: re },
-  ];
+  const customerOr: Record<string, unknown>[] = [];
+  const customerTokens = buildTokenSearchFilter(search, [
+    "accountName",
+    "first",
+    "last",
+    "email",
+    "phone",
+  ]);
+  if (customerTokens) customerOr.push(customerTokens);
   if (digits) {
     customerOr.push({ phoneDigits: new RegExp(escapeRegex(digits), "i") });
   }
-  const contactOr: Record<string, unknown>[] = [
-    { first: re },
-    { last: re },
-    { email: re },
-    { phone: re },
-  ];
+  const contactOr: Record<string, unknown>[] = [];
+  const contactTokens = buildTokenSearchFilter(search, [
+    "first",
+    "last",
+    "email",
+    "phone",
+  ]);
+  if (contactTokens) contactOr.push(contactTokens);
+  if (customerOr.length === 0 || contactOr.length === 0) return [];
 
   const [customers, contacts] = await Promise.all([
     Customer.find({ $or: customerOr }).select("_id").lean(),
@@ -321,7 +322,7 @@ export async function getInvoices(
       filter.workOrderRef = workOrderRef;
     }
 
-    if (isStaff(req.user?.role)) {
+    if (isStaff(req.user)) {
       if (typeof customerRef === "string" && customerRef) {
         filter.customerRef = customerRef;
       }
@@ -415,7 +416,7 @@ export async function getInvoiceById(
       return;
     }
 
-    if (!isStaff(req.user?.role)) {
+    if (!isStaff(req.user)) {
       const refs = await resolveCustomerRefsForAuthUser(req.user?.id ?? "");
       if (
         !invoice.customerRef ||
@@ -770,6 +771,74 @@ export async function reopenInvoiceByStaff(
   }
 }
 
+export async function bulkUpdateInvoiceStatus(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const parsed = bulkInvoiceStatusSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: "Validation failed",
+        errors: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const ids = [...new Set(parsed.data.ids)];
+    const actor = actorFromRequest(req.user);
+    const updated: ReturnType<typeof toPublicInvoice>[] = [];
+    const skipped: { id: string; reason: string }[] = [];
+    const failed: { id: string; message: string }[] = [];
+
+    for (const id of ids) {
+      try {
+        if (!Types.ObjectId.isValid(id)) {
+          skipped.push({ id, reason: "not_found" });
+          continue;
+        }
+
+        const invoice = await Invoice.findById(id);
+        if (!invoice) {
+          skipped.push({ id, reason: "not_found" });
+          continue;
+        }
+
+        if (parsed.data.paid) {
+          if (invoice.status === "paid") {
+            skipped.push({ id, reason: "already_paid" });
+            continue;
+          }
+          if (invoice.status !== "open" && invoice.status !== "failed") {
+            skipped.push({ id, reason: "cannot_mark_paid" });
+            continue;
+          }
+          const next = await markInvoicePaid({ invoice, actor });
+          updated.push(toPublicInvoice(next));
+        } else {
+          if (invoice.status !== "paid") {
+            skipped.push({ id, reason: "not_paid" });
+            continue;
+          }
+          const next = await reopenInvoice({ invoice, actor });
+          updated.push(toPublicInvoice(next));
+        }
+      } catch (err) {
+        failed.push({
+          id,
+          message:
+            err instanceof Error ? err.message : "Failed to update invoice",
+        });
+      }
+    }
+
+    res.json({ updated, skipped, failed });
+  } catch (err) {
+    console.error("[invoices] bulk status failed", err);
+    res.status(500).json({ message: "Failed to update invoices" });
+  }
+}
+
 export async function startInvoiceCheckout(
   req: AuthRequest,
   res: Response,
@@ -789,7 +858,7 @@ export async function startInvoiceCheckout(
       return;
     }
 
-    if (!isStaff(req.user?.role) && req.user?.id) {
+    if (!isStaff(req.user) && req.user?.id) {
       const refs = await resolveCustomerRefsForAuthUser(req.user.id);
       if (
         !invoice.customerRef ||

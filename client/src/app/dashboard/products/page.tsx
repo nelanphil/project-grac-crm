@@ -70,16 +70,27 @@ function PriceDisplay({
   );
 }
 
+function kindLabel(kind: ProductKind): string {
+  if (kind === "labor") return "Labor";
+  if (kind === "contract") return "Contract";
+  if (kind === "equipment") return "Equipment";
+  return "Part";
+}
+
 function KindBadge({ kind }: { kind: ProductKind }) {
+  const tone =
+    kind === "labor"
+      ? "bg-sky-50 text-sky-800 ring-sky-600/20"
+      : kind === "contract"
+        ? "bg-emerald-50 text-emerald-800 ring-emerald-600/20"
+        : kind === "equipment"
+          ? "bg-violet-50 text-violet-800 ring-violet-600/20"
+          : "bg-amber-50 text-amber-800 ring-amber-600/20";
   return (
     <span
-      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-        kind === "labor"
-          ? "bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-600/20"
-          : "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-600/20"
-      }`}
+      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tone}`}
     >
-      {kind === "labor" ? "Labor" : "Part"}
+      {kindLabel(kind)}
     </span>
   );
 }
@@ -92,19 +103,16 @@ export default function ProductsPage() {
   );
 }
 
-const PRODUCT_WRITE_ROLES = new Set(["admin", "super-admin", "owner", "manager"]);
-const PRODUCT_DELETE_ROLES = new Set(["admin", "super-admin", "owner"]);
-
 function ProductsContent() {
   const token = useAuthStore((s) => s.token);
-  const role = useAuthStore((s) => s.user?.role);
-  const permissions = useAuthStore((s) => s.user?.permissions);
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const hasRole = useAuthStore((s) => s.hasRole);
   const canWrite =
-    permissions?.includes("products:write") ||
-    PRODUCT_WRITE_ROLES.has(role ?? "");
+    hasPermission("products:write") ||
+    hasRole("admin", "super-admin", "manager");
   const canDelete =
-    permissions?.includes("products:delete") ||
-    PRODUCT_DELETE_ROLES.has(role ?? "");
+    hasPermission("products:delete") ||
+    hasRole("admin", "super-admin");
 
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -235,7 +243,12 @@ function ProductsContent() {
       productNumber: uppercaseText(product.productNumber ?? ""),
       name: uppercaseText(product.name),
       manufacturer: product.manufacturer?._id ?? "",
-      kind: product.kind === "labor" ? "labor" : "part",
+      kind:
+        product.kind === "labor" ||
+        product.kind === "contract" ||
+        product.kind === "equipment"
+          ? product.kind
+          : "part",
       listPrice: moneyString(listPriceOf(product)),
       cost: moneyString(product.cost ?? 0),
       strikeThroughPrice:
@@ -244,6 +257,8 @@ function ProductsContent() {
           : "",
       active: product.active,
       notes: uppercaseText(product.notes ?? ""),
+      agreementBody: product.agreementBody ?? "",
+      productDiscounts: product.productDiscounts ?? EMPTY_PRODUCT_FORM.productDiscounts,
     });
     resetManufacturerAdd();
     setModalOpen(true);
@@ -318,7 +333,7 @@ function ProductsContent() {
         <div>
           <h1 className="text-2xl font-bold text-brand-dark">Products</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            Parts and labor used on estimates and work orders.
+            Parts, labor, contracts, and equipment used on estimates and work orders.
           </p>
         </div>
         {canWrite ? (
@@ -397,7 +412,7 @@ function ProductsContent() {
               subtitle={product.name}
               badges={
                 <span className="flex flex-wrap gap-1">
-                  <KindBadge kind={product.kind === "labor" ? "labor" : "part"} />
+                  <KindBadge kind={product.kind} />
                   <span
                     className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
                       product.active
@@ -501,7 +516,7 @@ function ProductsContent() {
                       </td>
                       <td className="px-6 py-4 text-neutral-600">{product.name}</td>
                       <td className="px-6 py-4">
-                        <KindBadge kind={product.kind === "labor" ? "labor" : "part"} />
+                        <KindBadge kind={product.kind} />
                       </td>
                       <td className="px-6 py-4 text-neutral-700">
                         <PriceDisplay

@@ -126,16 +126,15 @@ export default function LocationStep({ data, errors, onChange }: LocationStepPro
           />
         </Field>
 
-        <label className="flex items-start gap-3 text-sm text-neutral-600">
+        <label htmlFor="estimate-sms-consent" className="flex items-start gap-3 text-sm text-neutral-600">
           <input
+            id="estimate-sms-consent"
             type="checkbox"
             checked={data.smsConsent}
             onChange={(e) => onChange("smsConsent", e.target.checked)}
             className="mt-1 h-4 w-4 rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
           />
-          <span>
-            <SmsConsentDisclosure />
-          </span>
+          <SmsConsentDisclosure />
         </label>
       </div>
     </div>

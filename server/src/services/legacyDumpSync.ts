@@ -3,7 +3,12 @@
  * Uses a dedicated mongoose connection so the API's default connection is never retargeted.
  */
 import mongoose, { Connection, Model, Types } from "mongoose";
-import { activeCustomerFilter, Customer, ICustomer } from "../models/mongo/Customer";
+import {
+  activeCustomerFilter,
+  Customer,
+  ensureCustomerOptionalUniqueIndexes,
+  ICustomer,
+} from "../models/mongo/Customer";
 import { CustomerAddress, ICustomerAddress } from "../models/mongo/CustomerAddress";
 import { activeContactFilter, CustomerContact, ICustomerContact } from "../models/mongo/CustomerContact";
 import { Equipment, IEquipment } from "../models/mongo/Equipment";
@@ -970,6 +975,7 @@ export async function runLegacyDumpSync(options: {
     conn = mongoose.createConnection(mongoUri);
     await conn.asPromise();
     log("Connected.");
+    await ensureCustomerOptionalUniqueIndexes(conn);
     const models = bindModels(conn);
 
     log("Loading existing customers…");

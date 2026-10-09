@@ -13,6 +13,7 @@ export default function TablePagination({
   onPrev,
   onNext,
   position,
+  pageSizeOptions = PAGE_SIZE_OPTIONS,
 }: {
   rangeStart: number;
   rangeEnd: number;
@@ -24,6 +25,7 @@ export default function TablePagination({
   onPrev: () => void;
   onNext: () => void;
   position: "top" | "bottom";
+  pageSizeOptions?: readonly number[];
 }) {
   return (
     <div
@@ -46,7 +48,7 @@ export default function TablePagination({
             }
             className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue"
           >
-            {PAGE_SIZE_OPTIONS.map((size) => (
+            {pageSizeOptions.map((size) => (
               <option key={size} value={size}>
                 {size}
               </option>

@@ -24,3 +24,12 @@ export const updateInvoiceTaxSchema = z
   );
 
 export type UpdateInvoiceTaxInput = z.infer<typeof updateInvoiceTaxSchema>;
+
+export const BULK_INVOICE_STATUS_LIMIT = 500;
+
+export const bulkInvoiceStatusSchema = z.object({
+  ids: z.array(z.string().trim().min(1)).min(1).max(BULK_INVOICE_STATUS_LIMIT),
+  paid: z.boolean(),
+});
+
+export type BulkInvoiceStatusInput = z.infer<typeof bulkInvoiceStatusSchema>;

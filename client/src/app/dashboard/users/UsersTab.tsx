@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   getUsers,
@@ -8,18 +9,32 @@ import {
   updateUser,
   deleteUser,
   getRoles,
+  getJobRoles,
   UserListItem,
   RoleItem,
+  JobRoleItem,
   ApiError,
-  UserWeeklyHours,
 } from "@/lib/api";
+import JobRoleFieldsRenderer from "@/components/users/JobRoleFieldsRenderer";
 import { FLORIDA_COUNTIES } from "@/lib/floridaCounties";
 import UsernameDisplay from "@/components/ui/UsernameDisplay";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import TablePagination from "@/components/ui/TablePagination";
-import { defaultWeeklyHours, weeklyHoursNeverEnabled } from "@/lib/schedule";
+import {
+  WEEKDAY_KEYS,
+  WEEKDAY_LABELS,
+  defaultWeeklyHours,
+  weeklyHoursNeverEnabled,
+} from "@/lib/schedule";
 import { DEFAULT_PAGE_SIZE, type PageSize } from "@/lib/pagination";
+import { canSeeNavHref } from "@/lib/dashboard-nav";
+import {
+  hasJobRoleCapability,
+  isCustomerRole,
+  isSuperAdminRole,
+  normalizeRoles,
+} from "@/lib/dashboard-role";
 
 type ModalMode = "create" | "edit" | null;
 type UserView = "staff" | "customers";
@@ -29,11 +44,13 @@ const emptyForm = {
   last_name: "",
   email: "",
   username: "",
-  role: "agent",
+  userType: "staff" as "staff" | "customer",
+  roles: ["agent"] as string[],
+  jobRoles: [] as string[],
+  jobRoleData: {} as Record<string, Record<string, unknown>>,
   password: "",
   counties: [] as string[],
   zips: [] as string[],
-  schedulable: false,
   weeklyHours: defaultWeeklyHours(false),
 };
 
@@ -41,13 +58,44 @@ function normalizeZipInput(raw: string): string {
   return raw.replace(/\D/g, "").slice(0, 5);
 }
 
+function formatLastLogin(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatLoginLocation(
+  location: UserListItem["lastLoginLocation"],
+): string {
+  if (!location) return "—";
+  const city = location.city.trim();
+  const region = location.region.trim();
+  const country = location.country.trim();
+  const place =
+    city && region
+      ? `${city}, ${region}`
+      : city && country
+        ? `${city}, ${country}`
+        : city || region || country;
+  if (!place) return "—";
+  return location.source === "device" ? place : `${place} (approx.)`;
+}
+
 export default function UsersTab() {
   const token = useAuthStore((s) => s.token);
   const currentUser = useAuthStore((s) => s.user);
-  const isSuperAdmin = currentUser?.role === "super-admin";
+  const isSuperAdmin = isSuperAdminRole(currentUser);
 
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [roleList, setRoleList] = useState<RoleItem[]>([]);
+  const [jobRoleList, setJobRoleList] = useState<JobRoleItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,10 +117,11 @@ export default function UsersTab() {
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
   useEffect(() => {
-    Promise.all([getUsers(token!), getRoles(token!)])
-      .then(([{ users }, { roles }]) => {
+    Promise.all([getUsers(token!), getRoles(token!), getJobRoles(token!)])
+      .then(([{ users }, { roles }, { jobRoles }]) => {
         setUsers(users);
         setRoleList(roles);
+        setJobRoleList(jobRoles);
       })
       .catch((err) =>
         setError(
@@ -86,30 +135,54 @@ export default function UsersTab() {
     return roleList.find((r) => r.slug === slug)?.label ?? slug;
   }
 
+  function formatUserRoles(user: UserListItem): string {
+    return normalizeRoles(user).map(getRoleLabel).join(", ");
+  }
+
+  function jobRoleLabels(user: UserListItem): string[] {
+    return (user.jobRoles ?? [])
+      .map((id) => jobRoleList.find((role) => role._id === id)?.label)
+      .filter((label): label is string => Boolean(label));
+  }
+
   const staffRoles = useMemo(
-    () => roleList.filter((r) => r.slug !== "customer"),
+    () => roleList.filter((r) => r.slug !== "customer" && r.slug !== "tech" && r.slug !== "owner"),
     [roleList],
   );
-  const createRoles = roleList;
+
+  const selectedJobRoles = useMemo(
+    () => jobRoleList.filter((role) => form.jobRoles.includes(role._id)),
+    [jobRoleList, form.jobRoles],
+  );
+  const formSchedulable = selectedJobRoles.some(
+    (role) => role.capabilities.schedulable,
+  );
+  const formTerritory = selectedJobRoles.some(
+    (role) => role.capabilities.territoryOwner,
+  );
 
   const staffUsers = useMemo(
-    () => users.filter((user) => user.role !== "customer"),
+    () => users.filter((user) => !isCustomerRole(user)),
     [users],
   );
 
   const customerUsers = useMemo(
-    () => users.filter((user) => user.role === "customer"),
+    () => users.filter((user) => isCustomerRole(user)),
     [users],
   );
 
   const visibleUsers = view === "staff" ? staffUsers : customerUsers;
   const isCustomerView = view === "customers";
-  const isCustomerForm = form.role === "customer";
+  const isCustomerForm = form.userType === "customer";
 
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
     return visibleUsers.filter((user) => {
-      if (view === "staff" && roleFilter !== "all" && user.role !== roleFilter) {
+      if (
+        view === "staff" &&
+        roleFilter !== "all" &&
+        !normalizeRoles(user).includes(roleFilter)
+      ) {
         return false;
       }
       if (!q) return true;
@@ -151,14 +224,12 @@ export default function UsersTab() {
   }
 
   function openCreate() {
-    const role =
-      view === "customers" ? "customer" : (staffRoles[0]?.slug ?? "agent");
-    const schedulable = role === "tech";
+    const customer = view === "customers";
     setForm({
       ...emptyForm,
-      role,
-      schedulable,
-      weeklyHours: defaultWeeklyHours(schedulable),
+      userType: customer ? "customer" : "staff",
+      roles: customer ? ["customer"] : [staffRoles[0]?.slug ?? "agent"],
+      weeklyHours: defaultWeeklyHours(false),
     });
     setZipDraft("");
     setEditingId(null);
@@ -168,20 +239,25 @@ export default function UsersTab() {
   }
 
   function openEdit(user: UserListItem) {
+    const customer = user.userType === "customer" || isCustomerRole(user);
     setForm({
       first_name: user.first_name,
       last_name: user.last_name,
       email: user.email,
       username: user.username ?? "",
-      role: user.role,
+      userType: customer ? "customer" : "staff",
+      roles: customer ? ["customer"] : normalizeRoles(user),
+      jobRoles: customer ? [] : (user.jobRoles ?? []),
+      jobRoleData: customer ? {} : (user.jobRoleData ?? {}),
       password: "",
       counties: user.territories?.counties ?? [],
       zips: user.territories?.zips ?? [],
-      schedulable:
-        user.role === "customer"
-          ? false
-          : (user.schedulable ?? user.role === "tech"),
-      weeklyHours: user.weeklyHours ?? defaultWeeklyHours(Boolean(user.schedulable)),
+      weeklyHours:
+        user.weeklyHours ??
+        defaultWeeklyHours(
+          hasJobRoleCapability(user.jobRoles, jobRoleList, "schedulable") ||
+            Boolean(user.schedulable),
+        ),
     });
     setZipDraft("");
     setEditingId(user._id);
@@ -224,6 +300,70 @@ export default function UsersTab() {
     setForm((f) => ({ ...f, zips: f.zips.filter((z) => z !== zip) }));
   }
 
+  function toggleFormRole(slug: string) {
+    setForm((f) => {
+      const has = f.roles.includes(slug);
+      let roles = has
+        ? f.roles.filter((role) => role !== slug)
+        : [...f.roles, slug];
+      if (roles.length === 0) {
+        roles = [staffRoles[0]?.slug ?? "agent"];
+      }
+      return { ...f, roles };
+    });
+  }
+
+  function setAccountType(next: "staff" | "customer") {
+    setForm((f) => {
+      if (next === "customer") {
+        return {
+          ...f,
+          userType: "customer",
+          roles: ["customer"],
+          jobRoles: [],
+          jobRoleData: {},
+          counties: [],
+          zips: [],
+        };
+      }
+      return {
+        ...f,
+        userType: "staff",
+        roles:
+          f.userType === "customer"
+            ? [staffRoles[0]?.slug ?? "agent"]
+            : f.roles,
+      };
+    });
+  }
+
+  function toggleJobRole(id: string) {
+    setForm((f) => {
+      const has = f.jobRoles.includes(id);
+      const jobRoles = has
+        ? f.jobRoles.filter((roleId) => roleId !== id)
+        : [...f.jobRoles, id];
+      const role = jobRoleList.find((item) => item._id === id);
+      const stillTerritory = jobRoleList.some(
+        (item) =>
+          jobRoles.includes(item._id) && item.capabilities.territoryOwner,
+      );
+      return {
+        ...f,
+        jobRoles,
+        weeklyHours:
+          !has &&
+          role?.capabilities.schedulable &&
+          weeklyHoursNeverEnabled(f.weeklyHours)
+            ? defaultWeeklyHours(true)
+            : f.weeklyHours,
+        ...(has && !stillTerritory
+          ? { counties: [] as string[], zips: [] as string[] }
+          : {}),
+      };
+    });
+  }
+
   function onZipKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
       if (zipDraft.trim()) {
@@ -246,47 +386,41 @@ export default function UsersTab() {
       addZip(zipDraft);
     }
 
-    const territories =
-      form.role === "owner"
+    const customer = form.userType === "customer";
+    const shared = {
+      email: form.email.trim(),
+      first_name: form.first_name.trim(),
+      last_name: form.last_name.trim(),
+      userType: form.userType,
+      roles: customer ? ["customer"] : form.roles,
+      jobRoles: customer ? [] : form.jobRoles,
+      jobRoleData: customer ? {} : form.jobRoleData,
+      username: form.username.trim() === "" ? null : form.username.trim(),
+      territories: customer || !formTerritory
+        ? { counties: [] as string[], zips: [] as string[] }
+        : { counties: form.counties, zips: form.zips },
+      ...(formSchedulable && !customer
         ? {
-            counties: form.counties,
-            zips: form.zips,
+            weeklyHours: weeklyHoursNeverEnabled(form.weeklyHours)
+              ? defaultWeeklyHours(true)
+              : form.weeklyHours,
           }
-        : undefined;
+        : {}),
+    };
 
     try {
       if (modal === "create") {
-        const payload: {
-          email: string;
-          first_name: string;
-          last_name: string;
-          role: string;
-          password?: string;
-          username?: string | null;
-          territories?: { counties: string[]; zips: string[] };
-          schedulable?: boolean;
-          weeklyHours?: UserWeeklyHours;
-        } = {
-          email: form.email.trim(),
-          first_name: form.first_name.trim(),
-          last_name: form.last_name.trim(),
-          role: form.role,
-          username: form.username.trim() === "" ? null : form.username.trim(),
-        };
-        if (form.password.trim()) {
-          payload.password = form.password;
-        }
-        if (territories) payload.territories = territories;
-        payload.schedulable = form.role === "customer" ? false : form.schedulable;
-        if (payload.schedulable) {
-          payload.weeklyHours = weeklyHoursNeverEnabled(form.weeklyHours)
-            ? defaultWeeklyHours(true)
-            : form.weeklyHours;
-        }
+        const payload: typeof shared & { password?: string } = { ...shared };
+        if (form.password.trim()) payload.password = form.password;
         const { user, temporaryPassword } = await createUser(token, payload);
-        setUsers((prev) => [user, ...prev]);
-        if (user.role === "customer" && view !== "customers") {
+        setUsers((prev) => [
+          user,
+          ...prev.filter((row) => row._id !== user._id),
+        ]);
+        if (isCustomerRole(user) && view !== "customers") {
           setUserView("customers");
+        } else if (!isCustomerRole(user) && view === "customers") {
+          setUserView("staff");
         }
         if (temporaryPassword) {
           setTempPassword(temporaryPassword);
@@ -294,44 +428,9 @@ export default function UsersTab() {
           closeModal();
         }
       } else if (modal === "edit" && editingId) {
-        const payload: {
-          email: string;
-          first_name: string;
-          last_name: string;
-          role: string;
-          username: string | null;
-          password?: string;
-          territories?: { counties: string[]; zips: string[] };
-          schedulable?: boolean;
-          weeklyHours?: UserWeeklyHours;
-        } = {
-          email: form.email.trim(),
-          first_name: form.first_name.trim(),
-          last_name: form.last_name.trim(),
-          role: form.role,
-          username: form.username.trim() === "" ? null : form.username.trim(),
-        };
+        const payload: typeof shared & { password?: string } = { ...shared };
         if (isSuperAdmin && form.password.trim()) {
           payload.password = form.password;
-        }
-        if (form.role === "customer") {
-          payload.schedulable = false;
-          payload.territories = { counties: [], zips: [] };
-        } else {
-          if (form.role === "owner") {
-            payload.territories = {
-              counties: form.counties,
-              zips: form.zips,
-            };
-          } else {
-            payload.territories = { counties: [], zips: [] };
-          }
-          payload.schedulable = form.schedulable;
-          if (form.schedulable) {
-            payload.weeklyHours = weeklyHoursNeverEnabled(form.weeklyHours)
-              ? defaultWeeklyHours(true)
-              : form.weeklyHours;
-          }
         }
         const { user } = await updateUser(token, editingId, payload);
         setUsers((prev) => prev.map((u) => (u._id === editingId ? user : u)));
@@ -382,7 +481,7 @@ export default function UsersTab() {
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-      <div className="px-4 py-4 sm:px-6 border-b border-neutral-100 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 border-b border-neutral-100 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">Users</h2>
           <p className="text-sm text-neutral-500 mt-0.5">
@@ -391,13 +490,31 @@ export default function UsersTab() {
               : `${filteredUsers.length} of ${visibleUsers.length}`}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="btn-primary text-sm px-4 py-2"
-        >
-          Create user
-        </button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+          {canSeeNavHref(currentUser, "/dashboard/users/roles") && (
+            <Link
+              href="/dashboard/users/roles"
+              className="inline-flex w-full items-center justify-center rounded-md border border-neutral-200 px-4 py-2 text-sm font-medium text-brand-dark hover:bg-neutral-50 sm:w-auto"
+            >
+              Roles & Permissions
+            </Link>
+          )}
+          {canSeeNavHref(currentUser, "/dashboard/users/job-roles") && (
+            <Link
+              href="/dashboard/users/job-roles"
+              className="inline-flex w-full items-center justify-center rounded-md border border-neutral-200 px-4 py-2 text-sm font-medium text-brand-dark hover:bg-neutral-50 sm:w-auto"
+            >
+              Job Roles
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={openCreate}
+            className="btn-primary w-full px-4 py-2 text-sm sm:w-auto"
+          >
+            Create user
+          </button>
+        </div>
       </div>
 
       <div className="px-4 py-4 sm:px-6 border-b border-neutral-100 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -477,8 +594,18 @@ export default function UsersTab() {
               subtitle={user.email}
               badges={
                 isCustomerView ? undefined : (
-                  <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
-                    {getRoleLabel(user.role)}
+                  <span className="inline-flex flex-wrap gap-1">
+                    <span className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
+                      {formatUserRoles(user)}
+                    </span>
+                    {jobRoleLabels(user).map((label) => (
+                      <span
+                        key={label}
+                        className="inline-flex rounded-full bg-orange-50 px-2 py-0.5 text-xs font-medium text-brand-orange"
+                      >
+                        {label}
+                      </span>
+                    ))}
                   </span>
                 )
               }
@@ -495,15 +622,17 @@ export default function UsersTab() {
                       }
                     />
                   )}
-                  {!isCustomerView && (
-                    <DataField
-                      label="Work schedule"
-                      value={user.schedulable ? "On" : "Off"}
-                    />
-                  )}
                   <DataField
                     label="Joined"
                     value={new Date(user.createdAt).toLocaleDateString()}
+                  />
+                  <DataField
+                    label="Last login"
+                    value={formatLastLogin(user.lastLoginAt)}
+                  />
+                  <DataField
+                    label="Location"
+                    value={formatLoginLocation(user.lastLoginLocation)}
                   />
                 </>
               }
@@ -548,16 +677,22 @@ export default function UsersTab() {
                     )}
                     {!isCustomerView && (
                       <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                        Role
+                        Roles
                       </th>
                     )}
                     {!isCustomerView && (
                       <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                        Work schedule
+                        Job roles
                       </th>
                     )}
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Joined
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Last login
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Location
                     </th>
                     <th className="px-6 py-3" />
                   </tr>
@@ -580,17 +715,25 @@ export default function UsersTab() {
                         </td>
                       )}
                       {!isCustomerView && (
-                        <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
-                          {getRoleLabel(user.role)}
+                        <td className="px-6 py-4 text-neutral-700">
+                          {formatUserRoles(user)}
                         </td>
                       )}
                       {!isCustomerView && (
-                        <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                          {user.schedulable ? "On" : "Off"}
+                        <td className="px-6 py-4 text-neutral-700">
+                          {jobRoleLabels(user).length
+                            ? jobRoleLabels(user).join(", ")
+                            : "—"}
                         </td>
                       )}
                       <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
                         {new Date(user.createdAt).toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
+                        {formatLastLogin(user.lastLoginAt)}
+                      </td>
+                      <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
+                        {formatLoginLocation(user.lastLoginLocation)}
                       </td>
                       <td className="px-6 py-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-3">
@@ -632,7 +775,9 @@ export default function UsersTab() {
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-3 py-3 sm:px-4 sm:py-6">
           <div
             className={`flex w-full max-h-[min(92dvh,920px)] flex-col overflow-hidden rounded-xl bg-white shadow-xl ${
-              form.role === "owner" ? "max-w-2xl" : "max-w-md"
+              formTerritory || selectedJobRoles.some((role) => role.fields.length > 0)
+                ? "max-w-2xl"
+                : "max-w-md"
             }`}
           >
             <div className="shrink-0 border-b border-neutral-100 px-4 py-4 sm:px-6">
@@ -737,43 +882,219 @@ export default function UsersTab() {
 
                 <div>
                   <label className="block text-sm font-medium text-brand-dark">
-                    Role
+                    Account type
                   </label>
-                  {modal === "edit" && isCustomerForm ? (
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    {(["staff", "customer"] as const).map((type) => (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => setAccountType(type)}
+                        className={`rounded-md border px-3 py-2 text-sm font-medium capitalize ${
+                          form.userType === type
+                            ? "border-brand-orange bg-orange-50 text-brand-dark"
+                            : "border-neutral-200 text-neutral-600 hover:bg-neutral-50"
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1 text-xs text-neutral-500">
+                    {isCustomerForm
+                      ? "Customers sign in to the portal. They use the customer security role."
+                      : "Staff use security roles for access and job roles for scheduling and territories."}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-brand-dark">
+                    {isCustomerForm ? "Security role" : "Security roles"}
+                  </label>
+                  {isCustomerForm ? (
                     <input
                       readOnly
                       value={getRoleLabel("customer")}
                       className="mt-1 block w-full rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700"
                     />
                   ) : (
-                    <select
-                      value={form.role}
-                      onChange={(e) => {
-                        const role = e.target.value;
-                        setForm((f) => ({
-                          ...f,
-                          role,
-                          schedulable:
-                            role === "customer" ? false : f.schedulable,
-                          ...(role !== "owner"
-                            ? { counties: [], zips: [] }
-                            : {}),
-                        }));
-                      }}
-                      className="mt-1 block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
-                    >
-                      {(modal === "create" ? createRoles : staffRoles).map(
-                        (r) => (
-                          <option key={r.slug} value={r.slug}>
-                            {r.label}
-                          </option>
-                        ),
-                      )}
-                    </select>
+                    <div className="mt-2 space-y-2 rounded-md border border-neutral-200 bg-white p-3">
+                      {staffRoles.map((r) => {
+                        const checked = form.roles.includes(r.slug);
+                        const onlyRole =
+                          checked && form.roles.length === 1;
+                        return (
+                          <label
+                            key={r.slug}
+                            className="flex items-start gap-2 text-sm text-neutral-700"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={onlyRole}
+                              onChange={() => toggleFormRole(r.slug)}
+                              className="mt-0.5 rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
+                            />
+                            <span className="font-medium">{r.label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
 
-                {form.role === "owner" && (
+                {!isCustomerForm && (
+                  <div>
+                    <label className="block text-sm font-medium text-brand-dark">
+                      Job roles
+                    </label>
+                    <div className="mt-2 space-y-2 rounded-md border border-neutral-200 bg-white p-3">
+                      {jobRoleList.length === 0 ? (
+                        <p className="text-sm text-neutral-500">No job roles yet.</p>
+                      ) : (
+                        jobRoleList.map((role) => (
+                          <label
+                            key={role._id}
+                            className="flex items-start gap-2 text-sm text-neutral-700"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={form.jobRoles.includes(role._id)}
+                              onChange={() => toggleJobRole(role._id)}
+                              className="mt-0.5 rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
+                            />
+                            <span>
+                              <span className="font-medium">{role.label}</span>
+                              <span className="mt-0.5 block text-xs text-neutral-500">
+                                {[
+                                  role.capabilities.schedulable
+                                    ? "Can be scheduled"
+                                    : null,
+                                  role.capabilities.territoryOwner
+                                    ? "Owns a territory"
+                                    : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ") || role.description || "No capabilities"}
+                              </span>
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {!isCustomerForm &&
+                  selectedJobRoles.map((role) => (
+                    <JobRoleFieldsRenderer
+                      key={role._id}
+                      title={role.label}
+                      color={role.color}
+                      fields={role.fields}
+                      values={form.jobRoleData[role._id] ?? {}}
+                      onChange={(key, value) =>
+                        setForm((f) => ({
+                          ...f,
+                          jobRoleData: {
+                            ...f.jobRoleData,
+                            [role._id]: {
+                              ...(f.jobRoleData[role._id] ?? {}),
+                              [key]: value,
+                            },
+                          },
+                        }))
+                      }
+                    />
+                  ))}
+
+                {formSchedulable && !isCustomerForm && (
+                  <div className="space-y-2 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4">
+                    <p className="text-sm font-medium text-brand-dark">
+                      Weekly hours
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      Shown on the schedule because a selected job role is schedulable.
+                    </p>
+                    <div className="overflow-x-auto rounded-md border border-neutral-200 bg-white">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-neutral-50 text-neutral-500">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left font-medium">Day</th>
+                            <th className="px-2 py-1.5 text-left font-medium">On</th>
+                            <th className="px-2 py-1.5 text-left font-medium">Start</th>
+                            <th className="px-2 py-1.5 text-left font-medium">End</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {WEEKDAY_KEYS.map((day) => (
+                            <tr key={day} className="border-t border-neutral-100">
+                              <td className="px-2 py-1.5">{WEEKDAY_LABELS[day]}</td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  type="checkbox"
+                                  checked={form.weeklyHours[day].enabled}
+                                  onChange={(e) =>
+                                    setForm((f) => ({
+                                      ...f,
+                                      weeklyHours: {
+                                        ...f.weeklyHours,
+                                        [day]: {
+                                          ...f.weeklyHours[day],
+                                          enabled: e.target.checked,
+                                        },
+                                      },
+                                    }))
+                                  }
+                                />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  type="time"
+                                  value={form.weeklyHours[day].start}
+                                  onChange={(e) =>
+                                    setForm((f) => ({
+                                      ...f,
+                                      weeklyHours: {
+                                        ...f.weeklyHours,
+                                        [day]: {
+                                          ...f.weeklyHours[day],
+                                          start: e.target.value,
+                                        },
+                                      },
+                                    }))
+                                  }
+                                  className="rounded border border-neutral-200 px-1 py-0.5"
+                                />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  type="time"
+                                  value={form.weeklyHours[day].end}
+                                  onChange={(e) =>
+                                    setForm((f) => ({
+                                      ...f,
+                                      weeklyHours: {
+                                        ...f.weeklyHours,
+                                        [day]: {
+                                          ...f.weeklyHours[day],
+                                          end: e.target.value,
+                                        },
+                                      },
+                                    }))
+                                  }
+                                  className="rounded border border-neutral-200 px-1 py-0.5"
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {formTerritory && !isCustomerForm && (
                   <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4">
                     <div>
                       <p className="text-sm font-medium text-brand-dark">
@@ -874,39 +1195,6 @@ export default function UsersTab() {
                         ownership.
                       </p>
                     </div>
-                  </div>
-                )}
-
-                {!isCustomerForm && (
-                  <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50/60 p-4">
-                    <div>
-                      <p className="text-sm font-medium text-brand-dark">
-                        Work schedule
-                      </p>
-                      <p className="mt-0.5 text-xs text-neutral-500">
-                        When on, this user appears as a technician on the Schedule
-                        page. Set weekly hours and home location there.
-                      </p>
-                    </div>
-                    <label className="flex items-center gap-2 text-sm text-neutral-700">
-                      <input
-                        type="checkbox"
-                        checked={form.schedulable}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setForm((f) => ({
-                            ...f,
-                            schedulable: checked,
-                            weeklyHours:
-                              checked && weeklyHoursNeverEnabled(f.weeklyHours)
-                                ? defaultWeeklyHours(true)
-                                : f.weeklyHours,
-                          }));
-                        }}
-                        className="rounded border-neutral-300 text-brand-orange focus:ring-brand-orange"
-                      />
-                      On work schedule
-                    </label>
                   </div>
                 )}
 

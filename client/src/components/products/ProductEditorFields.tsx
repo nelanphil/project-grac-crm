@@ -6,6 +6,11 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import type { ManufacturerItem, ProductKind, ProductWritePayload } from "@/lib/api";
+import ProductDiscountEditor from "@/components/contracts/ProductDiscountEditor";
+import {
+  DEFAULT_PRODUCT_DISCOUNTS,
+  type ProductDiscounts,
+} from "@/lib/productDiscounts";
 
 export type ProductFormState = {
   productCode: string;
@@ -18,6 +23,8 @@ export type ProductFormState = {
   strikeThroughPrice: string;
   active: boolean;
   notes: string;
+  agreementBody: string;
+  productDiscounts: ProductDiscounts;
 };
 
 export const EMPTY_PRODUCT_FORM: ProductFormState = {
@@ -31,6 +38,8 @@ export const EMPTY_PRODUCT_FORM: ProductFormState = {
   strikeThroughPrice: "",
   active: true,
   notes: "",
+  agreementBody: "",
+  productDiscounts: DEFAULT_PRODUCT_DISCOUNTS,
 };
 
 const ADD_MANUFACTURER = "__add__";
@@ -88,6 +97,8 @@ export function toProductWritePayload(form: ProductFormState): ProductWritePaylo
     strikeThroughPrice: Number(form.strikeThroughPrice) || 0,
     active: form.active,
     notes: uppercaseText(form.notes.trim()),
+    agreementBody: form.agreementBody,
+    productDiscounts: form.productDiscounts,
   };
 }
 
@@ -284,6 +295,8 @@ export default function ProductEditorFields({
         >
           <option value="part">Part</option>
           <option value="labor">Labor</option>
+          <option value="equipment">Equipment</option>
+          <option value="contract">Contract</option>
         </select>
       </label>
       <div className="block text-sm">
@@ -363,6 +376,25 @@ export default function ProductEditorFields({
           onChange={(notes) => onChange({ notes })}
         />
       </label>
+      {form.kind === "contract" ? (
+        <>
+          <label className="block text-sm sm:col-span-2">
+            <FieldLabel>Agreement body</FieldLabel>
+            <textarea
+              value={form.agreementBody}
+              rows={5}
+              onChange={(e) => onChange({ agreementBody: e.target.value })}
+              className={inputClass}
+            />
+          </label>
+          <div className="sm:col-span-2">
+            <ProductDiscountEditor
+              value={form.productDiscounts}
+              onChange={(productDiscounts) => onChange({ productDiscounts })}
+            />
+          </div>
+        </>
+      ) : null}
       <label className="inline-flex items-center gap-2 text-sm text-neutral-600 sm:col-span-2">
         <input
           type="checkbox"

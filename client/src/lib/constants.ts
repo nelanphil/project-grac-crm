@@ -261,3 +261,72 @@ export const US_STATES = [
   "Wisconsin",
   "Wyoming",
 ] as const;
+
+/** Two-letter code. Blank values become FL. Full names such as "Florida" are accepted. */
+export function toUsStateCode(
+  value: string | null | undefined,
+  fallback = "FL",
+): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return fallback;
+  const upper = raw.toUpperCase();
+  const codes = Object.values(US_STATE_CODES) as string[];
+  if (codes.includes(upper)) return upper;
+  const named = (
+    Object.entries(US_STATE_CODES) as [string, string][]
+  ).find(([name]) => name.toLowerCase() === raw.toLowerCase());
+  return named?.[1] ?? fallback;
+}
+
+export const US_STATE_CODES: Record<(typeof US_STATES)[number], string> = {
+  Florida: "FL",
+  Alabama: "AL",
+  Alaska: "AK",
+  Arizona: "AZ",
+  Arkansas: "AR",
+  California: "CA",
+  Colorado: "CO",
+  Connecticut: "CT",
+  Delaware: "DE",
+  Georgia: "GA",
+  Hawaii: "HI",
+  Idaho: "ID",
+  Illinois: "IL",
+  Indiana: "IN",
+  Iowa: "IA",
+  Kansas: "KS",
+  Kentucky: "KY",
+  Louisiana: "LA",
+  Maine: "ME",
+  Maryland: "MD",
+  Massachusetts: "MA",
+  Michigan: "MI",
+  Minnesota: "MN",
+  Mississippi: "MS",
+  Missouri: "MO",
+  Montana: "MT",
+  Nebraska: "NE",
+  Nevada: "NV",
+  "New Hampshire": "NH",
+  "New Jersey": "NJ",
+  "New Mexico": "NM",
+  "New York": "NY",
+  "North Carolina": "NC",
+  "North Dakota": "ND",
+  Ohio: "OH",
+  Oklahoma: "OK",
+  Oregon: "OR",
+  Pennsylvania: "PA",
+  "Rhode Island": "RI",
+  "South Carolina": "SC",
+  "South Dakota": "SD",
+  Tennessee: "TN",
+  Texas: "TX",
+  Utah: "UT",
+  Vermont: "VT",
+  Virginia: "VA",
+  Washington: "WA",
+  "West Virginia": "WV",
+  Wisconsin: "WI",
+  Wyoming: "WY",
+};

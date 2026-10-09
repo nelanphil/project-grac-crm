@@ -10,21 +10,21 @@ import {
   updateWorkOrderNoteSchema,
 } from "../schemas/workOrderNote.schema";
 import { isDispatcherRole } from "../services/schedule.service";
+import { isAdminRole, isStaffRole, DISPATCHER_ROLES } from "../utils/roles";
 import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
-
-const ADMIN_ROLES = new Set(["admin", "super-admin", "owner"]);
-const STAFF_ROLES = new Set([
-  "admin",
-  "super-admin",
-  "owner",
-  "manager",
-  "tech",
-  "dispatcher",
-  "agent",
-]);
+import {
+  createAudience,
+  displayTicketNumber,
+  editAudience,
+  notifyNoteAudience,
+  readMentionIds,
+  readMentions,
+  sanitizeMentionUserIds,
+  type NoteMention,
+} from "../services/noteAudience";
 
 type PopulatedAuthor = {
   _id: mongoose.Types.ObjectId;
@@ -39,17 +39,12 @@ export type PublicWorkOrderNote = {
   author?: { first_name: string; last_name: string };
   content: string;
   visibleToCustomer: boolean;
+  isReminder?: boolean;
+  mentionUserIds?: string[];
+  mentions?: NoteMention[];
   createdAt: string;
   updatedAt: string;
 };
-
-function isAdminRole(role?: string): boolean {
-  return Boolean(role && ADMIN_ROLES.has(role));
-}
-
-function isStaffRole(role?: string): boolean {
-  return Boolean(role && STAFF_ROLES.has(role));
-}
 
 function hasJobsPermission(req: AuthRequest, permission: string): boolean {
   return Boolean(req.user?.permissions.includes(permission));
@@ -62,6 +57,8 @@ function formatNote(
     authorId: mongoose.Types.ObjectId | PopulatedAuthor;
     content: string;
     visibleToCustomer: boolean;
+    isReminder?: boolean;
+    mentionUserIds?: unknown;
     createdAt: Date;
     updatedAt: Date;
   },
@@ -88,6 +85,9 @@ function formatNote(
     publicNote.author = author
       ? { first_name: author.first_name, last_name: author.last_name }
       : { first_name: "", last_name: "" };
+    publicNote.isReminder = Boolean(note.isReminder);
+    publicNote.mentionUserIds = readMentionIds(note.mentionUserIds);
+    publicNote.mentions = readMentions(note.mentionUserIds);
   }
 
   return publicNote;
@@ -104,6 +104,8 @@ function asFormatted(
       authorId: note.authorId as PopulatedAuthor,
       content: String(note.content ?? ""),
       visibleToCustomer: Boolean(note.visibleToCustomer),
+      isReminder: Boolean(note.isReminder),
+      mentionUserIds: note.mentionUserIds,
       createdAt: note.createdAt as Date,
       updatedAt: note.updatedAt as Date,
     },
@@ -140,7 +142,7 @@ async function canWriteNotes(
     res.status(403).json({ message: "Missing permission: jobs:write" });
     return false;
   }
-  const dispatcher = isDispatcherRole(req.user.role);
+  const dispatcher = isDispatcherRole(req.user);
   const isAssignee =
     workOrder.assignedUserRef &&
     String(workOrder.assignedUserRef) === req.user.id;
@@ -158,7 +160,10 @@ async function resolveLegacyAuthorId(
 ): Promise<mongoose.Types.ObjectId | null> {
   if (assignedUserRef) return assignedUserRef;
   const admin = await User.findOne({
-    role: { $in: [...ADMIN_ROLES] },
+    $or: [
+      { roles: { $in: [...DISPATCHER_ROLES] } },
+      { role: { $in: [...DISPATCHER_ROLES] } },
+    ],
   })
     .select("_id")
     .lean();
@@ -243,7 +248,7 @@ export async function getWorkOrderNotes(
 
     await ensureLegacyWorkOrderNote(workOrder);
 
-    const staff = isStaffRole(req.user?.role);
+    const staff = isStaffRole(req.user);
     const query: Record<string, unknown> = { workOrderRef: workOrder._id };
     if (!staff) {
       query.visibleToCustomer = true;
@@ -251,6 +256,7 @@ export async function getWorkOrderNotes(
 
     const notes = await WorkOrderNote.find(query)
       .populate("authorId", "first_name last_name")
+      .populate("mentionUserIds", "first_name last_name")
       .sort({ createdAt: 1 })
       .lean();
 
@@ -296,11 +302,16 @@ export async function createWorkOrderNote(
       }
     }
 
+    const mentionUserIds = await sanitizeMentionUserIds(parsed.data.mentionUserIds);
+    const isReminder = parsed.data.isReminder ?? false;
+
     const note = await WorkOrderNote.create({
       workOrderRef: workOrder._id,
       authorId: req.user!.id,
       content,
       visibleToCustomer: parsed.data.visibleToCustomer ?? true,
+      isReminder,
+      mentionUserIds,
     });
 
     if (note.visibleToCustomer) {
@@ -309,11 +320,28 @@ export async function createWorkOrderNote(
 
     const populated = await WorkOrderNote.findById(note._id)
       .populate("authorId", "first_name last_name")
+      .populate("mentionUserIds", "first_name last_name")
       .lean();
     if (!populated) {
       res.status(500).json({ message: "Internal server error" });
       return;
     }
+
+    notifyNoteAudience({
+      entityType: "work_order_note",
+      noteId: String(note._id),
+      recipientIds: createAudience(
+        req.user!.id,
+        mentionUserIds.map((id) => String(id)),
+        isReminder,
+      ),
+      isReminder,
+      ticketNumber: displayTicketNumber(workOrder),
+      ticketId: String(workOrder._id),
+      customerRef: workOrder.customerRef,
+      customerName: workOrder.customerName,
+      actorUserId: req.user!.id,
+    });
 
     logNotificationAsync({
       entityType: "work_order_note",
@@ -366,25 +394,51 @@ export async function updateWorkOrderNote(
     }
 
     const isAuthor = note.authorId.toString() === req.user!.id;
-    if (!isAuthor && !isAdminRole(req.user?.role)) {
+    if (!isAuthor && !isAdminRole(req.user)) {
       res.status(403).json({ message: "You can only edit your own notes" });
       return;
     }
 
+    const prevMentionIds = (note.mentionUserIds ?? []).map((id) => String(id));
+    const prevReminder = Boolean(note.isReminder);
+
     if (parsed.data.content !== undefined) note.content = parsed.data.content;
     if (parsed.data.visibleToCustomer !== undefined) {
       note.visibleToCustomer = parsed.data.visibleToCustomer;
+    }
+    if (parsed.data.isReminder !== undefined) note.isReminder = parsed.data.isReminder;
+    if (parsed.data.mentionUserIds !== undefined) {
+      note.mentionUserIds = await sanitizeMentionUserIds(parsed.data.mentionUserIds);
     }
     await note.save();
     await syncDescPerformedPreview(workOrder._id);
 
     const populated = await WorkOrderNote.findById(note._id)
       .populate("authorId", "first_name last_name")
+      .populate("mentionUserIds", "first_name last_name")
       .lean();
     if (!populated) {
       res.status(500).json({ message: "Internal server error" });
       return;
     }
+
+    notifyNoteAudience({
+      entityType: "work_order_note",
+      noteId: String(note._id),
+      recipientIds: editAudience({
+        authorId: String(note.authorId),
+        prevMentionIds,
+        nextMentionIds: (note.mentionUserIds ?? []).map((id) => String(id)),
+        prevReminder,
+        nextReminder: Boolean(note.isReminder),
+      }),
+      isReminder: Boolean(note.isReminder),
+      ticketNumber: displayTicketNumber(workOrder),
+      ticketId: String(workOrder._id),
+      customerRef: workOrder.customerRef,
+      customerName: workOrder.customerName,
+      actorUserId: req.user!.id,
+    });
 
     logNotificationAsync({
       entityType: "work_order_note",
@@ -428,7 +482,7 @@ export async function deleteWorkOrderNote(
     }
 
     const isAuthor = note.authorId.toString() === req.user!.id;
-    if (!isAuthor && !isAdminRole(req.user?.role)) {
+    if (!isAuthor && !isAdminRole(req.user)) {
       res.status(403).json({ message: "You can only delete your own notes" });
       return;
     }
@@ -449,6 +503,265 @@ export async function deleteWorkOrderNote(
     res.status(204).send();
   } catch (err) {
     console.error("DELETE /work-orders/:id/notes/:noteId error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function getRecentWorkOrderNotes(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user || !isStaffRole(req.user)) {
+    res.status(403).json({ message: "Staff only" });
+    return;
+  }
+  if (!hasJobsPermission(req, "jobs:read")) {
+    res.status(403).json({ message: "Missing permission: jobs:read" });
+    return;
+  }
+
+  try {
+    const notes = await WorkOrderNote.find({ isReminder: { $ne: true } })
+      .sort({ createdAt: -1 })
+      .limit(8)
+      .populate("authorId", "first_name last_name")
+      .lean();
+
+    const workOrderIds = notes.map((note) => note.workOrderRef);
+    const workOrders = await WorkOrder.find({ _id: { $in: workOrderIds } })
+      .select("number legacyId customerName")
+      .lean();
+    const ordersById = new Map(
+      workOrders.map((order) => [String(order._id), order]),
+    );
+
+    res.json({
+      notes: notes.map((note) => {
+        const author = note.authorId as Partial<PopulatedAuthor> | null;
+        const authorName = [author?.first_name, author?.last_name]
+          .map((part) => part?.trim())
+          .filter(Boolean)
+          .join(" ");
+        const order = ordersById.get(String(note.workOrderRef));
+        return {
+          id: String(note._id),
+          content: note.content,
+          createdAt: note.createdAt.toISOString(),
+          authorName,
+          workOrderId: String(note.workOrderRef),
+          ticketNumber: order
+            ? displayTicketNumber(order)
+            : String(note.workOrderRef).slice(-6),
+          customerName: order?.customerName?.trim() ?? "",
+        };
+      }),
+    });
+  } catch (err) {
+    console.error("GET /work-orders/recent-notes error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+const NOTE_HISTORY_PAGE_SIZES = [50, 150, 250] as const;
+const NOTE_HISTORY_SORTS = ["note", "ticket", "customer", "created"] as const;
+type NoteHistorySort = (typeof NOTE_HISTORY_SORTS)[number];
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export async function listWorkOrderNoteHistory(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user || !isStaffRole(req.user)) {
+    res.status(403).json({ message: "Staff only" });
+    return;
+  }
+  if (!hasJobsPermission(req, "jobs:read")) {
+    res.status(403).json({ message: "Missing permission: jobs:read" });
+    return;
+  }
+
+  const pageRaw = Number(req.query.page);
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+  const sizeRaw = Number(req.query.pageSize);
+  const pageSize = (NOTE_HISTORY_PAGE_SIZES as readonly number[]).includes(sizeRaw)
+    ? sizeRaw
+    : 50;
+  const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+  const sortRaw = typeof req.query.sort === "string" ? req.query.sort : "";
+  const sort: NoteHistorySort = (NOTE_HISTORY_SORTS as readonly string[]).includes(
+    sortRaw,
+  )
+    ? (sortRaw as NoteHistorySort)
+    : "created";
+  const dir = req.query.dir === "asc" ? 1 : -1;
+  const sortField =
+    sort === "note"
+      ? "content"
+      : sort === "ticket"
+        ? "ticketSort"
+        : sort === "customer"
+          ? "customerSort"
+          : "createdAt";
+
+  const canWrite = hasJobsPermission(req, "jobs:write");
+  const dispatcher = isDispatcherRole(req.user);
+  const admin = isAdminRole(req.user);
+  const userId = req.user.id;
+
+  try {
+    const pipeline: mongoose.PipelineStage[] = [
+      { $match: { isReminder: { $ne: true } } },
+      {
+        $lookup: {
+          from: WorkOrder.collection.name,
+          localField: "workOrderRef",
+          foreignField: "_id",
+          as: "order",
+        },
+      },
+      { $unwind: { path: "$order", preserveNullAndEmptyArrays: true } },
+    ];
+
+    if (search) {
+      const pattern = escapeRegex(search);
+      pipeline.push({
+        $match: {
+          $or: [
+            { content: { $regex: pattern, $options: "i" } },
+            { "order.number": { $regex: pattern, $options: "i" } },
+            { "order.customerName": { $regex: pattern, $options: "i" } },
+            {
+              $expr: {
+                $regexMatch: {
+                  input: { $toString: { $ifNull: ["$order.legacyId", ""] } },
+                  regex: pattern,
+                  options: "i",
+                },
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    pipeline.push(
+      {
+        $addFields: {
+          ticketSort: {
+            $let: {
+              vars: {
+                number: {
+                  $trim: { input: { $ifNull: ["$order.number", ""] } },
+                },
+              },
+              in: {
+                $cond: [
+                  { $gt: [{ $strLenCP: "$$number" }, 0] },
+                  "$$number",
+                  {
+                    $cond: [
+                      { $gt: ["$order.legacyId", 0] },
+                      { $toString: "$order.legacyId" },
+                      {
+                        $substrCP: [
+                          { $toString: "$workOrderRef" },
+                          {
+                            $max: [
+                              0,
+                              {
+                                $subtract: [
+                                  { $strLenCP: { $toString: "$workOrderRef" } },
+                                  6,
+                                ],
+                              },
+                            ],
+                          },
+                          6,
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          customerSort: { $ifNull: ["$order.customerName", ""] },
+        },
+      },
+      {
+        $sort: {
+          [sortField]: dir,
+          ...(sortField === "createdAt" ? {} : { createdAt: -1 as const }),
+          _id: dir,
+        },
+      },
+      {
+        $facet: {
+          rows: [
+            { $skip: (page - 1) * pageSize },
+            { $limit: pageSize },
+            {
+              $project: {
+                content: 1,
+                workOrderRef: 1,
+                authorId: 1,
+                createdAt: 1,
+                ticketSort: 1,
+                customerSort: 1,
+                "order.assignedUserRef": 1,
+              },
+            },
+          ],
+          total: [{ $count: "count" }],
+        },
+      },
+    );
+
+    const [result] = await WorkOrderNote.aggregate(pipeline).collation({
+      locale: "en",
+      numericOrdering: true,
+      strength: 2,
+    });
+
+    const rows = (result?.rows ?? []) as Array<{
+      _id: mongoose.Types.ObjectId;
+      content: string;
+      workOrderRef: mongoose.Types.ObjectId;
+      authorId: mongoose.Types.ObjectId;
+      createdAt: Date;
+      ticketSort?: string;
+      customerSort?: string;
+      order?: { assignedUserRef?: mongoose.Types.ObjectId | null };
+    }>;
+    const total = Number(result?.total?.[0]?.count ?? 0);
+
+    res.json({
+      notes: rows.map((note) => {
+        const isAssignee =
+          note.order?.assignedUserRef != null &&
+          String(note.order.assignedUserRef) === userId;
+        const isAuthor = String(note.authorId) === userId;
+        const canEdit =
+          canWrite && (dispatcher || isAssignee) && (isAuthor || admin);
+        return {
+          id: String(note._id),
+          content: note.content,
+          workOrderId: String(note.workOrderRef),
+          ticketNumber: note.ticketSort?.trim() || String(note.workOrderRef).slice(-6),
+          customerName: note.customerSort?.trim() ?? "",
+          createdAt: new Date(note.createdAt).toISOString(),
+          canEdit,
+        };
+      }),
+      total,
+      page,
+      pageSize,
+    });
+  } catch (err) {
+    console.error("GET /work-orders/notes error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }

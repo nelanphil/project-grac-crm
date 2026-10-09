@@ -1,0 +1,822 @@
+"use client";
+
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  ApiError,
+  geocodeMissingScheduleAddresses,
+  getScheduleRoute,
+  getScheduleStaff,
+  getTechnicians,
+  getWorkOrder,
+  type TechnicianListItem,
+  updateWorkOrder,
+  type ScheduleRouteStop,
+  type WorkOrderListItem,
+} from "@/lib/api";
+import {
+  DesktopWorkOrderPanel,
+  MobileWorkOrderPanel,
+} from "@/components/dashboard/staff/TechnicianWorkOrderPanel";
+import ScheduleMap, { jobHasCoordinates } from "@/components/schedule/ScheduleMap";
+import {
+  addDays,
+  formatAddressLine,
+  formatLocalClock,
+  formatLocalDate,
+  formatWeekdayDate,
+  startOfWeekSunday,
+  workOrderLocalDate,
+} from "@/lib/schedule";
+import { useAuthStore } from "@/store/useAuthStore";
+
+const TECH_STORAGE_KEY = "grac.todoTechnicianId";
+
+function technicianName(tech: {
+  first_name: string;
+  last_name: string;
+}): string {
+  return [tech.first_name, tech.last_name]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function possessive(name: string): string {
+  return `${name}'s`;
+}
+
+function assignedToUser(job: WorkOrderListItem, userId: string): boolean {
+  if (job.assignee?._id === userId) return true;
+  return typeof job.assignedUserRef === "string" && job.assignedUserRef === userId;
+}
+
+/** Same appointments the schedule board draws: anything still placed on a calendar. */
+function isScheduledAppointment(job: WorkOrderListItem): boolean {
+  return Boolean(job.scheduledStart);
+}
+
+function startMillis(job: WorkOrderListItem): number {
+  if (!job.scheduledStart) return Number.MAX_SAFE_INTEGER;
+  const time = new Date(job.scheduledStart).getTime();
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
+}
+
+function compareJobs(a: WorkOrderListItem, b: WorkOrderListItem): number {
+  return startMillis(a) - startMillis(b);
+}
+
+function timeWindow(job: WorkOrderListItem): string {
+  if (!job.scheduledStart) return "Time not set";
+  const start = new Date(job.scheduledStart);
+  const startLabel = formatLocalClock(start);
+  if (job.scheduledEnd) {
+    return `${startLabel} – ${formatLocalClock(new Date(job.scheduledEnd))}`;
+  }
+  const minutes = job.estimatedMinutes ?? 0;
+  if (minutes > 0) {
+    const end = new Date(start.getTime() + minutes * 60_000);
+    return `${startLabel} – ${formatLocalClock(end)}`;
+  }
+  return startLabel;
+}
+
+function jobAddress(job: WorkOrderListItem): string {
+  const line = formatAddressLine(job.address);
+  if (line !== "—") return line;
+  const snapshot = [
+    job.customerAddress,
+    job.customerCity,
+    job.customerState,
+    job.customerZip,
+  ]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(", ");
+  return snapshot;
+}
+
+function serviceLabel(job: WorkOrderListItem): string {
+  return job.workOrderType?.label?.trim() || job.descPerform?.trim() || "";
+}
+
+function noteLabel(job: WorkOrderListItem, service: string): string {
+  const note = job.scheduleNote?.trim() ?? "";
+  if (!note || note === service) return "";
+  return note;
+}
+
+function workOrderNumber(job: WorkOrderListItem): string {
+  if (job.number?.trim()) return job.number.trim();
+  if (job.legacyId) return String(job.legacyId);
+  return "";
+}
+
+function jobCountLabel(count: number): string {
+  return count === 1 ? "1 job" : `${count} jobs`;
+}
+
+function applyAddressCoords(
+  jobs: WorkOrderListItem[],
+  updated: Array<{ addressId: string; lat: number; lng: number }>,
+): WorkOrderListItem[] {
+  if (updated.length === 0) return jobs;
+  const byId = new Map(updated.map((row) => [row.addressId, row]));
+  return jobs.map((job) => {
+    const id = job.address?._id;
+    const hit = id ? byId.get(id) : undefined;
+    if (!hit || !job.address) return job;
+    return {
+      ...job,
+      address: { ...job.address, lat: hit.lat, lng: hit.lng },
+    };
+  });
+}
+
+type CardAction = "complete" | "paid";
+
+const SWATCH =
+  "inline-flex max-w-full rounded-full px-2.5 py-1 text-xs font-semibold ring-1 transition";
+
+function AppointmentCard({
+  job,
+  canWrite,
+  selected,
+  pendingAction,
+  busy,
+  error,
+  onToggleOpen,
+  onAsk,
+  onConfirm,
+  onCancel,
+  mobilePanel,
+}: {
+  job: WorkOrderListItem;
+  canWrite: boolean;
+  selected: boolean;
+  pendingAction: CardAction | null;
+  busy: boolean;
+  error: string | null;
+  onToggleOpen: () => void;
+  onAsk: (action: CardAction) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+  mobilePanel: ReactNode;
+}) {
+  const service = serviceLabel(job);
+  const note = noteLabel(job, service);
+  const address = jobAddress(job);
+  const number = workOrderNumber(job);
+  const confirmCopy =
+    pendingAction === "paid"
+      ? "Mark this job paid?"
+      : "Mark this job complete?";
+
+  return (
+    <div className="min-w-0 space-y-2">
+    <article
+      className={`min-w-0 rounded-xl border bg-[var(--staff-surface)] p-4 ${
+        selected
+          ? "border-brand-orange ring-2 ring-brand-orange"
+          : "border-[var(--staff-border)]"
+      }`}
+    >
+      <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <p className="min-w-0 break-words text-sm font-semibold text-brand-orange">
+          {timeWindow(job)}
+        </p>
+        {number ? (
+          <p className="min-w-0 break-all text-xs font-medium text-[var(--staff-muted)]">
+            {number}
+          </p>
+        ) : null}
+      </div>
+      <h3 className="mt-1 break-words text-base font-semibold text-[var(--staff-ink)]">
+        {job.customerName?.trim() || "Customer"}
+      </h3>
+      {address ? (
+        <p className="mt-1 break-words text-sm text-[var(--staff-muted)]">{address}</p>
+      ) : null}
+      {service ? (
+        <p className="mt-2 break-words text-sm text-[var(--staff-ink)]">{service}</p>
+      ) : null}
+      {note ? (
+        <p className="mt-1 break-words text-sm text-[var(--staff-muted)]">{note}</p>
+      ) : null}
+
+      {pendingAction ? (
+        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+          <p className="break-words">{confirmCopy}</p>
+          {error ? <p className="mt-2 break-words text-sm text-red-700">{error}</p> : null}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onConfirm}
+              className="rounded-md bg-brand-dark px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
+            >
+              {busy ? "Saving…" : "Confirm"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onCancel}
+              className="rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 flex min-w-0 flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-pressed={selected}
+            onClick={onToggleOpen}
+            className={`rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--staff-cream)] ${
+              selected
+                ? "border-brand-orange text-brand-orange"
+                : "border-[var(--staff-border)] text-[var(--staff-ink)]"
+            }`}
+          >
+            {selected ? "Close" : "Open"}
+          </button>
+          {job.completed ? (
+            <span className={`${SWATCH} bg-emerald-50 text-emerald-800 ring-emerald-200`}>
+              Complete
+            </span>
+          ) : null}
+          {canWrite && job.paid ? (
+            <span className={`${SWATCH} bg-emerald-50 text-emerald-800 ring-emerald-200`}>
+              Paid
+            </span>
+          ) : null}
+          {canWrite && !job.paid ? (
+            <button
+              type="button"
+              onClick={() => onAsk("paid")}
+              className={`${SWATCH} bg-sky-50 text-sky-800 ring-sky-200 hover:bg-sky-100`}
+            >
+              Mark paid
+            </button>
+          ) : null}
+          {canWrite && !job.completed ? (
+            <button
+              type="button"
+              onClick={() => onAsk("complete")}
+              className={`${SWATCH} bg-orange-50 text-orange-800 ring-orange-200 hover:bg-orange-100`}
+            >
+              Mark complete
+            </button>
+          ) : null}
+        </div>
+      )}
+    </article>
+    {mobilePanel}
+    </div>
+  );
+}
+
+function useTodoLayout(): "desktop" | "mobile" | null {
+  const [layout, setLayout] = useState<"desktop" | "mobile" | null>(null);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setLayout(media.matches ? "desktop" : "mobile");
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, []);
+
+  return layout;
+}
+
+export default function TechnicianHomeDashboard() {
+  const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
+  const userId = user?.id ?? "";
+  const isFieldStaff = useAuthStore((s) => s.hasRole("field-staff"));
+  const canSwitchTechnicians = !(
+    (user?.jobRoleSlugs ?? []).includes("technician") && isFieldStaff
+  );
+  const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
+  const layout = useTodoLayout();
+
+  const today = formatLocalDate(new Date());
+
+  const [technicians, setTechnicians] = useState<TechnicianListItem[]>([]);
+  const [techId, setTechId] = useState<string | null>(null);
+  const [techsLoading, setTechsLoading] = useState(canSwitchTechnicians);
+  const [techsError, setTechsError] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<WorkOrderListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<{
+    id: string;
+    action: CardAction;
+  } | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [order, setOrder] = useState<WorkOrderListItem | null>(null);
+  const [orderLoading, setOrderLoading] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [focusDate, setFocusDate] = useState(today);
+  const weekStart = startOfWeekSunday(focusDate);
+  const weekEnd = addDays(weekStart, 6);
+  const [routeStops, setRouteStops] = useState<ScheduleRouteStop[]>([]);
+  const [routePolyline, setRoutePolyline] = useState<string | undefined>();
+  const requestedGeocodeRef = useRef(new Set<string>());
+  const subjectId = canSwitchTechnicians ? (techId ?? "") : userId;
+  const selectedTech =
+    technicians.find((tech) => tech._id === subjectId) ?? null;
+  const ownerName = selectedTech ? technicianName(selectedTech) : "";
+  const scheduleWhose = canSwitchTechnicians
+    ? ownerName
+      ? possessive(ownerName)
+      : "their"
+    : "your";
+
+  useEffect(() => {
+    if (!canSwitchTechnicians || !token) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTechsLoading(true);
+    setTechsError(null);
+
+    getTechnicians(token, { all: true })
+      .then(({ technicians: rows }) => {
+        if (cancelled) return;
+        setTechnicians(rows);
+        let stored: string | null = null;
+        try {
+          stored = sessionStorage.getItem(TECH_STORAGE_KEY);
+        } catch {
+          stored = null;
+        }
+        const match = rows.find((row) => row._id === stored);
+        setTechId(match?._id ?? rows[0]?._id ?? null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setTechsError(
+          err instanceof ApiError
+            ? err.message
+            : "Failed to load technicians.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setTechsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canSwitchTechnicians, token]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (!subjectId) {
+      if (!techsLoading) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLoading(false);
+        setJobs([]);
+      }
+      return;
+    }
+    let cancelled = false;
+
+    setLoading(true);
+    setError(null);
+
+    getScheduleStaff(token, weekStart, weekEnd, subjectId)
+      .then(({ workOrders }) => {
+        if (cancelled) return;
+        setJobs(
+          workOrders
+            .filter(
+              (job) =>
+                assignedToUser(job, subjectId) && isScheduledAppointment(job),
+            )
+            .sort(compareJobs),
+        );
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 403) {
+          setError("This account cannot read jobs.");
+          return;
+        }
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : `Failed to load ${scheduleWhose} schedule.`,
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, subjectId, weekStart, weekEnd, techsLoading, scheduleWhose]);
+
+  useEffect(() => {
+    if (!token || jobs.length === 0) return;
+    const missing = [
+      ...new Set(
+        jobs
+          .map((job) => job.address)
+          .filter(
+            (address): address is NonNullable<WorkOrderListItem["address"]> =>
+              Boolean(address?._id) &&
+              !jobHasCoordinates({ address } as WorkOrderListItem),
+          )
+          .map((address) => address._id)
+          .filter((id) => !requestedGeocodeRef.current.has(id)),
+      ),
+    ];
+    if (missing.length === 0) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        for (let index = 0; index < missing.length; index += 40) {
+          if (cancelled) return;
+          const batch = missing.slice(index, index + 40);
+          const { updated } = await geocodeMissingScheduleAddresses(token, batch);
+          batch.forEach((id) => requestedGeocodeRef.current.add(id));
+          if (cancelled || updated.length === 0) continue;
+          setJobs((current) => applyAddressCoords(current, updated));
+        }
+      } catch {
+        missing.forEach((id) => requestedGeocodeRef.current.add(id));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, jobs]);
+
+  useEffect(() => {
+    if (!token || !selectedId) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOrder(null);
+    setOrderLoading(true);
+    setOrderError(null);
+    getWorkOrder(token, selectedId)
+      .then((next) => {
+        if (!cancelled) setOrder(next);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setOrderError(
+          err instanceof ApiError ? err.message : "Failed to load work order.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setOrderLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, selectedId]);
+
+  const dayJobs = jobs.filter((job) => workOrderLocalDate(job) === focusDate);
+
+  const mapDay = focusDate;
+  const mapJobs = jobs.filter((job) => workOrderLocalDate(job) === mapDay);
+  const mapCoordKey = mapJobs
+    .map(
+      (job) =>
+        `${job._id}:${job.address?.lat ?? ""},${job.address?.lng ?? ""}`,
+    )
+    .join("|");
+
+  useEffect(() => {
+    if (!token || !subjectId) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRouteStops([]);
+    setRoutePolyline(undefined);
+    getScheduleRoute(token, subjectId, mapDay)
+      .then((result) => {
+        if (cancelled) return;
+        setRouteStops(result.stops);
+        setRoutePolyline(result.route?.encodedPolyline);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRouteStops([]);
+        setRoutePolyline(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, subjectId, mapDay, mapCoordKey]);
+
+  const periodLabel = formatWeekdayDate(focusDate);
+  const pageError = techsError ?? error;
+  const pageLoading =
+    (canSwitchTechnicians && techsLoading) || (Boolean(subjectId) && loading);
+  const noTechnicians =
+    canSwitchTechnicians &&
+    !techsLoading &&
+    !techsError &&
+    technicians.length === 0;
+  const loadingLabel = !canSwitchTechnicians
+    ? "Loading your schedule…"
+    : ownerName
+      ? `Loading ${possessive(ownerName)} schedule…`
+      : "Loading schedule…";
+  const emptyToday =
+    focusDate === today
+      ? `Nothing on ${scheduleWhose} schedule today.`
+      : `Nothing on ${scheduleWhose} schedule for ${formatWeekdayDate(focusDate)}.`;
+
+  function selectTechnician(id: string) {
+    setTechId(id);
+    try {
+      sessionStorage.setItem(TECH_STORAGE_KEY, id);
+    } catch {
+      // The choice still applies for this visit when storage is blocked.
+    }
+    setSelectedId(null);
+    setOrder(null);
+    setOrderError(null);
+    setPending(null);
+    setActionError(null);
+  }
+
+  function askAction(id: string, action: CardAction) {
+    setActionError(null);
+    setPending({ id, action });
+  }
+
+  function cancelAction() {
+    setActionError(null);
+    setPending(null);
+  }
+
+  async function confirmAction() {
+    if (!token || !pending) return;
+    const { id, action } = pending;
+    setBusyId(id);
+    setActionError(null);
+    try {
+      if (action === "complete") {
+        await updateWorkOrder(token, id, { completed: true });
+        setJobs((current) =>
+          current.map((job) =>
+            job._id === id ? { ...job, completed: true } : job,
+          ),
+        );
+      } else {
+        await updateWorkOrder(token, id, { paid: true });
+        setJobs((current) =>
+          current.map((job) => (job._id === id ? { ...job, paid: true } : job)),
+        );
+      }
+      setPending(null);
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError
+          ? err.message
+          : action === "complete"
+            ? "Failed to mark this job complete."
+            : "Failed to mark this job paid.",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function clearOpenJob() {
+    setPending(null);
+    setActionError(null);
+    setOrder(null);
+    setOrderError(null);
+    setSelectedId(null);
+  }
+
+  function shiftFocus(direction: -1 | 1) {
+    setFocusDate(addDays(focusDate, direction));
+    clearOpenJob();
+  }
+
+  function toggleOpen(id: string) {
+    setActionError(null);
+    setPending(null);
+    setOrder(null);
+    setOrderError(null);
+    setSelectedId((current) => (current === id ? null : id));
+  }
+
+  function closeWorkOrder() {
+    setOrder(null);
+    setOrderError(null);
+    setSelectedId(null);
+  }
+
+  function handleOrderSaved(updated: WorkOrderListItem) {
+    setOrder(updated);
+    const stillScheduled =
+      assignedToUser(updated, subjectId) && isScheduledAppointment(updated);
+    if (!stillScheduled) {
+      setJobs((current) => current.filter((job) => job._id !== updated._id));
+      setSelectedId(null);
+      return;
+    }
+    setJobs((current) =>
+      current.map((job) =>
+        job._id === updated._id
+          ? {
+              ...job,
+              paid: updated.paid,
+              completed: updated.completed,
+              customerName: updated.customerName,
+              descPerform: updated.descPerform,
+              scheduledStart: updated.scheduledStart,
+              scheduledEnd: updated.scheduledEnd,
+              estimatedMinutes: updated.estimatedMinutes,
+              appointmentCanceledAt: updated.appointmentCanceledAt,
+              assignedUserRef: updated.assignedUserRef,
+              assignee: updated.assignee,
+            }
+          : job,
+      ),
+    );
+  }
+
+  const split = layout === "desktop" && Boolean(selectedId);
+  const showMap = !selectedId && layout !== null;
+
+  function cardProps(job: WorkOrderListItem) {
+    const isPending = pending?.id === job._id;
+    const selected = selectedId === job._id;
+    return {
+      job,
+      canWrite,
+      selected,
+      pendingAction: isPending ? pending.action : null,
+      busy: busyId === job._id,
+      error: isPending ? actionError : null,
+      onToggleOpen: () => toggleOpen(job._id),
+      onAsk: (action: CardAction) => askAction(job._id, action),
+      onConfirm: () => void confirmAction(),
+      onCancel: cancelAction,
+      mobilePanel:
+        selected && layout === "mobile" ? (
+          <MobileWorkOrderPanel
+            order={order}
+            loading={orderLoading}
+            error={orderError}
+            token={token}
+            user={user}
+            canWrite={canWrite}
+            onClose={closeWorkOrder}
+            onSaved={handleOrderSaved}
+          />
+        ) : null,
+    };
+  }
+
+  const desktopMap = showMap && layout === "desktop";
+
+  return (
+    <div
+      className={`w-full min-w-0 ${
+        desktopMap
+          ? "flex h-full min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:items-stretch"
+          : split
+            ? "pb-6 lg:flex lg:h-full lg:min-h-0 lg:items-stretch lg:gap-6 lg:overflow-hidden lg:pb-0"
+            : "pb-6"
+      }`}
+    >
+    <div
+      className={`min-w-0 space-y-5 transition-[width,max-width,margin] duration-300 ease-out ${
+        split
+          ? "w-full lg:mx-0 lg:min-h-0 lg:w-[22rem] lg:max-w-[22rem] lg:shrink-0 lg:overflow-y-auto"
+          : desktopMap
+            ? "w-full min-h-0 overflow-y-auto lg:mx-0 lg:w-[min(36rem,40%)] lg:max-w-xl lg:shrink-0"
+            : "mx-auto w-full max-w-3xl"
+      }`}
+    >
+      <div className="space-y-3">
+        <h2 className="text-2xl font-bold text-[var(--staff-ink)]">Schedule</h2>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4">
+          <div className="min-w-0 overflow-hidden">
+            {canSwitchTechnicians && technicians.length > 0 ? (
+              <select
+                aria-label="Technician"
+                value={subjectId}
+                onChange={(event) => selectTechnician(event.target.value)}
+                className="max-w-full truncate rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-sm font-medium text-[var(--staff-ink)]"
+              >
+                {technicians.map((tech) => (
+                  <option key={tech._id} value={tech._id}>
+                    {technicianName(tech)}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
+          <div className="flex min-w-0 items-center justify-center gap-1.5">
+            <button
+              type="button"
+              aria-label="Previous day"
+              onClick={() => shiftFocus(-1)}
+              className="shrink-0 rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </button>
+            <p className="min-w-0 truncate text-sm text-[var(--staff-muted)]">
+              {pageLoading
+                ? loadingLabel
+                : pageError
+                  ? periodLabel
+                  : `${periodLabel} · ${jobCountLabel(dayJobs.length)}`}
+            </p>
+            <button
+              type="button"
+              aria-label="Next day"
+              onClick={() => shiftFocus(1)}
+              className="shrink-0 rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+          <div aria-hidden />
+        </div>
+      </div>
+
+      {pageError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {pageError}
+        </div>
+      ) : null}
+
+      {pageLoading || pageError ? null : noTechnicians ? (
+        <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
+          No technicians to show.
+        </p>
+      ) : dayJobs.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
+          {emptyToday}
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {dayJobs.map((job) => (
+            <AppointmentCard key={job._id} {...cardProps(job)} />
+          ))}
+        </div>
+      )}
+      {showMap && layout === "mobile" ? (
+        <ScheduleMap
+          unscheduled={[]}
+          scheduled={mapJobs}
+          pinMode="scheduled"
+          selectedId={null}
+          droppable={false}
+          surfaceClassName="h-[clamp(16rem,50dvh,24rem)]"
+          routeStops={routeStops}
+          encodedPolyline={routePolyline}
+          onSelect={(job) => toggleOpen(job._id)}
+        />
+      ) : null}
+    </div>
+    {split ? (
+      <div className="min-w-0 flex-1 lg:min-h-0 lg:overflow-y-auto">
+        <DesktopWorkOrderPanel
+          order={order}
+          loading={orderLoading}
+          error={orderError}
+          token={token}
+          user={user}
+          canWrite={canWrite}
+          onClose={closeWorkOrder}
+          onSaved={handleOrderSaved}
+        />
+      </div>
+    ) : null}
+    {desktopMap ? (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <ScheduleMap
+          unscheduled={[]}
+          scheduled={mapJobs}
+          pinMode="scheduled"
+          selectedId={null}
+          droppable={false}
+          surfaceClassName="h-full min-h-[16rem]"
+          routeStops={routeStops}
+          encodedPolyline={routePolyline}
+          onSelect={(job) => toggleOpen(job._id)}
+        />
+      </div>
+    ) : null}
+    </div>
+  );
+}

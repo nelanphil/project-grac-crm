@@ -17,9 +17,11 @@ type SortKey = "date" | "customer" | "tech" | "duration";
 export default function MonthTable({
   jobs,
   onJobClick,
+  emptyLabel = "No work orders in this month.",
 }: {
   jobs: WorkOrderListItem[];
   onJobClick: (job: WorkOrderListItem) => void;
+  emptyLabel?: string;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [dir, setDir] = useState<"asc" | "desc">("asc");
@@ -68,7 +70,7 @@ export default function MonthTable({
       isEmpty={sorted.length === 0}
       empty={
         <div className="rounded-xl border border-dashed border-neutral-300 bg-white py-16 text-center text-sm text-neutral-500">
-          No work orders in this month.
+          {emptyLabel}
         </div>
       }
       mobile={

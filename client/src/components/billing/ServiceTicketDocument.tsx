@@ -6,7 +6,7 @@ import {
   formatDiscountSummary,
   type TicketContractDiscount,
 } from "@/lib/productDiscounts";
-import { SERVICE_TICKET_TERMS } from "@/lib/service-ticket";
+import { SERVICE_TICKET_TERMS, ticketProductKindPrefix } from "@/lib/service-ticket";
 
 function formatMoney(amount: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -36,6 +36,7 @@ export type ServiceTicketView = {
   customerName: string;
   customerAddress: string;
   customerCity: string;
+  customerState?: string;
   customerZip: string;
   customerPhone: string;
   customerEmail: string;
@@ -55,11 +56,12 @@ export type ServiceTicketView = {
     description?: string;
     unitPrice?: number;
     amount: number;
-    lineType?: "product" | "note";
-    kind?: "part" | "labor";
+    lineType?: "product" | "note" | "agreement";
+    kind?: "part" | "labor" | "contract" | "equipment";
   }>;
   totalParts: number;
   totalLabor: number;
+  totalAgreements?: number;
   miscExp: number;
   subtotal: number;
   shipping: number;
@@ -100,6 +102,10 @@ function TicketTotals({
       <p className="flex justify-between gap-4">
         <span>Total labor</span>
         <span>{formatMoney(ticket.totalLabor)}</span>
+      </p>
+      <p className="flex justify-between gap-4">
+        <span>Total agreements</span>
+        <span>{formatMoney(ticket.totalAgreements ?? 0)}</span>
       </p>
       <p className="flex justify-between gap-4">
         <span>Misc exp.</span>
@@ -185,7 +191,12 @@ export default function ServiceTicketDocument({
           <p className="font-semibold text-brand-dark">{ticket.customerName || "—"}</p>
           <p>{ticket.customerAddress}</p>
           <p>
-            {ticket.customerCity} {ticket.customerZip}
+            {[
+              ticket.customerCity,
+              [ticket.customerState || "FL", ticket.customerZip].filter(Boolean).join(" "),
+            ]
+              .filter(Boolean)
+              .join(", ")}
           </p>
           <p>{ticket.customerPhone}</p>
           <p>{ticket.customerEmail}</p>
@@ -219,7 +230,7 @@ export default function ServiceTicketDocument({
 
       <div className="mx-auto mt-5 w-full max-w-3xl">
         <p className="text-center text-xs font-semibold uppercase text-neutral-500">
-          Parts & Labor
+          Parts, Labor & Agreements
         </p>
         <table className="mt-1 min-w-full text-sm">
           <thead>
@@ -240,6 +251,16 @@ export default function ServiceTicketDocument({
                     {part.description || "—"}
                   </td>
                 </tr>
+              ) : part.lineType === "agreement" ? (
+                <tr key={index} className="border-b border-neutral-100">
+                  <td className="py-2">{part.quantity || ""}</td>
+                  <td className="py-2">
+                    Agreement · {part.description || "Agreement"}
+                  </td>
+                  <td className="py-2 text-right">
+                    {part.amount ? formatMoney(part.amount) : ""}
+                  </td>
+                </tr>
               ) : (
                 <tr key={index} className="border-b border-neutral-100">
                   <td className="py-2">{part.quantity || ""}</td>
@@ -247,7 +268,7 @@ export default function ServiceTicketDocument({
                     {part.partNumber}
                     {part.description ? (
                       <span className="ml-2 text-neutral-500">
-                        {part.kind === "labor" ? "Labor · " : ""}
+                        {ticketProductKindPrefix(part.kind)}
                         {part.description}
                       </span>
                     ) : null}

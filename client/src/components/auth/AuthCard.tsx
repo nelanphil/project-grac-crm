@@ -7,6 +7,8 @@ interface AuthCardProps {
   footerText?: string;
   footerLinkText?: string;
   footerLinkHref?: string;
+  /** Document-style layout so A2P crawlers do not treat the form as a popup. */
+  variant?: "card" | "page";
 }
 
 export default function AuthCard({
@@ -16,13 +18,27 @@ export default function AuthCard({
   footerText,
   footerLinkText,
   footerLinkHref,
+  variant = "card",
 }: AuthCardProps) {
   const showFooter = Boolean(footerText && footerLinkText && footerLinkHref);
+  const isPage = variant === "page";
 
   return (
-    <div className="flex items-center justify-center bg-neutral-100 px-4 py-8 sm:py-12">
-      <div className="w-full min-w-0 max-w-md">
-        <div className="rounded-lg bg-white p-5 shadow-lg sm:p-8">
+    <div
+      className={
+        isPage
+          ? "bg-white px-4 py-8 sm:py-12"
+          : "flex items-center justify-center bg-neutral-100 px-4 py-8 sm:py-12"
+      }
+    >
+      <div className={`w-full min-w-0 ${isPage ? "mx-auto max-w-xl" : "max-w-md"}`}>
+        <div
+          className={
+            isPage
+              ? "bg-white py-2"
+              : "rounded-lg bg-white p-5 shadow-lg sm:p-8"
+          }
+        >
           <div className="text-center">
             <Link
               href="/"

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isFloridaCounty } from "../constants/floridaCounties";
+import { isUsStateCode } from "../constants/usStates";
 
 const usernameField = z
   .union([
@@ -67,6 +68,50 @@ const homeLocationSchema = z
   })
   .optional();
 
+const SERVICE_CITY_LIMIT = 200;
+
+const serviceCitySchema = z.object({
+  city: z.string().trim().min(1).max(120),
+  state: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .refine(isUsStateCode, "State must be a US state code"),
+  placeId: z.string().trim().min(1).max(300),
+  lat: z.number().finite().nullable().optional(),
+  lng: z.number().finite().nullable().optional(),
+});
+
+const serviceCitiesSchema = z
+  .array(serviceCitySchema)
+  .max(SERVICE_CITY_LIMIT, `A technician can cover at most ${SERVICE_CITY_LIMIT} cities`)
+  .transform((cities) => {
+    const seen = new Set<string>();
+    const unique: Array<{
+      city: string;
+      state: string;
+      placeId: string;
+      lat: number | null;
+      lng: number | null;
+    }> = [];
+    for (const city of cities) {
+      const placeKey = `id:${city.placeId}`;
+      const nameKey = `name:${city.city.toLowerCase()}|${city.state}`;
+      if (seen.has(placeKey) || seen.has(nameKey)) continue;
+      seen.add(placeKey);
+      seen.add(nameKey);
+      unique.push({
+        city: city.city,
+        state: city.state,
+        placeId: city.placeId,
+        lat: typeof city.lat === "number" ? city.lat : null,
+        lng: typeof city.lng === "number" ? city.lng : null,
+      });
+    }
+    return unique;
+  })
+  .optional();
+
 const scheduleExceptionSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
   type: z.enum(["off", "custom"]),
@@ -75,29 +120,49 @@ const scheduleExceptionSchema = z.object({
   note: z.string().trim().max(200).optional().default(""),
 });
 
-export const createUserSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .max(100, "Password is too long")
-    .optional(),
-  first_name: z.string().min(1, "First name is required").max(100),
-  last_name: z.string().min(1, "Last name is required").max(100),
-  role: z.string().min(1, "Role is required"),
-  username: usernameField,
-  territories: territoriesSchema,
-  schedulable: z.boolean().optional(),
-  weeklyHours: weeklyHoursSchema,
-  homeLocation: homeLocationSchema,
-  scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
-});
+const rolesField = z.array(z.string().min(1)).min(1).optional();
+
+const jobRoleDataSchema = z
+  .record(z.string(), z.record(z.string(), z.unknown()))
+  .optional();
+
+export const createUserSchema = z
+  .object({
+    email: z.string().email("Invalid email address"),
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters")
+      .max(100, "Password is too long")
+      .optional(),
+    first_name: z.string().min(1, "First name is required").max(100),
+    last_name: z.string().min(1, "Last name is required").max(100),
+    role: z.string().min(1).optional(),
+    roles: rolesField,
+    userType: z.enum(["staff", "customer"]).optional(),
+    jobRoles: z.array(z.string().min(1)).optional(),
+    jobRoleData: jobRoleDataSchema,
+    username: usernameField,
+    territories: territoriesSchema,
+    schedulable: z.boolean().optional(),
+    weeklyHours: weeklyHoursSchema,
+    homeLocation: homeLocationSchema,
+    serviceCities: serviceCitiesSchema,
+    scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
+  })
+  .refine((data) => Boolean(data.role || (data.roles && data.roles.length > 0)), {
+    message: "Role is required",
+    path: ["role"],
+  });
 
 export const updateUserSchema = z.object({
   email: z.string().email("Invalid email address").optional(),
   first_name: z.string().min(1).max(100).optional(),
   last_name: z.string().min(1).max(100).optional(),
   role: z.string().min(1).optional(),
+  roles: rolesField,
+  userType: z.enum(["staff", "customer"]).optional(),
+  jobRoles: z.array(z.string().min(1)).optional(),
+  jobRoleData: jobRoleDataSchema,
   username: usernameField,
   password: z
     .string()
@@ -108,6 +173,7 @@ export const updateUserSchema = z.object({
   schedulable: z.boolean().optional(),
   weeklyHours: weeklyHoursSchema,
   homeLocation: homeLocationSchema,
+  serviceCities: serviceCitiesSchema,
   scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
 });
 

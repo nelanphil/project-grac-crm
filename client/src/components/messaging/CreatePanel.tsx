@@ -5,21 +5,27 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  CalendarClock,
   Check,
   CheckSquare,
   Loader2,
-  MessageSquare,
   Square,
 } from "lucide-react";
 import {
   MergeFieldItem,
   MessageTemplateItem,
   MessagingContactItem,
-  MessagingSendResponse,
+  ScheduledMessageItem,
   ThreadConflictCheck,
   TwilioAccountItem,
   checkMessagingThreadConflict,
+  formatTwilioLine,
 } from "@/lib/api";
+import {
+  formatPrettyDateTime,
+  isEmailScheduleTimeValid,
+  localDateTimeToIso,
+} from "@/lib/schedule";
 import {
   formatCustomerName,
   formatCustomerRecordName,
@@ -48,8 +54,9 @@ const MONTH_NAMES = [
 const STEPS = [
   { key: "recipients", label: "Recipients" },
   { key: "message", label: "Message" },
-  { key: "account", label: "Account" },
-  { key: "review", label: "Review & send" },
+  { key: "account", label: "Configuration" },
+  { key: "review", label: "Review" },
+  { key: "schedule", label: "Schedule & Send" },
 ] as const;
 
 function formatPhone(phone: string | undefined | null): string {
@@ -59,6 +66,80 @@ function formatPhone(phone: string | undefined | null): string {
     return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
   }
   return phone;
+}
+
+function offerForContact(
+  contactId: string,
+  fallback: string | null,
+  overrides: Record<string, string | null>,
+): string | null {
+  if (Object.prototype.hasOwnProperty.call(overrides, contactId)) {
+    return overrides[contactId];
+  }
+  return fallback;
+}
+
+function overrideSelectValue(
+  contactId: string,
+  overrides: Record<string, string | null>,
+): string {
+  if (!Object.prototype.hasOwnProperty.call(overrides, contactId)) return "";
+  return overrides[contactId] ?? "none";
+}
+
+function PaymentLinkStatus({
+  available,
+  viaTemporary,
+}: {
+  available?: boolean;
+  viaTemporary?: boolean;
+}) {
+  if (available) {
+    return (
+      <span className="inline-flex flex-col items-start gap-0.5">
+        <span className="rounded bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-700">
+          Will send
+        </span>
+        {viaTemporary ? (
+          <span className="text-[10px] text-neutral-500">
+            Temporary contract
+          </span>
+        ) : null}
+      </span>
+    );
+  }
+  return (
+    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+      No link
+    </span>
+  );
+}
+
+function OfferContractSelect({
+  value,
+  templates,
+  onChange,
+}: {
+  value: string;
+  templates: { _id: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => onChange(e.target.value)}
+      className="max-w-[12rem] rounded border border-neutral-200 bg-white px-1.5 py-1 text-[11px] text-brand-dark"
+    >
+      <option value="">Template default</option>
+      <option value="none">Don&apos;t offer</option>
+      {templates.map((template) => (
+        <option key={template._id} value={template._id}>
+          {template.label}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 function formatRenewalDate(iso: string | null): string {
@@ -127,16 +208,32 @@ type CreatePanelProps = {
   confirmOpen: boolean;
   onOpenConfirm: () => void;
   onCloseConfirm: () => void;
-  onConfirmSend: () => void;
+  onConfirmSchedule: () => void;
   onCancelFlow: () => void;
+
+  scheduleDate: string;
+  scheduleTime: string;
+  onScheduleDateChange: (value: string) => void;
+  onScheduleTimeChange: (value: string) => void;
 
   previewText: string;
   previewContactLabel?: string;
   previewSample: boolean;
 
   error: string | null;
-  sendResult: MessagingSendResponse | null;
-  onDismissSendResult: () => void;
+  scheduleResult: ScheduledMessageItem | null;
+  onDismissScheduleResult: () => void;
+  onViewScheduled: () => void;
+
+  showPaymentLinkColumn?: boolean;
+  includePaymentLink?: boolean;
+  onIncludePaymentLinkChange?: (value: boolean) => void;
+  contractTemplates?: { _id: string; label: string; cost: number }[];
+  offerContractTemplateId?: string | null;
+  offerOverrides?: Record<string, string | null>;
+  onOfferContractTemplateIdChange?: (value: string | null) => void;
+  onOfferOverrideChange?: (contactId: string, value: string) => void;
+  onApplyOfferOverrides?: (contactIds: string[], value: string) => void;
 };
 
 export default function CreatePanel({
@@ -185,18 +282,46 @@ export default function CreatePanel({
   confirmOpen,
   onOpenConfirm,
   onCloseConfirm,
-  onConfirmSend,
+  onConfirmSchedule,
   onCancelFlow,
+  scheduleDate,
+  scheduleTime,
+  onScheduleDateChange,
+  onScheduleTimeChange,
   previewText,
   previewContactLabel,
   previewSample,
   error,
-  sendResult,
-  onDismissSendResult,
+  scheduleResult,
+  onDismissScheduleResult,
+  onViewScheduled,
+  showPaymentLinkColumn = false,
+  includePaymentLink = false,
+  onIncludePaymentLinkChange,
+  contractTemplates = [],
+  offerContractTemplateId = null,
+  offerOverrides = {},
+  onOfferContractTemplateIdChange,
+  onOfferOverrideChange,
+  onApplyOfferOverrides,
 }: CreatePanelProps) {
   const [conflict, setConflict] = useState<ThreadConflictCheck | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const [maxStepIndex, setMaxStepIndex] = useState(0);
+  const [bulkOffer, setBulkOffer] = useState("");
+
+  function paymentForContact(contact: MessagingContactItem) {
+    const offered = offerForContact(
+      contact._id,
+      offerContractTemplateId,
+      offerOverrides,
+    );
+    const viaTemporary = Boolean(offered);
+    return {
+      available: Boolean(contact.hasPayableInvoice) || viaTemporary,
+      viaTemporary,
+    };
+  }
 
   const totalPages = Math.max(1, Math.ceil(contactsTotal / pageSize));
   const pageAllSelected =
@@ -229,6 +354,22 @@ export default function CreatePanel({
   }, [token, selectedIds, effectiveFromNumber]);
 
   const step = STEPS[stepIndex].key;
+  const selectedAccount = accounts.find((a) => a._id === accountId);
+  const scheduleIso =
+    scheduleDate && scheduleTime
+      ? localDateTimeToIso(scheduleDate, scheduleTime)
+      : null;
+  const scheduleValid = scheduleIso
+    ? isEmailScheduleTimeValid(scheduleIso)
+    : false;
+  const fromLabel = effectiveFromNumber
+    ? formatTwilioLine(
+        selectedAccount?.phoneNumbers.find(
+          (line) => line.phoneNumber === effectiveFromNumber,
+        )?.label,
+        effectiveFromNumber,
+      )
+    : "—";
 
   const nextDisabled =
     (step === "recipients" && selectedIds.size === 0) ||
@@ -249,8 +390,6 @@ export default function CreatePanel({
     setStepIndex((s) => Math.max(0, s - 1));
   }
 
-  const selectedAccount = accounts.find((a) => a._id === accountId);
-
   return (
     <div className="space-y-4">
       <h2 className="text-sm font-semibold text-brand-dark">Message Wizard</h2>
@@ -260,30 +399,32 @@ export default function CreatePanel({
         </div>
       ) : null}
 
-      {sendResult ? (
+      {scheduleResult ? (
         <div className="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm shadow-sm">
           <p className="font-medium text-brand-dark">
-            Send complete — {sendResult.summary.sent} sent,{" "}
-            {sendResult.summary.failed} failed
+            Scheduled for {formatPrettyDateTime(scheduleResult.scheduledAt)} —{" "}
+            {scheduleResult.recipientCount} recipient
+            {scheduleResult.recipientCount === 1 ? "" : "s"}
           </p>
-          {sendResult.summary.failed > 0 ? (
-            <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-neutral-600">
-              {sendResult.results
-                .filter((r) => r.status === "failed")
-                .map((r) => (
-                  <li key={r.contactId}>
-                    {r.contactId}: {r.error || "Failed"}
-                  </li>
-                ))}
-            </ul>
-          ) : null}
-          <button
-            type="button"
-            className="mt-2 text-xs font-medium text-brand-orange hover:underline"
-            onClick={onDismissSendResult}
-          >
-            Dismiss
-          </button>
+          <p className="mt-1 line-clamp-2 text-xs text-neutral-500">
+            {scheduleResult.body || "Untitled"}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-3">
+            <button
+              type="button"
+              className="text-xs font-medium text-brand-orange hover:underline"
+              onClick={onViewScheduled}
+            >
+              View scheduled messages
+            </button>
+            <button
+              type="button"
+              className="text-xs font-medium text-neutral-500 hover:underline"
+              onClick={onDismissScheduleResult}
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -375,6 +516,44 @@ export default function CreatePanel({
                   <ArrowRight className="h-4 w-4" />
                 </button>
               </div>
+            </div>
+          ) : null}
+
+          {showPaymentLinkColumn ? (
+            <p className="mb-2 text-xs text-neutral-500">
+              “Will send” means this contact has unpaid invoices or unpaid work
+              orders, or a temporary contract will be created when the message
+              sends. A selected temporary contract is added to the same
+              checkout as any existing balance. “No link” means they have
+              neither.
+            </p>
+          ) : null}
+
+          {showPaymentLinkColumn && onApplyOfferOverrides ? (
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-xs text-neutral-600">
+                Offer to selected customers without a link
+                <OfferContractSelect
+                  value={bulkOffer}
+                  templates={contractTemplates}
+                  onChange={setBulkOffer}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  const ids = contacts
+                    .filter(
+                      (c) => selectedIds.has(c._id) && !c.hasPayableInvoice,
+                    )
+                    .map((c) => c._id);
+                  if (ids.length === 0) return;
+                  onApplyOfferOverrides(ids, bulkOffer);
+                }}
+                className="rounded border border-neutral-200 px-2 py-1 text-xs font-medium text-brand-dark hover:border-brand-orange"
+              >
+                Apply
+              </button>
             </div>
           ) : null}
 
@@ -472,6 +651,34 @@ export default function CreatePanel({
                               className="col-span-2"
                             />
                           ) : null}
+                          {showPaymentLinkColumn ? (
+                            <DataField
+                              label="Payment link"
+                              value={
+                                <span className="inline-flex flex-col items-start gap-1">
+                                  <PaymentLinkStatus
+                                    available={paymentForContact(c).available}
+                                    viaTemporary={
+                                      paymentForContact(c).viaTemporary
+                                    }
+                                  />
+                                  {onOfferOverrideChange ? (
+                                    <OfferContractSelect
+                                      value={overrideSelectValue(
+                                        c._id,
+                                        offerOverrides,
+                                      )}
+                                      templates={contractTemplates}
+                                      onChange={(value) =>
+                                        onOfferOverrideChange(c._id, value)
+                                      }
+                                    />
+                                  ) : null}
+                                </span>
+                              }
+                              className="col-span-2"
+                            />
+                          ) : null}
                         </>
                       }
                       onClick={() => onToggleContact(c)}
@@ -488,6 +695,11 @@ export default function CreatePanel({
                         <th className="px-2 py-2 font-medium">Customer</th>
                         {useRenewalsFilter ? (
                           <th className="px-2 py-2 font-medium">Renewal</th>
+                        ) : null}
+                        {showPaymentLinkColumn ? (
+                          <th className="px-2 py-2 font-medium">
+                            Payment link
+                          </th>
                         ) : null}
                       </tr>
                     </thead>
@@ -530,6 +742,30 @@ export default function CreatePanel({
                             {useRenewalsFilter ? (
                               <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
                                 {formatRenewalDate(c.renewalDueDate)}
+                              </td>
+                            ) : null}
+                            {showPaymentLinkColumn ? (
+                              <td className="px-2 py-2">
+                                <div className="flex flex-col items-start gap-1">
+                                  <PaymentLinkStatus
+                                    available={paymentForContact(c).available}
+                                    viaTemporary={
+                                      paymentForContact(c).viaTemporary
+                                    }
+                                  />
+                                  {onOfferOverrideChange ? (
+                                    <OfferContractSelect
+                                      value={overrideSelectValue(
+                                        c._id,
+                                        offerOverrides,
+                                      )}
+                                      templates={contractTemplates}
+                                      onChange={(value) =>
+                                        onOfferOverrideChange(c._id, value)
+                                      }
+                                    />
+                                  ) : null}
+                                </div>
                               </td>
                             ) : null}
                           </tr>
@@ -639,6 +875,55 @@ export default function CreatePanel({
             {body.length}/1600
           </p>
 
+          {onIncludePaymentLinkChange ? (
+            <label className="mt-3 flex items-start gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={Boolean(includePaymentLink)}
+                onChange={(e) => onIncludePaymentLinkChange(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium text-brand-dark">
+                  Include payment link for all unpaid invoices and work orders
+                </span>
+                <span className="mt-0.5 block text-xs text-neutral-500">
+                  Adds a short pay link covering every open invoice and unpaid
+                  work order, even without inserting {"{{payment_link}}"}.
+                </span>
+              </span>
+            </label>
+          ) : null}
+
+          {onOfferContractTemplateIdChange ? (
+            <label className="mt-3 block rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm">
+              <span className="font-medium text-brand-dark">
+                Temporary contract
+              </span>
+              <span className="mt-0.5 block text-xs text-neutral-500">
+                When this message includes a payment link, each recipient gets
+                a temporary contract and an open invoice for the catalog
+                contract you pick. That invoice is added to the same checkout
+                as any unpaid invoices or work orders they already have. Paying
+                the contract invoice makes the contract permanent.
+              </span>
+              <select
+                value={offerContractTemplateId ?? ""}
+                onChange={(e) =>
+                  onOfferContractTemplateIdChange(e.target.value || null)
+                }
+                className="mt-2 w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-orange"
+              >
+                <option value="">None</option>
+                {contractTemplates.map((template) => (
+                  <option key={template._id} value={template._id}>
+                    {template.label} (${template.cost})
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
           <label className="mt-3 block text-sm">
             <span className="mb-1 block text-xs font-medium text-neutral-500">
               MMS media URLs (optional, one per line — publicly reachable)
@@ -694,7 +979,13 @@ export default function CreatePanel({
                 ) : (
                   fromOptions.map((n) => (
                     <option key={n} value={n}>
-                      {n}
+                      {formatTwilioLine(
+                        accounts
+                          .find((a) => a._id === accountId)
+                          ?.phoneNumbers.find((line) => line.phoneNumber === n)
+                          ?.label,
+                        n,
+                      )}
                     </option>
                   ))
                 )}
@@ -722,7 +1013,11 @@ export default function CreatePanel({
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
                   This contact already has an open thread on{" "}
-                  {conflict.openThread.ourNumber} (last message{" "}
+                  {formatTwilioLine(
+                    conflict.openThread.ourNumberLabel,
+                    conflict.openThread.ourNumber,
+                  )}{" "}
+                  (last message{" "}
                   {formatTime(conflict.openThread.lastMessageAt) || "—"}) —
                   sending will continue that thread instead of starting a new
                   one.
@@ -760,28 +1055,15 @@ export default function CreatePanel({
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <button
                 type="button"
-                disabled={
-                  sending ||
-                  selectedIds.size === 0 ||
-                  !accountId ||
-                  !effectiveFromNumber ||
-                  !body.trim()
-                }
-                onClick={onOpenConfirm}
-                className="btn-primary inline-flex flex-1 items-center justify-center gap-1.5 disabled:opacity-60"
-              >
-                <MessageSquare className="h-4 w-4" />
-                Send to {selectedIds.size}
-                {mediaUrlsRaw.trim() ? " (MMS)" : ""}
-              </button>
-              <button
-                type="button"
                 onClick={onCancelFlow}
                 className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
               >
                 Cancel
               </button>
             </div>
+            <p className="mt-3 text-xs text-neutral-500">
+              Next: choose when to send.
+            </p>
           </div>
 
           <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
@@ -839,6 +1121,20 @@ export default function CreatePanel({
                               value={formatRenewalDate(c.renewalDueDate)}
                               className="col-span-2"
                             />
+                            {showPaymentLinkColumn ? (
+                              <DataField
+                                label="Payment link"
+                                value={
+                                  <PaymentLinkStatus
+                                    available={paymentForContact(c).available}
+                                    viaTemporary={
+                                      paymentForContact(c).viaTemporary
+                                    }
+                                  />
+                                }
+                                className="col-span-2"
+                              />
+                            ) : null}
                           </>
                         }
                       />
@@ -852,6 +1148,11 @@ export default function CreatePanel({
                           <th className="px-2 py-2 font-medium">Phone</th>
                           <th className="px-2 py-2 font-medium">Customer</th>
                           <th className="px-2 py-2 font-medium">Renewal</th>
+                          {showPaymentLinkColumn ? (
+                            <th className="px-2 py-2 font-medium">
+                              Payment link
+                            </th>
+                          ) : null}
                         </tr>
                       </thead>
                       <tbody>
@@ -880,6 +1181,14 @@ export default function CreatePanel({
                             <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
                               {formatRenewalDate(c.renewalDueDate)}
                             </td>
+                            {showPaymentLinkColumn ? (
+                              <td className="px-2 py-2">
+                                <PaymentLinkStatus
+                                  available={paymentForContact(c).available}
+                                  viaTemporary={paymentForContact(c).viaTemporary}
+                                />
+                              </td>
+                            ) : null}
                           </tr>
                         ))}
                       </tbody>
@@ -888,6 +1197,118 @@ export default function CreatePanel({
                 />
               </div>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {step === "schedule" ? (
+        <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold text-brand-dark">
+            Schedule & Send
+          </h2>
+          <p className="mb-4 text-sm text-neutral-600">
+            Choose a date and time in Eastern Time. This message will send
+            automatically then — there is no send-now option in the wizard.
+          </p>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-sm">
+                  <span className="mb-1 block text-xs font-medium text-neutral-500">
+                    Date
+                  </span>
+                  <input
+                    type="date"
+                    value={scheduleDate}
+                    onChange={(e) => onScheduleDateChange(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="mb-1 block text-xs font-medium text-neutral-500">
+                    Time (Eastern)
+                  </span>
+                  <input
+                    type="time"
+                    value={scheduleTime}
+                    onChange={(e) => onScheduleTimeChange(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+                  />
+                </label>
+              </div>
+              {scheduleDate && scheduleTime && !scheduleValid ? (
+                <p className="text-xs text-red-600">
+                  Choose a time at least 1 minute in the future.
+                </p>
+              ) : null}
+              <dl className="space-y-2 text-sm">
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                  <dt className="text-neutral-500">Recipients</dt>
+                  <dd className="font-medium text-brand-dark">
+                    {selectedIds.size} selected
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                  <dt className="text-neutral-500">From</dt>
+                  <dd className="text-right font-medium text-brand-dark">
+                    {fromLabel}
+                  </dd>
+                </div>
+                {mediaUrlsRaw.trim() ? (
+                  <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                    <dt className="text-neutral-500">Media</dt>
+                    <dd className="font-medium text-brand-dark">MMS attached</dd>
+                  </div>
+                ) : null}
+                <div className="flex items-center justify-between border-b border-neutral-100 pb-2">
+                  <dt className="text-neutral-500">Sends at</dt>
+                  <dd className="text-right font-medium text-brand-dark">
+                    {scheduleValid && scheduleIso
+                      ? formatPrettyDateTime(scheduleIso)
+                      : "—"}
+                  </dd>
+                </div>
+              </dl>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  type="button"
+                  disabled={
+                    sending ||
+                    !scheduleValid ||
+                    selectedIds.size === 0 ||
+                    !accountId ||
+                    !effectiveFromNumber ||
+                    !body.trim()
+                  }
+                  onClick={onOpenConfirm}
+                  className="btn-primary inline-flex flex-1 items-center justify-center gap-1.5 disabled:opacity-60"
+                >
+                  <CalendarClock className="h-4 w-4" />
+                  Schedule send
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancelFlow}
+                  className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div className="border-t border-neutral-100 pt-6 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-6">
+              <h3 className="text-sm font-semibold text-brand-dark">
+                Phone preview
+              </h3>
+              <p className="mb-4 mt-1 text-xs text-neutral-500">
+                Same preview as Review. Recipients, merge fields, and payment
+                links are resolved when the message actually sends.
+              </p>
+              <PhonePreview
+                message={previewText}
+                contactLabel={previewContactLabel}
+                isSample={previewSample}
+              />
+            </div>
           </div>
         </div>
       ) : null}
@@ -902,7 +1323,7 @@ export default function CreatePanel({
         >
           Back
         </button>
-        {step !== "review" ? (
+        {step !== "schedule" ? (
           <button
             type="button"
             onClick={goNext}
@@ -915,18 +1336,24 @@ export default function CreatePanel({
         ) : null}
       </div>
 
-      {/* Confirm dialog */}
       {confirmOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
             <h3 className="text-lg font-semibold text-brand-dark">
-              Confirm bulk send
+              Confirm scheduled send
             </h3>
             <p className="mt-2 text-sm text-neutral-600">
-              Send this message to <strong>{selectedIds.size}</strong>{" "}
+              Schedule this message to <strong>{selectedIds.size}</strong>{" "}
               recipient
               {selectedIds.size === 1 ? "" : "s"} from{" "}
-              <strong>{effectiveFromNumber}</strong>?
+              <strong>{fromLabel}</strong>
+              {scheduleValid && scheduleIso ? (
+                <>
+                  {" "}
+                  at <strong>{formatPrettyDateTime(scheduleIso)}</strong>
+                </>
+              ) : null}
+              ?
             </p>
             <p className="mt-2 rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600 whitespace-pre-wrap">
               {previewText || body}
@@ -943,15 +1370,15 @@ export default function CreatePanel({
               <button
                 type="button"
                 className="btn-primary inline-flex items-center gap-1.5 disabled:opacity-60"
-                onClick={onConfirmSend}
-                disabled={sending}
+                onClick={onConfirmSchedule}
+                disabled={sending || !scheduleValid}
               >
                 {sending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <MessageSquare className="h-4 w-4" />
+                  <CalendarClock className="h-4 w-4" />
                 )}
-                Send now
+                Schedule send
               </button>
             </div>
           </div>

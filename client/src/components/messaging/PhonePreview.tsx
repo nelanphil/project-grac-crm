@@ -17,7 +17,7 @@ export default function PhonePreview({
   const empty = !message.trim();
 
   return (
-    <div className="mx-auto w-full max-w-[280px]">
+    <div className="theme-light mx-auto w-full max-w-[280px]">
       <div className="relative overflow-hidden rounded-[2rem] border-[10px] border-neutral-900 bg-neutral-900 shadow-lg">
         {/* Dynamic island */}
         <div className="absolute left-1/2 top-2 z-10 h-5 w-24 -translate-x-1/2 rounded-full bg-black" />

@@ -122,9 +122,6 @@ function appliesToFromForm(form: FormState): DiscountAppliesTo[] {
   return next;
 }
 
-const WRITE_ROLES = new Set(["admin", "super-admin", "owner", "manager"]);
-const DELETE_ROLES = new Set(["admin", "super-admin", "owner"]);
-
 export default function DiscountCodesPage() {
   return (
     <AuthGuard>
@@ -135,13 +132,14 @@ export default function DiscountCodesPage() {
 
 function DiscountCodesContent() {
   const token = useAuthStore((s) => s.token);
-  const role = useAuthStore((s) => s.user?.role);
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const hasRole = useAuthStore((s) => s.hasRole);
   const canWrite =
-    useAuthStore((s) => s.hasPermission("discounts:write")) ||
-    WRITE_ROLES.has(role ?? "");
+    hasPermission("discounts:write") ||
+    hasRole("admin", "super-admin", "manager");
   const canDelete =
-    useAuthStore((s) => s.hasPermission("discounts:delete")) ||
-    DELETE_ROLES.has(role ?? "");
+    hasPermission("discounts:delete") ||
+    hasRole("admin", "super-admin");
 
   const [codes, setCodes] = useState<DiscountCodeItem[]>([]);
   const [loading, setLoading] = useState(true);

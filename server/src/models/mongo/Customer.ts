@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document, Types } from "mongoose";
+import mongoose, { Connection, Schema, Document, Types } from "mongoose";
 
 export interface ICustomer extends Document {
   legacyId: number;
@@ -38,6 +38,8 @@ export interface ICustomer extends Document {
   deletedAt: Date | null;
   /** Unguessable public checkout capability key. Generated lazily. */
   checkoutKey?: string | null;
+  /** Short public code for SMS payment links. Maps to checkoutKey. */
+  payCode?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -84,10 +86,30 @@ const customerSchema = new Schema<ICustomer>(
       index: true,
     },
     deletedAt: { type: Date, default: null, index: true },
-    checkoutKey: { type: String, default: null, unique: true, sparse: true },
+    checkoutKey: { type: String },
+    payCode: { type: String },
   },
   { timestamps: true },
 );
+
+/**
+ * Unique only when a real code is present. Null and "" are omitted from the
+ * index so many customers can exist without a checkout key or pay code.
+ * Sparse unique indexes still index an explicit null, which is what made
+ * legacy imports fail with E11000 on payCode_1.
+ */
+const optionalUniqueCodeFields = ["checkoutKey", "payCode"] as const;
+
+for (const field of optionalUniqueCodeFields) {
+  customerSchema.index(
+    { [field]: 1 },
+    {
+      unique: true,
+      name: `${field}_1`,
+      partialFilterExpression: { [field]: { $gt: "" } },
+    },
+  );
+}
 
 // Indexes to support server-side sorting/searching of the customer list.
 customerSchema.index({ last: 1, first: 1 });
@@ -102,3 +124,58 @@ export const Customer = mongoose.model<ICustomer>("Customer", customerSchema);
 
 /** Active (non–soft-deleted) customers only. */
 export const activeCustomerFilter = { deletedAt: null } as const;
+
+type ListedIndex = {
+  name?: string;
+  unique?: boolean;
+  partialFilterExpression?: Record<string, { $gt?: unknown }>;
+};
+
+function isDesiredOptionalUniqueIndex(index: ListedIndex | undefined, field: string): boolean {
+  if (!index?.unique) return false;
+  return index.partialFilterExpression?.[field]?.$gt === "";
+}
+
+/**
+ * Replace a sparse unique index that treats null as a value. Clears stored
+ * nulls and empty strings, then drops payCode_1 / checkoutKey_1 when they are
+ * not already the partial unique index.
+ */
+export async function ensureCustomerOptionalUniqueIndexes(
+  conn: Connection,
+): Promise<void> {
+  const col = conn.collection("customers");
+  let indexes: ListedIndex[] = [];
+  try {
+    indexes = (await col.indexes()) as ListedIndex[];
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    if (code !== 26) throw err;
+  }
+
+  for (const field of optionalUniqueCodeFields) {
+    await col.updateMany(
+      { $or: [{ [field]: { $type: "null" } }, { [field]: "" }] },
+      { $unset: { [field]: "" } },
+    );
+
+    const name = `${field}_1`;
+    const existing = indexes.find((index) => index.name === name);
+    if (isDesiredOptionalUniqueIndex(existing, field)) continue;
+
+    if (existing?.name) {
+      await col.dropIndex(existing.name);
+    }
+    await col.createIndex(
+      { [field]: 1 },
+      {
+        unique: true,
+        name,
+        partialFilterExpression: { [field]: { $gt: "" } },
+      },
+    );
+    console.log(
+      `[customers] Rebuilt unique index ${name} so empty values are not unique.`,
+    );
+  }
+}

@@ -4,8 +4,10 @@ import { ticketContractDiscountSchema } from "./productDiscounts";
 
 export interface IWorkOrderPart {
   productRef?: Types.ObjectId | null;
-  lineType: "product" | "note";
-  kind: "part" | "labor";
+  contractTemplateRef?: Types.ObjectId | null;
+  enrolledContractRef?: Types.ObjectId | null;
+  lineType: "product" | "note" | "agreement";
+  kind: "part" | "labor" | "equipment";
   partNumber: string;
   description: string;
   quantity: number;
@@ -31,6 +33,8 @@ export interface IWorkOrder extends Document {
   runHours: number;
   laborHours: number;
   date: Date | null;
+  startTime: string;
+  endTime: string;
   tech: string;
   assignedUserRef?: Types.ObjectId | null;
   workOrderTypeRef?: Types.ObjectId | null;
@@ -44,6 +48,7 @@ export interface IWorkOrder extends Document {
   customerName: string;
   customerAddress: string;
   customerCity: string;
+  customerState: string;
   customerZip: string;
   customerPhone: string;
   customerEmail: string;
@@ -54,6 +59,7 @@ export interface IWorkOrder extends Document {
   exerciseTime: string;
   totalParts: number;
   totalLabor: number;
+  totalAgreements: number;
   laborOverridden: boolean;
   miscExp: number;
   subtotal: number;
@@ -78,8 +84,22 @@ const workOrderPartSchema = new Schema<IWorkOrderPart>(
       ref: "Product",
       default: null,
     },
-    lineType: { type: String, enum: ["product", "note"], default: "product" },
-    kind: { type: String, enum: ["part", "labor"], default: "part" },
+    contractTemplateRef: {
+      type: Schema.Types.ObjectId,
+      ref: "ContractTemplate",
+      default: null,
+    },
+    enrolledContractRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Contract",
+      default: null,
+    },
+    lineType: {
+      type: String,
+      enum: ["product", "note", "agreement"],
+      default: "product",
+    },
+    kind: { type: String, enum: ["part", "labor", "equipment"], default: "part" },
     partNumber: { type: String, default: "" },
     description: { type: String, default: "" },
     quantity: { type: Number, default: 0 },
@@ -94,7 +114,7 @@ const workOrderPartSchema = new Schema<IWorkOrderPart>(
 const workOrderSchema = new Schema<IWorkOrder>(
   {
     legacyId: { type: Number, index: true },
-    number: { type: String, default: undefined, index: true, sparse: true },
+    number: { type: String, default: undefined },
     userId: { type: Number, index: true },
     customerId: { type: Number, index: true, required: true },
     customerRef: { type: Schema.Types.ObjectId, ref: "Customer" },
@@ -130,6 +150,8 @@ const workOrderSchema = new Schema<IWorkOrder>(
     runHours: { type: Number, default: 0 },
     laborHours: { type: Number, default: 0 },
     date: { type: Date, default: null },
+    startTime: { type: String, default: "" },
+    endTime: { type: String, default: "" },
     tech: { type: String, default: "" },
     assignedUserRef: {
       type: Schema.Types.ObjectId,
@@ -145,7 +167,7 @@ const workOrderSchema = new Schema<IWorkOrder>(
     },
     scheduledStart: { type: Date, default: null, index: true },
     scheduledEnd: { type: Date, default: null },
-    estimatedMinutes: { type: Number, default: 60 },
+    estimatedMinutes: { type: Number, default: 30 },
     appointmentCanceledAt: { type: Date, default: null, index: true },
     appointmentCanceledBy: {
       type: Schema.Types.ObjectId,
@@ -157,6 +179,7 @@ const workOrderSchema = new Schema<IWorkOrder>(
     customerName: { type: String, default: "" },
     customerAddress: { type: String, default: "" },
     customerCity: { type: String, default: "" },
+    customerState: { type: String, default: "FL" },
     customerZip: { type: String, default: "" },
     customerPhone: { type: String, default: "" },
     customerEmail: { type: String, default: "" },
@@ -167,6 +190,7 @@ const workOrderSchema = new Schema<IWorkOrder>(
     exerciseTime: { type: String, default: "" },
     totalParts: { type: Number, default: 0 },
     totalLabor: { type: Number, default: 0 },
+    totalAgreements: { type: Number, default: 0 },
     laborOverridden: { type: Boolean, default: false },
     miscExp: { type: Number, default: 0 },
     subtotal: { type: Number, default: 0 },

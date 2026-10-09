@@ -80,7 +80,7 @@ export default function CustomerCommunicationsPanel({
   token,
 }: CustomerCommunicationsPanelProps) {
   const isAdmin = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin", "owner"),
+    s.hasRole("admin", "super-admin"),
   );
 
   const [channel, setChannel] = useState<ChannelFilter>("all");

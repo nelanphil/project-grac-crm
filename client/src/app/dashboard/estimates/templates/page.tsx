@@ -41,7 +41,7 @@ function EstimateTemplatesContent() {
   const token = useAuthStore((s) => s.token);
   const canWrite = useAuthStore((s) => s.hasPermission("estimates:write"));
   const canSetDefault = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin", "owner"),
+    s.hasRole("admin", "super-admin"),
   );
   const [templates, setTemplates] = useState<EstimateTemplateItem[]>([]);
   const [loading, setLoading] = useState(true);

@@ -11,9 +11,8 @@ import {
 import { NotificationRead } from "../models/mongo/NotificationRead";
 import { User } from "../models/mongo/User";
 import { resolveCustomerRefsForUser } from "../utils/resolveCustomerLogin";
-
-/** Org-wide notification visibility (owners are territory-scoped). */
-const FULL_ACCESS_ROLES = new Set(["super-admin", "admin"]);
+import { userHasCapability } from "../utils/jobRoles";
+import { isCustomerRole, isOrgAdminRole } from "../utils/roles";
 
 export interface LogNotificationInput {
   entityType: NotificationEntityType;
@@ -24,7 +23,10 @@ export interface LogNotificationInput {
   actorType?: NotificationActorType;
   actorUserId?: string | null;
   actorName?: string | null;
+  recipientUserIds?: Array<Types.ObjectId | string>;
   metadata?: Record<string, unknown>;
+  /** When true, only recipientUserIds can see the event. */
+  direct?: boolean;
 }
 
 export interface NotificationListItem {
@@ -45,6 +47,9 @@ export interface NotificationListItem {
 export interface AuthUserLike {
   id: string;
   role: string;
+  roles?: string[];
+  jobRoles?: string[];
+  userType?: string;
 }
 
 export function actorFromRequest(user?: { id: string } | null): {
@@ -107,6 +112,10 @@ export async function logNotification(input: LogNotificationInput): Promise<void
       entityId: String(input.entityId),
       summary: input.summary.trim(),
       metadata: input.metadata ?? {},
+      recipientUserIds: (input.recipientUserIds ?? [])
+        .map((id) => toObjectId(id))
+        .filter((id): id is Types.ObjectId => id !== null),
+      direct: Boolean(input.direct),
     });
   } catch (err) {
     console.error("[notifications] failed to log event", err);
@@ -116,6 +125,31 @@ export async function logNotification(input: LogNotificationInput): Promise<void
 /** Fire-and-forget wrapper so callers never await logging. */
 export function logNotificationAsync(input: LogNotificationInput): void {
   void logNotification(input);
+}
+
+/**
+ * Like `logNotificationAsync`, but skips the event when the same actor already
+ * logged the same action on the same entity within `windowMs` (e.g. autosave).
+ */
+export function logNotificationThrottledAsync(
+  input: LogNotificationInput,
+  windowMs: number,
+): void {
+  void (async () => {
+    try {
+      const recent = await NotificationEvent.exists({
+        entityType: input.entityType,
+        action: input.action,
+        entityId: String(input.entityId),
+        actorUserId: toObjectId(input.actorUserId),
+        createdAt: { $gte: new Date(Date.now() - windowMs) },
+      });
+      if (recent) return;
+    } catch (err) {
+      console.error("[notifications] throttle lookup failed", err);
+    }
+    await logNotification(input);
+  })();
 }
 
 export { resolveCustomerRefsForUser };
@@ -131,14 +165,14 @@ async function resolveOwnerCustomerRefs(
   return customers.map((c) => c._id as Types.ObjectId);
 }
 
-export async function buildVisibilityFilter(
+async function roleVisibilityFilter(
   user: AuthUserLike
 ): Promise<FilterQuery<INotificationEvent>> {
-  if (FULL_ACCESS_ROLES.has(user.role)) {
+  if (isOrgAdminRole(user)) {
     return {};
   }
 
-  if (user.role === "owner") {
+  if (await userHasCapability(user, "territoryOwner")) {
     const refs = await resolveOwnerCustomerRefs(user.id);
     if (refs.length === 0) {
       return { _id: { $in: [] } };
@@ -146,7 +180,7 @@ export async function buildVisibilityFilter(
     return { customerRef: { $in: refs } };
   }
 
-  if (user.role === "customer") {
+  if (isCustomerRole(user)) {
     const refs = await resolveCustomerRefsForUser(user.id);
     if (refs.length === 0) {
       return { _id: { $in: [] } };
@@ -165,6 +199,32 @@ export async function buildVisibilityFilter(
   return { entityType: { $in: OPERATIONAL_ENTITY_TYPES } };
 }
 
+const notDirect = { direct: { $ne: true } };
+
+export async function buildVisibilityFilter(
+  user: AuthUserLike
+): Promise<FilterQuery<INotificationEvent>> {
+  const userId = toObjectId(user.id);
+  const directForUser =
+    userId && !isCustomerRole(user)
+      ? { direct: true, recipientUserIds: userId }
+      : null;
+
+  if (isOrgAdminRole(user)) {
+    if (!directForUser) return notDirect;
+    return { $or: [notDirect, directForUser] };
+  }
+
+  const base = await roleVisibilityFilter(user);
+  const scoped: FilterQuery<INotificationEvent> = { $and: [base, notDirect] };
+  const clauses: FilterQuery<INotificationEvent>[] = [scoped];
+  if (userId) {
+    clauses.push({ ...notDirect, recipientUserIds: userId });
+  }
+  if (directForUser) clauses.push(directForUser);
+  return clauses.length === 1 ? clauses[0] : { $or: clauses };
+}
+
 function serializeEvent(
   event: INotificationEvent | (INotificationEvent & { _id: Types.ObjectId }),
   readIds: Set<string>,
@@ -172,7 +232,9 @@ function serializeEvent(
 ): NotificationListItem {
   const id = String(event._id);
   const actorUserId = event.actorUserId ? String(event.actorUserId) : null;
-  const redactActor = user?.role === "customer" && actorUserId !== user.id;
+  const redactActor = user
+    ? isCustomerRole(user) && actorUserId !== user.id
+    : false;
   return {
     id,
     entityType: event.entityType,

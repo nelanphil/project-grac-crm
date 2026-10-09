@@ -154,13 +154,52 @@ type EmailCreatePanelProps = {
   showPaymentLinkColumn?: boolean;
   includePaymentLink?: boolean;
   onIncludePaymentLinkChange?: (value: boolean) => void;
+
+  contractTemplates?: { _id: string; label: string; cost: number }[];
+  offerContractTemplateId?: string | null;
+  offerOverrides?: Record<string, string | null>;
+  onOfferContractTemplateIdChange?: (value: string | null) => void;
+  onOfferOverrideChange?: (contactId: string, value: string) => void;
+  onApplyOfferOverrides?: (contactIds: string[], value: string) => void;
 };
 
-function PaymentLinkStatus({ available }: { available?: boolean }) {
+function offerForContact(
+  contactId: string,
+  fallback: string | null,
+  overrides: Record<string, string | null>,
+): string | null {
+  if (Object.prototype.hasOwnProperty.call(overrides, contactId)) {
+    return overrides[contactId];
+  }
+  return fallback;
+}
+
+function overrideSelectValue(
+  contactId: string,
+  overrides: Record<string, string | null>,
+): string {
+  if (!Object.prototype.hasOwnProperty.call(overrides, contactId)) return "";
+  return overrides[contactId] ?? "none";
+}
+
+function PaymentLinkStatus({
+  available,
+  viaTemporary,
+}: {
+  available?: boolean;
+  viaTemporary?: boolean;
+}) {
   if (available) {
     return (
-      <span className="rounded bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-700">
-        Will send
+      <span className="inline-flex flex-col items-start gap-0.5">
+        <span className="rounded bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-700">
+          Will send
+        </span>
+        {viaTemporary ? (
+          <span className="text-[10px] text-neutral-500">
+            Temporary contract
+          </span>
+        ) : null}
       </span>
     );
   }
@@ -168,6 +207,33 @@ function PaymentLinkStatus({ available }: { available?: boolean }) {
     <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
       No button
     </span>
+  );
+}
+
+function OfferContractSelect({
+  value,
+  templates,
+  onChange,
+}: {
+  value: string;
+  templates: { _id: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => onChange(e.target.value)}
+      className="max-w-[12rem] rounded border border-neutral-200 bg-white px-1.5 py-1 text-[11px] text-brand-dark"
+    >
+      <option value="">Template default</option>
+      <option value="none">Don&apos;t offer</option>
+      {templates.map((template) => (
+        <option key={template._id} value={template._id}>
+          {template.label}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -246,9 +312,29 @@ export default function EmailCreatePanel({
   showPaymentLinkColumn = false,
   includePaymentLink = false,
   onIncludePaymentLinkChange,
+  contractTemplates = [],
+  offerContractTemplateId = null,
+  offerOverrides = {},
+  onOfferContractTemplateIdChange,
+  onOfferOverrideChange,
+  onApplyOfferOverrides,
 }: EmailCreatePanelProps) {
   const [stepIndex, setStepIndex] = useState(0);
   const [maxStepIndex, setMaxStepIndex] = useState(0);
+  const [bulkOffer, setBulkOffer] = useState("");
+
+  function paymentForContact(contact: MessagingContactItem) {
+    const offered = offerForContact(
+      contact._id,
+      offerContractTemplateId,
+      offerOverrides,
+    );
+    const viaTemporary = Boolean(offered);
+    return {
+      available: Boolean(contact.hasPayableInvoice) || viaTemporary,
+      viaTemporary,
+    };
+  }
 
   const totalPages = Math.max(1, Math.ceil(contactsTotal / pageSize));
   const pageAllSelected =
@@ -415,9 +501,39 @@ export default function EmailCreatePanel({
           {showPaymentLinkColumn ? (
             <p className="mb-2 text-xs text-neutral-500">
               “Will send” means this contact has unpaid invoices or unpaid work
-              orders and will get a Pay securely button. “No button” means they
-              have none.
+              orders, or a temporary contract will be created when the email
+              sends. A selected temporary contract is added to the same
+              checkout as any existing balance. “No button” means they have
+              neither.
             </p>
+          ) : null}
+
+          {showPaymentLinkColumn && onApplyOfferOverrides ? (
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-xs text-neutral-600">
+                Offer to selected customers without a button
+                <OfferContractSelect
+                  value={bulkOffer}
+                  templates={contractTemplates}
+                  onChange={setBulkOffer}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  const ids = contacts
+                    .filter(
+                      (c) => selectedIds.has(c._id) && !c.hasPayableInvoice,
+                    )
+                    .map((c) => c._id);
+                  if (ids.length === 0) return;
+                  onApplyOfferOverrides(ids, bulkOffer);
+                }}
+                className="rounded border border-neutral-200 px-2 py-1 text-xs font-medium text-brand-dark hover:border-brand-orange"
+              >
+                Apply
+              </button>
+            </div>
           ) : null}
 
           <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -511,9 +627,26 @@ export default function EmailCreatePanel({
                             <DataField
                               label="Payment button"
                               value={
-                                <PaymentLinkStatus
-                                  available={c.hasPayableInvoice}
-                                />
+                                <span className="inline-flex flex-col items-start gap-1">
+                                  <PaymentLinkStatus
+                                    available={paymentForContact(c).available}
+                                    viaTemporary={
+                                      paymentForContact(c).viaTemporary
+                                    }
+                                  />
+                                  {onOfferOverrideChange ? (
+                                    <OfferContractSelect
+                                      value={overrideSelectValue(
+                                        c._id,
+                                        offerOverrides,
+                                      )}
+                                      templates={contractTemplates}
+                                      onChange={(value) =>
+                                        onOfferOverrideChange(c._id, value)
+                                      }
+                                    />
+                                  ) : null}
+                                </span>
                               }
                               className="col-span-2"
                             />
@@ -585,9 +718,26 @@ export default function EmailCreatePanel({
                             ) : null}
                             {showPaymentLinkColumn ? (
                               <td className="px-2 py-2">
-                                <PaymentLinkStatus
-                                  available={c.hasPayableInvoice}
-                                />
+                                <div className="flex flex-col items-start gap-1">
+                                  <PaymentLinkStatus
+                                    available={paymentForContact(c).available}
+                                    viaTemporary={
+                                      paymentForContact(c).viaTemporary
+                                    }
+                                  />
+                                  {onOfferOverrideChange ? (
+                                    <OfferContractSelect
+                                      value={overrideSelectValue(
+                                        c._id,
+                                        offerOverrides,
+                                      )}
+                                      templates={contractTemplates}
+                                      onChange={(value) =>
+                                        onOfferOverrideChange(c._id, value)
+                                      }
+                                    />
+                                  ) : null}
+                                </div>
                               </td>
                             ) : null}
                           </tr>
@@ -671,6 +821,9 @@ export default function EmailCreatePanel({
           previewSample={previewSample}
           includePaymentLink={includePaymentLink}
           onIncludePaymentLinkChange={onIncludePaymentLinkChange}
+          contractTemplates={contractTemplates}
+          offerContractTemplateId={offerContractTemplateId}
+          onOfferContractTemplateIdChange={onOfferContractTemplateIdChange}
         />
       ) : null}
 
@@ -856,7 +1009,11 @@ export default function EmailCreatePanel({
             {showPaymentLinkColumn ? (
               <p className="mb-3 text-xs text-neutral-500">
                 Recipients marked “No button” have no unpaid invoices or unpaid
-                work orders, so their email will omit the Pay securely button.
+                work orders, and no temporary contract is set, so their email
+                will omit the Pay securely button. “Temporary contract” means
+                that contract and its invoice are created when the email sends
+                and added to the same checkout as any unpaid invoices or work
+                orders.
               </p>
             ) : null}
             {selectedContacts.length === 0 ? (
@@ -896,7 +1053,10 @@ export default function EmailCreatePanel({
                                 label="Payment button"
                                 value={
                                   <PaymentLinkStatus
-                                    available={c.hasPayableInvoice}
+                                    available={paymentForContact(c).available}
+                                    viaTemporary={
+                                      paymentForContact(c).viaTemporary
+                                    }
                                   />
                                 }
                                 className="col-span-2"
@@ -951,7 +1111,10 @@ export default function EmailCreatePanel({
                             {showPaymentLinkColumn ? (
                               <td className="px-2 py-2">
                                 <PaymentLinkStatus
-                                  available={c.hasPayableInvoice}
+                                  available={paymentForContact(c).available}
+                                  viaTemporary={
+                                    paymentForContact(c).viaTemporary
+                                  }
                                 />
                               </td>
                             ) : null}

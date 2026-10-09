@@ -9,6 +9,31 @@ import {
 
 const objectIdOrNull = z.union([z.string().trim(), z.null()]).optional();
 
+const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const optionalTime = z
+  .union([
+    z.string().regex(hhmm, "Use a valid time"),
+    z.literal(""),
+    z.null(),
+  ])
+  .optional();
+
+function refineTimeWindow(
+  data: { startTime?: string | null; endTime?: string | null },
+  ctx: z.RefinementCtx,
+) {
+  const start = typeof data.startTime === "string" ? data.startTime : "";
+  const end = typeof data.endTime === "string" ? data.endTime : "";
+  if (start && end && end <= start) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "End time must be after start time",
+      path: ["endTime"],
+    });
+  }
+}
+
 export const createWorkOrderSchema = z
   .object({
     customerId: z.coerce.number().int().positive(),
@@ -18,6 +43,8 @@ export const createWorkOrderSchema = z
     descPerform: z.string().optional(),
     descPerformed: z.string().optional(),
     date: z.union([z.string(), z.null()]).optional(),
+    startTime: optionalTime,
+    endTime: optionalTime,
     tech: z.string().optional(),
     assignedUserRef: objectIdOrNull,
     workOrderTypeRef: objectIdOrNull,
@@ -31,7 +58,8 @@ export const createWorkOrderSchema = z
   .merge(ticketSnapshotSchema)
   .merge(ticketMoneySchema)
   .merge(ticketSignatureSchema)
-  .merge(ticketContractSchema);
+  .merge(ticketContractSchema)
+  .superRefine(refineTimeWindow);
 
 export const updateWorkOrderSchema = z
   .object({
@@ -42,6 +70,8 @@ export const updateWorkOrderSchema = z
     descPerform: z.string().optional(),
     descPerformed: z.string().optional(),
     date: z.union([z.string(), z.null()]).optional(),
+    startTime: optionalTime,
+    endTime: optionalTime,
     tech: z.string().optional(),
     paid: z.boolean().optional(),
     completed: z.boolean().optional(),
@@ -53,7 +83,8 @@ export const updateWorkOrderSchema = z
   .merge(ticketSnapshotSchema)
   .merge(ticketMoneySchema)
   .merge(ticketSignatureSchema)
-  .merge(ticketContractSchema);
+  .merge(ticketContractSchema)
+  .superRefine(refineTimeWindow);
 
 export type CreateWorkOrderInput = z.infer<typeof createWorkOrderSchema>;
 export type UpdateWorkOrderInput = z.infer<typeof updateWorkOrderSchema>;

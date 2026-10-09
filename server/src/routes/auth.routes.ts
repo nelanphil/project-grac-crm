@@ -11,6 +11,7 @@ import {
   checkUsername,
   acceptLegalConsent,
   updateMyNotifications,
+  updateLoginLocation,
 } from "../controllers/auth.controller";
 import { authenticate, AuthRequest } from "../middleware/auth.middleware";
 
@@ -34,6 +35,9 @@ router.patch("/me/password", authenticate, (req, res: Response) =>
 );
 router.patch("/me/notifications", authenticate, (req, res: Response) =>
   updateMyNotifications(req as AuthRequest, res),
+);
+router.post("/me/login-location", authenticate, (req, res: Response) =>
+  updateLoginLocation(req as AuthRequest, res),
 );
 router.post("/legal-consent", authenticate, (req, res: Response) =>
   acceptLegalConsent(req as AuthRequest, res),

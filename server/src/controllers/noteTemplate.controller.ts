@@ -6,12 +6,7 @@ import {
   createNoteTemplateSchema,
   updateNoteTemplateSchema,
 } from "../schemas/noteTemplate.schema";
-
-const ADMIN_ROLES = new Set(["admin", "super-admin", "owner"]);
-
-function isAdminRole(role?: string): boolean {
-  return Boolean(role && ADMIN_ROLES.has(role));
-}
+import { isAdminRole } from "../utils/roles";
 
 function toPublic(doc: INoteTemplate | Record<string, unknown>) {
   const d =
@@ -75,7 +70,7 @@ export async function createNoteTemplate(
     }
 
     const requestedScope = parsed.data.scope ?? "personal";
-    if (requestedScope === "global" && !isAdminRole(req.user.role)) {
+    if (requestedScope === "global" && !isAdminRole(req.user)) {
       res.status(403).json({
         message: "Only admins can create global note templates",
       });
@@ -127,7 +122,7 @@ export async function updateNoteTemplate(
     }
 
     if (template.scope === "global") {
-      if (!isAdminRole(req.user.role)) {
+      if (!isAdminRole(req.user)) {
         res.status(403).json({
           message: "Only admins can edit global note templates",
         });
@@ -172,7 +167,7 @@ export async function deleteNoteTemplate(
     }
 
     if (template.scope === "global") {
-      if (!isAdminRole(req.user.role)) {
+      if (!isAdminRole(req.user)) {
         res.status(403).json({
           message: "Only admins can delete global note templates",
         });

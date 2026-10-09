@@ -1,3 +1,4 @@
+import { recordApiBreadcrumb } from "@/lib/crashBreadcrumbs";
 import type { EmailChrome } from "@/lib/emailChrome";
 import type { EstimatePayload } from "./estimate-types";
 import type { LeadListItem, LeadStatus } from "./lead-types";
@@ -15,6 +16,7 @@ export class ApiError extends Error {
     message: string,
     public status: number,
     public errors?: Record<string, string[]>,
+    public code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -24,12 +26,22 @@ export class ApiError extends Error {
 export async function submitLead(
   data: EstimatePayload,
 ): Promise<{ id: string; message: string }> {
-  const res = await fetch(`${API_URL}/leads`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/leads`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  } catch {
+    recordApiBreadcrumb("POST", "/leads", 0);
+    throw new ApiError(
+      "Could not reach the server. Check your connection and try again.",
+      0,
+    );
+  }
 
+  recordApiBreadcrumb("POST", "/leads", res.status);
   const body = await res.json().catch(() => ({}));
 
   if (!res.ok) {
@@ -56,12 +68,55 @@ export interface ContactFormPayload {
 export async function submitContactForm(
   data: ContactFormPayload,
 ): Promise<{ message: string }> {
-  const res = await fetch(`${API_URL}/contact`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/contact`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  } catch {
+    recordApiBreadcrumb("POST", "/contact", 0);
+    throw new ApiError(
+      "Could not reach the server. Check your connection and try again.",
+      0,
+    );
+  }
 
+  recordApiBreadcrumb("POST", "/contact", res.status);
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new ApiError(
+      body.message ?? "Something went wrong. Please try again.",
+      res.status,
+      body.errors,
+    );
+  }
+
+  return body;
+}
+
+export async function submitSmsOptIn(data: {
+  phone: string;
+  smsOptIn: true;
+}): Promise<{ message: string }> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/sms-opt-in`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+  } catch {
+    recordApiBreadcrumb("POST", "/sms-opt-in", 0);
+    throw new ApiError(
+      "Could not reach the server. Check your connection and try again.",
+      0,
+    );
+  }
+
+  recordApiBreadcrumb("POST", "/sms-opt-in", res.status);
   const body = await res.json().catch(() => ({}));
 
   if (!res.ok) {
@@ -168,6 +223,7 @@ async function authRequest<T>(
 ): Promise<T> {
   const isFormData =
     typeof FormData !== "undefined" && options.body instanceof FormData;
+  const method = options.method ?? "GET";
 
   let res: Response;
   try {
@@ -181,11 +237,14 @@ async function authRequest<T>(
           },
     });
   } catch {
+    recordApiBreadcrumb(method, endpoint, 0);
     throw new ApiError(
       "Could not reach the server. Check your connection and try again.",
       0,
     );
   }
+
+  recordApiBreadcrumb(method, endpoint, res.status);
 
   const body = await res.json().catch(() => ({}));
 
@@ -194,10 +253,101 @@ async function authRequest<T>(
       body.message ?? "Something went wrong. Please try again.",
       res.status,
       body.errors,
+      typeof body.code === "string" ? body.code : undefined,
     );
   }
 
   return body as T;
+}
+
+export type CrashReportStatus = "open" | "resolved";
+export type CrashReportSource =
+  | "render"
+  | "window"
+  | "unhandledrejection"
+  | "chunk";
+
+export interface CrashReportSummary {
+  id: string;
+  status: CrashReportStatus;
+  source: CrashReportSource;
+  name: string;
+  message: string;
+  pathname: string;
+  userEmail: string;
+  userRole: string;
+  reporterEmail: string;
+  occurredAt: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface CrashReportDetail extends CrashReportSummary {
+  stack: string;
+  componentStack: string;
+  url: string;
+  userAgent: string;
+  viewport: string;
+  online: boolean;
+  whatWereYouDoing: string;
+  whatHappened: string;
+  breadcrumbs: { t: number; type: "route" | "click" | "api"; detail: string }[];
+  resolutionNote: string;
+  resolvedByName: string;
+  ip: string;
+}
+
+export interface CrashReportListResponse {
+  reports: CrashReportSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  openCount: number;
+  resolvedCount: number;
+}
+
+export async function listCrashReports(
+  token: string,
+  options?: { page?: number; pageSize?: number; status?: CrashReportStatus | "all" },
+): Promise<CrashReportListResponse> {
+  const params = new URLSearchParams();
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
+  if (options?.status && options.status !== "all") {
+    params.set("status", options.status);
+  }
+  const qs = params.toString();
+  return authRequest<CrashReportListResponse>(
+    `/crash-reports${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function getCrashReport(
+  token: string,
+  id: string,
+): Promise<{ report: CrashReportDetail }> {
+  return authRequest<{ report: CrashReportDetail }>(`/crash-reports/${id}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function updateCrashReport(
+  token: string,
+  id: string,
+  data: { status: CrashReportStatus; resolutionNote?: string },
+): Promise<{ report: CrashReportDetail }> {
+  return authRequest<{ report: CrashReportDetail }>(`/crash-reports/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
 }
 
 function parseSseBlock(block: string): { event: string; data: unknown } | null {
@@ -227,6 +377,7 @@ async function streamAuthRequest(
   const isFormData =
     typeof FormData !== "undefined" && options.body instanceof FormData;
 
+  const method = options.method ?? "GET";
   let res: Response;
   try {
     res = await fetch(`${API_URL}${endpoint}`, {
@@ -238,11 +389,14 @@ async function streamAuthRequest(
       },
     });
   } catch {
+    recordApiBreadcrumb(method, endpoint, 0);
     throw new ApiError(
       "Could not reach the server. Check your connection and try again.",
       0,
     );
   }
+
+  recordApiBreadcrumb(method, endpoint, res.status);
 
   const contentType = res.headers.get("content-type") ?? "";
   if (!contentType.includes("text/event-stream")) {
@@ -304,14 +458,38 @@ async function streamAuthRequest(
   return lastResult;
 }
 
+export interface LoginCoordinates {
+  lat: number;
+  lng: number;
+}
+
+/** Server code returned when a staff sign-in is missing browser coordinates. */
+export const LOCATION_REQUIRED_CODE = "LOCATION_REQUIRED";
+
 export async function authLogin(
   identifier: string,
   password: string,
+  location?: LoginCoordinates,
 ): Promise<LoginResponse> {
   return authRequest<LoginResponse>("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ identifier, password }),
+    body: JSON.stringify({ identifier, password, ...(location ? { location } : {}) }),
   });
+}
+
+export async function authUpdateLoginLocation(
+  token: string,
+  location: LoginCoordinates,
+): Promise<boolean> {
+  const res = await fetch(`${API_URL}/auth/me/login-location`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(location),
+  });
+  return res.ok;
 }
 
 export async function authRegister(data: {
@@ -496,6 +674,22 @@ export interface UserHomeLocation {
   lng: number | null;
 }
 
+/** A Google-confirmed city a technician covers. */
+export interface ServiceCity {
+  city: string;
+  state: string;
+  placeId: string;
+  lat: number | null;
+  lng: number | null;
+}
+
+export interface CitySuggestion {
+  placeId: string;
+  label: string;
+  city: string;
+  state: string;
+}
+
 export interface WeeklyDayHours {
   enabled: boolean;
   start: string;
@@ -514,19 +708,40 @@ export interface ScheduleException {
   note?: string;
 }
 
+export interface UserCapabilities {
+  schedulable: boolean;
+  territoryOwner: boolean;
+}
+
+export interface UserLoginLocation {
+  city: string;
+  region: string;
+  country: string;
+  /** "device" from browser coordinates; "ip" (or missing) is an approximate IP guess. */
+  source?: "device" | "ip";
+}
+
 export interface UserListItem {
   _id: string;
   email: string;
   first_name: string;
   last_name: string;
   role: AuthUser["role"];
+  roles: string[];
+  userType?: "staff" | "customer";
+  jobRoles?: string[];
+  jobRoleData?: Record<string, Record<string, unknown>>;
+  capabilities?: UserCapabilities;
+  schedulable?: boolean;
   username: string | null;
   usernameNumber: number | null;
   territories: UserTerritories;
-  schedulable: boolean;
   homeLocation: UserHomeLocation;
   weeklyHours: UserWeeklyHours;
+  serviceCities: ServiceCity[];
   scheduleExceptions: ScheduleException[];
+  lastLoginAt?: string | null;
+  lastLoginLocation?: UserLoginLocation | null;
   createdAt: string;
   updatedAt?: string;
 }
@@ -547,12 +762,16 @@ export async function createUser(
     password?: string;
     first_name: string;
     last_name: string;
-    role: string;
+    role?: string;
+    roles?: string[];
+    userType?: "staff" | "customer";
+    jobRoles?: string[];
+    jobRoleData?: Record<string, Record<string, unknown>>;
     username?: string | null;
     territories?: UserTerritories;
-    schedulable?: boolean;
     weeklyHours?: UserWeeklyHours;
     homeLocation?: UserHomeLocation;
+    serviceCities?: ServiceCity[];
     scheduleExceptions?: ScheduleException[];
   },
 ): Promise<{ user: UserListItem; temporaryPassword?: string }> {
@@ -574,12 +793,16 @@ export async function updateUser(
     first_name?: string;
     last_name?: string;
     role?: string;
+    roles?: string[];
+    userType?: "staff" | "customer";
+    jobRoles?: string[];
+    jobRoleData?: Record<string, Record<string, unknown>>;
     username?: string | null;
     password?: string;
     territories?: UserTerritories;
-    schedulable?: boolean;
     weeklyHours?: UserWeeklyHours;
     homeLocation?: UserHomeLocation;
+    serviceCities?: ServiceCity[];
     scheduleExceptions?: ScheduleException[];
   },
 ): Promise<{ user: UserListItem }> {
@@ -1470,23 +1693,109 @@ export interface WorkOrderNoteAuthor {
   last_name: string;
 }
 
+export interface NoteMention {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+export type TicketNoteSource = "work-order" | "estimate";
+
 export interface WorkOrderNote {
   _id: string;
-  workOrderRef: string;
+  workOrderRef?: string;
+  estimateRef?: string;
   authorId?: string;
   author?: WorkOrderNoteAuthor;
   content: string;
   visibleToCustomer: boolean;
+  isReminder?: boolean;
+  mentionUserIds?: string[];
+  mentions?: NoteMention[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TicketNoteInput {
+  content: string;
+  visibleToCustomer?: boolean;
+  templateId?: string;
+  isReminder?: boolean;
+  mentionUserIds?: string[];
+}
+
+function ticketNotesPath(source: TicketNoteSource, recordId: string): string {
+  const root = source === "estimate" ? "estimates" : "work-orders";
+  return `/${root}/${recordId}/notes`;
+}
+
+export interface RecentWorkOrderNote {
+  id: string;
+  content: string;
+  createdAt: string;
+  authorName: string;
+  workOrderId: string;
+  ticketNumber: string;
+  customerName: string;
+}
+
+export interface WorkOrderNoteHistoryItem {
+  id: string;
+  content: string;
+  workOrderId: string;
+  ticketNumber: string;
+  customerName: string;
+  createdAt: string;
+  canEdit: boolean;
+}
+
+export async function getWorkOrderNoteHistory(
+  token: string,
+  opts: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    sort?: "note" | "ticket" | "customer" | "created";
+    dir?: "asc" | "desc";
+  } = {},
+): Promise<{
+  notes: WorkOrderNoteHistoryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (opts.page != null) params.set("page", String(opts.page));
+  if (opts.pageSize != null) params.set("pageSize", String(opts.pageSize));
+  if (opts.search) params.set("search", opts.search);
+  if (opts.sort) params.set("sort", opts.sort);
+  if (opts.dir) params.set("dir", opts.dir);
+  const qs = params.toString();
+  return authRequest(`/work-orders/notes${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getRecentWorkOrderNotes(
+  token: string,
+): Promise<{ notes: RecentWorkOrderNote[] }> {
+  return authRequest<{ notes: RecentWorkOrderNote[] }>(
+    "/work-orders/recent-notes",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function getWorkOrderNotes(
   token: string,
   workOrderId: string,
+  source: TicketNoteSource = "work-order",
 ): Promise<{ notes: WorkOrderNote[] }> {
   return authRequest<{ notes: WorkOrderNote[] }>(
-    `/work-orders/${workOrderId}/notes`,
+    ticketNotesPath(source, workOrderId),
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
@@ -1497,10 +1806,11 @@ export async function getWorkOrderNotes(
 export async function createWorkOrderNote(
   token: string,
   workOrderId: string,
-  data: { content: string; visibleToCustomer?: boolean; templateId?: string },
+  data: TicketNoteInput,
+  source: TicketNoteSource = "work-order",
 ): Promise<{ note: WorkOrderNote }> {
   return authRequest<{ note: WorkOrderNote }>(
-    `/work-orders/${workOrderId}/notes`,
+    ticketNotesPath(source, workOrderId),
     {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
@@ -1513,10 +1823,11 @@ export async function updateWorkOrderNote(
   token: string,
   workOrderId: string,
   noteId: string,
-  data: { content?: string; visibleToCustomer?: boolean },
+  data: TicketNoteInput,
+  source: TicketNoteSource = "work-order",
 ): Promise<{ note: WorkOrderNote }> {
   return authRequest<{ note: WorkOrderNote }>(
-    `/work-orders/${workOrderId}/notes/${noteId}`,
+    `${ticketNotesPath(source, workOrderId)}/${noteId}`,
     {
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}` },
@@ -1529,14 +1840,92 @@ export async function deleteWorkOrderNote(
   token: string,
   workOrderId: string,
   noteId: string,
+  source: TicketNoteSource = "work-order",
 ): Promise<void> {
   await authRequest<Record<string, never>>(
-    `/work-orders/${workOrderId}/notes/${noteId}`,
+    `${ticketNotesPath(source, workOrderId)}/${noteId}`,
     {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     },
   );
+}
+
+export interface MentionableUser {
+  id: string;
+  firstName: string;
+  lastName: string;
+}
+
+export async function searchMentionableUsers(
+  token: string,
+  search: string,
+): Promise<{ users: MentionableUser[] }> {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  const qs = params.toString();
+  return authRequest<{ users: MentionableUser[] }>(
+    `/users/mentions${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export interface ReminderListItem {
+  id: string;
+  source: TicketNoteSource;
+  content: string;
+  ticketId: string;
+  ticketNumber: string;
+  customerName: string;
+  authorName: string;
+  createdAt: string;
+  completed: boolean;
+}
+
+export async function getReminders(
+  token: string,
+  opts: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    sort?: "note" | "ticket" | "customer" | "created" | "completed";
+    dir?: "asc" | "desc";
+    showCompleted?: boolean;
+  } = {},
+): Promise<{
+  reminders: ReminderListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (opts.page != null) params.set("page", String(opts.page));
+  if (opts.pageSize != null) params.set("pageSize", String(opts.pageSize));
+  if (opts.search) params.set("search", opts.search);
+  if (opts.sort) params.set("sort", opts.sort);
+  if (opts.dir) params.set("dir", opts.dir);
+  if (opts.showCompleted) params.set("showCompleted", "true");
+  const qs = params.toString();
+  return authRequest(`/reminders${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function updateReminderCompleted(
+  token: string,
+  source: TicketNoteSource,
+  noteId: string,
+  completed: boolean,
+): Promise<{ id: string; source: TicketNoteSource; completed: boolean }> {
+  return authRequest(`/reminders/${source}/${noteId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ completed }),
+  });
 }
 
 export type NoteTemplateScope = "global" | "personal";
@@ -1594,11 +1983,13 @@ export async function deleteNoteTemplate(
   });
 }
 
-export type TicketLineType = "product" | "note";
-export type ProductKind = "part" | "labor";
+export type TicketLineType = "product" | "note" | "agreement";
+export type ProductKind = "part" | "labor" | "contract" | "equipment";
 
 export interface WorkOrderPart {
   productRef?: string | null;
+  contractTemplateRef?: string | null;
+  enrolledContractRef?: string | null;
   lineType?: TicketLineType;
   kind?: ProductKind;
   partNumber: string;
@@ -1626,12 +2017,15 @@ export interface WorkOrderListItem {
   legacyId?: number;
   number?: string;
   date: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
   descPerform: string;
   descPerformed: string;
   tech: string;
   total: number;
   totalParts?: number;
   totalLabor?: number;
+  totalAgreements?: number;
   miscExp?: number;
   subtotal?: number;
   shipping?: number;
@@ -1646,6 +2040,7 @@ export interface WorkOrderListItem {
   customerName?: string | null;
   customerAddress?: string;
   customerCity?: string;
+  customerState?: string;
   customerZip?: string;
   customerPhone?: string;
   customerEmail?: string;
@@ -1676,6 +2071,7 @@ export interface WorkOrderListItem {
   customerId?: number;
   assignee?: WorkOrderAssignee | null;
   warnings?: string[];
+  scheduleNote?: string | null;
 }
 
 export type ServiceTicketPayload = {
@@ -1686,6 +2082,8 @@ export type ServiceTicketPayload = {
   descPerform?: string;
   descPerformed?: string;
   date?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
   tech?: string;
   assignedUserRef?: string | null;
   workOrderTypeRef?: string | null;
@@ -1705,6 +2103,7 @@ export type ServiceTicketPayload = {
   customerName?: string;
   customerAddress?: string;
   customerCity?: string;
+  customerState?: string;
   customerZip?: string;
   customerPhone?: string;
   customerEmail?: string;
@@ -1859,11 +2258,12 @@ export async function geocodeMissingScheduleAddresses(
 
 export async function getScheduleQueue(
   token: string,
-  opts?: { from?: string; to?: string },
+  opts?: { from?: string; to?: string; includeUndated?: boolean },
 ): Promise<ScheduleQueue> {
   const params = new URLSearchParams();
   if (opts?.from) params.set("from", opts.from);
   if (opts?.to) params.set("to", opts.to);
+  if (opts?.includeUndated) params.set("includeUndated", "1");
   const qs = params.toString();
   return authRequest<ScheduleQueue>(
     `/schedule/queue${qs ? `?${qs}` : ""}`,
@@ -1893,7 +2293,8 @@ export interface ScheduleStaffMember {
   last_name: string;
   email: string;
   role: string;
-  schedulable: boolean;
+  roles: string[];
+  schedulable?: boolean;
   homeLocation: UserHomeLocation;
   weeklyHours: UserWeeklyHours;
   scheduleExceptions: ScheduleException[];
@@ -1912,6 +2313,8 @@ export async function getTechnicians(
     search?: string;
     date?: string;
     excludeWorkOrderId?: string;
+    /** Return every schedulable technician. Default search stays capped. */
+    all?: boolean;
   },
 ): Promise<{ technicians: TechnicianListItem[] }> {
   const params = new URLSearchParams();
@@ -1920,9 +2323,96 @@ export async function getTechnicians(
   if (options?.excludeWorkOrderId) {
     params.set("excludeWorkOrderId", options.excludeWorkOrderId);
   }
+  if (options?.all) params.set("all", "1");
   const qs = params.toString();
   return authRequest<{ technicians: TechnicianListItem[] }>(
     `/schedule/technicians${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function suggestServiceCities(
+  token: string,
+  query: string,
+  state: string,
+): Promise<{ suggestions: CitySuggestion[] }> {
+  const params = new URLSearchParams({ q: query, state });
+  return authRequest<{ suggestions: CitySuggestion[] }>(
+    `/schedule/city-suggestions?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function resolveServiceCity(
+  token: string,
+  placeId: string,
+  state: string,
+): Promise<{ city: ServiceCity }> {
+  const params = new URLSearchParams({ placeId, state });
+  return authRequest<{ city: ServiceCity }>(
+    `/schedule/city-details?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+/** A selectable map zone: a Census place plus its nearest share of unclaimed area. */
+export interface CityZone {
+  name: string;
+  state: string;
+  kind: "city" | "cdp";
+  geoid: string;
+  lat: number | null;
+  lng: number | null;
+}
+
+export interface CityBoundaryCollection {
+  type: "FeatureCollection";
+  features: Array<{
+    type: "Feature";
+    properties: CityZone;
+    geometry: {
+      type: "Polygon" | "MultiPolygon";
+      coordinates: number[][][] | number[][][][];
+    };
+  }>;
+}
+
+export async function getCityBoundaries(
+  token: string,
+  state: string,
+): Promise<CityBoundaryCollection> {
+  const params = new URLSearchParams({ state });
+  return authRequest<CityBoundaryCollection>(
+    `/schedule/city-boundaries?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function resolveServiceCityAt(
+  token: string,
+  lat: number,
+  lng: number,
+  state: string,
+): Promise<{ city: ServiceCity }> {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lng: String(lng),
+    state,
+  });
+  return authRequest<{ city: ServiceCity }>(
+    `/schedule/city-at-point?${params.toString()}`,
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
@@ -1934,8 +2424,10 @@ export async function getScheduleStaff(
   token: string,
   from: string,
   to: string,
+  userId?: string,
 ): Promise<{ staff: ScheduleStaffMember[]; workOrders: WorkOrderListItem[] }> {
   const params = new URLSearchParams({ from, to });
+  if (userId) params.set("userId", userId);
   return authRequest<{
     staff: ScheduleStaffMember[];
     workOrders: WorkOrderListItem[];
@@ -1954,12 +2446,43 @@ export interface ScheduleSuggestion {
   driveMinutes: number;
   remainingMinutes: number;
   existingJobCount: number;
+  /** False when this date is outside the technician's working schedule. */
+  available: boolean;
   fits: boolean;
   reason: string;
   driveSource: "google" | "haversine" | "none";
   driveFrom: "previousJob" | "home" | "unknown";
   driveFromLabel: string;
   driveKnown: boolean;
+  /** True when the job's city is one of this technician's service cities. */
+  inTerritory?: boolean;
+}
+
+export interface ScheduleRecommendation {
+  userId: string;
+  first_name: string;
+  last_name: string;
+  /** False when this date is outside the technician's working schedule. */
+  available: boolean;
+  reason: string;
+}
+
+export async function getScheduleRecommendations(
+  token: string,
+  data: { date: string; workOrderIds: string[] },
+): Promise<{
+  date: string;
+  recommendations: Array<{
+    workOrderId: string;
+    recommendation: ScheduleRecommendation | null;
+    technicians: ScheduleRecommendation[];
+  }>;
+}> {
+  return authRequest("/schedule/recommendations", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
 }
 
 export async function suggestScheduleAssignee(
@@ -1978,6 +2501,46 @@ export async function suggestScheduleAssignee(
   });
 }
 
+export interface ScheduleStartOptions {
+  isFirst: boolean;
+  earliestStart: string | null;
+  driveMinutes: number | null;
+  driveFromLabel: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  warning: string | null;
+  date: string;
+  assignedUserRef: string;
+}
+
+export async function getScheduleStartOptions(
+  token: string,
+  workOrderId: string,
+): Promise<ScheduleStartOptions> {
+  const params = new URLSearchParams({ workOrderId });
+  return authRequest(`/schedule/start-options?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function placeScheduleWorkOrder(
+  token: string,
+  data: {
+    workOrderId: string;
+    assignedUserRef: string;
+    date: string;
+    scheduledStart: string;
+    estimatedMinutes?: number;
+  },
+): Promise<{ workOrders: WorkOrderListItem[]; warnings: string[] }> {
+  return authRequest(`/schedule/place`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
 export interface ScheduleRouteStop {
   kind: "home" | "job";
   label: string;
@@ -1985,6 +2548,8 @@ export interface ScheduleRouteStop {
   lng: number | null;
   workOrderId?: string;
   scheduledStart?: string | null;
+  arrival?: string | null;
+  departure?: string | null;
 }
 
 export interface ScheduleRouteLeg {
@@ -2013,6 +2578,56 @@ export async function getScheduleRoute(
   return authRequest(`/schedule/route?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export type RouteObjective = "time" | "distance";
+
+export interface PlannedRoute {
+  stops: ScheduleRouteStop[];
+  route: {
+    durationMinutes: number;
+    distanceMeters: number;
+    encodedPolyline?: string;
+    legs: ScheduleRouteLeg[];
+    source: "google" | "haversine";
+  } | null;
+  orderedWorkOrderIds: string[];
+  warnings: string[];
+}
+
+export async function planScheduleRoute(
+  token: string,
+  data: {
+    userId: string;
+    date: string;
+    workOrderIds: string[];
+    roundTrip: boolean;
+    objective: RouteObjective;
+    optimize: boolean;
+    lockedStops?: Array<{ workOrderId: string; arrival: string }>;
+  },
+): Promise<PlannedRoute> {
+  return authRequest(`/schedule/route/plan`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function applyScheduleRoute(
+  token: string,
+  data: {
+    userId: string;
+    date: string;
+    orderedWorkOrderIds: string[];
+    lockedStops?: Array<{ workOrderId: string; arrival: string }>;
+  },
+): Promise<{ workOrders: WorkOrderListItem[]; warnings: string[] }> {
+  return authRequest(`/schedule/route/apply`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
   });
 }
 
@@ -2326,6 +2941,82 @@ export async function getInvoice(
   });
 }
 
+export interface InvoiceTemplateItem {
+  _id: string;
+  name: string;
+  isDefault: boolean;
+  blocks: unknown[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getDefaultInvoiceTemplate(
+  token: string,
+): Promise<{ template: InvoiceTemplateItem }> {
+  return authRequest<{ template: InvoiceTemplateItem }>("/invoice-templates/default", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getInvoiceTemplates(
+  token: string,
+): Promise<{ templates: InvoiceTemplateItem[] }> {
+  return authRequest<{ templates: InvoiceTemplateItem[] }>("/invoice-templates", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createInvoiceTemplate(
+  token: string,
+  data: { name: string; isDefault?: boolean; blocks?: unknown[] },
+): Promise<{ template: InvoiceTemplateItem }> {
+  return authRequest<{ template: InvoiceTemplateItem }>("/invoice-templates", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateInvoiceTemplate(
+  token: string,
+  id: string,
+  data: { name?: string; isDefault?: boolean; blocks?: unknown[] },
+): Promise<{ template: InvoiceTemplateItem }> {
+  return authRequest<{ template: InvoiceTemplateItem }>(`/invoice-templates/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteInvoiceTemplate(
+  token: string,
+  id: string,
+): Promise<{ deletedId: string; defaultId: string }> {
+  return authRequest<{ deletedId: string; defaultId: string }>(
+    `/invoice-templates/${id}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function uploadInvoiceTemplateImage(
+  token: string,
+  file: File,
+): Promise<{ url: string }> {
+  const payload = new FormData();
+  payload.append("file", file);
+  return authRequest<{ url: string }>("/invoice-templates/images", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: payload,
+  });
+}
+
 export async function createInvoice(
   token: string,
   data: CreateInvoiceInput,
@@ -2396,6 +3087,23 @@ export async function updateInvoiceTax(
   });
 }
 
+export interface BulkInvoiceStatusResult {
+  updated: InvoiceItem[];
+  skipped: { id: string; reason: string }[];
+  failed: { id: string; message: string }[];
+}
+
+export async function bulkUpdateInvoiceStatus(
+  token: string,
+  data: { ids: string[]; paid: boolean },
+): Promise<BulkInvoiceStatusResult> {
+  return authRequest<BulkInvoiceStatusResult>("/invoices/bulk-status", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
 export type CheckoutItemKind = "invoice" | "work_order";
 
 export interface CheckoutItem {
@@ -2440,6 +3148,18 @@ export async function confirmCheckoutPayment(data: {
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+export async function getCheckoutKeyByPayCode(code: string): Promise<string> {
+  const data = await authRequest<{ checkoutKey?: string }>(
+    `/checkout/code/${encodeURIComponent(code)}`,
+    { method: "GET" },
+  );
+  const checkoutKey = data.checkoutKey?.trim() ?? "";
+  if (!checkoutKey) {
+    throw new ApiError("Checkout link not found.", 404);
+  }
+  return checkoutKey;
 }
 
 export async function getCheckoutByKey(key: string): Promise<CheckoutCart> {
@@ -2786,6 +3506,9 @@ export interface ProductItem {
   strikeThroughPrice: number;
   active: boolean;
   notes: string;
+  agreementBody?: string;
+  productDiscounts?: ProductDiscounts;
+  contractTemplateRef?: string | null;
   usageCount?: number;
   createdAt: string;
   updatedAt: string;
@@ -2802,6 +3525,8 @@ export type ProductWritePayload = {
   strikeThroughPrice?: number;
   active?: boolean;
   notes?: string;
+  agreementBody?: string;
+  productDiscounts?: ProductDiscounts;
 };
 
 export async function getProducts(
@@ -2991,6 +3716,8 @@ export interface EstimateItem {
   addressRef?: string | null;
   equipmentRef?: string | null;
   workOrderRef?: string | null;
+  workOrderTypeRef?: string | null;
+  workOrderType?: { _id: string; label: string } | null;
   descPerform: string;
   laborHours: number;
   date: string | null;
@@ -2999,6 +3726,7 @@ export interface EstimateItem {
   customerName: string;
   customerAddress: string;
   customerCity: string;
+  customerState: string;
   customerZip: string;
   customerPhone: string;
   customerEmail: string;
@@ -3009,6 +3737,7 @@ export interface EstimateItem {
   exerciseTime: string;
   totalParts: number;
   totalLabor: number;
+  totalAgreements?: number;
   laborOverridden: boolean;
   miscExp: number;
   subtotal: number;
@@ -3359,6 +4088,98 @@ export async function updateRolePermissions(
   );
 }
 
+export const JOB_ROLE_FIELD_TYPES = [
+  "text",
+  "textarea",
+  "number",
+  "date",
+  "select",
+  "multiselect",
+  "checkbox",
+  "phone",
+  "email",
+] as const;
+
+export type JobRoleFieldType = (typeof JOB_ROLE_FIELD_TYPES)[number];
+
+export interface JobRoleField {
+  key: string;
+  label: string;
+  type: JobRoleFieldType;
+  required: boolean;
+  options: string[];
+  helpText: string;
+  order: number;
+}
+
+export interface JobRoleItem {
+  _id: string;
+  slug: string;
+  label: string;
+  description: string;
+  color: string;
+  isSystem: boolean;
+  capabilities: UserCapabilities;
+  /** Stored on the role. The staff home no longer follows this value. */
+  dashboardView: "default" | "todo";
+  fields: JobRoleField[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type JobRoleWrite = {
+  label: string;
+  description?: string;
+  color?: string;
+  capabilities?: UserCapabilities;
+  dashboardView?: "default" | "todo";
+  fields?: JobRoleField[];
+};
+
+export async function getJobRoles(
+  token: string,
+): Promise<{ jobRoles: JobRoleItem[] }> {
+  return authRequest<{ jobRoles: JobRoleItem[] }>("/job-roles", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createJobRole(
+  token: string,
+  data: JobRoleWrite,
+): Promise<{ jobRole: JobRoleItem }> {
+  return authRequest<{ jobRole: JobRoleItem }>("/job-roles", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateJobRole(
+  token: string,
+  id: string,
+  data: Partial<JobRoleWrite>,
+): Promise<{ jobRole: JobRoleItem }> {
+  return authRequest<{ jobRole: JobRoleItem }>(`/job-roles/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteJobRole(
+  token: string,
+  id: string,
+  force = false,
+): Promise<{ message: string }> {
+  const query = force ? "?force=1" : "";
+  return authRequest<{ message: string }>(`/job-roles/${id}${query}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Twilio accounts (Control Panel)
 // ---------------------------------------------------------------------------
@@ -3366,11 +4187,30 @@ export async function updateRolePermissions(
 export type TwilioRuntimeEnvironment = "development" | "production";
 export type TwilioCredentialPair = "live" | "test";
 
+export interface TwilioPhoneLine {
+  phoneNumber: string;
+  label: string;
+  twilioFriendlyName: string;
+  incomingSid: string;
+  sms: boolean;
+  mms: boolean;
+  voice: boolean;
+}
+
+export function formatTwilioLine(
+  label: string | null | undefined,
+  phone: string,
+): string {
+  const trimmed = label?.trim() ?? "";
+  if (trimmed && phone) return `${trimmed} · ${phone}`;
+  return phone || trimmed;
+}
+
 export interface TwilioAccountItem {
   _id: string;
   accountSid: string;
   friendlyName: string;
-  phoneNumbers: string[];
+  phoneNumbers: TwilioPhoneLine[];
   isActive: boolean;
   sayVoice: string;
   environment: TwilioRuntimeEnvironment;
@@ -3389,7 +4229,7 @@ export interface TwilioAccountInput {
   // string = set new value, null = explicitly clear, omit = leave unchanged
   testAccountSid?: string | null;
   testAuthToken?: string | null;
-  phoneNumbers?: string[];
+  phoneNumbers?: { phoneNumber: string; label?: string }[];
   isActive?: boolean;
   sayVoice?: string;
 }
@@ -3403,11 +4243,41 @@ export async function getTwilioAccounts(
   });
 }
 
+export async function previewTwilioNumbers(
+  token: string,
+  data: { accountSid: string; authToken: string },
+): Promise<{ phoneNumbers: TwilioPhoneLine[] }> {
+  return authRequest<{ phoneNumbers: TwilioPhoneLine[] }>(
+    "/twilio-accounts/preview-numbers",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function syncTwilioAccountNumbers(
+  token: string,
+  id: string,
+): Promise<{ account: TwilioAccountItem; numbersSyncError: string | null }> {
+  return authRequest<{
+    account: TwilioAccountItem;
+    numbersSyncError: string | null;
+  }>(`/twilio-accounts/${id}/sync-numbers`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export async function createTwilioAccount(
   token: string,
   data: TwilioAccountInput,
-): Promise<{ account: TwilioAccountItem }> {
-  return authRequest<{ account: TwilioAccountItem }>("/twilio-accounts", {
+): Promise<{ account: TwilioAccountItem; numbersSyncError?: string | null }> {
+  return authRequest<{
+    account: TwilioAccountItem;
+    numbersSyncError?: string | null;
+  }>("/twilio-accounts", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
@@ -3418,8 +4288,11 @@ export async function updateTwilioAccount(
   token: string,
   id: string,
   data: Partial<TwilioAccountInput>,
-): Promise<{ account: TwilioAccountItem }> {
-  return authRequest<{ account: TwilioAccountItem }>(`/twilio-accounts/${id}`, {
+): Promise<{ account: TwilioAccountItem; numbersSyncError?: string | null }> {
+  return authRequest<{
+    account: TwilioAccountItem;
+    numbersSyncError?: string | null;
+  }>(`/twilio-accounts/${id}`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
@@ -3453,7 +4326,11 @@ export interface EmailAccountItem {
   username: string;
   fromName: string;
   fromEmail: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: boolean;
   isActive: boolean;
+  autoAcknowledge?: boolean;
   roles: EmailAccountRole[];
   hasPassword: boolean;
   createdAt: string;
@@ -3469,7 +4346,11 @@ export interface EmailAccountInput {
   password?: string;
   fromName: string;
   fromEmail: string;
+  imapHost?: string;
+  imapPort?: number;
+  imapSecure?: boolean;
   isActive?: boolean;
+  autoAcknowledge?: boolean;
   roles?: EmailAccountRole[];
 }
 
@@ -3538,6 +4419,131 @@ export async function testEmailAccount(
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ to }),
+    },
+  );
+}
+
+export async function testEmailAccountImap(
+  token: string,
+  id: string,
+): Promise<{ message: string; mailbox: string }> {
+  return authRequest<{ message: string; mailbox: string }>(
+    `/email-accounts/${id}/imap-test`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export type MailboxFolder = "inbox" | "sent";
+
+export interface MailboxAddress {
+  name: string;
+  address: string;
+}
+
+export interface MailboxMessageSummary {
+  uid: number;
+  subject: string;
+  from: MailboxAddress[];
+  to: MailboxAddress[];
+  cc: MailboxAddress[];
+  date: string | null;
+  seen: boolean;
+  snippet: string;
+  messageId: string;
+  messageKey: string;
+  assignees: string[];
+}
+
+export interface MailboxAttachmentMeta {
+  filename: string;
+  size: number;
+  contentType: string;
+}
+
+export type MailboxReplyMode = "reply" | "replyAll" | "forward";
+
+export interface MailboxMessageDetail extends MailboxMessageSummary {
+  text: string;
+  html: string;
+  attachments: MailboxAttachmentMeta[];
+  inReplyTo: string;
+  references: string[];
+}
+
+export async function getMailboxMessages(
+  token: string,
+  accountId: string,
+  folder: MailboxFolder,
+  limit = 50,
+): Promise<{ folder: MailboxFolder; messages: MailboxMessageSummary[] }> {
+  const params = new URLSearchParams({
+    folder,
+    limit: String(limit),
+  });
+  return authRequest<{ folder: MailboxFolder; messages: MailboxMessageSummary[] }>(
+    `/email-mailbox/${accountId}/messages?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function getMailboxMessage(
+  token: string,
+  accountId: string,
+  uid: number,
+  folder: MailboxFolder,
+): Promise<{ folder: MailboxFolder; message: MailboxMessageDetail }> {
+  const params = new URLSearchParams({ folder });
+  return authRequest<{ folder: MailboxFolder; message: MailboxMessageDetail }>(
+    `/email-mailbox/${accountId}/messages/${uid}?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function replyToMailboxMessage(
+  token: string,
+  accountId: string,
+  uid: number,
+  body: {
+    folder: MailboxFolder;
+    mode: MailboxReplyMode;
+    to: string[];
+    cc: string[];
+    bcc: string[];
+    subject: string;
+    html: string;
+  },
+): Promise<{ sent: true; savedToSent: boolean }> {
+  return authRequest<{ sent: true; savedToSent: boolean }>(
+    `/email-mailbox/${accountId}/messages/${uid}/reply`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function setMailboxAssignees(
+  token: string,
+  accountId: string,
+  uid: number,
+  body: { folder: MailboxFolder; userIds: string[] },
+): Promise<{ assignees: string[]; messageKey: string }> {
+  return authRequest<{ assignees: string[]; messageKey: string }>(
+    `/email-mailbox/${accountId}/messages/${uid}/assignees`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
     },
   );
 }
@@ -4087,6 +5093,7 @@ export interface MessageTemplateItem {
   subject: string;
   templateType: MessageTemplateType;
   emailChrome?: EmailChrome;
+  offerContractTemplateId?: string | null;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -4098,6 +5105,7 @@ export interface MessageTemplateInput {
   subject?: string;
   templateType?: MessageTemplateType;
   emailChrome?: EmailChrome;
+  offerContractTemplateId?: string | null;
   slug?: string;
 }
 
@@ -4164,6 +5172,7 @@ export interface TwilioCommunicationItem {
   twilioAccountRef: string | null;
   accountSid: string;
   accountFriendlyName: string | null;
+  ourNumberLabel: string | null;
   channel: CommunicationChannel;
   direction: CommunicationDirection;
   status: string;
@@ -4195,6 +5204,7 @@ export interface MessageThreadItem {
   accountSid: string;
   accountFriendlyName: string | null;
   ourNumber: string;
+  ourNumberLabel: string | null;
   contactPhoneSnapshot: string;
   status: MessageThreadStatus;
   startedByUserRef: string | null;
@@ -4205,6 +5215,12 @@ export interface MessageThreadItem {
   lastMessageChannel: CommunicationChannel | null;
   lastMessagePreview: string;
   messageCount: number;
+  readAt: string | null;
+  readBy: {
+    _id: string;
+    first_name: string;
+    last_name: string;
+  } | null;
   contact: {
     _id: string;
     first: string;
@@ -4250,6 +5266,40 @@ export interface MessagingWebhookInfo {
     recordingWebhookUrl: string;
     statusWebhookUrl: string;
   }>;
+}
+
+export interface InvoiceMessageDefaults {
+  emailTemplateId: string | null;
+  smsTemplateId: string | null;
+}
+
+export async function getInvoiceMessageDefaults(
+  token: string,
+): Promise<InvoiceMessageDefaults> {
+  return authRequest<InvoiceMessageDefaults>(
+    "/message-templates/invoice-defaults",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function saveInvoiceMessageDefaults(
+  token: string,
+  data: {
+    emailTemplateId?: string | null;
+    smsTemplateId?: string | null;
+  },
+): Promise<InvoiceMessageDefaults> {
+  return authRequest<InvoiceMessageDefaults>(
+    "/message-templates/invoice-defaults",
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
 }
 
 export async function getMessageTemplates(
@@ -4356,6 +5406,8 @@ export async function previewMessagingMessage(
     contactId?: string;
     renewalYear?: number;
     renewalMonth?: number;
+    includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
   },
 ): Promise<MessagingPreviewResult> {
   return authRequest<MessagingPreviewResult>("/messaging/preview", {
@@ -4363,6 +5415,126 @@ export async function previewMessagingMessage(
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
+}
+
+export type ScheduledMessageStatus =
+  | "scheduled"
+  | "sending"
+  | "sent"
+  | "cancelled"
+  | "failed";
+
+export interface ScheduledMessageItem {
+  _id: string;
+  contactIds: string[];
+  recipientCount: number;
+  body: string;
+  fromNumber: string;
+  mediaUrls: string[];
+  twilioAccountRef: string | null;
+  accountFriendlyName: string | null;
+  includePaymentLink: boolean;
+  scheduledAt: string;
+  status: ScheduledMessageStatus;
+  summary: {
+    total: number;
+    sent: number;
+    failed: number;
+  } | null;
+  errorMessage: string | null;
+  cancelledAt: string | null;
+  createdByUserRef: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function scheduleMessagingMessages(
+  token: string,
+  data: {
+    contactIds: string[];
+    body?: string;
+    templateId?: string;
+    twilioAccountId?: string;
+    fromNumber?: string;
+    mediaUrls?: string[];
+    renewalYear?: number;
+    renewalMonth?: number;
+    includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
+    offerContractOverrides?: {
+      contactId: string;
+      contractTemplateId: string | null;
+    }[];
+    scheduledAt: string;
+  },
+): Promise<{ scheduled: ScheduledMessageItem }> {
+  return authRequest<{ scheduled: ScheduledMessageItem }>(
+    "/messaging/schedule",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function getScheduledMessages(
+  token: string,
+  options?: {
+    status?: ScheduledMessageStatus | "all";
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  scheduled: ScheduledMessageItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const params = new URLSearchParams();
+  if (options?.status) params.set("status", options.status);
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
+  const qs = params.toString();
+  return authRequest<{
+    scheduled: ScheduledMessageItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`/messaging/scheduled${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function rescheduleMessagingMessages(
+  token: string,
+  id: string,
+  scheduledAt: string,
+): Promise<{ scheduled: ScheduledMessageItem }> {
+  return authRequest<{ scheduled: ScheduledMessageItem }>(
+    `/messaging/scheduled/${id}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ scheduledAt }),
+    },
+  );
+}
+
+export async function cancelScheduledMessage(
+  token: string,
+  id: string,
+): Promise<{ scheduled: ScheduledMessageItem }> {
+  return authRequest<{ scheduled: ScheduledMessageItem }>(
+    `/messaging/scheduled/${id}/cancel`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function sendMessagingMessages(
@@ -4377,6 +5549,14 @@ export async function sendMessagingMessages(
     mediaUrls?: string[];
     renewalYear?: number;
     renewalMonth?: number;
+    includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
+    offerContractOverrides?: {
+      contactId: string;
+      contractTemplateId: string | null;
+    }[];
+    /** Replaces the contact's phone number for a single-contact send. */
+    toOverride?: string;
   },
 ): Promise<MessagingSendResponse> {
   return authRequest<MessagingSendResponse>("/messaging/send", {
@@ -4459,6 +5639,7 @@ export async function getMessagingThreads(
     customerId?: string;
     contactId?: string;
     status?: MessageThreadStatus;
+    unread?: boolean;
     page?: number;
     pageSize?: number;
   },
@@ -4475,6 +5656,7 @@ export async function getMessagingThreads(
   if (options?.customerId) params.set("customerId", options.customerId);
   if (options?.contactId) params.set("contactId", options.contactId);
   if (options?.status) params.set("status", options.status);
+  if (options?.unread) params.set("unread", "1");
   if (options?.page !== undefined) params.set("page", String(options.page));
   if (options?.pageSize !== undefined) {
     params.set("pageSize", String(options.pageSize));
@@ -4499,6 +5681,19 @@ export async function getMessagingThreadDetail(
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+export async function markMessagingThreadRead(
+  token: string,
+  threadId: string,
+): Promise<{ thread: MessageThreadItem }> {
+  return authRequest<{ thread: MessageThreadItem }>(
+    `/messaging/threads/${threadId}/read`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function checkMessagingThreadConflict(
@@ -4727,6 +5922,7 @@ export type NotificationEntityType =
   | "contract"
   | "customer_note"
   | "work_order_note"
+  | "estimate_note"
   | "user"
   | "role"
   | "twilio_account"
@@ -4739,14 +5935,17 @@ export type NotificationEntityType =
   | "invoice"
   | "product"
   | "estimate"
-  | "discount_code";
+  | "discount_code"
+  | "mailbox_message";
 
 export type NotificationAction =
   | "created"
   | "updated"
   | "deleted"
   | "merged"
-  | "renewed";
+  | "renewed"
+  | "assigned"
+  | "mentioned";
 
 export interface NotificationItem {
   id: string;
@@ -4934,6 +6133,7 @@ export async function previewEmailMessage(
     renewalYear?: number;
     renewalMonth?: number;
     includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
   },
 ): Promise<EmailPreviewResult> {
   return authRequest<EmailPreviewResult>("/email-messages/preview", {
@@ -4958,6 +6158,13 @@ export async function sendEmailMessages(
     renewalYear?: number;
     renewalMonth?: number;
     includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
+    offerContractOverrides?: {
+      contactId: string;
+      contractTemplateId: string | null;
+    }[];
+    /** Replaces the contact's email for a single-contact send. */
+    toOverride?: string;
   },
 ): Promise<EmailSendResponse> {
   return authRequest<EmailSendResponse>("/email-messages/send", {
@@ -5015,6 +6222,11 @@ export async function scheduleEmailMessages(
     renewalYear?: number;
     renewalMonth?: number;
     includePaymentLink?: boolean;
+    offerContractTemplateId?: string | null;
+    offerContractOverrides?: {
+      contactId: string;
+      contractTemplateId: string | null;
+    }[];
     scheduledAt: string;
   },
 ): Promise<{ scheduled: ScheduledEmailItem }> {

@@ -9,6 +9,8 @@ import { env } from "../config/env";
 
 export interface SendMailOptions {
   to: string;
+  cc?: string;
+  bcc?: string;
   subject: string;
   text: string;
   html?: string;
@@ -58,7 +60,7 @@ function resolveEnvFromAddress(): string {
   );
 }
 
-function formatFrom(fromName: string, fromEmail: string): string {
+export function formatFrom(fromName: string, fromEmail: string): string {
   const name = fromName.trim();
   if (!name) return fromEmail;
   // Quote display name if it contains special characters
@@ -152,6 +154,8 @@ async function sendWithConfig(
   const info = await transporter.sendMail({
     from: config.from,
     to: options.to,
+    cc: options.cc || undefined,
+    bcc: options.bcc || undefined,
     replyTo: options.replyTo,
     subject: options.subject,
     text: options.text,

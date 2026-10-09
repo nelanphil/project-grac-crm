@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { COMPANY } from "@/lib/constants";
+import { SMS_CONSENT_DISCLOSURE_TEXT } from "@/lib/smsConsent";
 
-const LAST_UPDATED = "August 31, 2026";
+const LAST_UPDATED = "September 15, 2026";
 
 export default function TermsOfServiceContent() {
   return (
@@ -106,12 +107,19 @@ export default function TermsOfServiceContent() {
           <p className="mt-3">
             {COMPANY.name} may send optional automated transactional SMS/MMS
             messages if you opt in by providing a mobile number and checking an
-            unchecked consent box (on signup, first login, or an estimate request).
+            unchecked consent box (on our SMS program page, signup, first login, or
+            an estimate request).
             Messages are sent by {COMPANY.name} and may include appointment
             confirmations and reminders, invoices, payment receipts, and account or
             service alerts. Message frequency varies. Message and data rates may
-            apply. Reply <strong>STOP</strong> to opt out; reply{" "}
-            <strong>HELP</strong> for help. Consent is not a condition of purchase.
+            apply. Msg & data rates may apply. Reply <strong>STOP</strong> to opt
+            out; reply <strong>HELP</strong> for help. Consent is not a condition of
+            purchase.
+          </p>
+          <p className="mt-3">
+            Exact checkbox wording: {SMS_CONSENT_DISCLOSURE_TEXT}
+          </p>
+          <p className="mt-3">
             Additional details, including how we use and do not share mobile numbers,
             are in our{" "}
             <Link

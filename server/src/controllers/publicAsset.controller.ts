@@ -1,7 +1,13 @@
 import { Request, Response } from "express";
 import crypto from "crypto";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { PublicAsset } from "../models/mongo/PublicAsset";
+import {
+  fetchPublicAssetMedia,
+  PublicAssetProxyError,
+} from "../utils/publicAssetProxy";
 import { getCloudinarySecretsForUpload } from "./cloudinaryCredentials.controller";
 
 const PUBLIC_ROUTE_PREFIX = "/public-assets";
@@ -160,9 +166,33 @@ export async function getPublicAssetBySlug(
     return;
   }
 
-  // Allow <img> embeds from the marketing site and other origins.
-  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-  res.redirect(302, asset.publicUrl);
+  try {
+    const media = await fetchPublicAssetMedia(asset.publicUrl);
+    res.status(200);
+    res.setHeader(
+      "Content-Type",
+      asset.mimeType || media.contentType || "application/octet-stream",
+    );
+    res.setHeader("Cache-Control", "public, max-age=300, must-revalidate");
+    // Allow <img> embeds from the marketing site and other origins.
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    if (media.contentLength) {
+      res.setHeader("Content-Length", media.contentLength);
+    }
+    await pipeline(
+      Readable.fromWeb(media.body as import("node:stream/web").ReadableStream),
+      res,
+    );
+  } catch (err) {
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    const status = err instanceof PublicAssetProxyError ? err.status : 502;
+    const message =
+      err instanceof Error ? err.message : "Unable to retrieve the image.";
+    res.status(status).json({ message });
+  }
 }
 
 export async function publicAssetHealth(

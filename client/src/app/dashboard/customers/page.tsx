@@ -226,9 +226,8 @@ function CustomersContent() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q")?.trim() ?? "";
   const token = useAuthStore((s) => s.token);
-  const user = useAuthStore((s) => s.user);
   const canManageCustomers = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin", "owner"),
+    s.hasRole("admin", "super-admin"),
   );
   const canReadContracts = useAuthStore((s) =>
     s.hasPermission("contracts:read"),
@@ -267,12 +266,6 @@ function CustomersContent() {
   }
 
   useEffect(() => {
-    if (user?.role === "customer") {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
     const q = searchParams.get("q")?.trim() ?? "";
     if (q && q !== search) {
       // Seed from URL only when the query param changes.
@@ -291,7 +284,7 @@ function CustomersContent() {
   }, [search]);
 
   useEffect(() => {
-    if (!token || user?.role === "customer") return;
+    if (!token) return;
 
     let cancelled = false;
 
@@ -329,7 +322,6 @@ function CustomersContent() {
     };
   }, [
     token,
-    user,
     canManageCustomers,
     listView,
     page,
@@ -380,8 +372,6 @@ function CustomersContent() {
       setRestoringId(null);
     }
   }
-
-  if (!user || user.role === "customer") return null;
 
   if (loading && customers.length === 0)
     return (

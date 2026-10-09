@@ -83,7 +83,9 @@ import {
 } from "../utils/ownerTerritory";
 import { User } from "../models/mongo/User";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
+import { geocodeSitePoint } from "../utils/siteGeocode";
 import { mintCheckoutKey } from "../utils/checkoutKey";
+import { buildTokenSearchFilter } from "../utils/textSearch";
 import {
   customerOwnedFilter,
   reassignCustomerOwnedRecords,
@@ -310,7 +312,13 @@ function formatContact(doc: {
 async function findActiveCustomerOr404(
   customerId: string,
   res: Response,
-  accessUser?: { id: string; role: string } | null,
+  accessUser?: {
+    id: string;
+    role: string;
+    roles?: string[];
+    jobRoles?: string[];
+    userType?: string;
+  } | null,
 ): Promise<{
   _id: mongoose.Types.ObjectId;
   legacyId: number;
@@ -491,7 +499,7 @@ export async function listCustomers(
       : "customer";
 
     const ownerScope = req.user
-      ? await buildOwnerCustomerFilter({ id: req.user.id, role: req.user.role })
+      ? await buildOwnerCustomerFilter(req.user)
       : null;
 
     const baseFilter: Record<string, unknown> = {
@@ -503,18 +511,19 @@ export async function listCustomers(
     const search = trimStr(req.query.search);
     let filter: Record<string, unknown> = baseFilter;
     if (search) {
-      const rx = new RegExp(escapeRegex(search), "i");
-      const or: Array<Record<string, unknown>> = [
-        { accountName: rx },
-        { first: rx },
-        { last: rx },
-        { address: rx },
-        { city: rx },
-        { state: rx },
-        { zip: rx },
-        { county: rx },
-        { phone: rx },
-      ];
+      const or: Array<Record<string, unknown>> = [];
+      const tokenFilter = buildTokenSearchFilter(search, [
+        "accountName",
+        "first",
+        "last",
+        "address",
+        "city",
+        "state",
+        "zip",
+        "county",
+        "phone",
+      ]);
+      if (tokenFilter) or.push(tokenFilter);
       const digits = normalizePhoneDigits(search);
       if (digits.length > 0) {
         or.push({ phoneDigits: new RegExp(escapeRegex(digits)) });
@@ -567,6 +576,7 @@ export async function listCustomers(
     if (legacyIds.length > 0) {
       const contracts = await Contract.find({
         customerId: { $in: legacyIds },
+        temporary: { $ne: true },
       })
         .select("customerId renewalDueDate templateId contractType")
         .lean();
@@ -775,7 +785,7 @@ export async function listContacts(
     const sortKey = CONTACT_SORT_KEYS.has(sortKeyRaw) ? sortKeyRaw : "name";
 
     const ownerScope = req.user
-      ? await buildOwnerCustomerFilter({ id: req.user.id, role: req.user.role })
+      ? await buildOwnerCustomerFilter(req.user)
       : null;
 
     const customerMatch: Record<string, unknown> = {
@@ -792,18 +802,19 @@ export async function listContacts(
     const search = trimStr(req.query.search);
     const searchMatch: Record<string, unknown> | null = search
       ? (() => {
-          const rx = new RegExp(escapeRegex(search), "i");
-          const or: Array<Record<string, unknown>> = [
-            { first: rx },
-            { last: rx },
-            { phone: rx },
-            { email: rx },
-            { label: rx },
-            { "customer.accountName": rx },
-            { "customer.first": rx },
-            { "customer.last": rx },
-            { "customer.phone": rx },
-          ];
+          const or: Array<Record<string, unknown>> = [];
+          const tokenFilter = buildTokenSearchFilter(search, [
+            "first",
+            "last",
+            "phone",
+            "email",
+            "label",
+            "customer.accountName",
+            "customer.first",
+            "customer.last",
+            "customer.phone",
+          ]);
+          if (tokenFilter) or.push(tokenFilter);
           const digits = normalizePhoneDigits(search);
           if (digits.length > 0) {
             const digitRx = new RegExp(escapeRegex(digits));
@@ -963,7 +974,9 @@ export async function createCustomer(
     }
     const primaryEmail = normalizeAccountEmail(trimStr(primary.email));
     if (primaryEmail) {
-      const emailConflict = await findEmailConflict(primaryEmail);
+      const emailConflict = await findEmailConflict(primaryEmail, {
+        allowStaffUser: true,
+      });
       if (emailConflict) {
         res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
         return;
@@ -1425,7 +1438,9 @@ export async function updateCustomer(
       return;
     }
 
-    const accountName = parsed.data.accountName;
+    const accountName =
+      parsed.data.accountName ||
+      `${(customer.first ?? "").trim()} ${(customer.last ?? "").trim()}`.trim();
     const accountNameMatches = await findAccountNameMatches(
       accountName,
       customer._id.toString(),
@@ -1733,6 +1748,7 @@ export async function getCustomerById(
         await Contract.updateMany(
           {
             customerId: customer.legacyId,
+            temporary: { $ne: true },
             $or: [{ addressRef: null }, { addressRef: { $exists: false } }],
           },
           { $set: { addressRef: addressId, customerRef: customer._id } },
@@ -1870,21 +1886,13 @@ export async function createCustomerAddress(
     const county = normalizeCountyName(parsed.data.county);
     const countyManual = parsed.data.countyManual === true || Boolean(county);
 
-    let lat: number | null = null;
-    let lng: number | null = null;
     const street = trimStr(parsed.data.address);
-    if (street) {
-      const geocode = await resolveGeocodedAddress({
-        street,
-        city: trimStr(parsed.data.city),
-        state: trimStr(parsed.data.state),
-        zip: trimStr(parsed.data.zip),
-      });
-      if (geocode.ok) {
-        lat = geocode.match.coordinates?.lat ?? null;
-        lng = geocode.match.coordinates?.lng ?? null;
-      }
-    }
+    const point = await geocodeSitePoint({
+      address: street,
+      city: trimStr(parsed.data.city),
+      state: trimStr(parsed.data.state),
+      zip: trimStr(parsed.data.zip),
+    });
 
     const address = await CustomerAddress.create({
       customerRef: customer._id,
@@ -1898,8 +1906,10 @@ export async function createCustomerAddress(
       isPrimary: makePrimary,
       propertyType: parsed.data.propertyType,
       legacyCustomerId: null,
-      lat,
-      lng,
+      lat: point?.lat ?? null,
+      lng: point?.lng ?? null,
+      coordSource: point?.source ?? "",
+      geocodedStreet: point ? street : "",
     });
 
     await syncCustomerPrimaryFields(customer._id);
@@ -1980,16 +1990,19 @@ export async function updateCustomerAddress(
       parsed.data.city !== undefined ||
       parsed.data.state !== undefined ||
       parsed.data.zip !== undefined;
-    if (addressFieldsChanged && trimStr(address.address)) {
-      const geocode = await resolveGeocodedAddress({
-        street: trimStr(address.address),
+    if (addressFieldsChanged) {
+      const street = trimStr(address.address);
+      const point = await geocodeSitePoint({
+        address: street,
         city: trimStr(address.city),
         state: trimStr(address.state),
         zip: trimStr(address.zip),
       });
-      if (geocode.ok) {
-        address.lat = geocode.match.coordinates?.lat ?? null;
-        address.lng = geocode.match.coordinates?.lng ?? null;
+      if (point) {
+        address.lat = point.lat;
+        address.lng = point.lng;
+        address.coordSource = point.source;
+        address.geocodedStreet = street;
       }
     }
     if (parsed.data.propertyType !== undefined)
@@ -2482,6 +2495,7 @@ export async function createCustomerContact(
       const emailConflict = await findEmailConflict(contactEmail, {
         excludeCustomerId: customer._id,
         allowCustomerUser: true,
+        allowStaffUser: true,
       });
       if (emailConflict) {
         res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
@@ -2593,6 +2607,7 @@ export async function updateCustomerContact(
       const emailConflict = await findEmailConflict(nextPrimaryEmail, {
         excludeCustomerId: customer._id,
         allowCustomerUser: true,
+        allowStaffUser: true,
       });
       if (emailConflict) {
         res.status(409).json({ message: EMAIL_CONFLICT_ADMIN });
@@ -2782,12 +2797,18 @@ export async function getMergePreview(
       WorkOrder.find(customerOwnedFilter(source._id, source.legacyId))
         .select("_id addressRef")
         .lean(),
-      Contract.find(customerOwnedFilter(survivor._id, survivor.legacyId))
+      Contract.find({
+        ...customerOwnedFilter(survivor._id, survivor.legacyId),
+        temporary: { $ne: true },
+      })
         .select(
           "_id description contractType templateId renewalDueDate addressRef equipmentRef",
         )
         .lean(),
-      Contract.find(customerOwnedFilter(source._id, source.legacyId))
+      Contract.find({
+        ...customerOwnedFilter(source._id, source.legacyId),
+        temporary: { $ne: true },
+      })
         .select(
           "_id description contractType templateId renewalDueDate addressRef equipmentRef",
         )
@@ -3153,7 +3174,12 @@ export async function mergeCustomers(
         ],
       };
       await WorkOrder.updateMany(untaggedOnSource, { $set: tagFields });
-      await Contract.updateMany(untaggedOnSource, { $set: tagFields });
+      await Contract.updateMany(
+        {
+          $and: [...untaggedOnSource.$and, { temporary: { $ne: true } }],
+        },
+        { $set: tagFields },
+      );
     }
 
     // Source addresses become non-primary on survivor (survivor keeps its primary)

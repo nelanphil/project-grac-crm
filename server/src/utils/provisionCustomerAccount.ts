@@ -7,6 +7,7 @@ import {
   normalizePhoneDigits,
 } from "./customerSites";
 import { mintCheckoutKey } from "./checkoutKey";
+import { isCustomerRole } from "./roles";
 
 export const EMAIL_CONFLICT_ADMIN =
   "A customer with this email already exists.";
@@ -112,6 +113,12 @@ async function nextCustomerLegacyId(): Promise<number> {
  * Treat an email as taken if it exists on an active User or as the
  * primary email on an active (not deleted/merged) Customer.
  * Secondary contact emails are not login identities.
+ *
+ * A staff login may share an email with a CRM customer. `forStaffAccount`
+ * ignores a customer primary email and a customer portal login (the caller
+ * promotes that login). `allowStaffUser` lets an admin customer email match
+ * a staff login without treating it as stolen. Another customer primary
+ * email still conflicts.
  */
 export async function findEmailConflict(
   email: string,
@@ -120,6 +127,10 @@ export async function findEmailConflict(
     excludeCustomerId?: Types.ObjectId | string | null;
     /** When rematching a primary email, an existing customer User is the login. */
     allowCustomerUser?: boolean;
+    /** Staff saves may share this email with a customer record or portal login. */
+    forStaffAccount?: boolean;
+    /** Admin customer email writes may match a staff login. */
+    allowStaffUser?: boolean;
   },
 ): Promise<EmailConflict | null> {
   const normalized = normalizeAccountEmail(email);
@@ -139,14 +150,23 @@ export async function findEmailConflict(
   if (excludeUserId) {
     userQuery._id = { $ne: excludeUserId };
   }
-  const existingUser = await User.findOne(userQuery).select("_id role").lean();
+  const existingUser = await User.findOne(userQuery)
+    .select("_id role roles userType")
+    .lean();
   if (existingUser) {
-    if (opts?.allowCustomerUser && existingUser.role === "customer") {
+    const customerLogin = isCustomerRole(existingUser);
+    if (opts?.allowCustomerUser && customerLogin) {
       // fall through to customer-primary check
+    } else if (opts?.allowStaffUser && !customerLogin) {
+      // fall through to customer-primary check
+    } else if (opts?.forStaffAccount && customerLogin) {
+      // Caller promotes this portal login to staff.
     } else {
       return { type: "user", userId: existingUser._id as Types.ObjectId };
     }
   }
+
+  if (opts?.forStaffAccount) return null;
 
   const emailRx = accountEmailRegex(normalized);
   if (!emailRx) return null;

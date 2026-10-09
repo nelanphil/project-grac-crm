@@ -18,6 +18,7 @@ import {
   normalizeProductDiscounts,
   ProductDiscounts,
 } from "../utils/productDiscounts";
+import { linkedContractTemplateIds } from "../services/syncContractProduct";
 
 function toPublic(doc: IContractTemplate | Record<string, unknown>) {
   const d =
@@ -50,7 +51,9 @@ export async function getContractTemplates(
     const includeDeleted =
       req.query.includeDeleted === "1" || req.query.includeDeleted === "true";
 
-    const filter = includeDeleted ? {} : { deletedAt: null };
+    const filter: Record<string, unknown> = includeDeleted ? {} : { deletedAt: null };
+    const linkedIds = await linkedContractTemplateIds();
+    if (linkedIds.length > 0) filter._id = { $nin: linkedIds };
     const templates = await ContractTemplate.find(filter)
       .sort({ label: 1 })
       .lean();

@@ -1,3 +1,4 @@
+import HomeAuthRedirect from "@/components/auth/HomeAuthRedirect";
 import HeroSection from "@/components/landing/HeroSection";
 import FeaturesSection from "@/components/landing/FeaturesSection";
 import SolutionsSection from "@/components/landing/SolutionsSection";
@@ -10,6 +11,7 @@ import CtaBanner from "@/components/landing/CtaBanner";
 export default function Home() {
   return (
     <>
+      <HomeAuthRedirect />
       <HeroSection />
       <FeaturesSection />
       <SolutionsSection />

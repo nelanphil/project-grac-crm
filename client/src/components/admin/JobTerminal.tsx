@@ -96,7 +96,7 @@ function TerminalPanel({
 }) {
   return (
     <div
-      className={`flex h-full min-h-0 flex-col overflow-hidden border border-neutral-800 bg-neutral-950 ${
+      className={`job-terminal flex h-full min-h-0 flex-col overflow-hidden border border-neutral-800 bg-neutral-950 ${
         fillViewport ? "w-full rounded-none" : "rounded-lg"
       }`}
     >

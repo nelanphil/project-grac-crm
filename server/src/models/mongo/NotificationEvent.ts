@@ -9,6 +9,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "contract",
   "customer_note",
   "work_order_note",
+  "estimate_note",
   "user",
   "role",
   "twilio_account",
@@ -22,6 +23,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "product",
   "estimate",
   "discount_code",
+  "mailbox_message",
 ] as const;
 
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPES)[number];
@@ -35,6 +37,7 @@ export const OPERATIONAL_ENTITY_TYPES: NotificationEntityType[] = [
   "contract",
   "customer_note",
   "work_order_note",
+  "estimate_note",
 ];
 
 export const NOTIFICATION_ACTIONS = [
@@ -43,6 +46,8 @@ export const NOTIFICATION_ACTIONS = [
   "deleted",
   "merged",
   "renewed",
+  "assigned",
+  "mentioned",
 ] as const;
 
 export type NotificationAction = (typeof NOTIFICATION_ACTIONS)[number];
@@ -59,6 +64,9 @@ export interface INotificationEvent extends Document {
   entityId: string;
   summary: string;
   metadata: Record<string, unknown>;
+  recipientUserIds: Types.ObjectId[];
+  /** Visible only to recipientUserIds, including for org admins. */
+  direct: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -97,6 +105,12 @@ const notificationEventSchema = new Schema<INotificationEvent>(
     entityId: { type: String, required: true },
     summary: { type: String, required: true, trim: true },
     metadata: { type: Schema.Types.Mixed, default: {} },
+    recipientUserIds: {
+      type: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      default: [],
+      index: true,
+    },
+    direct: { type: Boolean, default: false, index: true },
   },
   { timestamps: true }
 );

@@ -9,6 +9,7 @@ import {
   parseDateOnly,
   startOfDay,
 } from "../utils/contractDates";
+import { promoteTemporaryContract } from "../utils/temporaryContractOffer";
 import { SCHEDULE_TIMEZONE } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
 import { PaymentProviderName } from "../models/mongo/PaymentProviderAccount";
@@ -150,7 +151,10 @@ export async function markInvoicePaid(params: {
     invoice.contractRef
   ) {
     const contract = await Contract.findById(invoice.contractRef);
-    if (contract && invoice.sourceType === "contract_renewal") {
+    if (contract && invoice.sourceType === "contract_initial" && contract.temporary) {
+      promoteTemporaryContract(contract, invoice.paidAt ?? new Date());
+      await contract.save();
+    } else if (contract && invoice.sourceType === "contract_renewal") {
       const durationMonths =
         typeof invoice.metadata?.durationMonths === "number"
           ? invoice.metadata.durationMonths
@@ -411,16 +415,28 @@ export function workOrderInvoiceLineItems(wo: {
   let hasLaborProductLines = false;
   for (const part of parts) {
     if (part.lineType === "note") continue;
-    if (part.kind === "labor") hasLaborProductLines = true;
+    if (part.lineType !== "agreement" && part.kind === "labor") {
+      hasLaborProductLines = true;
+    }
     const cents = dollarsToCents(part.amount || 0);
     if (cents <= 0) continue;
     const qty = part.quantity && part.quantity !== 1 ? `${part.quantity} × ` : "";
     const label =
       part.description?.trim() ||
       part.partNumber?.trim() ||
-      (part.kind === "labor" ? "Labor" : "Part");
+      (part.lineType === "agreement"
+        ? "Agreement"
+        : part.kind === "labor"
+          ? "Labor"
+          : part.kind === "equipment"
+            ? "Equipment"
+            : "Part");
+    const kindPrefix =
+      part.lineType !== "agreement" && part.kind === "equipment" && part.description?.trim()
+        ? "Equipment · "
+        : "";
     items.push({
-      description: `${qty}${label}${part.partNumber && part.description ? ` (${part.partNumber})` : ""}`,
+      description: `${qty}${kindPrefix}${label}${part.partNumber && part.description ? ` (${part.partNumber})` : ""}`,
       amountCents: cents,
     });
   }
@@ -610,26 +626,20 @@ export async function syncWorkOrderInvoice(
   options?: { backfilled?: boolean },
 ): Promise<SyncWorkOrderInvoiceResult> {
   const amountCents = dollarsToCents(wo.total || 0);
-  const open = await findOpenInvoiceForWorkOrder(wo._id);
-
-  if (!wo.paid && amountCents <= 0) {
-    if (open) {
-      open.status = "void";
-      await open.save();
-      return { action: "voided", invoice: open };
-    }
-    return { action: "skipped" };
-  }
-
-  if (amountCents <= 0) {
-    return { action: "skipped" };
-  }
 
   if (wo.paid) {
-    if (open) {
-      await markInvoicePaid({ invoice: open });
-      return { action: "paid", invoice: open };
+    const unpaid = await Invoice.find({
+      workOrderRef: wo._id,
+      status: { $in: ["open", "draft", "failed"] },
+    });
+    if (unpaid.length > 0) {
+      let last: IInvoice | undefined;
+      for (const invoice of unpaid) {
+        last = await markInvoicePaid({ invoice });
+      }
+      return { action: "paid", invoice: last };
     }
+    if (amountCents <= 0) return { action: "skipped" };
     const existing = await Invoice.findOne({
       workOrderRef: wo._id,
       status: { $ne: "void" },
@@ -644,6 +654,16 @@ export async function syncWorkOrderInvoice(
       if (err instanceof InvoiceAmountError) return { action: "skipped" };
       throw err;
     }
+  }
+
+  if (amountCents <= 0) {
+    const open = await findOpenInvoiceForWorkOrder(wo._id);
+    if (open) {
+      open.status = "void";
+      await open.save();
+      return { action: "voided", invoice: open };
+    }
+    return { action: "skipped" };
   }
 
   try {

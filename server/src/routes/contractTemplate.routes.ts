@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   authenticate,
+  requireAnyPermission,
   requirePermission,
   requireRole,
 } from "../middleware/auth.middleware";
@@ -14,12 +15,16 @@ import {
 
 const router = Router();
 
-const adminRoles = requireRole("admin", "super-admin", "owner");
+const adminRoles = requireRole("admin", "super-admin");
 
 router.use(authenticate);
 
-// Readable by anyone who can read contracts (for list filters / badges).
-router.get("/", requirePermission("contracts:read"), getContractTemplates);
+// Readable by contract viewers and by people who write estimates or work orders.
+router.get(
+  "/",
+  requireAnyPermission("contracts:read", "jobs:write", "estimates:write"),
+  getContractTemplates,
+);
 
 // Catalog mutations stay admin-only (Control Panel).
 router.post("/", adminRoles, requirePermission("contracts:write"), createContractTemplate);

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { COMPANY } from "@/lib/constants";
+import { SMS_CONSENT_DISCLOSURE_TEXT } from "@/lib/smsConsent";
 
-const LAST_UPDATED = "September 9, 2026";
+const LAST_UPDATED = "September 15, 2026";
 
 export default function PrivacyPolicyContent() {
   return (
@@ -84,13 +85,15 @@ export default function PrivacyPolicyContent() {
           <p className="mt-3">
             {COMPANY.name} offers an optional SMS program for transactional account
             and service notifications. If you provide a mobile number and opt in
-            (for example, by checking an unchecked box on our signup form, first-login
-            consent screen, or estimate request), you consent to receive automated
+            (for example, by checking an unchecked box on our SMS program page,
+            signup form, first-login consent screen, or estimate request), you consent
+            to receive automated
             SMS/MMS messages from {COMPANY.name} at that number. Messages may include
             appointment confirmations and reminders, invoices, payment receipts, and
             account or service alerts. Message frequency varies. Message and data
-            rates may apply. Reply <strong>STOP</strong> to opt out; reply{" "}
-            <strong>HELP</strong> for help. For help you may also contact us at{" "}
+            rates may apply. Msg & data rates may apply. Reply{" "}
+            <strong>STOP</strong> to opt out; reply <strong>HELP</strong> for help.
+            For help you may also contact us at{" "}
             <a
               href={`mailto:${COMPANY.email}`}
               className="text-brand-orange underline-offset-2 hover:underline"
@@ -113,6 +116,9 @@ export default function PrivacyPolicyContent() {
               SMS program
             </Link>{" "}
             page.
+          </p>
+          <p className="mt-3">
+            Exact checkbox wording: {SMS_CONSENT_DISCLOSURE_TEXT}
           </p>
           <p className="mt-3">
             We do not share, sell, or provide your mobile phone number or messaging

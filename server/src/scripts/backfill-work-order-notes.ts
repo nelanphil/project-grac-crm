@@ -19,7 +19,7 @@ import { WorkOrder } from "../models/mongo/WorkOrder";
 import { WorkOrderNote } from "../models/mongo/WorkOrderNote";
 
 const DRY_RUN = process.argv.includes("--dry-run");
-const ADMIN_ROLES = ["admin", "super-admin", "owner"];
+const ADMIN_ROLES = ["admin", "super-admin"];
 
 async function main() {
   await connectMongoDB();

@@ -24,11 +24,13 @@ export function defaultLaborTotal(laborHours: number): number {
   return Math.ceil(extra / LABOR_BLOCK_MINUTES) * LABOR_BLOCK_RATE_DOLLARS;
 }
 
-export type TicketLineType = "product" | "note";
-export type TicketProductKind = "part" | "labor";
+export type TicketLineType = "product" | "note" | "agreement";
+export type TicketProductKind = "part" | "labor" | "equipment";
 
 export interface TicketPartInput {
   productRef?: string | null;
+  contractTemplateRef?: string | null;
+  enrolledContractRef?: string | null;
   lineType?: TicketLineType | string;
   kind?: TicketProductKind | string;
   partNumber?: string;
@@ -42,6 +44,8 @@ export interface TicketPartInput {
 
 export interface NormalizedTicketPart {
   productRef: string | null;
+  contractTemplateRef: string | null;
+  enrolledContractRef: string | null;
   lineType: TicketLineType;
   kind: TicketProductKind;
   partNumber: string;
@@ -53,19 +57,35 @@ export interface NormalizedTicketPart {
   amount: number;
 }
 
+function lineTypeOf(value: string | undefined): TicketLineType {
+  if (value === "note") return "note";
+  if (value === "agreement") return "agreement";
+  return "product";
+}
+
+function refOrNull(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed || null;
+}
+
 export function normalizeParts(
   parts: TicketPartInput[] | undefined,
 ): NormalizedTicketPart[] {
   if (!parts?.length) return [];
   return parts
     .map((part) => {
-      const lineType: TicketLineType =
-        part.lineType === "note" ? "note" : "product";
+      const lineType = lineTypeOf(part.lineType);
       const kind: TicketProductKind =
-        part.kind === "labor" ? "labor" : "part";
+        lineType === "product" && part.kind === "labor"
+          ? "labor"
+          : lineType === "product" && part.kind === "equipment"
+            ? "equipment"
+            : "part";
       if (lineType === "note") {
         return {
           productRef: null,
+          contractTemplateRef: null,
+          enrolledContractRef: null,
           lineType,
           kind: "part" as const,
           partNumber: "",
@@ -86,8 +106,26 @@ export function normalizeParts(
         part.amount != null && Number.isFinite(Number(part.amount))
           ? roundMoney(Number(part.amount))
           : roundMoney(quantity * unitPrice);
+      if (lineType === "agreement") {
+        return {
+          productRef: null,
+          contractTemplateRef: refOrNull(part.contractTemplateRef),
+          enrolledContractRef: refOrNull(part.enrolledContractRef),
+          lineType,
+          kind: "part" as const,
+          partNumber: "",
+          description: (part.description ?? "").trim(),
+          quantity,
+          unitPrice,
+          listPrice,
+          priceOverridden: Boolean(part.priceOverridden),
+          amount,
+        };
+      }
       return {
         productRef: part.productRef?.trim() ? part.productRef.trim() : null,
+        contractTemplateRef: null,
+        enrolledContractRef: null,
         lineType,
         kind,
         partNumber: (part.partNumber ?? "").trim(),
@@ -101,6 +139,9 @@ export function normalizeParts(
     })
     .filter((part) => {
       if (part.lineType === "note") return Boolean(part.description);
+      if (part.lineType === "agreement") {
+        return Boolean(part.contractTemplateRef || part.description);
+      }
       return Boolean(part.partNumber || part.description);
     });
 }
@@ -109,7 +150,10 @@ export function hasLaborProductLines(
   parts: Array<{ lineType?: string; kind?: string }>,
 ): boolean {
   return parts.some(
-    (part) => part.lineType !== "note" && part.kind === "labor",
+    (part) =>
+      part.lineType !== "note" &&
+      part.lineType !== "agreement" &&
+      part.kind === "labor",
   );
 }
 
@@ -127,6 +171,7 @@ export function computeTicketTotals(input: {
 }): {
   totalParts: number;
   totalLabor: number;
+  totalAgreements: number;
   miscExp: number;
   subtotal: number;
   shipping: number;
@@ -138,12 +183,17 @@ export function computeTicketTotals(input: {
   const productLines = input.parts.filter((part) => part.lineType !== "note");
   const totalParts = roundMoney(
     productLines
-      .filter((part) => part.kind !== "labor")
+      .filter((part) => part.lineType !== "agreement" && part.kind !== "labor")
+      .reduce((sum, part) => sum + (Number(part.amount) || 0), 0),
+  );
+  const totalAgreements = roundMoney(
+    productLines
+      .filter((part) => part.lineType === "agreement")
       .reduce((sum, part) => sum + (Number(part.amount) || 0), 0),
   );
   const lineLabor = roundMoney(
     productLines
-      .filter((part) => part.kind === "labor")
+      .filter((part) => part.lineType !== "agreement" && part.kind === "labor")
       .reduce((sum, part) => sum + (Number(part.amount) || 0), 0),
   );
   const totalLabor = hasLaborProductLines(productLines)
@@ -156,7 +206,7 @@ export function computeTicketTotals(input: {
         );
   const miscExp = roundMoney(input.miscExp ?? 0);
   const shipping = roundMoney(input.shipping ?? 0);
-  const subtotal = roundMoney(totalParts + totalLabor + miscExp);
+  const subtotal = roundMoney(totalParts + totalLabor + totalAgreements + miscExp);
   const taxRate = normalizeTaxRatePercent(input.taxRate);
   const taxOverridden = Boolean(input.taxOverridden);
   const tax = taxOverridden
@@ -166,6 +216,7 @@ export function computeTicketTotals(input: {
   return {
     totalParts,
     totalLabor,
+    totalAgreements,
     miscExp,
     subtotal,
     shipping,

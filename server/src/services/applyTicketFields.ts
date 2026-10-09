@@ -2,6 +2,7 @@ import mongoose, { Types } from "mongoose";
 import { Customer, ICustomer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { Equipment } from "../models/mongo/Equipment";
+import { stateCodeOrFlorida } from "../constants/usStates";
 import { syncCustomerPrimaryFields } from "../utils/customerSites";
 import { customerDisplayName } from "./notification.service";
 import {
@@ -24,6 +25,7 @@ export type TicketSnapshotFields = {
   customerName?: string;
   customerAddress?: string;
   customerCity?: string;
+  customerState?: string;
   customerZip?: string;
   customerPhone?: string;
   customerEmail?: string;
@@ -38,6 +40,8 @@ export type TicketBodyFields = TicketSnapshotFields & {
   descPerform?: string;
   descPerformed?: string;
   date?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
   tech?: string;
   paid?: boolean;
   completed?: boolean;
@@ -69,6 +73,8 @@ function asObjectId(value: string | null | undefined): Types.ObjectId | null {
 function partsForDoc(parts: NormalizedTicketPart[]) {
   return parts.map((part) => ({
     productRef: asObjectId(part.productRef),
+    contractTemplateRef: asObjectId(part.contractTemplateRef),
+    enrolledContractRef: asObjectId(part.enrolledContractRef),
     lineType: part.lineType,
     kind: part.kind,
     partNumber: part.partNumber,
@@ -89,6 +95,7 @@ export async function resolveTicketSnapshot(opts: {
     | "last"
     | "address"
     | "city"
+    | "state"
     | "zip"
     | "phone"
     | "email"
@@ -105,16 +112,18 @@ export async function resolveTicketSnapshot(opts: {
   let address = {
     address: customer.address ?? "",
     city: customer.city ?? "",
+    state: customer.state ?? "",
     zip: customer.zip ?? "",
   };
   if (opts.addressRef && mongoose.Types.ObjectId.isValid(opts.addressRef)) {
     const site = await CustomerAddress.findById(opts.addressRef)
-      .select("address city zip")
+      .select("address city state zip")
       .lean();
     if (site) {
       address = {
         address: site.address ?? "",
         city: site.city ?? "",
+        state: site.state ?? "",
         zip: site.zip ?? "",
       };
     }
@@ -144,6 +153,9 @@ export async function resolveTicketSnapshot(opts: {
     customerName: overrides.customerName?.trim() || customerDisplayName(customer),
     customerAddress: overrides.customerAddress?.trim() || address.address,
     customerCity: overrides.customerCity?.trim() || address.city,
+    customerState: stateCodeOrFlorida(
+      overrides.customerState?.trim() || address.state,
+    ),
     customerZip: overrides.customerZip?.trim() || address.zip,
     customerPhone: overrides.customerPhone?.trim() || customer.phone || "",
     customerEmail: overrides.customerEmail?.trim() || customer.email || "",
@@ -162,6 +174,7 @@ export async function applyTicketMoney(
     runHours: number;
     totalParts: number;
     totalLabor: number;
+    totalAgreements: number;
     laborOverridden: boolean;
     miscExp: number;
     subtotal: number;
@@ -237,6 +250,7 @@ export async function applyTicketMoney(
   });
   target.totalParts = totals.totalParts;
   target.totalLabor = totals.totalLabor;
+  target.totalAgreements = totals.totalAgreements;
   target.miscExp = totals.miscExp;
   target.subtotal = totals.subtotal;
   target.shipping = totals.shipping;
@@ -335,6 +349,26 @@ async function ensureTicketEquipment(
   return String(created._id);
 }
 
+async function backfillBlankAddressState(
+  addressRef: unknown,
+  state: string,
+): Promise<void> {
+  const id = addressRef ? String(addressRef) : "";
+  if (!id || !mongoose.Types.ObjectId.isValid(id) || !state.trim()) return;
+  const updated = await CustomerAddress.updateOne(
+    {
+      _id: id,
+      $or: [{ state: "" }, { state: null }, { state: { $exists: false } }],
+    },
+    { $set: { state: state.trim() } },
+  );
+  if (updated.modifiedCount < 1) return;
+  const site = await CustomerAddress.findById(id).select("customerRef").lean();
+  if (site?.customerRef) {
+    await syncCustomerPrimaryFields(site.customerRef);
+  }
+}
+
 export async function applyTicketFields(
   target: Record<string, unknown>,
   body: TicketBodyFields,
@@ -348,6 +382,12 @@ export async function applyTicketFields(
   if (body.certify !== undefined) target.certify = body.certify;
   if (body.date !== undefined) {
     target.date = body.date ? new Date(body.date) : null;
+  }
+  if (body.startTime !== undefined) {
+    target.startTime = body.startTime?.trim() || "";
+  }
+  if (body.endTime !== undefined) {
+    target.endTime = body.endTime?.trim() || "";
   }
 
   if (body.addressRef !== undefined) {
@@ -383,6 +423,7 @@ export async function applyTicketFields(
     overrides: body,
   });
   Object.assign(target, snapshot);
+  await backfillBlankAddressState(target.addressRef, snapshot.customerState);
 
   await applyTicketMoney(
     target as {
@@ -391,6 +432,7 @@ export async function applyTicketFields(
       runHours: number;
       totalParts: number;
       totalLabor: number;
+      totalAgreements: number;
       laborOverridden: boolean;
       miscExp: number;
       subtotal: number;

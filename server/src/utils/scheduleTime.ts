@@ -15,7 +15,7 @@ export type WeekdayKey = (typeof WEEKDAY_KEYS)[number];
 
 export const DEFAULT_DAY_START = "08:00";
 export const DEFAULT_DAY_END = "17:00";
-export const DEFAULT_ESTIMATED_MINUTES = 60;
+export const DEFAULT_ESTIMATED_MINUTES = 30;
 
 export type WeeklyDayHours = {
   enabled: boolean;
@@ -76,8 +76,11 @@ export function defaultWeeklyHours(weekdayEnabled: boolean): WeeklyHours {
   };
 }
 
-export function defaultSchedulableForRole(role: string): boolean {
-  return role === "tech";
+export function weeklyHoursNeverEnabled(
+  hours: WeeklyHours | null | undefined,
+): boolean {
+  if (!hours) return true;
+  return WEEKDAY_KEYS.every((key) => !hours[key]?.enabled);
 }
 
 function nyParts(date: Date): {

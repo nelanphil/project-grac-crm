@@ -121,6 +121,10 @@ export default function EstimateTemplateForm({
             <span>Total labor</span>
             <span>{formatMoney(totals.totalLabor)}</span>
           </div>
+          <div className="flex justify-between">
+            <span>Total agreements</span>
+            <span>{formatMoney(totals.totalAgreements)}</span>
+          </div>
           <div className="flex justify-between border-t border-neutral-200 pt-2 font-semibold">
             <span>Template total</span>
             <span>{formatMoney(totals.total)}</span>

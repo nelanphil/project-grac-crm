@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Minus } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import {
   SortableContext,
@@ -13,9 +13,12 @@ import {
   isNavItemActive,
   isNavSubtreeActive,
   MAX_NAV_DEPTH,
+  navNudgeAvailability,
   type NavItem,
+  type NavNudge,
 } from "@/lib/dashboard-nav";
 import { NestPlaceholder } from "@/components/dashboard/NavDropTargets";
+import NavReorderControls from "@/components/dashboard/NavReorderControls";
 
 type NavItemGroupProps = {
   item: NavItem;
@@ -26,6 +29,10 @@ type NavItemGroupProps = {
   editable?: boolean;
   editMode?: boolean;
   depth?: number;
+  onRemove?: (href: string) => void;
+  onNudge?: (href: string, direction: NavNudge) => void;
+  /** Full visible tree, used to enable and disable the arrow controls. */
+  navTree?: NavItem[];
 };
 
 export default function NavItemGroup({
@@ -36,6 +43,9 @@ export default function NavItemGroup({
   editable = false,
   editMode = false,
   depth = 0,
+  onRemove,
+  onNudge,
+  navTree,
 }: NavItemGroupProps) {
   const { href, label, icon: Icon, children } = item;
   const hasChildren = Boolean(children && children.length > 0);
@@ -159,8 +169,37 @@ export default function NavItemGroup({
                 />
               </button>
             ) : null}
+            {editable && editMode && onRemove ? (
+              <button
+                type="button"
+                aria-label={`Remove ${label} from menu`}
+                data-nav-allow-click
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onRemove(href);
+                }}
+                className={`shrink-0 rounded-md p-2 transition-colors ${
+                  isSidebar
+                    ? "text-neutral-400 hover:bg-neutral-100 hover:text-red-600"
+                    : "text-white/50 hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <Minus className="h-4 w-4" />
+              </button>
+            ) : null}
           </div>
         </div>
+        {editable && editMode && onNudge && navTree ? (
+          <NavReorderControls
+            label={label}
+            availability={navNudgeAvailability(navTree, href)}
+            onNudge={(direction) => onNudge(href, direction)}
+            tone={isSidebar ? "light" : "dark"}
+            className={depth === 0 ? "pl-11" : "pl-8"}
+          />
+        ) : null}
       </div>
 
       {showChildList ? (
@@ -182,6 +221,9 @@ export default function NavItemGroup({
                   editable
                   editMode={editMode}
                   depth={depth + 1}
+                  onRemove={onRemove}
+                  onNudge={onNudge}
+                  navTree={navTree}
                 />
               ))}
             </SortableContext>

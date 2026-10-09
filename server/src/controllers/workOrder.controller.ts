@@ -2,7 +2,6 @@ import { Response } from "express";
 import mongoose from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { WorkOrder } from "../models/mongo/WorkOrder";
-import { WorkOrderType } from "../models/mongo/WorkOrderType";
 import { Estimate } from "../models/mongo/Estimate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
@@ -16,6 +15,7 @@ import {
   actorFromRequest,
   customerDisplayName,
   logNotificationAsync,
+  logNotificationThrottledAsync,
 } from "../services/notification.service";
 import {
   applyAssignmentSideEffects,
@@ -26,13 +26,51 @@ import {
   isDispatcherRole,
   rangeUtc,
 } from "../services/schedule.service";
+import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
+import { resolveTicketWorkOrderType } from "../services/ticketWorkOrderType";
 import { syncWorkOrderInvoice } from "../services/invoice.service";
 import { addMinutes, formatLocalDate } from "../utils/scheduleTime";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { findWorkOrderIdsMatchingNoteSearch } from "./workOrderNote.controller";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
+/** Autosave patches often; one "updated" event per editor per window is enough. */
+const WORK_ORDER_UPDATE_NOTIFY_WINDOW_MS = 10 * 60 * 1000;
+
+function timeWindowIsInvalid(start: unknown, end: unknown): boolean {
+  const startTime = typeof start === "string" ? start : "";
+  const endTime = typeof end === "string" ? end : "";
+  return Boolean(startTime && endTime && endTime <= startTime);
+}
+
+async function loadSchedulableAssignee(id: string): Promise<
+  | {
+      ok: true;
+      user: {
+        first_name: string;
+        last_name: string;
+        weeklyHours?: unknown;
+        scheduleExceptions?: unknown;
+      };
+    }
+  | { ok: false; message: string }
+> {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return { ok: false, message: "Invalid assignedUserRef" };
+  }
+  const user = await User.findOne({ _id: id, ...activeUserFilter })
+    .select("first_name last_name schedulable weeklyHours scheduleExceptions")
+    .lean();
+  if (!user) return { ok: false, message: "Assigned user not found" };
+  if (!user.schedulable) {
+    return {
+      ok: false,
+      message: "Assigned user cannot be scheduled for work orders",
+    };
+  }
+  return { ok: true, user };
+}
 
 async function enrichWithAddress(
   workOrders: Array<Record<string, unknown>>,
@@ -42,30 +80,6 @@ async function enrichWithAddress(
 
 function hasJobsPermission(req: AuthRequest, permission: string): boolean {
   return Boolean(req.user?.permissions.includes(permission));
-}
-
-async function resolveWorkOrderTypeRef(
-  value: string | null | undefined,
-): Promise<
-  | { ok: true; skip: true }
-  | { ok: true; skip: false; ref: mongoose.Types.ObjectId | null }
-  | { ok: false; message: string }
-> {
-  if (value === undefined) return { ok: true, skip: true };
-  if (value === null || value === "") {
-    return { ok: true, skip: false, ref: null };
-  }
-  if (!mongoose.Types.ObjectId.isValid(value)) {
-    return { ok: false, message: "Invalid workOrderTypeRef" };
-  }
-  const type = await WorkOrderType.findOne({
-    _id: value,
-    deletedAt: null,
-  }).select("_id");
-  if (!type) {
-    return { ok: false, message: "Work order type not found" };
-  }
-  return { ok: true, skip: false, ref: type._id };
 }
 
 // GET /work-orders?customerId=&addressId=&from=&to=&assignedUserId=&unscheduled=
@@ -151,7 +165,7 @@ export async function getWorkOrders(
       filter.addressRef = addressId;
     }
 
-    const dispatcher = isDispatcherRole(req.user?.role);
+    const dispatcher = isDispatcherRole(req.user);
     let scopedUserId = assignedUserId;
     if (!dispatcher && (from || to || unscheduled || assignedUserId)) {
       scopedUserId = req.user?.id ?? "";
@@ -371,18 +385,21 @@ export async function createWorkOrder(
       customer,
     );
 
-    const typeRef = await resolveWorkOrderTypeRef(data.workOrderTypeRef);
+    const typeRef = await resolveTicketWorkOrderType({
+      requestedRef: data.workOrderTypeRef,
+      parts: workOrder.parts,
+      emptyWithoutEquipment: "service",
+    });
     if (!typeRef.ok) {
       res.status(400).json({ message: typeRef.message });
       return;
     }
-    if (!typeRef.skip) {
-      workOrder.workOrderTypeRef = typeRef.ref;
-    }
+    workOrder.workOrderTypeRef = typeRef.ref;
 
     if (data.assignedUserRef) {
-      if (!mongoose.Types.ObjectId.isValid(data.assignedUserRef)) {
-        res.status(400).json({ message: "Invalid assignedUserRef" });
+      const assignee = await loadSchedulableAssignee(data.assignedUserRef);
+      if (!assignee.ok) {
+        res.status(400).json({ message: assignee.message });
         return;
       }
       workOrder.assignedUserRef = new mongoose.Types.ObjectId(
@@ -397,7 +414,13 @@ export async function createWorkOrder(
       }
     }
 
+    if (timeWindowIsInvalid(workOrder.startTime, workOrder.endTime)) {
+      res.status(400).json({ message: "End time must be after start time" });
+      return;
+    }
+
     await workOrder.save();
+    await saveWorkOrderAgreements(workOrder);
     await syncWorkOrderInvoice(workOrder);
 
     if (workOrder.estimateRef) {
@@ -450,7 +473,7 @@ export async function updateWorkOrder(
       return;
     }
 
-    const dispatcher = isDispatcherRole(req.user?.role);
+    const dispatcher = isDispatcherRole(req.user);
     const isAssignee =
       workOrder.assignedUserRef &&
       String(workOrder.assignedUserRef) === req.user?.id;
@@ -504,12 +527,29 @@ export async function updateWorkOrder(
       }
     }
 
-    const typeRef = await resolveWorkOrderTypeRef(parsed.data.workOrderTypeRef);
-    if (!typeRef.ok) {
-      res.status(400).json({ message: typeRef.message });
-      return;
+    if (parsed.data.startTime !== undefined) {
+      workOrder.startTime = parsed.data.startTime?.trim() || "";
     }
-    if (!typeRef.skip) {
+    if (parsed.data.endTime !== undefined) {
+      workOrder.endTime = parsed.data.endTime?.trim() || "";
+    }
+
+    if (
+      parsed.data.workOrderTypeRef !== undefined ||
+      parsed.data.parts !== undefined
+    ) {
+      const typeRef = await resolveTicketWorkOrderType({
+        requestedRef:
+          parsed.data.workOrderTypeRef !== undefined
+            ? parsed.data.workOrderTypeRef
+            : workOrder.workOrderTypeRef?.toString() ?? null,
+        parts: workOrder.parts,
+        emptyWithoutEquipment: "service",
+      });
+      if (!typeRef.ok) {
+        res.status(400).json({ message: typeRef.message });
+        return;
+      }
       workOrder.workOrderTypeRef = typeRef.ref;
     }
 
@@ -520,6 +560,7 @@ export async function updateWorkOrder(
     if (parsed.data.assignedUserRef !== undefined) {
       if (parsed.data.assignedUserRef === null || parsed.data.assignedUserRef === "") {
         workOrder.assignedUserRef = null;
+        workOrder.tech = "";
       } else if (!mongoose.Types.ObjectId.isValid(parsed.data.assignedUserRef)) {
         res.status(400).json({ message: "Invalid assignedUserRef" });
         return;
@@ -554,17 +595,31 @@ export async function updateWorkOrder(
 
     let assignee: { first_name: string; last_name: string } | null = null;
     if (workOrder.assignedUserRef) {
-      const user = await User.findOne({
-        _id: workOrder.assignedUserRef,
-        ...activeUserFilter,
-      })
-        .select("first_name last_name weeklyHours scheduleExceptions")
-        .lean();
-      if (!user) {
-        res.status(400).json({ message: "Assigned user not found" });
-        return;
+      const assigning =
+        typeof parsed.data.assignedUserRef === "string" &&
+        parsed.data.assignedUserRef !== "";
+      if (assigning) {
+        const loaded = await loadSchedulableAssignee(
+          String(workOrder.assignedUserRef),
+        );
+        if (!loaded.ok) {
+          res.status(400).json({ message: loaded.message });
+          return;
+        }
+        assignee = loaded.user;
+      } else {
+        const user = await User.findOne({
+          _id: workOrder.assignedUserRef,
+          ...activeUserFilter,
+        })
+          .select("first_name last_name weeklyHours scheduleExceptions")
+          .lean();
+        if (!user) {
+          res.status(400).json({ message: "Assigned user not found" });
+          return;
+        }
+        assignee = user;
       }
-      assignee = user;
 
       if (workOrder.scheduledStart && workOrder.scheduledEnd) {
         const overlap = await findOverlappingJob({
@@ -582,15 +637,28 @@ export async function updateWorkOrder(
       }
     }
 
+    if (timeWindowIsInvalid(workOrder.startTime, workOrder.endTime)) {
+      res.status(400).json({ message: "End time must be after start time" });
+      return;
+    }
+
     await applyAssignmentSideEffects(workOrder, assignee);
     await workOrder.save();
+    await saveWorkOrderAgreements(workOrder);
+    const warnings: string[] = [];
     try {
       await syncWorkOrderInvoice(workOrder);
     } catch (syncErr) {
       console.error("syncWorkOrderInvoice failed:", syncErr);
+      const detail =
+        syncErr instanceof Error && syncErr.message ? syncErr.message : "";
+      warnings.push(
+        detail
+          ? `The work order was saved, but its invoice was not updated: ${detail}`
+          : "The work order was saved, but its invoice was not updated.",
+      );
     }
 
-    const warnings: string[] = [];
     if (
       assignee &&
       workOrder.assignedUserRef &&
@@ -610,14 +678,17 @@ export async function updateWorkOrder(
       if (warn) warnings.push(warn);
     }
 
-    logNotificationAsync({
-      entityType: "work_order",
-      action: "updated",
-      entityId: String(workOrder._id),
-      customerRef: workOrder.customerRef ?? null,
-      summary: "Work order updated",
-      ...actorFromRequest(req.user),
-    });
+    logNotificationThrottledAsync(
+      {
+        entityType: "work_order",
+        action: "updated",
+        entityId: String(workOrder._id),
+        customerRef: workOrder.customerRef ?? null,
+        summary: "Work order updated",
+        ...actorFromRequest(req.user),
+      },
+      WORK_ORDER_UPDATE_NOTIFY_WINDOW_MS,
+    );
 
     const lean = workOrder.toObject() as unknown as Record<string, unknown>;
     const [enriched] = await enrichWithAddress([lean]);
@@ -637,7 +708,7 @@ export async function cancelWorkOrderAppointment(
       res.status(403).json({ message: "Missing permission: jobs:write" });
       return;
     }
-    if (!isDispatcherRole(req.user?.role)) {
+    if (!isDispatcherRole(req.user)) {
       res.status(403).json({
         message: "Only dispatchers can cancel appointments",
       });

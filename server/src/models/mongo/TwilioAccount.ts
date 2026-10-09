@@ -1,4 +1,8 @@
 import mongoose, { Schema, Document } from "mongoose";
+import {
+  normalizeStoredPhoneLine,
+  TwilioPhoneLine,
+} from "../../utils/twilioPhoneLines";
 
 export interface ITwilioAccount extends Document {
   accountSid: string;
@@ -6,7 +10,7 @@ export interface ITwilioAccount extends Document {
   authTokenEncrypted: string;
   testAccountSid?: string;
   testAuthTokenEncrypted?: string;
-  phoneNumbers: string[];
+  phoneNumbers: TwilioPhoneLine[];
   isActive: boolean;
   /** Twilio <Say> voice used for IVR, voicemail, and outbound calls. */
   sayVoice: string;
@@ -41,7 +45,20 @@ const twilioAccountSchema = new Schema<ITwilioAccount>(
       default: undefined,
     },
     phoneNumbers: {
-      type: [String],
+      type: [
+        new Schema(
+          {
+            phoneNumber: { type: String, required: true, trim: true },
+            label: { type: String, trim: true, default: "" },
+            twilioFriendlyName: { type: String, trim: true, default: "" },
+            incomingSid: { type: String, trim: true, default: "" },
+            sms: { type: Boolean, default: false },
+            mms: { type: Boolean, default: false },
+            voice: { type: Boolean, default: false },
+          },
+          { _id: false },
+        ),
+      ],
       default: [],
     },
     isActive: {
@@ -61,3 +78,28 @@ export const TwilioAccount = mongoose.model<ITwilioAccount>(
   "TwilioAccount",
   twilioAccountSchema,
 );
+
+let phoneLineMigration: Promise<void> | null = null;
+
+/** Convert legacy `phoneNumbers: string[]` docs before mongoose casts them. */
+export function ensureTwilioPhoneLineShape(): Promise<void> {
+  if (!phoneLineMigration) {
+    phoneLineMigration = migrateTwilioPhoneNumberStrings().catch((err) => {
+      phoneLineMigration = null;
+      throw err;
+    });
+  }
+  return phoneLineMigration;
+}
+
+async function migrateTwilioPhoneNumberStrings(): Promise<void> {
+  const col = TwilioAccount.collection;
+  const cursor = col.find({ "phoneNumbers.0": { $type: "string" } });
+  for await (const doc of cursor) {
+    const raw = Array.isArray(doc.phoneNumbers) ? doc.phoneNumbers : [];
+    const phoneNumbers = raw
+      .map((entry) => normalizeStoredPhoneLine(entry))
+      .filter((line): line is TwilioPhoneLine => Boolean(line));
+    await col.updateOne({ _id: doc._id }, { $set: { phoneNumbers } });
+  }
+}

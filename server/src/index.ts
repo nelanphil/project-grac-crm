@@ -1,6 +1,8 @@
+import mongoose from "mongoose";
 import app from "./app";
 import { env } from "./config/env";
 import { connectMongoDB, disconnectMongoDB } from "./config/mongodb";
+import { ensureCustomerOptionalUniqueIndexes } from "./models/mongo/Customer";
 import {
   seedDefaultPermissions,
   revokeCustomerListAccess,
@@ -10,15 +12,28 @@ import {
   ensureEstimatePermissions,
   ensureProductPermissions,
   ensureDiscountPermissions,
+  ensureJobRolePermissions,
+  ensureNavPermissions,
 } from "./models/mongo/RolePermission";
 import { seedDefaultRoles } from "./models/mongo/Role";
+import { seedDefaultJobRoles } from "./models/mongo/JobRole";
+import {
+  ensureFieldStaffPermissions,
+  migrateToJobRoles,
+} from "./utils/migrateUserRoles";
 import { seedDefaultManufacturers } from "./models/mongo/Manufacturer";
 import { seedContractTemplates } from "./models/mongo/ContractTemplate";
+import { seedInvoiceTemplates } from "./models/mongo/InvoiceTemplate";
+import { ensureTwilioPhoneLineShape } from "./models/mongo/TwilioAccount";
 import { startRenewalInvoiceScheduler } from "./jobs/scheduler";
 
 async function bootstrap(): Promise<void> {
   await connectMongoDB();
+  await ensureCustomerOptionalUniqueIndexes(mongoose.connection);
   await seedDefaultRoles();
+  await seedDefaultJobRoles();
+  await migrateToJobRoles();
+  await ensureFieldStaffPermissions();
   await seedDefaultPermissions();
   await revokeCustomerListAccess();
   await ensureContractPermissions();
@@ -27,8 +42,12 @@ async function bootstrap(): Promise<void> {
   await ensureEstimatePermissions();
   await ensureProductPermissions();
   await ensureDiscountPermissions();
+  await ensureJobRolePermissions();
+  await ensureNavPermissions();
   await seedDefaultManufacturers();
   await seedContractTemplates();
+  await seedInvoiceTemplates();
+  await ensureTwilioPhoneLineShape();
 
   startRenewalInvoiceScheduler();
 

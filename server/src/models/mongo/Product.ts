@@ -1,6 +1,8 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
+import { ProductDiscounts } from "../../utils/productDiscounts";
+import { productDiscountsSchema } from "./productDiscounts";
 
-export const PRODUCT_KINDS = ["part", "labor"] as const;
+export const PRODUCT_KINDS = ["part", "labor", "contract", "equipment"] as const;
 export type ProductKind = (typeof PRODUCT_KINDS)[number];
 
 export interface IProduct extends Document {
@@ -17,6 +19,9 @@ export interface IProduct extends Document {
   strikeThroughPrice: number;
   active: boolean;
   notes: string;
+  agreementBody: string;
+  productDiscounts: ProductDiscounts;
+  contractTemplateRef?: Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -52,6 +57,13 @@ const productSchema = new Schema<IProduct>(
     strikeThroughPrice: { type: Number, default: 0, min: 0 },
     active: { type: Boolean, default: true, index: true },
     notes: { type: String, default: "", trim: true, uppercase: true },
+    agreementBody: { type: String, default: "" },
+    productDiscounts: { type: productDiscountsSchema, default: () => ({}) },
+    contractTemplateRef: {
+      type: Schema.Types.ObjectId,
+      ref: "ContractTemplate",
+      default: null,
+    },
   },
   { timestamps: true },
 );

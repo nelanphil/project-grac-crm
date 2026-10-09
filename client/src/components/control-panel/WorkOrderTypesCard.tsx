@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
+import { userHasCapability } from "@/lib/dashboard-role";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import {
@@ -62,9 +63,7 @@ export default function WorkOrderTypesCard() {
       .then(([{ types: list }, { users }]) => {
         setTypes(list);
         setStaff(
-          users.filter(
-            (user) => user.schedulable && user.role !== "customer",
-          ),
+          users.filter((user) => userHasCapability(user, "schedulable")),
         );
       })
       .catch((err) =>
@@ -292,8 +291,8 @@ export default function WorkOrderTypesCard() {
             </p>
             {staffOptions.length === 0 ? (
               <p className="text-sm text-neutral-500">
-                No schedulable technicians found. Mark staff as schedulable on
-                the Users page first.
+                No technicians found. Assign the Technician role on the Users
+                page first.
               </p>
             ) : (
               <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border border-neutral-200 p-2">

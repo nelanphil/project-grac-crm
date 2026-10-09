@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   ArrowDown,
   ArrowUp,
@@ -72,9 +71,7 @@ function SortHeader({
 }
 
 function ContactsContent() {
-  const router = useRouter();
   const token = useAuthStore((s) => s.token);
-  const user = useAuthStore((s) => s.user);
 
   const [contacts, setContacts] = useState<ContactListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -104,12 +101,6 @@ function ContactsContent() {
   }
 
   useEffect(() => {
-    if (user?.role === "customer") {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(search.trim());
       setPage(1);
@@ -118,7 +109,7 @@ function ContactsContent() {
   }, [search]);
 
   useEffect(() => {
-    if (!token || user?.role === "customer") return;
+    if (!token) return;
 
     let cancelled = false;
 
@@ -151,9 +142,7 @@ function ContactsContent() {
     return () => {
       cancelled = true;
     };
-  }, [token, user, page, pageSize, sortKey, sortDir, debouncedSearch]);
-
-  if (!user || user.role === "customer") return null;
+  }, [token, page, pageSize, sortKey, sortDir, debouncedSearch]);
 
   if (loading && contacts.length === 0)
     return (

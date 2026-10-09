@@ -8,8 +8,11 @@ import {
   MessageThreadItem,
   closeMessagingThread,
   getMessagingThreadDetail,
+  markMessagingThreadRead,
+  formatTwilioLine,
   placeMessagingCall,
   sendMessagingMessages,
+  type TwilioCommunicationItem,
 } from "@/lib/api";
 import MessageBubble from "./MessageBubble";
 import {
@@ -24,6 +27,72 @@ import {
   pickReplyThread,
   uniqueContactThreads,
 } from "./conversationUtils";
+
+function isUnreadTextThread(thread: MessageThreadItem): boolean {
+  if (thread.lastMessageChannel !== "sms" && thread.lastMessageChannel !== "mms") {
+    return false;
+  }
+  if (thread.lastMessageDirection !== "inbound" || !thread.lastMessageAt) {
+    return false;
+  }
+  if (!thread.readAt) return true;
+  return new Date(thread.lastMessageAt).getTime() > new Date(thread.readAt).getTime();
+}
+
+function latestInboundText(
+  messages: TwilioCommunicationItem[],
+): TwilioCommunicationItem | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (
+      message.direction === "inbound" &&
+      (message.channel === "sms" || message.channel === "mms")
+    ) {
+      return message;
+    }
+  }
+  return null;
+}
+
+function formatReadStamp(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = date.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (sameDay) return time;
+  const day = date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `${day}, ${time}`;
+}
+
+function readReceiptLabel(
+  message: TwilioCommunicationItem,
+  threadsById: Record<string, MessageThreadItem>,
+): string | null {
+  if (!message.threadRef) return null;
+  const thread = threadsById[message.threadRef];
+  if (!thread?.readAt || !thread.readBy) return null;
+  const readAt = new Date(thread.readAt).getTime();
+  const sentAt = new Date(message.createdAt).getTime();
+  if (Number.isNaN(readAt) || Number.isNaN(sentAt) || readAt < sentAt) {
+    return null;
+  }
+  const name = [thread.readBy.first_name, thread.readBy.last_name]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(" ");
+  const when = formatReadStamp(thread.readAt);
+  return `Read by ${name || "Staff"}${when ? ` · ${when}` : ""}`;
+}
 
 type CustomerThreadsPanelProps = {
   token: string;
@@ -53,6 +122,9 @@ export default function CustomerThreadsPanel({
   const [threadDetail, setThreadDetail] = useState<MessageThreadDetail | null>(
     null,
   );
+  const [threadsById, setThreadsById] = useState<
+    Record<string, MessageThreadItem>
+  >({});
   const [loadingThreadDetail, setLoadingThreadDetail] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [sendingReply, setSendingReply] = useState(false);
@@ -92,7 +164,10 @@ export default function CustomerThreadsPanel({
 
   useEffect(() => {
     if (relatedThreads.length === 0) {
-      queueMicrotask(() => setThreadDetail(null));
+      queueMicrotask(() => {
+        setThreadDetail(null);
+        setThreadsById({});
+      });
       return;
     }
     let cancelled = false;
@@ -102,11 +177,36 @@ export default function CustomerThreadsPanel({
     Promise.all(
       relatedThreads.map((th) => getMessagingThreadDetail(token, th._id)),
     )
+      .then(async (details) => {
+        if (cancelled) return details;
+        const unread = details.filter((detail) =>
+          isUnreadTextThread(detail.thread),
+        );
+        if (unread.length === 0) return details;
+        const marked = await Promise.all(
+          unread.map((detail) =>
+            markMessagingThreadRead(token, detail.thread._id).catch(() => null),
+          ),
+        );
+        if (cancelled) return details;
+        const updates = new Map(
+          marked.flatMap((result) =>
+            result ? [[result.thread._id, result.thread] as const] : [],
+          ),
+        );
+        return details.map((detail) => {
+          const thread = updates.get(detail.thread._id);
+          return thread ? { ...detail, thread } : detail;
+        });
+      })
       .then((details) => {
-        if (cancelled) return;
+        if (cancelled || !details) return;
         const header =
           details.find((d) => d.thread._id === replyThread?._id) ??
           details[0];
+        setThreadsById(
+          Object.fromEntries(details.map((detail) => [detail.thread._id, detail.thread])),
+        );
         setThreadDetail({
           thread: header.thread,
           messages: mergeMessages(details.map((d) => d.messages)),
@@ -135,13 +235,36 @@ export default function CustomerThreadsPanel({
   const contactRef =
     replyThread?.contactRef ?? threadDetail?.thread.contactRef ?? null;
   const conversationMessages = threadDetail?.messages ?? [];
+  const latestInbound = latestInboundText(conversationMessages);
+  const readReceipt = latestInbound
+    ? readReceiptLabel(latestInbound, threadsById)
+    : null;
+  const highlightMessageId =
+    initialThreadId &&
+    relatedThreads.some((thread) => thread._id === initialThreadId)
+      ? (latestInbound?._id ?? null)
+      : null;
   const messageScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = messageScrollRef.current;
     if (!el || loadingThreadDetail) return;
+    if (highlightMessageId) {
+      const node = el.querySelector(
+        `[data-message-id="${highlightMessageId}"]`,
+      );
+      if (node instanceof HTMLElement) {
+        node.scrollIntoView({ block: "nearest" });
+        return;
+      }
+    }
     el.scrollTop = el.scrollHeight;
-  }, [conversationMessages, loadingThreadDetail, selectedThreadId]);
+  }, [
+    conversationMessages,
+    loadingThreadDetail,
+    selectedThreadId,
+    highlightMessageId,
+  ]);
 
   async function handleSendReply() {
     if (!threadDetail || !replyText.trim() || !contactRef) return;
@@ -248,7 +371,7 @@ export default function CustomerThreadsPanel({
                       onClick={() => setSelectedThreadId(t._id)}
                       className={`w-full border-b border-[var(--staff-border)] px-3 py-2 text-left ${
                         active
-                          ? "border-l-2 border-l-brand-orange bg-orange-50"
+                          ? "conversation-row-active border-l-2 border-l-brand-orange"
                           : "hover:bg-[var(--staff-surface)]"
                       }`}
                     >
@@ -259,8 +382,8 @@ export default function CustomerThreadsPanel({
                         <span
                           className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
                             t.status === "open"
-                              ? "bg-green-50 text-green-700"
-                              : "bg-neutral-100 text-neutral-500"
+                              ? "conversation-status-open"
+                              : "conversation-status-closed"
                           }`}
                         >
                           {t.status}
@@ -278,7 +401,9 @@ export default function CustomerThreadsPanel({
                           {formatPhone(t.contactPhoneSnapshot) || t.ourNumber}
                         </span>
                         <span>·</span>
-                        <span className="truncate">{t.ourNumber}</span>
+                        <span className="truncate">
+                          {formatTwilioLine(t.ourNumberLabel, t.ourNumber)}
+                        </span>
                       </div>
                       <div className="text-[10px] text-neutral-400">
                         {formatRelativeTime(t.lastMessageAt)}
@@ -358,7 +483,11 @@ export default function CustomerThreadsPanel({
                   threadDetail.thread.accountSid}
               </span>
               <span className="truncate">
-                via {threadDetail.thread.ourNumber}
+                via{" "}
+                {formatTwilioLine(
+                  threadDetail.thread.ourNumberLabel,
+                  threadDetail.thread.ourNumber,
+                )}
               </span>
             </div>
           ) : null}
@@ -388,7 +517,17 @@ export default function CustomerThreadsPanel({
                         {dateGroupLabel(m.createdAt)}
                       </div>
                     ) : null}
-                    <MessageBubble msg={m} />
+                    <div data-message-id={m._id}>
+                      <MessageBubble
+                        msg={m}
+                        highlighted={m._id === highlightMessageId}
+                      />
+                      {m._id === latestInbound?._id && readReceipt ? (
+                        <p className="mt-1 px-1 text-[11px] text-neutral-400">
+                          {readReceipt}
+                        </p>
+                      ) : null}
+                    </div>
                   </Fragment>
                 );
               })
@@ -411,7 +550,7 @@ export default function CustomerThreadsPanel({
                       : "Type a reply…"
                 }
                 disabled={!contactRef}
-                className="flex-1 rounded-full border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-sm outline-none focus:border-brand-orange disabled:opacity-50"
+                className="flex-1 rounded-full border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-sm text-[var(--staff-ink)] placeholder:text-[var(--staff-muted)] outline-none focus:border-brand-orange disabled:opacity-50"
               />
               <button
                 type="button"

@@ -405,6 +405,7 @@ export type VoiceContactGroup = {
   key: string;
   contactRef: string | null;
   ourNumber: string;
+  ourNumberLabel: string | null;
   displayName: string;
   phone: string;
   status: MessageThreadStatus | null;
@@ -466,6 +467,10 @@ export function groupVoiceContacts(calls: VoiceCallRow[]): VoiceContactGroup[] {
       key,
       contactRef: contactRefFromCall(latest),
       ourNumber: ourNumberFromCall(latest),
+      ourNumberLabel:
+        latest.thread?.ourNumberLabel ??
+        latest.communication?.ourNumberLabel ??
+        null,
       displayName: unknown
         ? latest.phone || "Unknown caller"
         : latest.thread

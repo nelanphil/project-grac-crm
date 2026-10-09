@@ -11,6 +11,7 @@ import {
   Map,
   ShieldCheck,
   KeyRound,
+  Briefcase,
   Package,
   TicketPercent,
   Landmark,
@@ -21,12 +22,15 @@ import {
   LayoutDashboard,
   LucideIcon,
 } from "lucide-react";
+import { hasRole, isStaffRole } from "@/lib/dashboard-role";
 
 export interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
+  /** Kept as the historical audience. Live visibility is the nav permission. */
   excludeRoles?: string[];
+  /** Kept as the historical audience. Live visibility is the nav permission. */
   includeRoles?: string[];
   children?: NavItem[];
 }
@@ -58,13 +62,13 @@ export const NAV_SECTIONS: NavSection[] = [
         href: "/dashboard/messaging",
         label: "Messages",
         icon: MessageSquare,
-        includeRoles: ["admin", "super-admin", "owner"],
+        includeRoles: ["admin", "super-admin"],
       },
       {
         href: "/dashboard/control-panel",
         label: "Control Panel",
         icon: Settings2,
-        includeRoles: ["admin", "super-admin", "owner"],
+        includeRoles: ["admin", "super-admin"],
         children: [
           {
             href: "/dashboard/customers",
@@ -100,7 +104,7 @@ export const NAV_SECTIONS: NavSection[] = [
             href: "/dashboard/territory",
             label: "Territory",
             icon: Map,
-            includeRoles: ["admin", "super-admin", "owner"],
+            includeRoles: ["admin", "super-admin"],
           },
         ],
       },
@@ -108,13 +112,19 @@ export const NAV_SECTIONS: NavSection[] = [
         href: "/dashboard/users",
         label: "Users",
         icon: UserCog,
-        includeRoles: ["admin", "super-admin", "owner"],
+        includeRoles: ["admin", "super-admin"],
         children: [
           {
             href: "/dashboard/users/roles",
             label: "Roles & Permissions",
             icon: KeyRound,
             includeRoles: ["super-admin"],
+          },
+          {
+            href: "/dashboard/users/job-roles",
+            label: "Job Roles",
+            icon: Briefcase,
+            includeRoles: ["admin", "super-admin"],
           },
         ],
       },
@@ -146,7 +156,7 @@ export const NAV_SECTIONS: NavSection[] = [
         label: "Financials",
         icon: Landmark,
         excludeRoles: ["customer"],
-        includeRoles: ["admin", "super-admin", "owner", "manager"],
+        includeRoles: ["admin", "super-admin", "manager"],
         children: [
           { href: "/dashboard/orders", label: "Invoices", icon: ShoppingCart },
           {
@@ -181,6 +191,103 @@ export const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
+/** Staff and customer account link pinned outside {@link NAV_SECTIONS}. */
+export const SETTINGS_NAV_HREF = "/dashboard/settings";
+
+const HOME_NAV_HREF = "/dashboard";
+
+export interface NavPermissionEntry {
+  key: string;
+  href: string;
+  label: string;
+}
+
+export interface NavViewer {
+  role?: string | null;
+  roles?: string[] | null;
+  userType?: string | null;
+  permissions?: readonly string[] | null;
+}
+
+export function navPermissionKey(href: string): string {
+  return `nav:${href}`;
+}
+
+function collectNavPermissions(
+  items: NavItem[],
+  parentLabel: string | undefined,
+  into: NavPermissionEntry[],
+): void {
+  for (const item of items) {
+    const label = parentLabel ? `${parentLabel} / ${item.label}` : item.label;
+    into.push({ key: navPermissionKey(item.href), href: item.href, label });
+    if (item.children?.length) {
+      collectNavPermissions(item.children, item.label, into);
+    }
+  }
+}
+
+/** Every left-hand link, including ones added to {@link NAV_SECTIONS} later. */
+export function listNavPermissions(): NavPermissionEntry[] {
+  const entries: NavPermissionEntry[] = [];
+  for (const section of NAV_SECTIONS) {
+    collectNavPermissions(section.items, undefined, entries);
+  }
+  if (!entries.some((entry) => entry.href === SETTINGS_NAV_HREF)) {
+    entries.push({
+      key: navPermissionKey(SETTINGS_NAV_HREF),
+      href: SETTINGS_NAV_HREF,
+      label: "Settings",
+    });
+  }
+  return entries;
+}
+
+export function navPermissionLabel(permission: string): string | null {
+  return (
+    listNavPermissions().find((entry) => entry.key === permission)?.label ??
+    null
+  );
+}
+
+/** Super-admin sees every link. Other roles need the nav permission. */
+export function canSeeNavHref(
+  viewer: NavViewer | null | undefined,
+  href: string,
+): boolean {
+  if (!viewer) return false;
+  if (hasRole(viewer, "super-admin")) return true;
+  return viewer.permissions?.includes(navPermissionKey(href)) ?? false;
+}
+
+/**
+ * Longest nav href that owns this path. The staff home (`/dashboard`) is not
+ * a prefix, so it stays open without the customer Dashboard permission.
+ */
+export function navHrefForPath(pathname: string): string | null {
+  let best: string | null = null;
+  for (const entry of listNavPermissions()) {
+    if (entry.href === HOME_NAV_HREF) continue;
+    const matches =
+      pathname === entry.href || pathname.startsWith(`${entry.href}/`);
+    if (matches && (!best || entry.href.length > best.length)) {
+      best = entry.href;
+    }
+  }
+  return best;
+}
+
+/** Signed-out visitors are left to the auth guard. */
+export function canAccessNavPath(
+  viewer: NavViewer | null | undefined,
+  pathname: string,
+): boolean {
+  if (!viewer) return true;
+  const href = navHrefForPath(pathname);
+  if (!href) return true;
+  return canSeeNavHref(viewer, href);
+}
+
 const NEST_PREFIX = "nest:";
 
 export function nestDroppableId(parentHref: string): string {
@@ -192,20 +299,12 @@ export function parseNestDroppableId(id: string): string | null {
   return id.startsWith(NEST_PREFIX) ? id.slice(NEST_PREFIX.length) : null;
 }
 
-function isItemVisible(
-  item: { includeRoles?: string[]; excludeRoles?: string[] },
-  role: string | undefined,
-): boolean {
-  if (item.includeRoles) {
-    return item.includeRoles.includes(role ?? "");
-  }
-  return !item.excludeRoles?.includes(role ?? "");
-}
-
-function visibleTree(items: NavItem[], role: string | undefined): NavItem[] {
+function visibleTree(items: NavItem[], viewer: NavViewer): NavItem[] {
   return items.flatMap((item) => {
-    const kids = visibleTree(item.children ?? [], role);
-    if (isItemVisible(item, role)) {
+    const kids = visibleTree(item.children ?? [], viewer);
+    // Staff reach home from the logo. Customers keep the Dashboard link.
+    if (item.href === "/dashboard" && isStaffRole(viewer)) return kids;
+    if (canSeeNavHref(viewer, item.href)) {
       return [
         {
           ...item,
@@ -217,10 +316,13 @@ function visibleTree(items: NavItem[], role: string | undefined): NavItem[] {
   });
 }
 
-export function getVisibleNavSections(role: string | undefined): NavSection[] {
+export function getVisibleNavSections(
+  viewer: NavViewer | null | undefined,
+): NavSection[] {
+  if (!viewer) return [];
   return NAV_SECTIONS.map((section) => ({
     ...section,
-    items: visibleTree(section.items, role),
+    items: visibleTree(section.items, viewer),
   })).filter((section) => section.items.length > 0);
 }
 
@@ -251,6 +353,8 @@ export interface NavOrder {
   order: string[];
   /** parentHref -> ordered child item hrefs within that parent. */
   children: Record<string, string[]>;
+  /** Hrefs removed from the nav. Omitted or empty means every visible item is shown. */
+  hidden?: string[];
 }
 
 function flattenCatalog(sections: NavSection[]): {
@@ -342,6 +446,10 @@ export function applyNavOrder(
     delete parentOf[href];
   }
 
+  const hiddenSet = new Set(
+    (navOrder?.hidden ?? []).filter((href) => catalog.has(href)),
+  );
+
   const nested = new Set(Object.values(childrenMap).flat());
   const catalogIds = [...catalog.keys()];
   const preferredDefault = [
@@ -349,30 +457,49 @@ export function applyNavOrder(
     ...catalogIds.filter((href) => !defaultOrder.includes(href)),
   ];
   const order = orderByHrefs(preferredDefault, navOrder?.order).filter(
-    (href) => catalog.has(href) && !nested.has(href),
+    (href) =>
+      catalog.has(href) && !nested.has(href) && !hiddenSet.has(href),
   );
 
   for (const href of catalog.keys()) {
+    if (hiddenSet.has(href)) continue;
     if (!order.includes(href) && !nested.has(href)) {
       order.push(href);
     }
   }
 
+  const childHrefs = (href: string): string[] =>
+    (childrenMap[href] ?? []).filter(
+      (childHref) => catalog.has(childHref) && childHref !== href,
+    );
+
   const build = (href: string, depth: number): NavItem => {
     const item = catalog.get(href)!;
     if (depth >= MAX_NAV_DEPTH) return { ...item, children: undefined };
-    const kids = (childrenMap[href] ?? []).filter(
-      (childHref) => catalog.has(childHref) && childHref !== href,
-    );
+    const kids = visibleItems(childHrefs(href), depth + 1);
     return {
       ...item,
-      children: kids.length
-        ? kids.map((childHref) => build(childHref, depth + 1))
-        : undefined,
+      children: kids.length ? kids : undefined,
     };
   };
 
-  return order.filter((href) => catalog.has(href)).map((href) => build(href, 0));
+  const visibleItems = (hrefs: string[], depth: number): NavItem[] => {
+    const out: NavItem[] = [];
+    for (const href of hrefs) {
+      if (!catalog.has(href)) continue;
+      if (hiddenSet.has(href)) {
+        out.push(...visibleItems(childHrefs(href), depth));
+        continue;
+      }
+      out.push(build(href, depth));
+    }
+    return out;
+  };
+
+  return visibleItems(
+    order.filter((href) => catalog.has(href)),
+    0,
+  );
 }
 
 function collectChildren(
@@ -385,10 +512,98 @@ function collectChildren(
   }
 }
 
-export function navItemsToOrder(items: NavItem[]): NavOrder {
+export function navItemsToOrder(
+  items: NavItem[],
+  hidden: string[] = [],
+): NavOrder {
   const children: Record<string, string[]> = {};
   collectChildren(items, children);
-  return { order: items.map((item) => item.href), children };
+  return {
+    order: items.map((item) => item.href),
+    children,
+    hidden: [...new Set(hidden)],
+  };
+}
+
+function promoteItem(items: NavItem[], href: string): NavItem[] {
+  const out: NavItem[] = [];
+  for (const item of items) {
+    const children = item.children?.length
+      ? promoteItem(item.children, href)
+      : undefined;
+    if (item.href === href) {
+      out.push(...(children ?? []));
+      continue;
+    }
+    out.push({
+      ...item,
+      children: children?.length ? children : undefined,
+    });
+  }
+  return out;
+}
+
+function detachHref(navOrder: NavOrder, href: string): NavOrder {
+  const children: Record<string, string[]> = {};
+  for (const [parent, kids] of Object.entries(navOrder.children)) {
+    children[parent] = kids.filter((id) => id !== href);
+  }
+  // An explicit empty list blocks the catalog default from nesting items back
+  // under a label that was removed.
+  children[href] = [];
+  return {
+    ...navOrder,
+    order: navOrder.order.filter((id) => id !== href),
+    children,
+  };
+}
+
+/** Remove a label from the visible tree. Its children take its place. */
+export function hideNavItem(
+  items: NavItem[],
+  href: string,
+  hidden: string[] = [],
+): NavOrder | null {
+  if (hidden.includes(href) || !findNode(items, href)) return null;
+  return detachHref(
+    navItemsToOrder(promoteItem(items, href), [...hidden, href]),
+    href,
+  );
+}
+
+/** Put a hidden label back at the bottom of the nav as a top-level item. */
+export function showNavItem(
+  items: NavItem[],
+  href: string,
+  hidden: string[] = [],
+): NavOrder | null {
+  if (!hidden.includes(href)) return null;
+  const next = detachHref(
+    navItemsToOrder(
+      items,
+      hidden.filter((id) => id !== href),
+    ),
+    href,
+  );
+  next.order.push(href);
+  return next;
+}
+
+/** Role-visible labels the user has removed, in the order they were hidden. */
+export function hiddenNavItems(
+  sections: NavSection[],
+  navOrder: NavOrder | undefined,
+): NavItem[] {
+  const { catalog } = flattenCatalog(sections);
+  const seen = new Set<string>();
+  const items: NavItem[] = [];
+  for (const href of navOrder?.hidden ?? []) {
+    if (seen.has(href)) continue;
+    seen.add(href);
+    const item = catalog.get(href);
+    if (item) items.push(item);
+  }
+  return items;
 }
 
 function findNode(items: NavItem[], href: string): NavItem | undefined {
@@ -491,6 +706,7 @@ export function moveNavItem(
   items: NavItem[],
   activeId: string,
   overId: string,
+  hidden: string[] = [],
 ): NavOrder | null {
   if (activeId === overId) return null;
 
@@ -499,7 +715,7 @@ export function moveNavItem(
   if (!from || !to) return null;
   if (to.parentHref === activeId) return null;
 
-  const snapshot = navItemsToOrder(items);
+  const snapshot = navItemsToOrder(items, hidden);
   let { order } = snapshot;
   const children: Record<string, string[]> = {};
   for (const [href, kids] of Object.entries(snapshot.children)) {
@@ -533,7 +749,7 @@ export function moveNavItem(
     } else {
       children[from.parentHref] = moved;
     }
-    return { order, children };
+    return { order, children, hidden: snapshot.hidden };
   }
 
   const fromList = listOf(from.parentHref);
@@ -561,7 +777,124 @@ export function moveNavItem(
     children[from.parentHref] = fromList;
   }
 
-  return { order, children };
+  return { order, children, hidden: snapshot.hidden };
+}
+
+export type NavNudge = "up" | "down" | "indent" | "outdent";
+
+export interface NavNudgeAvailability {
+  up: boolean;
+  down: boolean;
+  indent: boolean;
+  outdent: boolean;
+}
+
+const NO_NUDGE: NavNudgeAvailability = {
+  up: false,
+  down: false,
+  indent: false,
+  outdent: false,
+};
+
+function subtreeExtraDepth(item: NavItem): number {
+  const kids = item.children ?? [];
+  if (!kids.length) return 0;
+  let deepest = 0;
+  for (const kid of kids) {
+    deepest = Math.max(deepest, 1 + subtreeExtraDepth(kid));
+  }
+  return deepest;
+}
+
+function locateSibling(
+  items: NavItem[],
+  href: string,
+): {
+  siblings: NavItem[];
+  index: number;
+  parentHref: string | null;
+} | null {
+  const container = findContainer(items, href);
+  if (!container || container.index < 0) return null;
+  if (container.parentHref === null) {
+    return { siblings: items, index: container.index, parentHref: null };
+  }
+  const parent = findNode(items, container.parentHref);
+  const siblings = parent?.children;
+  if (!siblings || container.index >= siblings.length) return null;
+  return {
+    siblings,
+    index: container.index,
+    parentHref: container.parentHref,
+  };
+}
+
+/** Which arrow moves are legal for this label in the current tree. */
+export function navNudgeAvailability(
+  items: NavItem[],
+  href: string,
+): NavNudgeAvailability {
+  const located = locateSibling(items, href);
+  if (!located) return NO_NUDGE;
+  const item = located.siblings[located.index];
+  if (!item) return NO_NUDGE;
+  const currentDepth = depthOfContainer(items, located.parentHref) + 1;
+  const indentFits =
+    currentDepth + 1 + subtreeExtraDepth(item) <= MAX_NAV_DEPTH;
+  return {
+    up: located.index > 0,
+    down: located.index < located.siblings.length - 1,
+    indent: located.index > 0 && indentFits,
+    outdent: located.parentHref !== null,
+  };
+}
+
+/**
+ * Move a label one step with the edit-mode arrows. Up/down stay among siblings.
+ * Indent nests under the sibling above. Outdent promotes the label to sit
+ * immediately after its parent. Returns null when the move is not allowed.
+ */
+export function nudgeNavItem(
+  items: NavItem[],
+  href: string,
+  direction: NavNudge,
+  hidden: string[] = [],
+): NavOrder | null {
+  if (!navNudgeAvailability(items, href)[direction]) return null;
+  const located = locateSibling(items, href);
+  if (!located) return null;
+  const { siblings, index, parentHref } = located;
+
+  if (direction === "up") {
+    const previous = siblings[index - 1];
+    if (!previous) return null;
+    return moveNavItem(items, href, previous.href, hidden);
+  }
+
+  if (direction === "down") {
+    const next = siblings[index + 1];
+    if (!next) return null;
+    return moveNavItem(items, href, next.href, hidden);
+  }
+
+  if (direction === "indent") {
+    const previous = siblings[index - 1];
+    if (!previous) return null;
+    return moveNavItem(items, href, nestDroppableId(previous.href), hidden);
+  }
+
+  if (!parentHref) return null;
+  const parentLocated = locateSibling(items, parentHref);
+  if (!parentLocated) return null;
+  const afterParent = parentLocated.siblings[parentLocated.index + 1];
+  if (afterParent) {
+    return moveNavItem(items, href, afterParent.href, hidden);
+  }
+  const overId =
+    parentLocated.parentHref === null
+      ? ROOT_DROPPABLE_ID
+      : nestDroppableId(parentLocated.parentHref);
+  return moveNavItem(items, href, overId, hidden);
 }
 
 /** Parent is active only on its exact path (children have their own links). */

@@ -9,8 +9,17 @@ import {
   getScheduleStaff,
   getScheduleTechnicians,
   postScheduleSuggest,
+  postScheduleRecommendations,
+  postSchedulePlace,
+  getScheduleStartOptions,
   postScheduleGeocodeMissing,
   getScheduleRoute,
+  postScheduleRoutePlan,
+  postScheduleRouteApply,
+  getCitySuggestions,
+  getCityDetails,
+  getCityAtPoint,
+  getCityBoundaries,
 } from "../controllers/schedule.controller";
 
 const router = Router();
@@ -33,14 +42,66 @@ router.post("/suggest", requirePermission("jobs:write"), (req, res: Response) =>
   postScheduleSuggest(req as AuthRequest, res),
 );
 
+router.post(
+  "/recommendations",
+  requirePermission("jobs:write"),
+  (req, res: Response) => postScheduleRecommendations(req as AuthRequest, res),
+);
+
+router.post("/place", requirePermission("jobs:write"), (req, res: Response) =>
+  postSchedulePlace(req as AuthRequest, res),
+);
+
+router.get(
+  "/start-options",
+  requirePermission("jobs:read"),
+  (req, res: Response) => getScheduleStartOptions(req as AuthRequest, res),
+);
+
 router.get("/route", requirePermission("jobs:read"), (req, res: Response) =>
   getScheduleRoute(req as AuthRequest, res),
+);
+
+router.post(
+  "/route/plan",
+  requirePermission("jobs:read"),
+  (req, res: Response) => postScheduleRoutePlan(req as AuthRequest, res),
+);
+
+router.post(
+  "/route/apply",
+  requirePermission("jobs:write"),
+  (req, res: Response) => postScheduleRouteApply(req as AuthRequest, res),
 );
 
 router.post(
   "/geocode-missing",
   requirePermission("jobs:read"),
   (req, res: Response) => postScheduleGeocodeMissing(req as AuthRequest, res),
+);
+
+router.get(
+  "/city-suggestions",
+  requirePermission("jobs:read"),
+  (req, res: Response) => getCitySuggestions(req as AuthRequest, res),
+);
+
+router.get(
+  "/city-details",
+  requirePermission("jobs:read"),
+  (req, res: Response) => getCityDetails(req as AuthRequest, res),
+);
+
+router.get(
+  "/city-at-point",
+  requirePermission("jobs:read"),
+  (req, res: Response) => getCityAtPoint(req as AuthRequest, res),
+);
+
+router.get(
+  "/city-boundaries",
+  requirePermission("jobs:read"),
+  (req, res: Response) => getCityBoundaries(req as AuthRequest, res),
 );
 
 export default router;

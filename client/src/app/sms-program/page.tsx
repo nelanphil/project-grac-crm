@@ -5,7 +5,7 @@ import { COMPANY } from "@/lib/constants";
 export const metadata: Metadata = {
   title: `SMS Program — ${COMPANY.name}`,
   description:
-    "How Generator Maintenance of Florida sends optional transactional text messages, including opt-in, STOP/HELP, and privacy.",
+    "Opt in to optional transactional text messages from Generator Maintenance of Florida. Message frequency varies. Msg & data rates may apply. Reply STOP to opt out or HELP for help.",
 };
 
 export default function SmsProgramPage() {

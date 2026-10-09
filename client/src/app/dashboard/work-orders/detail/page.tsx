@@ -16,12 +16,14 @@ import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
   deleteWorkOrder,
+  getInvoices,
   getWorkOrder,
+  InvoiceItem,
   updateWorkOrder,
   WorkOrderListItem,
 } from "@/lib/api";
 import { isDispatcherRole } from "@/lib/schedule";
-import { ticketFromRecord } from "@/lib/service-ticket";
+import { ticketFromRecord, type ticketToPayload } from "@/lib/service-ticket";
 
 export default function WorkOrderDetailPage() {
   return (
@@ -44,6 +46,8 @@ function WorkOrderDetailContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
+  const [invoiceListVersion, setInvoiceListVersion] = useState(0);
 
   useEffect(() => {
     if (!token || !id) {
@@ -58,6 +62,21 @@ function WorkOrderDetailContent() {
       )
       .finally(() => setLoading(false));
   }, [token, id]);
+
+  useEffect(() => {
+    if (!token || !id) return;
+    let cancelled = false;
+    getInvoices(token, { workOrderRef: id })
+      .then(({ invoices }) => {
+        if (!cancelled) setViewInvoiceId(pickRelatedWorkOrderInvoice(invoices));
+      })
+      .catch(() => {
+        if (!cancelled) setViewInvoiceId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, id, invoiceListVersion]);
 
   const backLink = (
     <DashboardBackLink
@@ -92,6 +111,7 @@ function WorkOrderDetailContent() {
     customerName: order.customerName ?? "",
     customerAddress: order.customerAddress ?? "",
     customerCity: order.customerCity ?? "",
+    customerState: order.customerState ?? "FL",
     customerZip: order.customerZip ?? "",
     customerPhone: order.customerPhone ?? "",
     customerEmail: order.customerEmail ?? "",
@@ -108,6 +128,7 @@ function WorkOrderDetailContent() {
     parts: order.parts ?? [],
     totalParts: order.totalParts ?? 0,
     totalLabor: order.totalLabor ?? 0,
+    totalAgreements: order.totalAgreements ?? 0,
     miscExp: order.miscExp ?? 0,
     subtotal: order.subtotal ?? 0,
     shipping: order.shipping ?? 0,
@@ -123,10 +144,10 @@ function WorkOrderDetailContent() {
     token && user ? (
       <WorkOrderNotesPanel
         token={token}
-        workOrderId={order._id}
+        recordId={order._id}
         userId={user.id}
         canWrite={canWrite}
-        userRole={user.role}
+        userRole={user}
         fallbackContent={order.descPerformed}
       />
     ) : null;
@@ -135,13 +156,26 @@ function WorkOrderDetailContent() {
     token && user ? (
       <WorkOrderNotesPanel
         token={token}
-        workOrderId={order._id}
+        recordId={order._id}
         userId={user.id}
         canWrite={false}
-        userRole={user.role}
+        userRole={user}
         fallbackContent={order.descPerformed}
       />
     ) : null;
+
+  async function saveOrder(payload: ReturnType<typeof ticketToPayload>) {
+    if (!token || !order) throw new Error("Work order is not loaded.");
+    const { assignedUserRef, ...rest } = payload;
+    const nextAssigned = assignedUserRef ?? null;
+    const prevAssigned = order.assignedUserRef ?? null;
+    return updateWorkOrder(token, order._id, {
+      ...rest,
+      ...(isDispatcherRole(user) && nextAssigned !== prevAssigned
+        ? { assignedUserRef: nextAssigned }
+        : {}),
+    });
+  }
 
   const invoiceAction =
     token ? (
@@ -149,6 +183,7 @@ function WorkOrderDetailContent() {
         token={token}
         workOrderRef={order._id}
         sourcePaid={order.paid}
+        onCreated={() => setInvoiceListVersion((version) => version + 1)}
       />
     ) : null;
 
@@ -157,6 +192,14 @@ function WorkOrderDetailContent() {
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         {backLink}
         <div className="flex flex-wrap gap-2">
+          {viewInvoiceId ? (
+            <Link
+              href={`/dashboard/orders/detail?id=${viewInvoiceId}`}
+              className="rounded-lg border border-neutral-300 px-3 py-2 text-sm"
+            >
+              View invoice
+            </Link>
+          ) : null}
           {order.customerRef ? (
             <Link
               href={`/dashboard/customers/detail?id=${order.customerRef}`}
@@ -185,6 +228,14 @@ function WorkOrderDetailContent() {
       {error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 print:hidden">
           {error}
+        </div>
+      ) : null}
+
+      {order.warnings && order.warnings.length > 0 ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 print:hidden">
+          {order.warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
         </div>
       ) : null}
 
@@ -220,21 +271,22 @@ function WorkOrderDetailContent() {
                 </button>
               ) : null
             }
+            autoSave={async (payload) => {
+              if (!token) throw new Error("You are signed out.");
+              const updated = await saveOrder(payload);
+              setError(null);
+              setOrder(updated);
+              if (updated.total !== order.total || updated.paid !== order.paid) {
+                setInvoiceListVersion((version) => version + 1);
+              }
+              return ticketFromRecord(updated);
+            }}
             onSubmit={async (payload) => {
               if (!token) return;
               setSubmitting(true);
               setError(null);
               try {
-                const { assignedUserRef, ...rest } = payload;
-                const nextAssigned = assignedUserRef ?? null;
-                const prevAssigned = order.assignedUserRef ?? null;
-                const updated = await updateWorkOrder(token, order._id, {
-                  ...rest,
-                  ...(isDispatcherRole(user?.role) && nextAssigned !== prevAssigned
-                    ? { assignedUserRef: nextAssigned }
-                    : {}),
-                });
-                setOrder(updated);
+                setOrder(await saveOrder(payload));
               } catch (err) {
                 setError(
                   err instanceof ApiError ? err.message : "Failed to save work order.",
@@ -257,4 +309,10 @@ function WorkOrderDetailContent() {
       )}
     </div>
   );
+}
+
+function pickRelatedWorkOrderInvoice(invoices: InvoiceItem[]): string | null {
+  const viewable = invoices.filter((invoice) => invoice.status !== "void");
+  const open = viewable.find((invoice) => invoice.status === "open");
+  return (open ?? viewable[0])?._id ?? null;
 }

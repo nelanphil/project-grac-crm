@@ -1,10 +1,12 @@
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, { Schema, Document, Types } from "mongoose";
 import {
   defaultWeeklyHours,
   type HomeLocation,
   type ScheduleException,
   type WeeklyHours,
 } from "../../utils/scheduleTime";
+import { rolesAreSchedulable } from "../../utils/jobRoles";
+import { CUSTOMER_ROLE, syncRoleFields, type UserType } from "../../utils/roles";
 
 // UserRole is now an open string to support dynamic roles
 export type UserRole = string;
@@ -20,22 +22,46 @@ export interface IUserTerritories {
   zips: string[];
 }
 
+/** A city a technician covers. Used later to recommend assignees. */
+export interface IServiceCity {
+  city: string;
+  /** Two-letter US state code. */
+  state: string;
+  placeId: string;
+  lat: number | null;
+  lng: number | null;
+}
+
 export interface IUser extends Document {
   email: string;
   password_hash: string;
   first_name: string;
   last_name: string;
+  /** Highest-ranked assigned security role. Always derived from `roles`. */
   role: UserRole;
+  /** Security role slugs. Source of truth for application permissions. */
+  roles: UserRole[];
+  /** Staff can use job roles and the CRM. Customers are portal logins. */
+  userType: UserType;
+  /** Job roles describing what a staff member does. Staff only. */
+  jobRoles: Types.ObjectId[];
+  /** Values for each job role's form-builder fields, keyed by job role id. */
+  jobRoleData: Record<string, Record<string, unknown>>;
   /** Display / login handle (not unique). Never includes numeric suffix. */
   username: string | null;
   /** Unique backend key, e.g. doc1 / doc2. Never exposed to clients. */
   usernameKey: string | null;
-  /** Geographic territories for owner-role users. */
+  /** Geographic territories for staff with a territory-owner job role. */
   territories: IUserTerritories;
-  /** When true, this staff user appears on the dispatcher board. */
+  /**
+   * Denormalized from job-role capabilities so schedule queries stay indexed.
+   * True when any assigned job role is schedulable.
+   */
   schedulable: boolean;
   homeLocation: IUserHomeLocation;
   weeklyHours: IWeeklyHours;
+  /** Cities this technician covers, grouped in the UI by state. */
+  serviceCities: IServiceCity[];
   scheduleExceptions: IScheduleException[];
   /** When the user accepted the Terms of Service. */
   termsAcceptedAt: Date | null;
@@ -49,6 +75,10 @@ export interface IUser extends Document {
   phone: string;
   /** Version string of the legal docs accepted (e.g. "2026-08-03"). */
   legalDocsVersion: string | null;
+  /** Most recent successful sign-in. Null until the user logs in after this was added. */
+  lastLoginAt: Date | null;
+  /** Approximate place of the most recent sign-in. Null for private IPs or a failed lookup. */
+  lastLoginLocation: IUserLoginLocation | null;
   /** Per-user dashboard nav customization. */
   uiPreferences: IUserUiPreferences;
   deletedAt: Date | null;
@@ -61,11 +91,24 @@ export interface IUserNavOrder {
   order: string[];
   /** parentHref -> ordered child item hrefs within that parent. */
   children: Record<string, string[]>;
+  /** Hrefs the user removed from the nav. */
+  hidden: string[];
 }
 
 export interface IUserUiPreferences {
   navOrder: IUserNavOrder;
 }
+
+export interface IUserLoginLocation {
+  city: string;
+  /** Region code when the lookup provides one (e.g. "FL"), otherwise the region name. */
+  region: string;
+  country: string;
+  /** "device" from browser coordinates, "ip" from an IP lookup (approximate). */
+  source: LoginLocationSource;
+}
+
+export type LoginLocationSource = "device" | "ip";
 
 const territoriesSchema = new Schema<IUserTerritories>(
   {
@@ -109,6 +152,17 @@ const homeLocationSchema = new Schema<IUserHomeLocation>(
   { _id: false },
 );
 
+const serviceCitySchema = new Schema<IServiceCity>(
+  {
+    city: { type: String, required: true, trim: true },
+    state: { type: String, required: true, trim: true, uppercase: true },
+    placeId: { type: String, required: true, trim: true },
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
+  },
+  { _id: false },
+);
+
 const scheduleExceptionSchema = new Schema<IScheduleException>(
   {
     date: { type: String, required: true },
@@ -124,6 +178,17 @@ const navOrderSchema = new Schema<IUserNavOrder>(
   {
     order: { type: [String], default: [] },
     children: { type: Schema.Types.Mixed, default: () => ({}) },
+    hidden: { type: [String], default: [] },
+  },
+  { _id: false },
+);
+
+const loginLocationSchema = new Schema<IUserLoginLocation>(
+  {
+    city: { type: String, default: "" },
+    region: { type: String, default: "" },
+    country: { type: String, default: "" },
+    source: { type: String, enum: ["device", "ip"], default: "ip" },
   },
   { _id: false },
 );
@@ -132,7 +197,7 @@ const uiPreferencesSchema = new Schema<IUserUiPreferences>(
   {
     navOrder: {
       type: navOrderSchema,
-      default: () => ({ order: [], children: {} }),
+      default: () => ({ order: [], children: {}, hidden: [] }),
     },
   },
   { _id: false },
@@ -151,6 +216,14 @@ const userSchema = new Schema<IUser>(
     first_name: { type: String, required: true, trim: true },
     last_name: { type: String, required: true, trim: true },
     role: { type: String, default: "agent", required: true },
+    roles: { type: [String], default: [] },
+    userType: {
+      type: String,
+      enum: ["staff", "customer"],
+      index: true,
+    },
+    jobRoles: { type: [{ type: Schema.Types.ObjectId, ref: "JobRole" }], default: [] },
+    jobRoleData: { type: Schema.Types.Mixed, default: () => ({}) },
     username: {
       type: String,
       default: null,
@@ -179,6 +252,7 @@ const userSchema = new Schema<IUser>(
       type: weeklyHoursSchema,
       default: () => defaultWeeklyHours(false),
     },
+    serviceCities: { type: [serviceCitySchema], default: [] },
     scheduleExceptions: { type: [scheduleExceptionSchema], default: [] },
     termsAcceptedAt: { type: Date, default: null },
     privacyAcceptedAt: { type: Date, default: null },
@@ -186,14 +260,19 @@ const userSchema = new Schema<IUser>(
     smsOptInAt: { type: Date, default: null },
     phone: { type: String, default: "" },
     legalDocsVersion: { type: String, default: null },
+    lastLoginAt: { type: Date, default: null },
+    lastLoginLocation: { type: loginLocationSchema, default: null },
     uiPreferences: {
       type: uiPreferencesSchema,
-      default: () => ({ navOrder: { order: [], children: {} } }),
+      default: () => ({ navOrder: { order: [], children: {}, hidden: [] } }),
     },
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
+
+userSchema.index({ roles: 1 });
+userSchema.index({ jobRoles: 1 });
 
 userSchema.index(
   { usernameKey: 1 },
@@ -202,6 +281,35 @@ userSchema.index(
     partialFilterExpression: { usernameKey: { $type: "string" } },
   },
 );
+
+userSchema.pre("save", async function syncRoles() {
+  const incomingRoles = Array.isArray(this.roles) ? this.roles : [];
+  const looksLikeCustomer =
+    this.userType === "customer" ||
+    (!this.userType &&
+      (incomingRoles.includes(CUSTOMER_ROLE) || this.role === CUSTOMER_ROLE));
+
+  if (looksLikeCustomer) {
+    this.userType = "customer";
+    this.roles = [CUSTOMER_ROLE];
+    this.role = CUSTOMER_ROLE;
+    this.jobRoles = [];
+    this.jobRoleData = {};
+    this.markModified("jobRoleData");
+    this.territories = { counties: [], zips: [] };
+    this.schedulable = false;
+    return;
+  }
+
+  this.userType = "staff";
+  const synced = syncRoleFields({
+    role: this.role,
+    roles: incomingRoles.filter((slug) => slug !== CUSTOMER_ROLE),
+  });
+  this.roles = synced.roles;
+  this.role = synced.role;
+  this.schedulable = await rolesAreSchedulable(this.jobRoles ?? []);
+});
 
 export const User = mongoose.model<IUser>("User", userSchema);
 

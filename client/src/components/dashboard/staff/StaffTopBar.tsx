@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, LogOut, Menu, Plus, X } from "lucide-react";
 import {
   closestCorners,
@@ -20,12 +21,21 @@ import {
 } from "@dnd-kit/sortable";
 import {
   applyNavOrder,
+  canSeeNavHref,
   getVisibleNavSections,
+  SETTINGS_NAV_HREF,
+  hiddenNavItems,
+  hideNavItem,
   moveNavItem,
+  nudgeNavItem,
+  showNavItem,
+  type NavNudge,
+  type NavOrder,
 } from "@/lib/dashboard-nav";
 import { useAuthStore } from "@/store/useAuthStore";
 import { updateNavOrder } from "@/lib/api";
 import NotificationBell from "@/components/notifications/NotificationBell";
+import ThemeToggle from "@/components/theme/ThemeToggle";
 import NavItemGroup from "@/components/dashboard/NavItemGroup";
 import { RootDropZone } from "@/components/dashboard/NavDropTargets";
 import CustomerHeaderSearch from "@/components/dashboard/staff/CustomerHeaderSearch";
@@ -56,11 +66,15 @@ export default function StaffTopBar() {
   const [editMode, setEditMode] = useState(false);
 
   const baseSections = useMemo(
-    () => getVisibleNavSections(user?.role),
-    [user?.role],
+    () => getVisibleNavSections(user),
+    [user],
   );
   const visibleItems = useMemo(
     () => applyNavOrder(baseSections, navOrder),
+    [baseSections, navOrder],
+  );
+  const hiddenItems = useMemo(
+    () => hiddenNavItems(baseSections, navOrder),
     [baseSections, navOrder],
   );
   const sensors = useSensors(
@@ -76,7 +90,7 @@ export default function StaffTopBar() {
     "U";
 
   const persistNavOrder = useCallback(
-    (next: { order: string[]; children: Record<string, string[]> }) => {
+    (next: NavOrder) => {
       setNavOrder(next);
       if (token) {
         updateNavOrder(token, next).catch((err) => {
@@ -87,11 +101,32 @@ export default function StaffTopBar() {
     [setNavOrder, token],
   );
 
+  const handleHideItem = useCallback(
+    (href: string) => {
+      const next = hideNavItem(visibleItems, href, navOrder?.hidden ?? []);
+      if (next) persistNavOrder(next);
+    },
+    [visibleItems, navOrder?.hidden, persistNavOrder],
+  );
+
+  const handleShowItem = useCallback(
+    (href: string) => {
+      const next = showNavItem(visibleItems, href, navOrder?.hidden ?? []);
+      if (next) persistNavOrder(next);
+    },
+    [visibleItems, navOrder?.hidden, persistNavOrder],
+  );
+
   const handleDragStart = useCallback(() => {
     setEditMode(true);
   }, []);
 
   const mobileNavRef = useRef<HTMLElement>(null);
+
+  const closeMenus = useCallback(() => {
+    setMobileOpen(false);
+    setNewOpen(false);
+  }, []);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -101,6 +136,24 @@ export default function StaffTopBar() {
       document.body.style.overflow = previous;
     };
   }, [mobileOpen]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closeMenus();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [mobileOpen, closeMenus]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const closeAtDesktop = () => {
+      if (mq.matches) closeMenus();
+    };
+    mq.addEventListener("change", closeAtDesktop);
+    return () => mq.removeEventListener("change", closeAtDesktop);
+  }, [closeMenus]);
 
   useEffect(() => {
     if (!editMode) return;
@@ -122,20 +175,33 @@ export default function StaffTopBar() {
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const next = moveNavItem(visibleItems, String(active.id), String(over.id));
+      const next = moveNavItem(
+        visibleItems,
+        String(active.id),
+        String(over.id),
+        navOrder?.hidden ?? [],
+      );
       if (next) persistNavOrder(next);
     },
-    [visibleItems, persistNavOrder],
+    [visibleItems, navOrder?.hidden, persistNavOrder],
+  );
+
+  const handleNudge = useCallback(
+    (href: string, direction: NavNudge) => {
+      const next = nudgeNavItem(
+        visibleItems,
+        href,
+        direction,
+        navOrder?.hidden ?? [],
+      );
+      if (next) persistNavOrder(next);
+    },
+    [visibleItems, navOrder?.hidden, persistNavOrder],
   );
 
   function handleLogout() {
     logout();
     router.push("/auth/login");
-  }
-
-  function closeMenus() {
-    setMobileOpen(false);
-    setNewOpen(false);
   }
 
   const newMenuItems = (
@@ -185,11 +251,17 @@ export default function StaffTopBar() {
   );
 
   return (
-    <header className="sticky top-0 z-30 w-full border-b border-[var(--staff-border)] bg-[var(--staff-surface)]/95 backdrop-blur">
+    <header
+      className={`sticky top-0 w-full border-b border-[var(--staff-border)] ${
+        mobileOpen
+          ? "z-0 bg-[var(--staff-surface)]"
+          : "z-30 bg-[var(--staff-surface)]/95 backdrop-blur"
+      }`}
+    >
       <div className="relative flex w-full items-center gap-2 px-3 py-3 sm:gap-3 sm:px-5 lg:px-6">
         <button
           type="button"
-          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[var(--staff-muted)] transition-colors hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)] md:hidden"
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[var(--staff-muted)] transition-colors hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)] lg:hidden"
           onClick={() => setMobileOpen((v) => !v)}
           aria-label="Toggle menu"
           aria-expanded={mobileOpen}
@@ -201,14 +273,14 @@ export default function StaffTopBar() {
           )}
         </button>
 
-        <div className="absolute left-1/2 hidden w-full max-w-2xl -translate-x-1/2 items-center gap-2 px-3 md:flex">
+        <div className="absolute left-1/2 hidden w-full max-w-2xl -translate-x-1/2 items-center gap-2 px-3 lg:flex">
           <CustomerHeaderSearch className="min-w-0 max-w-xl flex-1" />
 
           <div className="relative shrink-0">
             <button
               type="button"
               onClick={() => setNewOpen((v) => !v)}
-              className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-[var(--staff-ink)] px-3 text-sm font-semibold text-white transition hover:bg-black sm:h-auto sm:py-2"
+              className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-brand-dark px-3 text-sm font-semibold text-white transition hover:bg-black sm:h-auto sm:py-2"
             >
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New</span>
@@ -229,12 +301,16 @@ export default function StaffTopBar() {
           </div>
         </div>
 
-        <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
-          <div className="relative md:hidden">
+        <div
+          className={`ml-auto flex shrink-0 items-center gap-1 sm:gap-2 ${
+            mobileOpen ? "invisible" : ""
+          }`}
+        >
+          <div className="relative lg:hidden">
             <button
               type="button"
               onClick={() => setNewOpen((v) => !v)}
-              className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-[var(--staff-ink)] px-3 text-sm font-semibold text-white transition hover:bg-black sm:h-auto sm:py-2"
+              className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-brand-dark px-3 text-sm font-semibold text-white transition hover:bg-black sm:h-auto sm:py-2"
             >
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New</span>
@@ -254,16 +330,26 @@ export default function StaffTopBar() {
             )}
           </div>
 
+          <ThemeToggle variant="light" />
           <NotificationBell variant="light" />
 
-          <Link
-            href="/dashboard/settings"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--staff-cream)] text-xs font-bold text-[var(--staff-ink)] ring-1 ring-[var(--staff-border)] transition hover:ring-brand-orange"
-            title="Settings"
-            aria-label="Account settings"
-          >
-            {initials}
-          </Link>
+          {canSeeNavHref(user, SETTINGS_NAV_HREF) ? (
+            <Link
+              href={SETTINGS_NAV_HREF}
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--staff-cream)] text-xs font-bold text-[var(--staff-ink)] ring-1 ring-[var(--staff-border)] transition hover:ring-brand-orange"
+              title="Settings"
+              aria-label="Account settings"
+            >
+              {initials}
+            </Link>
+          ) : (
+            <span
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--staff-cream)] text-xs font-bold text-[var(--staff-ink)] ring-1 ring-[var(--staff-border)]"
+              aria-hidden
+            >
+              {initials}
+            </span>
+          )}
 
           <button
             type="button"
@@ -277,108 +363,137 @@ export default function StaffTopBar() {
       </div>
 
       <CustomerHeaderSearch
-        className="w-full border-t border-[var(--staff-border)] px-3 py-2 md:hidden"
+        className="w-full border-t border-[var(--staff-border)] px-3 py-2 lg:hidden"
         inputClassName="w-full rounded-xl border border-[var(--staff-border)] bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-brand-orange focus:ring-2 focus:ring-brand-orange/20"
       />
 
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/40"
-            aria-label="Close menu"
-            onClick={closeMenus}
-          />
-          <div className="absolute inset-y-0 left-0 flex w-[min(20rem,88vw)] flex-col bg-[var(--staff-surface)] shadow-xl">
-            <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-4 py-3">
-              <p className="text-sm font-semibold text-[var(--staff-ink)]">
-                Menu
-              </p>
+      {mobileOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div className="fixed inset-0 z-[70] isolate lg:hidden">
               <button
                 type="button"
-                className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[var(--staff-muted)] hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)]"
-                onClick={closeMenus}
+                className="absolute inset-0 bg-black/40"
                 aria-label="Close menu"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <nav
-              ref={mobileNavRef}
-              className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-4 pb-6 pt-4"
-            >
-            <Link
-              href="/dashboard"
-              className={`rounded-lg px-3 py-2.5 text-sm font-medium ${
-                pathname === "/dashboard"
-                  ? "bg-[var(--staff-ink)] text-white"
-                  : "text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-              }`}
-              onClick={closeMenus}
-            >
-              Home
-            </Link>
-            {editMode ? (
-              <button
-                type="button"
-                onClick={() => setEditMode(false)}
-                data-nav-allow-click
-                className="flex items-center justify-center gap-1.5 rounded-lg bg-brand-orange px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-orange/90"
-              >
-                <Check className="h-4 w-4" />
-                Done
-              </button>
-            ) : null}
-            {visibleItems.length ? (
-              <DndContext
-                sensors={sensors}
-                collisionDetection={navCollision}
-                onDragStart={handleDragStart}
-                onDragEnd={handleDragEnd}
-              >
-                <div className="flex flex-col gap-1">
-                  <RootDropZone
-                    editMode={editMode}
-                    className="rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-center text-[11px] font-medium text-neutral-400"
-                  />
-                  <SortableContext
-                    items={visibleItems.map((item) => item.href)}
-                    strategy={verticalListSortingStrategy}
+                onClick={closeMenus}
+              />
+              <div className="absolute inset-y-0 left-0 flex h-dvh w-[min(20rem,88vw)] flex-col bg-[var(--staff-surface)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] shadow-xl">
+                <div className="flex items-center justify-between border-b border-[var(--staff-border)] px-4 py-3">
+                  <p className="text-sm font-semibold text-[var(--staff-ink)]">
+                    Menu
+                  </p>
+                  <button
+                    type="button"
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-[var(--staff-muted)] hover:bg-[var(--staff-cream)] hover:text-[var(--staff-ink)]"
+                    onClick={closeMenus}
+                    aria-label="Close menu"
                   >
-                    {visibleItems.map((item) => (
-                      <NavItemGroup
-                        key={item.href}
-                        item={item}
-                        pathname={pathname}
-                        variant="sidebar"
-                        onNavigate={closeMenus}
-                        editable
-                        editMode={editMode}
-                      />
-                    ))}
-                  </SortableContext>
-                  <RootDropZone
-                    editMode={editMode}
-                    className="rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-center text-[11px] font-medium text-neutral-400"
-                  />
+                    <X className="h-5 w-5" />
+                  </button>
                 </div>
-              </DndContext>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => {
-                closeMenus();
-                handleLogout();
-              }}
-              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
-            >
-              <LogOut className="h-4 w-4" />
-              Sign out
-            </button>
-            </nav>
-          </div>
-        </div>
-      )}
+                <nav
+                  ref={mobileNavRef}
+                  className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-4 pb-6 pt-4"
+                >
+                  <Link
+                    href="/dashboard"
+                    className={`rounded-lg px-3 py-2.5 text-sm font-medium ${
+                      pathname === "/dashboard"
+                        ? "bg-brand-dark text-white"
+                        : "text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                    }`}
+                    onClick={closeMenus}
+                  >
+                    Home
+                  </Link>
+                  {editMode ? (
+                    <button
+                      type="button"
+                      onClick={() => setEditMode(false)}
+                      data-nav-allow-click
+                      className="flex items-center justify-center gap-1.5 rounded-lg bg-brand-orange px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-orange/90"
+                    >
+                      <Check className="h-4 w-4" />
+                      Done
+                    </button>
+                  ) : null}
+                  {visibleItems.length ? (
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={navCollision}
+                      onDragStart={handleDragStart}
+                      onDragEnd={handleDragEnd}
+                    >
+                      <div className="flex flex-col gap-1">
+                        <RootDropZone
+                          editMode={editMode}
+                          className="rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-center text-[11px] font-medium text-neutral-400"
+                        />
+                        <SortableContext
+                          items={visibleItems.map((item) => item.href)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          {visibleItems.map((item) => (
+                            <NavItemGroup
+                              key={item.href}
+                              item={item}
+                              pathname={pathname}
+                              variant="sidebar"
+                              onNavigate={closeMenus}
+                              editable
+                              editMode={editMode}
+                              onRemove={handleHideItem}
+                              onNudge={handleNudge}
+                              navTree={visibleItems}
+                            />
+                          ))}
+                        </SortableContext>
+                        <RootDropZone
+                          editMode={editMode}
+                          className="rounded-lg border border-dashed border-neutral-300 px-3 py-2 text-center text-[11px] font-medium text-neutral-400"
+                        />
+                      </div>
+                    </DndContext>
+                  ) : null}
+                  {editMode && hiddenItems.length ? (
+                    <div className="flex flex-col gap-1 border-t border-[var(--staff-border)] pt-3">
+                      <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                        Hidden
+                      </p>
+                      {hiddenItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            key={item.href}
+                            type="button"
+                            data-nav-allow-click
+                            onClick={() => handleShowItem(item.href)}
+                            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                          >
+                            <Plus className="h-4 w-4 shrink-0 text-[var(--staff-muted)]" />
+                            <Icon className="h-4 w-4 shrink-0" />
+                            <span className="truncate">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeMenus();
+                      handleLogout();
+                    }}
+                    className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Sign out
+                  </button>
+                </nav>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </header>
   );
 }

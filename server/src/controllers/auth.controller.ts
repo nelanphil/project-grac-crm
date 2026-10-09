@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import {
+  coordinatesSchema,
   loginSchema,
   registerSchema,
   legalConsentSchema,
@@ -20,7 +21,7 @@ import {
 import { User, UserRole, activeUserFilter } from "../models/mongo/User";
 import { findPrimaryContactForUserEmail } from "../utils/resolveCustomerLogin";
 import { PasswordResetToken } from "../models/mongo/PasswordResetToken";
-import { getPermissionsForRole } from "../models/mongo/RolePermission";
+import { getPermissionsForRoles } from "../models/mongo/RolePermission";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { normalizePhoneDigits } from "../utils/customerSites";
 import {
@@ -46,10 +47,21 @@ import {
 } from "../utils/provisionCustomerAccount";
 import { syncCustomersToUserEmail } from "../utils/ensureCustomerLogin";
 import {
+  lookupLoginLocation,
+  reverseGeocodeLocation,
+} from "../utils/loginLocation";
+import {
   getEmailPreferences,
   renameEmailPreferences,
   setEmailPreferences,
 } from "../utils/emailPreferences";
+import { capabilitiesForJobRoleIds, homeViewForJobRoleIds, slugsForJobRoleIds } from "../utils/jobRoles";
+import {
+  isCustomerRole,
+  normalizeRoles,
+  primaryRole,
+  type UserType,
+} from "../utils/roles";
 
 function toIsoOrNull(value: Date | string | null | undefined): string | null {
   if (!value) return null;
@@ -63,6 +75,12 @@ function buildUserPayload(user: {
   first_name: string;
   last_name: string;
   role: UserRole;
+  roles?: UserRole[];
+  userType?: UserType | null;
+  jobRoles?: unknown[] | null;
+  jobRoleSlugs?: string[] | null;
+  homeView?: "default" | "todo" | null;
+  capabilities?: { schedulable: boolean; territoryOwner: boolean };
   username?: string | null;
   usernameKey?: string | null;
   termsAcceptedAt?: Date | string | null;
@@ -75,17 +93,32 @@ function buildUserPayload(user: {
     navOrder?: {
       order: string[];
       children: Record<string, string[]>;
+      hidden?: string[];
     };
   };
   permissions: string[];
 }) {
   const termsAcceptedAt = toIsoOrNull(user.termsAcceptedAt);
+  const roles = normalizeRoles(user);
+  const userType: UserType =
+    user.userType === "customer" || isCustomerRole(roles) ? "customer" : "staff";
+  const jobRoles = (user.jobRoles ?? []).map((id) => String(id));
   return {
     id: String(user._id),
     email: user.email,
     first_name: user.first_name,
     last_name: user.last_name,
-    role: user.role,
+    role: userType === "customer" ? "customer" : (primaryRole(roles) ?? user.role),
+    roles: userType === "customer" ? ["customer"] : roles,
+    userType,
+    jobRoles: userType === "customer" ? [] : jobRoles,
+    jobRoleSlugs:
+      userType === "customer" ? [] : (user.jobRoleSlugs ?? []),
+    homeView: userType === "customer" ? "default" : (user.homeView ?? "default"),
+    capabilities: user.capabilities ?? {
+      schedulable: false,
+      territoryOwner: false,
+    },
     username: user.username ?? null,
     usernameNumber: usernameNumberFromKey(user.username, user.usernameKey),
     permissions: user.permissions,
@@ -96,12 +129,23 @@ function buildUserPayload(user: {
     phone: (user.phone ?? "").trim() || null,
     legalDocsVersion: user.legalDocsVersion ?? null,
     uiPreferences: {
-      navOrder: user.uiPreferences?.navOrder ?? { order: [], children: {} },
+      navOrder: {
+        order: user.uiPreferences?.navOrder?.order ?? [],
+        children: user.uiPreferences?.navOrder?.children ?? {},
+        hidden: user.uiPreferences?.navOrder?.hidden ?? [],
+      },
     },
-    needsLegalConsent: user.role === "customer" && !termsAcceptedAt,
+    needsLegalConsent: isCustomerRole(roles) && !termsAcceptedAt,
     generalNotifications: true,
     billingAlerts: true,
   };
+}
+
+async function permissionsForUser(user: {
+  role?: string;
+  roles?: string[];
+}): Promise<string[]> {
+  return getPermissionsForRoles(normalizeRoles(user));
 }
 
 async function lookupContactPhone(userEmail: string | null | undefined): Promise<string> {
@@ -118,8 +162,21 @@ async function toUserPayload(
   const own = (user.phone ?? "").trim();
   const phone = own || (await lookupContactPhone(user.email));
   const prefs = await getEmailPreferences(user.email);
+  const jobRoles = (user.jobRoles ?? []).map((id) => String(id));
+  const [capabilities, jobRoleSlugs, homeView] = await Promise.all([
+    capabilitiesForJobRoleIds(jobRoles),
+    slugsForJobRoleIds(jobRoles),
+    homeViewForJobRoleIds(jobRoles),
+  ]);
   return {
-    ...buildUserPayload({ ...user, phone }),
+    ...buildUserPayload({
+      ...user,
+      phone,
+      jobRoles,
+      jobRoleSlugs,
+      homeView,
+      capabilities,
+    }),
     generalNotifications: prefs.generalNotifications,
     billingAlerts: prefs.billingAlerts,
   };
@@ -161,6 +218,11 @@ const LOGIN_AMBIGUOUS = {
   message:
     "This username is shared. Sign in with your username and number (e.g. doc1), or use your email.",
 };
+const LOCATION_REQUIRED = {
+  code: "LOCATION_REQUIRED",
+  message:
+    "Staff sign-in requires location access. Allow location for this site in your browser, then sign in again.",
+};
 
 export async function register(req: Request, res: Response): Promise<void> {
   const parsed = registerSchema.safeParse(req.body);
@@ -195,7 +257,9 @@ export async function register(req: Request, res: Response): Promise<void> {
       softDeleted.password_hash = await bcrypt.hash(password, 10);
       softDeleted.first_name = first_name;
       softDeleted.last_name = last_name;
+      softDeleted.userType = "customer";
       softDeleted.role = role;
+      softDeleted.roles = ["customer"];
       softDeleted.deletedAt = null;
       applyLegalConsent(softDeleted, smsOptIn);
       if (phone) softDeleted.phone = phone;
@@ -209,7 +273,7 @@ export async function register(req: Request, res: Response): Promise<void> {
         return;
       }
 
-      const permissions = await getPermissionsForRole(softDeleted.role);
+      const permissions = await permissionsForUser(softDeleted);
       void sendSignupConfirmationEmail({
         email: softDeleted.email,
         firstName: softDeleted.first_name,
@@ -229,6 +293,8 @@ export async function register(req: Request, res: Response): Promise<void> {
       first_name,
       last_name,
       role,
+      roles: ["customer"],
+      userType: "customer",
       termsAcceptedAt: now,
       privacyAcceptedAt: now,
       legalDocsVersion: LEGAL_DOCS_VERSION,
@@ -244,7 +310,7 @@ export async function register(req: Request, res: Response): Promise<void> {
       throw err;
     }
 
-    const permissions = await getPermissionsForRole(user.role);
+    const permissions = await permissionsForUser(user);
     void sendSignupConfirmationEmail({
       email: user.email,
       firstName: user.first_name,
@@ -320,11 +386,11 @@ export async function acceptLegalConsent(
     if (parsed.data.phone) user.phone = parsed.data.phone;
     await user.save();
 
-    if (user.role === "customer" && parsed.data.phone) {
+    if (isCustomerRole(user) && parsed.data.phone) {
       await syncEmptyContactPhone(user.email, parsed.data.phone);
     }
 
-    const permissions = await getPermissionsForRole(user.role);
+    const permissions = await permissionsForUser(user);
     res.status(200).json({
       user: await toUserPayload({ ...user.toObject(), permissions }),
     });
@@ -344,7 +410,7 @@ export async function login(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const { identifier, password } = parsed.data;
+  const { identifier, password, location } = parsed.data;
   const trimmed = identifier.trim();
 
   try {
@@ -395,13 +461,30 @@ export async function login(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const permissions = await getPermissionsForRole(matchedUser.role);
+    if (!isCustomerRole(matchedUser) && !location) {
+      res.status(403).json(LOCATION_REQUIRED);
+      return;
+    }
+
+    const lastLoginAt = new Date();
+    const deviceLocation = location
+      ? await reverseGeocodeLocation(location.lat, location.lng)
+      : null;
+    const lastLoginLocation =
+      deviceLocation ?? (await lookupLoginLocation(req.ip));
+    await User.updateOne(
+      { _id: matchedUser._id },
+      { $set: { lastLoginAt, lastLoginLocation } },
+    );
+
+    const permissions = await permissionsForUser(matchedUser);
 
     const token = jwt.sign(
       {
         sub: String(matchedUser._id),
         email: matchedUser.email,
-        role: matchedUser.role,
+        role: primaryRole(matchedUser) ?? matchedUser.role,
+        roles: normalizeRoles(matchedUser),
         permissions,
       },
       env.jwt.secret,
@@ -414,6 +497,40 @@ export async function login(req: Request, res: Response): Promise<void> {
     });
   } catch (err) {
     console.error("login error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+/** POST /auth/me/login-location — refresh the city for the current session. Does not change lastLoginAt. */
+export async function updateLoginLocation(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  const parsed = coordinatesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "Validation error",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  try {
+    const location = await reverseGeocodeLocation(parsed.data.lat, parsed.data.lng);
+    if (location) {
+      await User.updateOne(
+        { _id: req.user.id, ...activeUserFilter },
+        { $set: { lastLoginLocation: location } },
+      );
+    }
+    res.status(204).end();
+  } catch (err) {
+    console.error("POST /auth/me/login-location error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }
@@ -450,7 +567,7 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
       if (emailConflict) {
         res.status(409).json({
           message:
-            user.role === "customer" || emailConflict.type === "customer"
+            isCustomerRole(user) || emailConflict.type === "customer"
               ? EMAIL_CONFLICT_SIGNUP
               : "Email already in use",
         });
@@ -479,7 +596,7 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
     }
 
     if (
-      user.role === "customer" &&
+      isCustomerRole(user) &&
       email &&
       previousEmail !== user.email
     ) {
@@ -493,7 +610,7 @@ export async function updateMe(req: AuthRequest, res: Response): Promise<void> {
       return;
     }
 
-    const permissions = await getPermissionsForRole(fresh.role);
+    const permissions = await permissionsForUser(fresh);
     res.status(200).json({
       user: await toUserPayload({ ...fresh, permissions }),
     });
@@ -633,7 +750,7 @@ export async function updateMyNotifications(
       });
     }
 
-    const permissions = await getPermissionsForRole(user.role);
+    const permissions = await permissionsForUser(user);
     res.status(200).json({
       user: await toUserPayload({ ...user.toObject(), permissions }),
     });
@@ -659,7 +776,7 @@ export async function me(req: AuthRequest, res: Response): Promise<void> {
       return;
     }
 
-    const permissions = await getPermissionsForRole(user.role);
+    const permissions = await permissionsForUser(user);
 
     res.status(200).json({
       user: await toUserPayload({ ...user, permissions }),
@@ -701,7 +818,12 @@ export async function updateMyNavOrder(
 
     res
       .status(200)
-      .json({ navOrder: user.uiPreferences?.navOrder ?? parsed.data });
+      .json({
+        navOrder: user.uiPreferences?.navOrder ?? {
+          ...parsed.data,
+          hidden: parsed.data.hidden ?? [],
+        },
+      });
   } catch (err) {
     console.error("updateMyNavOrder error:", err);
     res.status(500).json({ message: "Internal server error" });

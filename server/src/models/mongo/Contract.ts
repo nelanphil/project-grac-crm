@@ -35,6 +35,8 @@ export interface IContract extends Document {
   productDiscounts: ContractProductDiscountOverride;
   sourceWorkOrderRef?: Types.ObjectId;
   userId?: number;
+  /** Hidden offer created so an email can include a payment link. Cleared when paid. */
+  temporary: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -89,6 +91,7 @@ const contractSchema = new Schema<IContract>(
     },
     sourceWorkOrderRef: { type: Schema.Types.ObjectId, ref: "WorkOrder" },
     userId: { type: Number },
+    temporary: { type: Boolean, default: false },
   },
   { timestamps: true },
 );
@@ -97,5 +100,9 @@ contractSchema.index({ customerId: 1, contractDate: -1 });
 contractSchema.index({ customerRef: 1 });
 contractSchema.index({ renewalDueDate: 1 });
 contractSchema.index({ templateId: 1 });
+contractSchema.index(
+  { customerRef: 1, templateId: 1 },
+  { unique: true, partialFilterExpression: { temporary: true } },
+);
 
 export const Contract = mongoose.model<IContract>("Contract", contractSchema);

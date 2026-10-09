@@ -2,16 +2,33 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   useConsentStore,
   type CookieConsentStatus,
 } from "@/store/useConsentStore";
 
+const HIDDEN_BANNER_PATHS = new Set([
+  "/sms-program",
+  "/sms-opt-in",
+  "/privacy",
+  "/terms",
+  "/auth/signup",
+]);
+
+function normalizePath(pathname: string) {
+  if (pathname.length > 1 && pathname.endsWith("/")) {
+    return pathname.slice(0, -1);
+  }
+  return pathname;
+}
+
 export default function CookieConsentBanner() {
   // Always false on first server + client render to avoid hydration mismatch.
   // Flip true only in effects after Zustand rehydration.
   const [ready, setReady] = useState(false);
+  const pathname = usePathname();
 
   const cookieConsentStatus = useConsentStore((s) => s.cookieConsentStatus);
   const setCookieConsent = useConsentStore((s) => s.setCookieConsent);
@@ -86,7 +103,11 @@ export default function CookieConsentBanner() {
     cookieConsentStatus != null ||
     (isAuthenticated && userConsentStatus != null);
 
-  if (!ready || decided) {
+  if (
+    !ready ||
+    decided ||
+    HIDDEN_BANNER_PATHS.has(normalizePath(pathname))
+  ) {
     return null;
   }
 
@@ -100,7 +121,7 @@ export default function CookieConsentBanner() {
   return (
     <div
       className="fixed inset-x-0 bottom-0 z-50 border-t border-neutral-200 bg-white/95 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-[0_-4px_20px_rgba(0,0,0,0.08)] backdrop-blur-sm print:hidden"
-      role="dialog"
+      role="region"
       aria-label="Cookie consent"
     >
       <div className="mx-auto flex max-w-5xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

@@ -13,8 +13,10 @@ export type EstimateStatus = (typeof ESTIMATE_STATUSES)[number];
 
 export interface IEstimatePart {
   productRef?: Types.ObjectId | null;
-  lineType: "product" | "note";
-  kind: "part" | "labor";
+  contractTemplateRef?: Types.ObjectId | null;
+  enrolledContractRef?: Types.ObjectId | null;
+  lineType: "product" | "note" | "agreement";
+  kind: "part" | "labor" | "equipment";
   partNumber: string;
   description: string;
   quantity: number;
@@ -32,6 +34,7 @@ export interface IEstimate extends Document {
   addressRef?: Types.ObjectId | null;
   equipmentRef?: Types.ObjectId | null;
   workOrderRef?: Types.ObjectId | null;
+  workOrderTypeRef?: Types.ObjectId | null;
   contractRef?: Types.ObjectId | null;
   contractDiscount?: TicketContractDiscount | null;
   descPerform: string;
@@ -42,6 +45,7 @@ export interface IEstimate extends Document {
   customerName: string;
   customerAddress: string;
   customerCity: string;
+  customerState: string;
   customerZip: string;
   customerPhone: string;
   customerEmail: string;
@@ -52,6 +56,7 @@ export interface IEstimate extends Document {
   exerciseTime: string;
   totalParts: number;
   totalLabor: number;
+  totalAgreements: number;
   laborOverridden: boolean;
   miscExp: number;
   subtotal: number;
@@ -74,8 +79,22 @@ const estimatePartSchema = new Schema<IEstimatePart>(
       ref: "Product",
       default: null,
     },
-    lineType: { type: String, enum: ["product", "note"], default: "product" },
-    kind: { type: String, enum: ["part", "labor"], default: "part" },
+    contractTemplateRef: {
+      type: Schema.Types.ObjectId,
+      ref: "ContractTemplate",
+      default: null,
+    },
+    enrolledContractRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Contract",
+      default: null,
+    },
+    lineType: {
+      type: String,
+      enum: ["product", "note", "agreement"],
+      default: "product",
+    },
+    kind: { type: String, enum: ["part", "labor", "equipment"], default: "part" },
     partNumber: { type: String, default: "" },
     description: { type: String, default: "" },
     quantity: { type: Number, default: 0 },
@@ -89,7 +108,7 @@ const estimatePartSchema = new Schema<IEstimatePart>(
 
 const estimateSchema = new Schema<IEstimate>(
   {
-    number: { type: String, required: true, unique: true, index: true },
+    number: { type: String, required: true, unique: true },
     status: {
       type: String,
       enum: ESTIMATE_STATUSES,
@@ -114,6 +133,12 @@ const estimateSchema = new Schema<IEstimate>(
       default: null,
       index: true,
     },
+    workOrderTypeRef: {
+      type: Schema.Types.ObjectId,
+      ref: "WorkOrderType",
+      default: null,
+      index: true,
+    },
     contractRef: {
       type: Schema.Types.ObjectId,
       ref: "Contract",
@@ -131,6 +156,7 @@ const estimateSchema = new Schema<IEstimate>(
     customerName: { type: String, default: "" },
     customerAddress: { type: String, default: "" },
     customerCity: { type: String, default: "" },
+    customerState: { type: String, default: "FL" },
     customerZip: { type: String, default: "" },
     customerPhone: { type: String, default: "" },
     customerEmail: { type: String, default: "" },
@@ -141,6 +167,7 @@ const estimateSchema = new Schema<IEstimate>(
     exerciseTime: { type: String, default: "" },
     totalParts: { type: Number, default: 0 },
     totalLabor: { type: Number, default: 0 },
+    totalAgreements: { type: Number, default: 0 },
     laborOverridden: { type: Boolean, default: false },
     miscExp: { type: Number, default: 0 },
     subtotal: { type: Number, default: 0 },

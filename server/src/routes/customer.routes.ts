@@ -41,7 +41,7 @@ import { getCustomerCheckoutLink } from "../controllers/checkout.controller";
 
 const router = Router();
 
-const adminRoles = requireRole("admin", "super-admin", "owner");
+const adminRoles = requireRole("admin", "super-admin");
 
 router.use(authenticate);
 

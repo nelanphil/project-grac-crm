@@ -9,6 +9,7 @@ import {
   normalizeAccountEmail,
 } from "./provisionCustomerAccount";
 import { renameEmailPreferences } from "./emailPreferences";
+import { isCustomerRole } from "./roles";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -66,7 +67,7 @@ export async function ensureCustomerLoginForPrimaryEmail(
 
   const active = await User.findOne({ email, ...activeUserFilter });
   if (active) {
-    if (active.role !== "customer") {
+    if (!isCustomerRole(active)) {
       return { status: "skipped", reason: "staff-email" };
     }
     return { status: "linked", userId: active._id as Types.ObjectId };
@@ -75,8 +76,8 @@ export async function ensureCustomerLoginForPrimaryEmail(
   if (previousEmail && previousEmail !== email) {
     const previous = await User.findOne({
       email: previousEmail,
-      role: "customer",
       ...activeUserFilter,
+      $or: [{ userType: "customer" }, { roles: "customer" }, { role: "customer" }],
     });
     if (previous) {
       previous.email = email;
@@ -100,7 +101,7 @@ export async function ensureCustomerLoginForPrimaryEmail(
     softDeleted.deletedAt = null;
     softDeleted.first_name = first_name;
     softDeleted.last_name = last_name;
-    if (softDeleted.role !== "customer") {
+    if (!isCustomerRole(softDeleted)) {
       return { status: "skipped", reason: "staff-email" };
     }
     await softDeleted.save();
@@ -119,6 +120,8 @@ export async function ensureCustomerLoginForPrimaryEmail(
       first_name,
       last_name,
       role: "customer",
+      roles: ["customer"],
+      userType: "customer",
     });
     return { status: "created", userId: user._id as Types.ObjectId };
   } catch (err) {
@@ -126,7 +129,7 @@ export async function ensureCustomerLoginForPrimaryEmail(
 
     const existing = await User.findOne({ email });
     if (!existing) throw err;
-    if (existing.role !== "customer") {
+    if (!isCustomerRole(existing)) {
       return { status: "skipped", reason: "staff-email" };
     }
 

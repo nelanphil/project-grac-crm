@@ -7,19 +7,31 @@ import {
 import {
   getTwilioAccounts,
   createTwilioAccount,
+  previewTwilioNumbers,
+  syncTwilioAccountNumbers,
   updateTwilioAccount,
   deleteTwilioAccount,
 } from "../controllers/twilioAccount.controller";
 
 const router = Router();
 
-const adminRoles = requireRole("admin", "super-admin", "owner");
+const adminRoles = requireRole("admin", "super-admin");
 
 router.use(authenticate);
 router.use(adminRoles);
 
 router.get("/", requirePermission("integrations:read"), getTwilioAccounts);
+router.post(
+  "/preview-numbers",
+  requirePermission("integrations:write"),
+  previewTwilioNumbers,
+);
 router.post("/", requirePermission("integrations:write"), createTwilioAccount);
+router.post(
+  "/:id/sync-numbers",
+  requirePermission("integrations:write"),
+  syncTwilioAccountNumbers,
+);
 router.patch("/:id", requirePermission("integrations:write"), updateTwilioAccount);
 router.delete("/:id", requirePermission("integrations:delete"), deleteTwilioAccount);
 

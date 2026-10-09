@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ServiceContractsTable from "@/components/contracts/ServiceContractsTable";
@@ -30,8 +29,6 @@ import {
 } from "@/lib/contractTypes";
 import { formatCustomerRecordName } from "@/lib/formatName";
 
-const ADMIN_ROLES = ["admin", "super-admin", "owner"];
-
 type ContractsView = "customer" | "manage";
 
 type StandingFilter = ContractStanding | "all";
@@ -59,9 +56,7 @@ function matchesSearch(contract: ContractListItem, query: string): boolean {
 }
 
 function ContractsContent() {
-  const router = useRouter();
   const token = useAuthStore((s) => s.token);
-  const user = useAuthStore((s) => s.user);
 
   const [contracts, setContracts] = useState<ContractListItem[]>([]);
   const [statsContracts, setStatsContracts] = useState<ContractListItem[]>([]);
@@ -76,7 +71,9 @@ function ContractsContent() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
-  const isAdmin = user ? ADMIN_ROLES.includes(user.role) : false;
+  const isAdmin = useAuthStore((s) =>
+    s.hasRole("admin", "super-admin"),
+  );
 
   const typeTabs = useMemo(
     () => buildContractTypeFilterTabs(templates),
@@ -123,13 +120,7 @@ function ContractsContent() {
   };
 
   useEffect(() => {
-    if (user?.role === "customer") {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
-    if (!token || user?.role === "customer") return;
+    if (!token) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -150,10 +141,10 @@ function ContractsContent() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [token, user, standingFilter]);
+  }, [token, standingFilter]);
 
   useEffect(() => {
-    if (!token || user?.role === "customer") return;
+    if (!token) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatsLoading(true);
@@ -162,9 +153,7 @@ function ContractsContent() {
       .then(({ contracts: list }) => setStatsContracts(list))
       .catch(() => {})
       .finally(() => setStatsLoading(false));
-  }, [token, user]);
-
-  if (!user || user.role === "customer") return null;
+  }, [token]);
 
   if (loading && contracts.length === 0 && statsContracts.length === 0)
     return (

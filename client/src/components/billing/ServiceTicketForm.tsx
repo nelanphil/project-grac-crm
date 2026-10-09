@@ -1,6 +1,14 @@
 "use client";
 
-import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   CustomerDetail,
   CustomerListItem,
@@ -13,7 +21,7 @@ import {
   getWorkOrderTypes,
   WorkOrderTypeItem,
 } from "@/lib/api";
-import { COMPANY } from "@/lib/constants";
+import { COMPANY, US_STATE_CODES, US_STATES, toUsStateCode } from "@/lib/constants";
 import { formatCustomerRecordName } from "@/lib/formatName";
 import PhoneInput from "@/components/ui/PhoneInput";
 import {
@@ -29,10 +37,18 @@ import {
   TicketVariant,
   applyDiscountsToParts,
   emptyTicketForm,
+  hasEquipmentProductLines,
+  mergeSavedTicket,
+  nextTicketWorkOrderType,
   ticketToPayload,
   ticketTotals,
+  workOrderTypeSaveIssue,
 } from "@/lib/service-ticket";
+import { useWorkOrderAutosave } from "@/lib/useWorkOrderAutosave";
+import AutosaveStatus from "@/components/billing/AutosaveStatus";
 import { useAuthStore } from "@/store/useAuthStore";
+import { timeWindowError } from "@/lib/schedule";
+import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
 import TicketLineItemsEditor from "@/components/billing/TicketLineItemsEditor";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 
@@ -75,6 +91,10 @@ function taxInputValue(amount: number): string {
   return String(amount);
 }
 
+function serializeTicket(form: TicketFormState): string {
+  return JSON.stringify(ticketToPayload(form));
+}
+
 function technicianDisplayName(tech: {
   first_name?: string;
   last_name?: string;
@@ -91,6 +111,7 @@ export default function ServiceTicketForm({
   onSubmit,
   extraActions,
   invoiceAction,
+  autoSave,
 }: {
   variant: TicketVariant;
   initial?: TicketFormState;
@@ -100,10 +121,16 @@ export default function ServiceTicketForm({
   onSubmit: (payload: ReturnType<typeof ticketToPayload>) => void | Promise<void>;
   extraActions?: ReactNode;
   invoiceAction?: ReactNode;
+  /**
+   * Saves an existing record as the user edits instead of showing a submit
+   * button. Must throw on failure and resolve with the saved record as form state.
+   */
+  autoSave?: (payload: ReturnType<typeof ticketToPayload>) => Promise<TicketFormState>;
 }) {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const canWriteJobs = useAuthStore((s) => s.hasPermission("jobs:write"));
+  const canWriteEstimates = useAuthStore((s) => s.hasPermission("estimates:write"));
   const [form, setForm] = useState<TicketFormState>(initial ?? emptyTicketForm());
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerListItem[]>([]);
@@ -112,16 +139,25 @@ export default function ServiceTicketForm({
   const [techResults, setTechResults] = useState<TechnicianListItem[]>([]);
   const [techConflict, setTechConflict] = useState(false);
   const [workOrderTypes, setWorkOrderTypes] = useState<WorkOrderTypeItem[]>([]);
+  const [workOrderTypesLoaded, setWorkOrderTypesLoaded] = useState(false);
   const lastAppliedSiteKey = useRef(
     ticketSiteKey(initial ?? emptyTicketForm()),
   );
+  const stateTouched = useRef(false);
+  const initialAppliedFor = useRef<string | undefined>(undefined);
+  const autoSaving = Boolean(autoSave);
 
   useEffect(() => {
+    // Autosaved records feed each save back as `initial`; resetting to it
+    // would drop edits typed while the save was in flight.
+    if (autoSaving && initial && initialAppliedFor.current === recordId) return;
+    initialAppliedFor.current = recordId;
+    stateTouched.current = false;
     if (initial) {
       setForm(initial);
       lastAppliedSiteKey.current = ticketSiteKey(initial);
     }
-  }, [initial]);
+  }, [initial, autoSaving, recordId]);
 
   useEffect(() => {
     if (!token || recordId) return;
@@ -150,14 +186,28 @@ export default function ServiceTicketForm({
       .then(({ customer: c }) => {
         setCustomer(c);
         setForm((prev) => {
-          if (prev.addressRef || c.addresses.length === 0) return prev;
-          const site = c.addresses.find((a) => a.isPrimary) ?? c.addresses[0];
+          const linked = prev.addressRef
+            ? c.addresses.find((a) => a._id === prev.addressRef)
+            : undefined;
+          const site =
+            linked ??
+            c.addresses.find((a) => a.isPrimary) ??
+            c.addresses[0];
+          const nextState = stateTouched.current || prev.customerState.trim()
+            ? prev.customerState || "FL"
+            : toUsStateCode(site?.state);
+          if (prev.addressRef || c.addresses.length === 0) {
+            return nextState === prev.customerState
+              ? prev
+              : { ...prev, customerState: nextState };
+          }
           const equipment = site.equipment?.[0];
           return {
             ...prev,
             addressRef: site._id,
             customerAddress: prev.customerAddress || site.address,
             customerCity: prev.customerCity || site.city,
+            customerState: nextState,
             customerZip: prev.customerZip || site.zip,
             equipmentRef: equipment?._id ?? prev.equipmentRef,
             serialNumber: prev.serialNumber || equipment?.serial || c.serial,
@@ -185,11 +235,46 @@ export default function ServiceTicketForm({
   }, [token, customerQuery]);
 
   useEffect(() => {
-    if (!token || variant !== "work-order") return;
+    if (!token) return;
+    let cancelled = false;
     getWorkOrderTypes(token)
-      .then(({ types }) => setWorkOrderTypes(types))
-      .catch(() => setWorkOrderTypes([]));
-  }, [token, variant]);
+      .then(({ types }) => {
+        if (!cancelled) setWorkOrderTypes(types);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkOrderTypes([]);
+      })
+      .finally(() => {
+        if (!cancelled) setWorkOrderTypesLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const hasEquipmentNow = hasEquipmentProductLines(form.parts);
+  if (workOrderTypes.length > 0) {
+    const nextType = nextTicketWorkOrderType({
+      variant,
+      hadEquipment: form.trackedEquipment,
+      hasEquipment: hasEquipmentNow,
+      workOrderTypeRef: form.workOrderTypeRef,
+      workOrderTypeLabel: form.workOrderTypeLabel,
+      types: workOrderTypes,
+    });
+    if (
+      nextType.workOrderTypeRef !== form.workOrderTypeRef ||
+      nextType.workOrderTypeLabel !== form.workOrderTypeLabel ||
+      form.trackedEquipment !== hasEquipmentNow
+    ) {
+      setForm({
+        ...form,
+        workOrderTypeRef: nextType.workOrderTypeRef,
+        workOrderTypeLabel: nextType.workOrderTypeLabel,
+        trackedEquipment: hasEquipmentNow,
+      });
+    }
+  }
 
   useEffect(() => {
     if (!token || techQuery.trim().length < 2) {
@@ -322,6 +407,7 @@ export default function ServiceTicketForm({
       customerName: formatCustomerRecordName(c),
       customerAddress: primary?.address ?? c.address,
       customerCity: primary?.city ?? c.city,
+      customerState: toUsStateCode(primary?.state || c.state),
       customerZip: primary?.zip ?? c.zip,
       customerPhone: c.phone,
       customerEmail: c.email,
@@ -355,6 +441,7 @@ export default function ServiceTicketForm({
       addressRef: addressId,
       customerAddress: site?.address ?? form.customerAddress,
       customerCity: site?.city ?? form.customerCity,
+      customerState: toUsStateCode(site?.state || form.customerState),
       customerZip: site?.zip ?? form.customerZip,
       equipmentRef: equipment?._id ?? "",
       serialNumber: equipment?.serial ?? "",
@@ -378,7 +465,26 @@ export default function ServiceTicketForm({
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (autoSave) {
+      autosave.arm();
+      autosave.flush();
+      return;
+    }
     if (!form.customerId) return;
+    if (variant === "work-order" && timeWindowError(form.startTime, form.endTime)) {
+      return;
+    }
+    if (
+      workOrderTypeSaveIssue({
+        variant,
+        parts: form.parts,
+        workOrderTypeRef: form.workOrderTypeRef,
+        types: workOrderTypes,
+        typesLoaded: workOrderTypesLoaded,
+      }).blocked
+    ) {
+      return;
+    }
     await onSubmit(ticketToPayload(form));
   }
 
@@ -393,9 +499,47 @@ export default function ServiceTicketForm({
       equipmentOptions.some((unit) => unit._id === form.equipmentRef),
   );
   const equipmentFieldsLocked = Boolean(customer && existingEquipmentSelected);
+  const windowError =
+    variant === "work-order" ? timeWindowError(form.startTime, form.endTime) : null;
+  const hasEquipmentLines = hasEquipmentProductLines(form.parts);
+  const typeSaveIssue = workOrderTypeSaveIssue({
+    variant,
+    parts: form.parts,
+    workOrderTypeRef: form.workOrderTypeRef,
+    types: workOrderTypes,
+    typesLoaded: workOrderTypesLoaded,
+  });
+  const autosaveBlockedReason = !form.customerId
+    ? "choose a customer."
+    : windowError
+      ? windowError
+      : typeSaveIssue.blocked
+        ? typeSaveIssue.message || "loading work order types…"
+        : null;
+
+  const saveDraft = useCallback(
+    async (sent: TicketFormState) => {
+      if (!autoSave) return;
+      const saved = await autoSave(ticketToPayload(sent));
+      setForm((current) => mergeSavedTicket(current, sent, saved));
+    },
+    [autoSave],
+  );
+  const autosave = useWorkOrderAutosave({
+    value: form,
+    serialize: serializeTicket,
+    save: saveDraft,
+    blocked: !autoSave || autosaveBlockedReason !== null,
+  });
 
   return (
-    <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6 print:hidden">
+    <form
+      onSubmit={(e) => void handleSubmit(e)}
+      onChangeCapture={autoSave ? autosave.arm : undefined}
+      onClickCapture={autoSave ? autosave.arm : undefined}
+      onBlurCapture={autoSave ? autosave.flush : undefined}
+      className="space-y-6 print:hidden"
+    >
       <article className="rounded-xl border border-neutral-200 bg-white px-4 py-6 shadow-sm sm:px-8">
         <header className="border-b border-neutral-200 pb-5 text-center">
           <p className="text-3xl font-black tracking-[0.2em] text-brand-dark">
@@ -410,7 +554,11 @@ export default function ServiceTicketForm({
           </p>
         </header>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div
+          className={`mt-5 grid gap-3 sm:grid-cols-2 ${
+            variant === "work-order" ? "lg:grid-cols-7" : "lg:grid-cols-5"
+          }`}
+        >
           <Field label={variant === "estimate" ? "Estimate No" : "Work Order No"}>
             <input value={form.number || "Assigned on save"} disabled className={inputClass} />
           </Field>
@@ -423,6 +571,29 @@ export default function ServiceTicketForm({
             />
           </Field>
           {variant === "work-order" ? (
+            <>
+              <Field label="Start time">
+                <input
+                  type="time"
+                  value={form.startTime}
+                  onChange={(e) => patch({ startTime: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field label="End time">
+                <input
+                  type="time"
+                  value={form.endTime}
+                  onChange={(e) => patch({ endTime: e.target.value })}
+                  className={inputClass}
+                />
+                {windowError ? (
+                  <p className="mt-1 text-xs text-amber-700">{windowError}</p>
+                ) : null}
+              </Field>
+            </>
+          ) : null}
+          {variant === "work-order" && !hasEquipmentLines ? (
             <Field label="Type">
               <select
                 value={form.workOrderTypeRef ?? ""}
@@ -436,7 +607,6 @@ export default function ServiceTicketForm({
                 }}
                 className={inputClass}
               >
-                <option value="">None</option>
                 {workOrderTypes.map((type) => (
                   <option key={type._id} value={type._id}>
                     {type.label}
@@ -596,20 +766,38 @@ export default function ServiceTicketForm({
                   className={inputClass}
                 />
               </Field>
-              <Field label="City">
-                <input
-                  value={form.customerCity}
-                  onChange={(e) => patch({ customerCity: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="ZIP">
-                <input
-                  value={form.customerZip}
-                  onChange={(e) => patch({ customerZip: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
+              <div className="grid grid-cols-1 gap-3 sm:col-span-2 sm:grid-cols-6">
+                <Field label="City" className="sm:col-span-3">
+                  <input
+                    value={form.customerCity}
+                    onChange={(e) => patch({ customerCity: e.target.value })}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="State" className="sm:col-span-1">
+                  <select
+                    value={form.customerState || "FL"}
+                    onChange={(e) => {
+                      stateTouched.current = true;
+                      patch({ customerState: e.target.value });
+                    }}
+                    className={inputClass}
+                  >
+                    {US_STATES.map((name) => (
+                      <option key={name} value={US_STATE_CODES[name]}>
+                        {US_STATE_CODES[name]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="ZIP" className="sm:col-span-2">
+                  <input
+                    value={form.customerZip}
+                    onChange={(e) => patch({ customerZip: e.target.value })}
+                    className={inputClass}
+                  />
+                </Field>
+              </div>
               <Field label="Phone">
                 <PhoneInput
                   value={form.customerPhone}
@@ -697,18 +885,35 @@ export default function ServiceTicketForm({
         </div>
 
         <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-start">
-          <TicketLineItemsEditor
-            parts={form.parts}
-            discounts={discountRules}
-            onChange={(parts) => patch({ parts })}
-            banner={
-              discountBanner ? (
-                <p className="text-[11px] font-normal normal-case tracking-normal text-sky-800">
-                  {discountBanner}
-                </p>
-              ) : null
-            }
-          />
+          <div className="min-w-0 flex-1 space-y-3">
+            <TicketLineItemsEditor
+              parts={form.parts}
+              discounts={discountRules}
+              onChange={(parts) => patch({ parts })}
+              banner={
+                discountBanner ? (
+                  <p className="text-[11px] font-normal normal-case tracking-normal text-sky-800">
+                    {discountBanner}
+                  </p>
+                ) : null
+              }
+            />
+            {hasEquipmentLines ? (
+              <EquipmentWorkOrderTypeChoice
+                types={workOrderTypes}
+                value={form.workOrderTypeRef}
+                message={typeSaveIssue.message}
+                onChange={(type) =>
+                  patch({
+                    workOrderTypeRef: type._id,
+                    workOrderTypeLabel: type.label,
+                  })
+                }
+              />
+            ) : typeSaveIssue.message ? (
+              <p className="text-sm text-red-700">{typeSaveIssue.message}</p>
+            ) : null}
+          </div>
 
           <div className="w-full shrink-0 space-y-2 rounded border border-neutral-200 p-3 text-sm lg:w-72">
             {discountBanner ? (
@@ -723,6 +928,10 @@ export default function ServiceTicketForm({
             <div className="flex justify-between">
               <span>Total labor</span>
               <span>{formatMoney(totals.totalLabor)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Total agreements</span>
+              <span>{formatMoney(totals.totalAgreements)}</span>
             </div>
             <div className="flex items-center justify-between gap-2">
               <span>Misc exp.</span>
@@ -778,22 +987,30 @@ export default function ServiceTicketForm({
               />
             </Field>
           </div>
-        ) : token && user && recordId ? (
+        ) : null}
+
+        {token && user && recordId ? (
           <div className="mt-5">
             <WorkOrderNotesPanel
               token={token}
-              workOrderId={recordId}
+              recordId={recordId}
+              source={variant === "estimate" ? "estimate" : "work-order"}
               userId={user.id}
-              canWrite={canWriteJobs}
-              userRole={user.role}
-              fallbackContent={form.descPerformed}
+              canWrite={variant === "estimate" ? canWriteEstimates : canWriteJobs}
+              userRole={user}
+              fallbackContent={variant === "work-order" ? form.descPerformed : undefined}
+              visibilityLabel={
+                variant === "estimate"
+                  ? "Show on estimate"
+                  : "Show on work order & invoice"
+              }
             />
           </div>
-        ) : variant === "work-order" ? (
+        ) : (
           <p className="mt-5 text-sm text-neutral-500">
-            Save this work order to add notes.
+            Save this {variant === "estimate" ? "estimate" : "work order"} to add notes.
           </p>
-        ) : null}
+        )}
 
         <div className="mt-5 flex flex-wrap items-end justify-between gap-4 border-t border-neutral-200 pt-5">
           {variant === "work-order" ? (
@@ -833,14 +1050,25 @@ export default function ServiceTicketForm({
             <div />
           )}
           <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+            {autoSave ? (
+              <AutosaveStatus
+                status={autosave.status}
+                error={autosave.error}
+                blockedReason={autosaveBlockedReason}
+                onRetry={autosave.retry}
+                className="mr-auto sm:mr-2"
+              />
+            ) : null}
             {extraActions}
-            <button
-              type="submit"
-              disabled={submitting || !form.customerId}
-              className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
-            >
-              {submitting ? "Saving…" : submitLabel}
-            </button>
+            {autoSave ? null : (
+              <button
+                type="submit"
+                disabled={submitting || !form.customerId || typeSaveIssue.blocked}
+                className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
+              >
+                {submitting ? "Saving…" : submitLabel}
+              </button>
+            )}
           </div>
         </div>
       </article>

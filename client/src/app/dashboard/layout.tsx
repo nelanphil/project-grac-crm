@@ -1,9 +1,13 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import DashboardNav from "@/components/dashboard/DashboardNav";
 import StaffDashboardShell from "@/components/dashboard/staff/StaffDashboardShell";
 import { isJobTerminalPopoutPath } from "@/utils/jobTerminalWindow";
+import { authGetMe } from "@/lib/api";
+import { refreshVisitLocation } from "@/lib/browserLocation";
+import { canAccessNavPath } from "@/lib/dashboard-nav";
 import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
@@ -14,11 +18,42 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const hydrated = useHasHydrated();
-  const role = useAuthStore((s) => s.user?.role);
+  const user = useAuthStore((s) => s.user);
+  const token = useAuthStore((s) => s.token);
+  const login = useAuthStore((s) => s.login);
+  const [syncedToken, setSyncedToken] = useState<string | null>(null);
   const isTerminalPopout = isJobTerminalPopoutPath(pathname);
+  const synced = !token || syncedToken === token;
+  const pathAllowed = canAccessNavPath(user, pathname);
 
-  if (!hydrated) {
+  useEffect(() => {
+    if (!hydrated || !token) return;
+    let cancelled = false;
+    authGetMe(token)
+      .then(({ user: fresh }) => {
+        if (cancelled) return;
+        login(token, fresh);
+        refreshVisitLocation(token, fresh.id);
+      })
+      .catch(() => {
+        // Keep the stored session if the refresh fails.
+      })
+      .finally(() => {
+        if (!cancelled) setSyncedToken(token);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, token, login]);
+
+  useEffect(() => {
+    if (!hydrated || !synced || !user || pathAllowed) return;
+    router.replace("/dashboard");
+  }, [hydrated, synced, user, pathAllowed, router]);
+
+  if (!hydrated || !synced) {
     if (isTerminalPopout) {
       return (
         <div className="h-dvh w-full bg-neutral-950" aria-busy="true">
@@ -37,7 +72,17 @@ export default function DashboardLayout({
     );
   }
 
-  if (isStaffRole(role)) {
+  if (user && !pathAllowed) {
+    return (
+      <div
+        className="min-h-[50vh] bg-[var(--staff-canvas)] px-4 py-6 sm:px-6"
+        aria-busy="true"
+        aria-label="Opening dashboard"
+      />
+    );
+  }
+
+  if (isStaffRole(user)) {
     return <StaffDashboardShell>{children}</StaffDashboardShell>;
   }
 

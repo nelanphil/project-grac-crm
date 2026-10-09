@@ -3,8 +3,10 @@ import { ticketContractDiscountSchema } from "./contractTemplate.schema";
 
 export const ticketPartSchema = z.object({
   productRef: z.string().trim().nullable().optional(),
-  lineType: z.enum(["product", "note"]).optional().default("product"),
-  kind: z.enum(["part", "labor"]).optional().default("part"),
+  contractTemplateRef: z.string().trim().nullable().optional(),
+  enrolledContractRef: z.string().trim().nullable().optional(),
+  lineType: z.enum(["product", "note", "agreement"]).optional().default("product"),
+  kind: z.enum(["part", "labor", "equipment"]).optional().default("part"),
   partNumber: z.string().trim().max(80).optional().default(""),
   description: z.string().trim().max(2000).optional().default(""),
   quantity: z.number().min(0).optional().default(0),
@@ -18,6 +20,7 @@ export const ticketSnapshotSchema = z.object({
   customerName: z.string().trim().max(200).optional(),
   customerAddress: z.string().trim().max(300).optional(),
   customerCity: z.string().trim().max(120).optional(),
+  customerState: z.string().trim().max(40).optional(),
   customerZip: z.string().trim().max(20).optional(),
   customerPhone: z.string().trim().max(40).optional(),
   customerEmail: z.string().trim().max(200).optional(),

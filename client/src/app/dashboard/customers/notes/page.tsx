@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import CustomerNotesPanel from "@/components/customers/CustomerNotesPanel";
@@ -10,7 +10,6 @@ import { formatCustomerRecordName } from "@/lib/formatName";
 import { ApiError, CustomerDetail, getCustomer } from "@/lib/api";
 
 function CustomerNotesContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const id = searchParams.get("id") ?? "";
 
@@ -22,13 +21,7 @@ function CustomerNotesContent() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (user?.role === "customer") {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
-    if (!token || !id || user?.role === "customer") return;
+    if (!token || !id) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -43,9 +36,9 @@ function CustomerNotesContent() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [token, id, user]);
+  }, [token, id]);
 
-  if (!user || user.role === "customer") return null;
+  if (!user) return null;
 
   if (loading) {
     return <div className="text-sm text-neutral-500 py-6">Loading notes…</div>;

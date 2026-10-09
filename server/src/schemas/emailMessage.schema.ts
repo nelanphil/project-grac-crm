@@ -3,6 +3,8 @@ import {
   EMAIL_BODY_MAX,
   EMAIL_SUBJECT_MAX,
   emailChromeSchema,
+  offerContractOverrideSchema,
+  offerContractTemplateIdSchema,
 } from "./messageTemplate.schema";
 
 export const emailPaymentLinkAvailabilitySchema = z.object({
@@ -18,6 +20,7 @@ export const emailMessagePreviewSchema = z
     renewalYear: z.number().int().min(1970).max(2100).optional(),
     renewalMonth: z.number().int().min(1).max(12).optional(),
     includePaymentLink: z.boolean().optional(),
+    offerContractTemplateId: offerContractTemplateIdSchema.optional(),
   })
   .refine(
     (data) =>
@@ -45,6 +48,11 @@ const emailMessageSendFields = z.object({
   renewalYear: z.number().int().min(1970).max(2100).optional(),
   renewalMonth: z.number().int().min(1).max(12).optional(),
   includePaymentLink: z.boolean().optional(),
+  offerContractTemplateId: offerContractTemplateIdSchema.optional(),
+  offerContractOverrides: z
+    .array(offerContractOverrideSchema)
+    .max(200)
+    .optional(),
 });
 
 function refineSendContent(
@@ -80,8 +88,21 @@ function refineRenewalPair(
 }
 
 export const emailMessageSendSchema = emailMessageSendFields
+  .extend({
+    /** Replaces the contact's email for a single-contact send. */
+    toOverride: z.string().trim().email().max(255).optional(),
+  })
   .superRefine(refineSendContent)
-  .superRefine(refineRenewalPair);
+  .superRefine(refineRenewalPair)
+  .superRefine((data, ctx) => {
+    if (data.toOverride && data.contactIds.length !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["toOverride"],
+        message: "toOverride can only be used when sending to a single contact",
+      });
+    }
+  });
 
 export const emailMessageScheduleSchema = emailMessageSendFields
   .extend({

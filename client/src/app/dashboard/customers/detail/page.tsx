@@ -105,7 +105,7 @@ function CustomerDetailContent() {
     s.hasPermission("contracts:write"),
   );
   const canManageCustomers = useAuthStore((s) =>
-    s.hasRole("admin", "super-admin", "owner"),
+    s.hasRole("admin", "super-admin"),
   );
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
@@ -132,13 +132,7 @@ function CustomerDetailContent() {
   const [statusError, setStatusError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (user?.role === "customer") {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
-    if (!token || !id || user?.role === "customer") return;
+    if (!token || !id) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -167,7 +161,7 @@ function CustomerDetailContent() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [token, id, user]);
+  }, [token, id]);
 
   const filteredWorkOrders = useMemo(() => {
     if (addressFilter === "all") return workOrders;
@@ -278,7 +272,7 @@ function CustomerDetailContent() {
     }
   }
 
-  if (!user || user.role === "customer") return null;
+  if (!user) return null;
 
   if (loading) {
     return (

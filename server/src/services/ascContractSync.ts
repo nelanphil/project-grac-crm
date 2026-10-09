@@ -427,6 +427,7 @@ export async function syncAscContractsFromRecords(
 
   const customerIds = [...latestByCustomer.keys()];
   const existingContracts = await models.Contract.find({
+    temporary: { $ne: true },
     $or: [
       { customerRef: { $in: customerIds } },
       {

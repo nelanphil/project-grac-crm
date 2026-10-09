@@ -17,7 +17,7 @@ import {
 
 const router = Router();
 
-const adminRoles = requireRole("admin", "super-admin", "owner");
+const adminRoles = requireRole("admin", "super-admin");
 
 // Public Square OAuth redirect (state is signed/verified server-side).
 router.get("/square/oauth/callback", squareOAuthCallback);

@@ -28,6 +28,7 @@ export async function runRenewalInvoiceJob(): Promise<{
 
   const contracts = await Contract.find({
     renewalDueDate: { $ne: null, $lte: windowEnd },
+    temporary: { $ne: true },
   }).limit(500);
 
   let created = 0;

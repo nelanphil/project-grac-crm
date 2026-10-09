@@ -13,6 +13,10 @@ import {
 import { encryptCredential } from "../utils/credentialsCrypto";
 import { sendWithEmailAccount } from "../services/email.service";
 import {
+  MailboxError,
+  testMailboxConnection,
+} from "../services/mailbox.service";
+import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
@@ -32,12 +36,22 @@ function toPublic(doc: IEmailAccount | Record<string, unknown>) {
     username: d.username,
     fromName: d.fromName,
     fromEmail: d.fromEmail,
+    imapHost: typeof d.imapHost === "string" ? d.imapHost : "",
+    imapPort: typeof d.imapPort === "number" ? d.imapPort : 993,
+    imapSecure: d.imapSecure !== false,
     isActive: d.isActive ?? true,
+    autoAcknowledge: d.autoAcknowledge === true,
     roles: d.roles ?? [],
     hasPassword: Boolean(d.passwordEncrypted),
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
   };
+}
+
+function applyImapSecure(port: number, secure: boolean): boolean {
+  if (port === 993) return true;
+  if (port === 143) return false;
+  return secure;
 }
 
 /** Ensure each role is owned by at most one account. */
@@ -104,6 +118,9 @@ export async function createEmailAccount(
     passwordEncrypted: encryptCredential(data.password),
     fromName: data.fromName,
     fromEmail: data.fromEmail.toLowerCase(),
+    imapHost: data.imapHost?.trim() ?? "",
+    imapPort: data.imapPort ?? 993,
+    imapSecure: applyImapSecure(data.imapPort ?? 993, data.imapSecure ?? true),
     isActive: data.isActive ?? true,
     roles,
   });
@@ -164,7 +181,17 @@ export async function updateEmailAccount(
   if (data.fromEmail !== undefined) {
     account.fromEmail = data.fromEmail.toLowerCase();
   }
+  if (data.imapHost !== undefined) account.imapHost = data.imapHost.trim();
+  if (data.imapPort !== undefined) account.imapPort = data.imapPort;
+  if (data.imapSecure !== undefined) account.imapSecure = data.imapSecure;
+  account.imapSecure = applyImapSecure(account.imapPort, account.imapSecure);
   if (data.isActive !== undefined) account.isActive = data.isActive;
+  if (data.autoAcknowledge !== undefined) {
+    const turningOn = data.autoAcknowledge && !account.autoAcknowledge;
+    account.autoAcknowledge = data.autoAcknowledge;
+    if (turningOn) account.autoAcknowledgeEnabledAt = new Date();
+    if (!data.autoAcknowledge) account.autoAcknowledgeEnabledAt = null;
+  }
 
   if (data.password !== undefined && data.password.trim() !== "") {
     account.passwordEncrypted = encryptCredential(data.password);
@@ -286,5 +313,33 @@ export async function testEmailAccount(
     res.status(502).json({
       message: `SMTP rejected or failed the test send: ${detail}`,
     });
+  }
+}
+
+/** POST /email-accounts/:id/imap-test — log in and open INBOX. */
+export async function testEmailAccountImap(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  const account = await EmailAccount.findById(req.params.id);
+  if (!account) {
+    res.status(404).json({ message: "Email account not found" });
+    return;
+  }
+
+  try {
+    const result = await testMailboxConnection(account);
+    res.json({
+      message: `Connected and opened ${result.mailbox}.`,
+      mailbox: result.mailbox,
+    });
+  } catch (err) {
+    if (err instanceof MailboxError) {
+      res.status(err.status).json({ message: err.message });
+      return;
+    }
+    const detail = err instanceof Error ? err.message : "Mailbox test failed";
+    console.error("[mailbox] IMAP test failed:", detail);
+    res.status(502).json({ message: detail });
   }
 }

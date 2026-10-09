@@ -108,19 +108,13 @@ function EditContractContent() {
   }, [contract, renewedAt, renewDurationMonths]);
 
   useEffect(() => {
-    if (user?.role === "customer") {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
-    if (user && user.role !== "customer" && !canWrite) {
+    if (user && !canWrite) {
       router.replace(returnTo);
     }
   }, [canWrite, user, router, returnTo]);
 
   useEffect(() => {
-    if (!token || !id || user?.role === "customer") return;
+    if (!token || !id) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
@@ -161,7 +155,7 @@ function EditContractContent() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [token, id, user]);
+  }, [token, id]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -265,7 +259,7 @@ function EditContractContent() {
     }
   }
 
-  if (!user || user.role === "customer") return null;
+  if (!user) return null;
 
   if (loading) {
     return (
@@ -290,7 +284,7 @@ function EditContractContent() {
   const standing = contract.standing ?? "expired";
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6">
       <div>
         <DashboardBackLink fallbackHref={returnTo} />
         <h1 className="mt-4 text-2xl font-bold text-brand-dark">

@@ -13,7 +13,7 @@ import {
 
 const router = Router();
 
-const adminRoles = requireRole("admin", "super-admin", "owner");
+const adminRoles = requireRole("admin", "super-admin");
 
 router.get("/site-key", getRecaptchaSiteKey);
 

@@ -5,6 +5,11 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
+import {
+  isOrgAdminRole,
+  userHasCapability,
+  isSuperAdminRole,
+} from "@/lib/dashboard-role";
 import PasswordInput from "@/components/ui/PasswordInput";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
@@ -67,8 +72,6 @@ const PROVIDER_LABELS: Record<PaymentProviderName, string> = {
   paypal: "PayPal",
 };
 
-const ORG_ADMIN_ROLES = ["admin", "super-admin"];
-
 function ownerLabel(owner: {
   first_name: string;
   last_name: string;
@@ -82,9 +85,10 @@ export default function PaymentProvidersCard() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const searchParams = useSearchParams();
-  const isOrgAdmin = user ? ORG_ADMIN_ROLES.includes(user.role) : false;
-  const isOwner = user?.role === "owner";
-  const isSuperAdmin = user?.role === "super-admin";
+  const isOrgAdmin = isOrgAdminRole(user);
+  const isOwner =
+    !isOrgAdmin && userHasCapability(user, "territoryOwner");
+  const isSuperAdmin = isSuperAdminRole(user);
 
   const [accounts, setAccounts] = useState<PaymentProviderAccountItem[]>([]);
   const [webhooks, setWebhooks] = useState<Record<string, string> | null>(null);
@@ -198,7 +202,9 @@ export default function PaymentProvidersCard() {
         } else if (oauth.sandbox) {
           setOauthEnvironment("sandbox");
         }
-        setOwners(usersRes.users.filter((u) => u.role === "owner"));
+        setOwners(
+          usersRes.users.filter((u) => userHasCapability(u, "territoryOwner")),
+        );
       } catch (err) {
         setError(
           err instanceof ApiError

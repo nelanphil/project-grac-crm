@@ -3,15 +3,28 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Download, Mail } from "lucide-react";
+import { Download } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import InvoiceDocument from "@/components/billing/InvoiceDocument";
+import {
+  InvoiceSendButtons,
+  InvoiceSendEditor,
+  InvoiceSendPreview,
+  useInvoiceCustomerSend,
+} from "@/components/billing/InvoiceCustomerSend";
+import {
+  canToggleInvoiceStatus,
+  InvoiceStatusChangeWarning,
+} from "@/components/billing/InvoiceStatusActions";
 import { useAuthStore } from "@/store/useAuthStore";
+import { isCustomerRole } from "@/lib/dashboard-role";
 import {
   ApiError,
   getInvoice,
   InvoiceItem,
+  markInvoicePaid,
+  reopenInvoice,
   startInvoiceCheckout,
   updateInvoiceTax,
 } from "@/lib/api";
@@ -36,9 +49,10 @@ function InvoiceDetailContent() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const hasRole = useAuthStore((s) => s.hasRole);
-  const isCustomer = user?.role === "customer";
-  const canEmail = hasRole("admin", "super-admin", "owner");
-  const canEditTax = useAuthStore((s) => s.hasPermission("contracts:write"));
+  const isCustomer = isCustomerRole(user);
+  const canEmail = hasRole("admin", "super-admin");
+  const canWrite = useAuthStore((s) => s.hasPermission("contracts:write"));
+  const canEditTax = canWrite;
 
   const [invoice, setInvoice] = useState<InvoiceItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,6 +60,9 @@ function InvoiceDetailContent() {
   const [paying, setPaying] = useState(false);
   const [taxDraft, setTaxDraft] = useState("");
   const [savingTax, setSavingTax] = useState(false);
+  const [confirmingStatus, setConfirmingStatus] = useState(false);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const send = useInvoiceCustomerSend(invoice, canEmail && !isCustomer);
 
   useEffect(() => {
     if (!token || !id) {
@@ -67,6 +84,28 @@ function InvoiceDetailContent() {
       )
       .finally(() => setLoading(false));
   }, [token, id]);
+
+  async function confirmStatusChange() {
+    if (!token || !invoice) return;
+    setStatusBusy(true);
+    setError(null);
+    try {
+      const { invoice: updated } =
+        invoice.status === "paid"
+          ? await reopenInvoice(token, invoice._id)
+          : await markInvoicePaid(token, invoice._id);
+      setInvoice((current) => (current ? { ...current, ...updated } : updated));
+      setConfirmingStatus(false);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to update invoice status.",
+      );
+    } finally {
+      setStatusBusy(false);
+    }
+  }
 
   async function handlePay() {
     if (!token || !invoice) return;
@@ -159,9 +198,14 @@ function InvoiceDetailContent() {
   }
 
   const canPay = invoice.status === "open" || invoice.status === "failed";
+  const canToggle = !isCustomer && canWrite && canToggleInvoiceStatus(invoice);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 print:max-w-none print:space-y-0">
+    <div
+      className={`space-y-4 print:max-w-none print:space-y-0 ${
+        send.composerOpen ? "w-full max-w-none" : "mx-auto max-w-5xl"
+      }`}
+    >
       <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <DashboardBackLink
           fallbackHref="/dashboard/orders"
@@ -176,6 +220,19 @@ function InvoiceDetailContent() {
             <Download className="h-4 w-4" />
             Export to PDF
           </button>
+          {canToggle ? (
+            <button
+              type="button"
+              disabled={statusBusy}
+              onClick={() => {
+                setError(null);
+                setConfirmingStatus((current) => !current);
+              }}
+              className="inline-flex w-full items-center justify-center rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60 sm:w-auto"
+            >
+              {invoice.status === "paid" ? "Mark as unpaid" : "Mark as paid"}
+            </button>
+          ) : null}
           {isCustomer && canPay ? (
             <Link
               href={`/dashboard/checkout/?invoiceId=${invoice._id}`}
@@ -184,25 +241,7 @@ function InvoiceDetailContent() {
               Pay now
             </Link>
           ) : canEmail ? (
-            invoice.customerRef ? (
-              <Link
-                href={`/dashboard/messaging?tab=email&invoiceId=${invoice._id}`}
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 sm:w-auto"
-              >
-                <Mail className="h-4 w-4" />
-                Email
-              </Link>
-            ) : (
-              <button
-                type="button"
-                disabled
-                title="This invoice has no customer to email."
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white opacity-60 sm:w-auto"
-              >
-                <Mail className="h-4 w-4" />
-                Email
-              </button>
-            )
+            <InvoiceSendButtons send={send} />
           ) : canPay ? (
             <button
               type="button"
@@ -216,41 +255,74 @@ function InvoiceDetailContent() {
         </div>
       </div>
 
-      {error ? (
+      {confirmingStatus && canToggle ? (
+        <div className="print:hidden">
+          <InvoiceStatusChangeWarning
+            invoice={invoice}
+            busy={statusBusy}
+            error={error}
+            onConfirm={() => void confirmStatusChange()}
+            onCancel={() => {
+              setConfirmingStatus(false);
+              setError(null);
+            }}
+          />
+        </div>
+      ) : error ? (
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 print:hidden">
           {error}
         </div>
       ) : null}
 
-      <InvoiceDocument
-        invoice={invoice}
-        isCustomer={isCustomer}
-        taxEditor={
-          !isCustomer &&
-          canEditTax &&
-          (invoice.status === "open" ||
-            invoice.status === "draft" ||
-            invoice.status === "failed") ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                value={taxDraft}
-                onChange={(e) => setTaxDraft(e.target.value)}
-                inputMode="decimal"
-                aria-label="Tax amount"
-                className="w-24 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
-              />
-              <button
-                type="button"
-                disabled={savingTax}
-                onClick={() => void handleSaveTax()}
-                className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
-              >
-                {savingTax ? "Saving…" : "Update tax"}
-              </button>
-            </div>
-          ) : null
+      {!isCustomer &&
+      canEditTax &&
+      (invoice.status === "open" ||
+        invoice.status === "draft" ||
+        invoice.status === "failed") ? (
+        <div className="flex flex-wrap items-center gap-2 print:hidden">
+          <label className="text-sm text-neutral-600" htmlFor="invoice-tax-amount">
+            Tax
+          </label>
+          <input
+            id="invoice-tax-amount"
+            value={taxDraft}
+            onChange={(e) => setTaxDraft(e.target.value)}
+            inputMode="decimal"
+            aria-label="Tax amount"
+            className="w-24 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
+          />
+          <button
+            type="button"
+            disabled={savingTax}
+            onClick={() => void handleSaveTax()}
+            className="rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
+          >
+            {savingTax ? "Saving…" : "Update tax"}
+          </button>
+        </div>
+      ) : null}
+
+      <div
+        className={
+          send.composerOpen
+            ? "grid items-start gap-4 print:block lg:grid-cols-2 xl:grid-cols-3"
+            : undefined
         }
-      />
+      >
+        <div
+          className={
+            send.composerOpen ? "min-w-0 lg:col-span-2 xl:col-span-1" : undefined
+          }
+        >
+          <InvoiceDocument invoice={invoice} isCustomer={isCustomer} />
+        </div>
+        {send.composerOpen ? (
+          <>
+            <InvoiceSendEditor send={send} />
+            <InvoiceSendPreview send={send} />
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

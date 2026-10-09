@@ -36,14 +36,21 @@ import {
   verifySquareOAuthState,
 } from "../services/squareOAuth.service";
 import { getPaymentPlatformsReady } from "../services/paymentPlatform.service";
+import { userHasCapability } from "../utils/jobRoles";
+import { isOrgAdminRole, isSuperAdminRole } from "../utils/roles";
 
 function emptyToUndefined(value: string | undefined | null): string | undefined {
   if (value == null || value.trim() === "") return undefined;
   return value.trim();
 }
 
-function isOrgAdmin(role?: string): boolean {
-  return role === "admin" || role === "super-admin";
+async function requesterLockedToOwnAccount(req: AuthRequest): Promise<boolean> {
+  if (!req.user || isOrgAdmin(req.user)) return false;
+  return userHasCapability(req.user, "territoryOwner");
+}
+
+function isOrgAdmin(user: Parameters<typeof isOrgAdminRole>[0]): boolean {
+  return isOrgAdminRole(user);
 }
 
 function ownerScopeFilter(ownerUserId: string | null) {
@@ -140,10 +147,10 @@ async function resolveOwnerUserIdForWrite(
   req: AuthRequest,
   requested: string | null | undefined,
 ): Promise<{ ownerUserId: string | null; error?: string }> {
-  if (req.user?.role === "owner") {
-    return { ownerUserId: req.user.id };
+  if (await requesterLockedToOwnAccount(req)) {
+    return { ownerUserId: req.user!.id };
   }
-  if (!isOrgAdmin(req.user?.role)) {
+  if (!isOrgAdmin(req.user)) {
     return { ownerUserId: null, error: "Forbidden" };
   }
   if (requested === undefined) {
@@ -152,9 +159,12 @@ async function resolveOwnerUserIdForWrite(
   if (requested === null || requested === "") {
     return { ownerUserId: null };
   }
-  const owner = await User.findById(requested).select("role").lean();
-  if (!owner || owner.role !== "owner") {
-    return { ownerUserId: null, error: "ownerUserId must reference an owner user" };
+  const owner = await User.findById(requested).select("jobRoles userType").lean();
+  if (!owner || !(await userHasCapability(owner, "territoryOwner"))) {
+    return {
+      ownerUserId: null,
+      error: "ownerUserId must reference a staff user with a territory-owner job role",
+    };
   }
   return { ownerUserId: requested };
 }
@@ -163,11 +173,11 @@ async function assertCanAccessAccount(
   req: AuthRequest,
   account: IPaymentProviderAccount,
 ): Promise<boolean> {
-  if (isOrgAdmin(req.user?.role)) return true;
-  if (req.user?.role === "owner") {
+  if (isOrgAdmin(req.user)) return true;
+  if (await requesterLockedToOwnAccount(req)) {
     return (
       Boolean(account.ownerUserRef) &&
-      String(account.ownerUserRef) === req.user.id
+      String(account.ownerUserRef) === req.user!.id
     );
   }
   return false;
@@ -188,8 +198,8 @@ export async function getPaymentProviderAccounts(
   res: Response,
 ): Promise<void> {
   const filter: Record<string, unknown> = {};
-  if (req.user?.role === "owner") {
-    filter.ownerUserRef = new Types.ObjectId(req.user.id);
+  if (await requesterLockedToOwnAccount(req)) {
+    filter.ownerUserRef = new Types.ObjectId(req.user!.id);
   }
 
   const accounts = await PaymentProviderAccount.find(filter)
@@ -246,12 +256,11 @@ export async function createPaymentProviderAccount(
     return;
   }
   // Owners always assign to themselves; admins may omit for global.
-  const ownerUserId =
-    req.user?.role === "owner"
-      ? req.user.id
-      : data.ownerUserId === undefined
-        ? null
-        : ownerResolved.ownerUserId;
+  const ownerUserId = (await requesterLockedToOwnAccount(req))
+    ? req.user!.id
+    : data.ownerUserId === undefined
+      ? null
+      : ownerResolved.ownerUserId;
 
   const conflict = await PaymentProviderAccount.findOne({
     provider: data.provider,
@@ -377,9 +386,8 @@ export async function updatePaymentProviderAccount(
   if (data.isActive !== undefined) account.isActive = data.isActive;
 
   if (data.ownerUserId !== undefined) {
-    if (req.user?.role === "owner") {
-      // Owners cannot reassign away from themselves
-      account.ownerUserRef = new Types.ObjectId(req.user.id);
+    if (await requesterLockedToOwnAccount(req)) {
+      account.ownerUserRef = new Types.ObjectId(req.user!.id);
     } else {
       const ownerResolved = await resolveOwnerUserIdForWrite(
         req,
@@ -541,9 +549,9 @@ export async function startSquareOAuth(
   }
 
   let ownerUserId: string | null = null;
-  if (req.user?.role === "owner") {
-    ownerUserId = req.user.id;
-  } else if (isOrgAdmin(req.user?.role)) {
+  if (await requesterLockedToOwnAccount(req)) {
+    ownerUserId = req.user!.id;
+  } else if (isOrgAdmin(req.user)) {
     const resolved = await resolveOwnerUserIdForWrite(
       req,
       parsed.data.ownerUserId === undefined ? null : parsed.data.ownerUserId,
@@ -590,7 +598,7 @@ export async function saveSquareOAuthApp(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
-  if (req.user?.role !== "super-admin") {
+  if (!isSuperAdminRole(req.user)) {
     res.status(403).json({
       message: "Only a super-admin can configure Square OAuth app credentials",
     });

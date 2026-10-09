@@ -24,9 +24,7 @@ export const Role = mongoose.model<IRole>("Role", roleSchema);
 const SYSTEM_ROLES: { slug: string; label: string }[] = [
   { slug: "super-admin", label: "Super Admin" },
   { slug: "admin",       label: "Administrator" },
-  { slug: "owner",       label: "Owner" },
   { slug: "manager",     label: "Manager" },
-  { slug: "tech",        label: "Technician" },
   { slug: "agent",       label: "Agent" },
   { slug: "customer",    label: "Customer" },
 ];

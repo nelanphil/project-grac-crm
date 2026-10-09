@@ -4,6 +4,7 @@ import SignupForm from "@/components/auth/SignupForm";
 export default function SignupPage() {
   return (
     <AuthCard
+      variant="page"
       title="Create Your Account"
       subtitle="Get started with GMOF today"
       footerText="Already have an account?"

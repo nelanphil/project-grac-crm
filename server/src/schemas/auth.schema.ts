@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { normalizePhoneDigits } from "../utils/customerSites";
 
+export const coordinatesSchema = z.object({
+  lat: z.number().finite().min(-90).max(90),
+  lng: z.number().finite().min(-180).max(180),
+});
+
 export const loginSchema = z
   .object({
     // Accept `identifier` (current client) or `email` (legacy client) so that
@@ -8,10 +13,13 @@ export const loginSchema = z
     identifier: z.string().min(1).max(200).optional(),
     email: z.string().min(1).max(200).optional(),
     password: z.string().min(1, "Password is required"),
+    /** Browser coordinates. Required for staff accounts. */
+    location: coordinatesSchema.optional(),
   })
   .transform((data) => ({
     identifier: (data.identifier ?? data.email ?? "").trim(),
     password: data.password,
+    location: data.location,
   }))
   .refine((data) => data.identifier.length > 0, {
     message: "Email or username is required",
@@ -101,15 +109,22 @@ export const updatePasswordSchema = z.object({
     .max(100),
 });
 
-export const updateRoleSchema = z.object({
-  role: z.string().min(1),
-});
+export const updateRoleSchema = z
+  .object({
+    role: z.string().min(1).optional(),
+    roles: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .refine((data) => Boolean(data.role || (data.roles && data.roles.length > 0)), {
+    message: "Role is required",
+    path: ["role"],
+  });
 
 const navOrderHrefList = z.array(z.string().max(200)).max(50);
 
 export const navOrderSchema = z.object({
   order: navOrderHrefList.default([]),
   children: z.record(z.string().max(200), navOrderHrefList).default({}),
+  hidden: navOrderHrefList.default([]),
 });
 
 export const updateNotificationsSchema = z
@@ -130,6 +145,7 @@ export const updateNotificationsSchema = z
   );
 
 export type LoginInput = z.infer<typeof loginSchema>;
+export type CoordinatesInput = z.infer<typeof coordinatesSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LegalConsentInput = z.infer<typeof legalConsentSchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;

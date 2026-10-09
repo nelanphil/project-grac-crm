@@ -11,13 +11,23 @@ const accountSidSchema = z
 
 const sayVoiceSchema = z.enum(TWILIO_SAY_VOICE_VALUES);
 
+const phoneLineInputSchema = z.object({
+  phoneNumber: z.string().trim().min(1),
+  label: z.string().trim().max(80).optional().default(""),
+});
+
+export const previewTwilioNumbersSchema = z.object({
+  accountSid: accountSidSchema,
+  authToken: z.string().trim().min(1, "Auth token is required"),
+});
+
 export const createTwilioAccountSchema = z.object({
   accountSid: accountSidSchema,
   friendlyName: z.string().trim().min(1, "Account name is required").max(120),
   authToken: z.string().trim().min(1, "Auth token is required"),
   testAccountSid: z.string().trim().optional(),
   testAuthToken: z.string().trim().optional(),
-  phoneNumbers: z.array(z.string().trim().min(1)).optional().default([]),
+  phoneNumbers: z.array(phoneLineInputSchema).optional().default([]),
   isActive: z.boolean().optional().default(true),
   sayVoice: sayVoiceSchema.optional(),
 });
@@ -30,7 +40,7 @@ export const updateTwilioAccountSchema = z.object({
   // string = set new value, null = explicitly clear, undefined = leave unchanged
   testAccountSid: z.string().trim().nullable().optional(),
   testAuthToken: z.string().trim().min(1).nullable().optional(),
-  phoneNumbers: z.array(z.string().trim().min(1)).optional(),
+  phoneNumbers: z.array(phoneLineInputSchema).optional(),
   isActive: z.boolean().optional(),
   sayVoice: sayVoiceSchema.optional(),
 });
@@ -40,4 +50,7 @@ export type CreateTwilioAccountInput = z.infer<
 >;
 export type UpdateTwilioAccountInput = z.infer<
   typeof updateTwilioAccountSchema
+>;
+export type PreviewTwilioNumbersInput = z.infer<
+  typeof previewTwilioNumbersSchema
 >;

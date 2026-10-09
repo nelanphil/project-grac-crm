@@ -10,11 +10,12 @@ import {
   updateEmailAccount,
   deleteEmailAccount,
   testEmailAccount,
+  testEmailAccountImap,
 } from "../controllers/emailAccount.controller";
 
 const router = Router();
 
-const adminRoles = requireRole("admin", "super-admin", "owner");
+const adminRoles = requireRole("admin", "super-admin");
 
 router.use(authenticate);
 router.use(adminRoles);
@@ -25,6 +26,11 @@ router.post(
   "/:id/test",
   requirePermission("integrations:write"),
   testEmailAccount
+);
+router.post(
+  "/:id/imap-test",
+  requirePermission("integrations:write"),
+  testEmailAccountImap
 );
 router.patch(
   "/:id",

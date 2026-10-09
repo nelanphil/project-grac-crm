@@ -40,6 +40,38 @@ export function invoiceEmailSubject(invoice: Pick<InvoiceItem, "number">): strin
   return `Invoice ${invoice.number}`;
 }
 
+function invoiceTotalCents(invoice: InvoiceItem): number {
+  const hasDiscount = Boolean(invoice.discountCents && invoice.discountCents > 0);
+  const subtotalCents = invoice.originalAmountCents ?? invoice.amountCents;
+  return hasDiscount
+    ? Math.max(subtotalCents - (invoice.discountCents ?? 0), 0)
+    : invoice.amountCents;
+}
+
+export function invoiceSmsBody(invoice: InvoiceItem): string {
+  const dueLabel = invoice.dueDate ? formatDate(invoice.dueDate) : "";
+  const dueSentence = dueLabel && dueLabel !== "—" ? ` Due ${dueLabel}.` : "";
+  return `Hi {{first_name}}, invoice ${invoice.number} is ready. Total due: ${formatMoney(invoiceTotalCents(invoice))}.${dueSentence}`;
+}
+
+export function hasValidContactPhone(phone: string | null | undefined): boolean {
+  return (phone ?? "").replace(/\D/g, "").length >= 7;
+}
+
+export function pickInvoicePhoneContact(
+  contacts: CustomerContact[],
+  preferredContactId?: string | null,
+): CustomerContact | null {
+  const valid = contacts.filter((contact) =>
+    hasValidContactPhone(contact.phone),
+  );
+  if (preferredContactId) {
+    const preferred = valid.find((contact) => contact._id === preferredContactId);
+    if (preferred) return preferred;
+  }
+  return valid.find((contact) => contact.isPrimary) ?? valid[0] ?? null;
+}
+
 export function invoiceEmailBodyHtml(invoice: InvoiceItem): string {
   const lineItems =
     invoice.lineItems.length > 0
@@ -55,7 +87,7 @@ export function invoiceEmailBodyHtml(invoice: InvoiceItem): string {
   const taxCents = invoice.taxCents ?? 0;
   const totalBeforeDiscount = invoice.originalAmountCents ?? invoice.amountCents;
   const subtotalCents = Math.max(totalBeforeDiscount - taxCents, 0);
-  const totalCents = Math.max(totalBeforeDiscount - (invoice.discountCents ?? 0), 0);
+  const totalCents = invoiceTotalCents(invoice);
 
   const discountLabel = invoice.discountCode
     ? `Discount ${escapeHtml(invoice.discountCode)}`

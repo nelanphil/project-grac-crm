@@ -14,8 +14,10 @@ import {
 } from "react";
 import {
   Check,
+  Minus,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
   Settings,
 } from "lucide-react";
 import {
@@ -37,12 +39,21 @@ import { CSS } from "@dnd-kit/utilities";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   applyNavOrder,
+  canSeeNavHref,
   getVisibleNavSections,
+  SETTINGS_NAV_HREF,
+  hiddenNavItems,
+  hideNavItem,
   isNavItemActive,
   isNavSubtreeActive,
   MAX_NAV_DEPTH,
   moveNavItem,
+  navNudgeAvailability,
+  nudgeNavItem,
+  showNavItem,
   type NavItem,
+  type NavNudge,
+  type NavOrder,
 } from "@/lib/dashboard-nav";
 import { COMPANY } from "@/lib/constants";
 import { updateNavOrder } from "@/lib/api";
@@ -50,6 +61,7 @@ import {
   NestPlaceholder,
   RootDropZone,
 } from "@/components/dashboard/NavDropTargets";
+import NavReorderControls from "@/components/dashboard/NavReorderControls";
 
 /** Press and hold ~500ms (dnd-kit's own activation delay) starts both the wiggle and the drag. */
 const LONG_PRESS_ACTIVATION = { delay: 500, tolerance: 8 };
@@ -140,6 +152,31 @@ function NavLink({
         <span className="truncate text-sm font-medium">{label}</span>
       ) : null}
     </Link>
+  );
+}
+
+function RemoveNavButton({
+  label,
+  onRemove,
+}: {
+  label: string;
+  onRemove: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`Remove ${label} from menu`}
+      data-nav-allow-click
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onRemove();
+      }}
+      className="shrink-0 rounded-md p-1.5 text-white/40 transition-colors hover:bg-white/10 hover:text-white"
+    >
+      <Minus className="h-4 w-4" />
+    </button>
   );
 }
 
@@ -266,20 +303,26 @@ function FlyoutChildLinks({
 function StaffNavItem({
   item,
   pathname,
+  navItems,
   sidebarExpanded,
   editMode,
   openFlyoutHref,
   onShowHover,
   onHideHover,
+  onRemove,
+  onNudge,
   depth = 0,
 }: {
   item: NavItem;
   pathname: string;
+  navItems: NavItem[];
   sidebarExpanded: boolean;
   editMode: boolean;
   openFlyoutHref?: string;
   onShowHover: (el: HTMLElement, target: HoverTarget) => void;
   onHideHover: () => void;
+  onRemove?: (href: string) => void;
+  onNudge?: (href: string, direction: NavNudge) => void;
   depth?: number;
 }) {
   const flyoutOpen = openFlyoutHref === item.href;
@@ -292,6 +335,9 @@ function StaffNavItem({
     editMode &&
     sidebarExpanded &&
     (hasChildren || canNestInside);
+  const showRemove = editMode && sidebarExpanded && Boolean(onRemove);
+  const showReorder = editMode && sidebarExpanded && Boolean(onNudge);
+  const reorderClass = depth >= 2 ? "ml-8 pl-8" : depth > 0 ? "ml-4 pl-8" : "pl-11";
 
   const {
     attributes,
@@ -302,9 +348,23 @@ function StaffNavItem({
     isDragging,
   } = useSortable({ id: item.href });
 
+  const reorderControls = showReorder ? (
+    <NavReorderControls
+      label={item.label}
+      availability={navNudgeAvailability(navItems, item.href)}
+      onNudge={(direction) => onNudge?.(item.href, direction)}
+      tone="dark"
+      className={reorderClass}
+    />
+  ) : null;
+
   if (depth > 0) {
     return (
-      <div className={showChildList ? "flex w-full flex-col gap-0.5" : undefined}>
+      <div
+        className={
+          showChildList || showReorder ? "flex w-full flex-col gap-0.5" : undefined
+        }
+      >
         <div
           ref={setNodeRef}
           style={{
@@ -314,24 +374,54 @@ function StaffNavItem({
           }}
           {...attributes}
           {...listeners}
-          className={`nav-draggable ${editMode ? "nav-wiggle" : ""}`}
+          className="nav-draggable"
         >
-          <ChildNavLink
-            href={item.href}
-            label={item.label}
-            Icon={Icon}
-            active={parentActive || descendantActive}
-            editMode={editMode}
-            depth={depth}
-            hasPopup={hasChildren}
-            popupOpen={flyoutOpen}
-            onShowHover={
-              hasChildren
-                ? (el) => onShowHover(el, { kind: "flyout", item })
-                : undefined
-            }
-            onHideHover={hasChildren ? onHideHover : undefined}
-          />
+          <div className={editMode ? "nav-wiggle" : undefined}>
+            {showRemove ? (
+              <div className="flex items-center">
+                <div className="min-w-0 flex-1">
+                  <ChildNavLink
+                    href={item.href}
+                    label={item.label}
+                    Icon={Icon}
+                    active={parentActive || descendantActive}
+                    editMode={editMode}
+                    depth={depth}
+                    hasPopup={hasChildren}
+                    popupOpen={flyoutOpen}
+                    onShowHover={
+                      hasChildren
+                        ? (el) => onShowHover(el, { kind: "flyout", item })
+                        : undefined
+                    }
+                    onHideHover={hasChildren ? onHideHover : undefined}
+                  />
+                </div>
+                <RemoveNavButton
+                  label={item.label}
+                  onRemove={() => onRemove?.(item.href)}
+                />
+              </div>
+            ) : (
+              <ChildNavLink
+                href={item.href}
+                label={item.label}
+                Icon={Icon}
+                active={parentActive || descendantActive}
+                editMode={editMode}
+                depth={depth}
+                hasPopup={hasChildren}
+                popupOpen={flyoutOpen}
+                onShowHover={
+                  hasChildren
+                    ? (el) => onShowHover(el, { kind: "flyout", item })
+                    : undefined
+                }
+                onHideHover={hasChildren ? onHideHover : undefined}
+              />
+            )}
+          </div>
+          {reorderControls}
         </div>
         {showChildList ? (
           <div className="flex flex-col gap-0.5">
@@ -344,11 +434,14 @@ function StaffNavItem({
                   key={child.href}
                   item={child}
                   pathname={pathname}
+                  navItems={navItems}
                   sidebarExpanded={sidebarExpanded}
                   editMode={editMode}
                   openFlyoutHref={openFlyoutHref}
                   onShowHover={onShowHover}
                   onHideHover={onHideHover}
+                  onRemove={onRemove}
+                  onNudge={onNudge}
                   depth={depth + 1}
                 />
               ))}
@@ -367,7 +460,11 @@ function StaffNavItem({
   }
 
   return (
-    <div className={showChildList ? "flex w-full flex-col gap-0.5" : undefined}>
+    <div
+      className={
+        showChildList || showReorder ? "flex w-full flex-col gap-0.5" : undefined
+      }
+    >
       <div
         ref={setNodeRef}
         style={{
@@ -380,27 +477,59 @@ function StaffNavItem({
         className="nav-draggable"
       >
         <div className={editMode ? "nav-wiggle" : undefined}>
-          <NavLink
-            href={item.href}
-            label={item.label}
-            active={parentActive || descendantActive}
-            expanded={sidebarExpanded}
-            editMode={editMode}
-            hasPopup={hasChildren}
-            popupOpen={flyoutOpen}
-            onShowHover={(el) =>
-              onShowHover(
-                el,
-                hasChildren
-                  ? { kind: "flyout", item }
-                  : { kind: "tooltip", label: item.label },
-              )
-            }
-            onHideHover={onHideHover}
-          >
-            <Icon className="h-5 w-5" />
-          </NavLink>
+          {showRemove ? (
+            <div className="flex items-center">
+              <div className="min-w-0 flex-1">
+                <NavLink
+                  href={item.href}
+                  label={item.label}
+                  active={parentActive || descendantActive}
+                  expanded={sidebarExpanded}
+                  editMode={editMode}
+                  hasPopup={hasChildren}
+                  popupOpen={flyoutOpen}
+                  onShowHover={(el) =>
+                    onShowHover(
+                      el,
+                      hasChildren
+                        ? { kind: "flyout", item }
+                        : { kind: "tooltip", label: item.label },
+                    )
+                  }
+                  onHideHover={onHideHover}
+                >
+                  <Icon className="h-5 w-5" />
+                </NavLink>
+              </div>
+              <RemoveNavButton
+                label={item.label}
+                onRemove={() => onRemove?.(item.href)}
+              />
+            </div>
+          ) : (
+            <NavLink
+              href={item.href}
+              label={item.label}
+              active={parentActive || descendantActive}
+              expanded={sidebarExpanded}
+              editMode={editMode}
+              hasPopup={hasChildren}
+              popupOpen={flyoutOpen}
+              onShowHover={(el) =>
+                onShowHover(
+                  el,
+                  hasChildren
+                    ? { kind: "flyout", item }
+                    : { kind: "tooltip", label: item.label },
+                )
+              }
+              onHideHover={onHideHover}
+            >
+              <Icon className="h-5 w-5" />
+            </NavLink>
+          )}
         </div>
+        {reorderControls}
       </div>
       {showChildList ? (
         <div className="flex flex-col gap-0.5">
@@ -413,11 +542,14 @@ function StaffNavItem({
                 key={child.href}
                 item={child}
                 pathname={pathname}
+                navItems={navItems}
                 sidebarExpanded={sidebarExpanded}
                 editMode={editMode}
                 openFlyoutHref={openFlyoutHref}
                 onShowHover={onShowHover}
                 onHideHover={onHideHover}
+                onRemove={onRemove}
+                onNudge={onNudge}
                 depth={1}
               />
             ))}
@@ -437,13 +569,17 @@ function StaffNavItem({
 
 export default function StaffIconSidebar() {
   const pathname = usePathname();
-  const role = useAuthStore((s) => s.user?.role);
+  const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
   const navOrder = useAuthStore((s) => s.user?.uiPreferences?.navOrder);
   const setNavOrder = useAuthStore((s) => s.setNavOrder);
-  const baseSections = useMemo(() => getVisibleNavSections(role), [role]);
+  const baseSections = useMemo(() => getVisibleNavSections(user), [user]);
   const items = useMemo(
     () => applyNavOrder(baseSections, navOrder),
+    [baseSections, navOrder],
+  );
+  const hiddenItems = useMemo(
+    () => hiddenNavItems(baseSections, navOrder),
     [baseSections, navOrder],
   );
   const settingsActive = pathname.startsWith("/dashboard/settings");
@@ -571,7 +707,7 @@ export default function StaffIconSidebar() {
   }, [editMode]);
 
   const persistNavOrder = useCallback(
-    (next: { order: string[]; children: Record<string, string[]> }) => {
+    (next: NavOrder) => {
       setNavOrder(next);
       if (token) {
         updateNavOrder(token, next).catch((err) => {
@@ -582,14 +718,48 @@ export default function StaffIconSidebar() {
     [setNavOrder, token],
   );
 
+  const handleHideItem = useCallback(
+    (href: string) => {
+      const next = hideNavItem(items, href, navOrder?.hidden ?? []);
+      if (next) persistNavOrder(next);
+    },
+    [items, navOrder?.hidden, persistNavOrder],
+  );
+
+  const handleShowItem = useCallback(
+    (href: string) => {
+      const next = showNavItem(items, href, navOrder?.hidden ?? []);
+      if (next) persistNavOrder(next);
+    },
+    [items, navOrder?.hidden, persistNavOrder],
+  );
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const next = moveNavItem(items, String(active.id), String(over.id));
+      const next = moveNavItem(
+        items,
+        String(active.id),
+        String(over.id),
+        navOrder?.hidden ?? [],
+      );
       if (next) persistNavOrder(next);
     },
-    [items, persistNavOrder],
+    [items, navOrder?.hidden, persistNavOrder],
+  );
+
+  const handleNudge = useCallback(
+    (href: string, direction: NavNudge) => {
+      const next = nudgeNavItem(
+        items,
+        href,
+        direction,
+        navOrder?.hidden ?? [],
+      );
+      if (next) persistNavOrder(next);
+    },
+    [items, navOrder?.hidden, persistNavOrder],
   );
 
   useEffect(() => {
@@ -697,11 +867,14 @@ export default function StaffIconSidebar() {
                 key={item.href}
                 item={item}
                 pathname={pathname}
+                navItems={items}
                 sidebarExpanded={expanded}
                 editMode={editMode}
                 openFlyoutHref={flyout?.item.href}
                 onShowHover={showHover}
                 onHideHover={scheduleHideHover}
+                onRemove={handleHideItem}
+                onNudge={handleNudge}
               />
             ))}
           </SortableContext>
@@ -710,6 +883,29 @@ export default function StaffIconSidebar() {
             className="mt-1 rounded-lg border border-dashed border-white/25 px-3 py-2 text-center text-[11px] font-medium text-white/40"
           />
         </DndContext>
+        {editMode && hiddenItems.length ? (
+          <div className="mt-2 flex w-full flex-col gap-0.5 border-t border-white/15 pt-2">
+            <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-white/40">
+              Hidden
+            </p>
+            {hiddenItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.href}
+                  type="button"
+                  data-nav-allow-click
+                  onClick={() => handleShowItem(item.href)}
+                  className="flex h-9 items-center gap-2 rounded-lg px-3 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <Plus className="h-4 w-4 shrink-0 text-white/40" />
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate font-medium">{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </nav>
 
       <div
@@ -736,18 +932,20 @@ export default function StaffIconSidebar() {
           ) : null}
         </button>
 
-        <NavLink
-          href="/dashboard/settings"
-          label="Settings"
-          active={settingsActive}
-          expanded={expanded}
-          onShowHover={(el) =>
-            showHover(el, { kind: "tooltip", label: "Settings" })
-          }
-          onHideHover={scheduleHideHover}
-        >
-          <Settings className="h-5 w-5" />
-        </NavLink>
+        {canSeeNavHref(user, SETTINGS_NAV_HREF) ? (
+          <NavLink
+            href={SETTINGS_NAV_HREF}
+            label="Settings"
+            active={settingsActive}
+            expanded={expanded}
+            onShowHover={(el) =>
+              showHover(el, { kind: "tooltip", label: "Settings" })
+            }
+            onHideHover={scheduleHideHover}
+          >
+            <Settings className="h-5 w-5" />
+          </NavLink>
+        ) : null}
       </div>
 
       {!expanded && tooltip ? (

@@ -1,4 +1,5 @@
 import type { NotificationEntityType, NotificationItem } from "@/lib/api";
+import { isCustomerRole } from "@/lib/dashboard-role";
 
 const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   customer: "Customer",
@@ -9,6 +10,7 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   contract: "Contract",
   customer_note: "Note",
   work_order_note: "Work order note",
+  estimate_note: "Estimate note",
   user: "User",
   role: "Role",
   twilio_account: "Twilio",
@@ -22,6 +24,7 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   product: "Product",
   estimate: "Estimate",
   discount_code: "Discount code",
+  mailbox_message: "Email",
 };
 
 export function notificationEntityLabel(type: NotificationEntityType): string {
@@ -30,13 +33,22 @@ export function notificationEntityLabel(type: NotificationEntityType): string {
 
 export function notificationHref(
   item: NotificationItem,
-  role?: string,
+  role?: string | { role?: string; roles?: string[] },
 ): string | null {
-  if (role === "customer") {
+  if (isCustomerRole(role)) {
     if (item.entityType === "invoice") {
       return `/dashboard/orders/detail?id=${item.entityId}`;
     }
     return "/dashboard";
+  }
+
+  if (item.entityType === "work_order_note") {
+    const id = String(item.metadata.workOrderId ?? "");
+    if (id) return `/dashboard/work-orders/detail?id=${id}`;
+  }
+  if (item.entityType === "estimate_note") {
+    const id = String(item.metadata.estimateId ?? "");
+    if (id) return `/dashboard/estimates/detail?id=${id}`;
   }
 
   if (item.customerRef) {
@@ -72,6 +84,22 @@ export function notificationHref(
       return "/dashboard/estimates";
     case "lead":
       return "/dashboard";
+    case "mailbox_message": {
+      const accountId = String(item.metadata.accountId ?? "");
+      const folder = item.metadata.folder === "sent" ? "sent" : "inbox";
+      const uid = Number(item.metadata.uid);
+      if (!accountId || !Number.isInteger(uid) || uid < 1) {
+        return "/dashboard/messaging?tab=threads&view=email";
+      }
+      const params = new URLSearchParams({
+        tab: "threads",
+        view: "email",
+        accountId,
+        folder,
+        uid: String(uid),
+      });
+      return `/dashboard/messaging?${params.toString()}`;
+    }
     default:
       return null;
   }

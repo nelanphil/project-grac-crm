@@ -16,7 +16,14 @@ export interface IEmailAccount extends Document {
   passwordEncrypted: string;
   fromName: string;
   fromEmail: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: boolean;
   isActive: boolean;
+  /** When true, new inbox mail gets a short receipt reply. */
+  autoAcknowledge: boolean;
+  /** Receipts are only sent for mail that arrives after this time. */
+  autoAcknowledgeEnabledAt: Date | null;
   roles: EmailAccountRole[];
   createdAt: Date;
   updatedAt: Date;
@@ -64,10 +71,31 @@ const emailAccountSchema = new Schema<IEmailAccount>(
       trim: true,
       lowercase: true,
     },
+    imapHost: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    imapPort: {
+      type: Number,
+      default: 993,
+    },
+    imapSecure: {
+      type: Boolean,
+      default: true,
+    },
     isActive: {
       type: Boolean,
       default: true,
       index: true,
+    },
+    autoAcknowledge: {
+      type: Boolean,
+      default: false,
+    },
+    autoAcknowledgeEnabledAt: {
+      type: Date,
+      default: null,
     },
     roles: {
       type: [String],

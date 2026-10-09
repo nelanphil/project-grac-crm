@@ -4,6 +4,8 @@ import { authenticate, requireRole, AuthRequest } from "../middleware/auth.middl
 import { RolePermission } from "../models/mongo/RolePermission";
 import { Role } from "../models/mongo/Role";
 import { User } from "../models/mongo/User";
+import { findRoleLabelConflict } from "../utils/migrateUserRoles";
+import { syncRoleFields } from "../utils/roles";
 import {
   actorFromRequest,
   logNotificationAsync,
@@ -65,6 +67,12 @@ router.post(
     const slug = label.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
 
     try {
+      const labelConflict = await findRoleLabelConflict(label);
+      if (labelConflict && labelConflict.slug !== slug) {
+        res.status(409).json({ message: "A role with that name already exists" });
+        return;
+      }
+
       const existing = await Role.findOne({ slug });
       if (existing) {
         if (existing.deletedAt) {
@@ -129,6 +137,20 @@ router.patch(
         return;
       }
 
+      if (role.isSystem && newSlug !== oldSlug) {
+        res.status(403).json({ message: "System role slugs cannot be changed" });
+        return;
+      }
+
+      const labelConflict = await findRoleLabelConflict(
+        label,
+        Array.isArray(oldSlug) ? oldSlug[0] : oldSlug,
+      );
+      if (labelConflict) {
+        res.status(409).json({ message: "A role with that name already exists" });
+        return;
+      }
+
       // Check new slug isn't already taken by a different role
       if (newSlug !== oldSlug) {
         const conflict = await Role.findOne({ slug: newSlug, deletedAt: null });
@@ -141,9 +163,20 @@ router.patch(
       // Cascade: update all users and role permissions referencing the old slug
       if (newSlug !== oldSlug) {
         await Promise.all([
-          User.updateMany({ role: oldSlug }, { role: newSlug }),
+          User.updateMany({ roles: oldSlug }, { $addToSet: { roles: newSlug } }),
           RolePermission.updateMany({ role: oldSlug }, { role: newSlug }),
         ]);
+        await User.updateMany({ roles: oldSlug }, { $pull: { roles: oldSlug } });
+        await User.updateMany({ role: oldSlug }, { $set: { role: newSlug } });
+        const affected = await User.find({ roles: newSlug }).select("roles");
+        for (const user of affected) {
+          const synced = syncRoleFields(user);
+          if (user.role !== synced.role) {
+            user.role = synced.role;
+            user.roles = synced.roles;
+            await user.save();
+          }
+        }
       }
 
       role.slug = newSlug;
@@ -180,6 +213,15 @@ router.patch(
     }
 
     try {
+      const labelConflict = await findRoleLabelConflict(
+        parsed.data.label,
+        Array.isArray(req.params.slug) ? req.params.slug[0] : req.params.slug,
+      );
+      if (labelConflict) {
+        res.status(409).json({ message: "A role with that name already exists" });
+        return;
+      }
+
       const role = await Role.findOneAndUpdate(
         { slug: req.params.slug, deletedAt: null },
         { label: parsed.data.label },
@@ -223,6 +265,25 @@ router.delete(
         res.status(403).json({ message: "System roles cannot be deleted" });
         return;
       }
+
+      const assignedUsers = await User.find({
+        $or: [{ roles: role.slug }, { role: role.slug }],
+      });
+      for (const user of assignedUsers) {
+        const nextRoles = (user.roles ?? []).filter((slug) => slug !== role.slug);
+        if (nextRoles.length === 0 && user.role === role.slug) {
+          nextRoles.push("agent");
+        }
+        const synced = syncRoleFields({
+          roles: nextRoles.length ? nextRoles : [user.role],
+          role: user.role,
+        });
+        user.roles = synced.roles;
+        user.role = synced.role;
+        await user.save();
+      }
+
+      await RolePermission.deleteMany({ role: role.slug });
       role.deletedAt = new Date();
       await role.save();
 

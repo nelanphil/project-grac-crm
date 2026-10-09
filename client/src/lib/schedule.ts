@@ -1,4 +1,5 @@
 import type {
+  ServiceCity,
   UserHomeLocation,
   UserWeeklyHours,
   WeekdayKey,
@@ -29,7 +30,7 @@ export const WEEKDAY_LABELS: Record<WeekdayKey, string> = {
 
 export const BOARD_HOUR_START = 7;
 export const BOARD_HOUR_END = 19;
-export const DEFAULT_ESTIMATED_MINUTES = 60;
+export const DEFAULT_ESTIMATED_MINUTES = 30;
 
 export function emptyHomeLocation(): UserHomeLocation {
   return {
@@ -109,6 +110,59 @@ export function formatLocalDate(date: Date): string {
 export function formatLocalTime(date: Date): string {
   const { hour, minute } = nyDateParts(date);
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+export function formatLocalClock(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: SCHEDULE_TIMEZONE,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+const TIME_OF_DAY = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function normalizeTimeOfDay(value: string | null | undefined): string {
+  const trimmed = (value ?? "").trim();
+  return TIME_OF_DAY.test(trimmed) ? trimmed : "";
+}
+
+function formatHmClock(value: string): string {
+  const [hour, minute] = value.split(":").map(Number);
+  const date = new Date(Date.UTC(2020, 0, 1, hour, minute));
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+export function timeWindowError(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): string | null {
+  const startTime = normalizeTimeOfDay(start);
+  const endTime = normalizeTimeOfDay(end);
+  if (startTime && endTime && endTime <= startTime) {
+    return "End time must be after start time";
+  }
+  return null;
+}
+
+export function formatTimeWindow(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): string | null {
+  const startLabel = normalizeTimeOfDay(start);
+  const endLabel = normalizeTimeOfDay(end);
+  if (startLabel && endLabel) {
+    return `${formatHmClock(startLabel)} – ${formatHmClock(endLabel)}`;
+  }
+  if (startLabel) return `From ${formatHmClock(startLabel)}`;
+  if (endLabel) return `Until ${formatHmClock(endLabel)}`;
+  return null;
 }
 
 export function addDays(localDate: string, days: number): string {
@@ -209,6 +263,54 @@ export function formatMonthDayYear(localDate: string): string {
   });
 }
 
+/** Long date, e.g. "August 27, 2026". */
+export function formatLongDate(localDate: string): string {
+  const iso = localDateTimeToIso(localDate, "12:00");
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: SCHEDULE_TIMEZONE,
+  });
+}
+
+/** Full weekday plus short date, e.g. "Tuesday, Sep 29". */
+export function formatWeekdayDate(localDate: string): string {
+  const iso = localDateTimeToIso(localDate, "12:00");
+  return new Date(iso).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    timeZone: SCHEDULE_TIMEZONE,
+  });
+}
+
+/** "September 2026" from YYYY-MM. */
+export function formatMonthYear(yyyyMm: string): string {
+  const iso = localDateTimeToIso(`${yyyyMm}-01`, "12:00");
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: SCHEDULE_TIMEZONE,
+  });
+}
+
+/** Move a YYYY-MM value by whole months. */
+export function shiftMonth(yyyyMm: string, delta: number): string {
+  if (delta === 0) return yyyyMm;
+  let cursor = `${yyyyMm}-01`;
+  if (delta > 0) {
+    for (let i = 0; i < delta; i += 1) {
+      cursor = addDays(cursor, daysInMonth(cursor));
+    }
+    return cursor.slice(0, 7);
+  }
+  for (let i = 0; i < -delta; i += 1) {
+    cursor = startOfMonth(addDays(cursor, -1));
+  }
+  return cursor.slice(0, 7);
+}
+
 export function formatPrettyDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
@@ -230,11 +332,7 @@ export function isEmailScheduleTimeValid(iso: string): boolean {
   return !Number.isNaN(t) && t >= Date.now() + MIN_EMAIL_SCHEDULE_LEAD_MS;
 }
 
-export const DISPATCHER_ROLES = ["super-admin", "admin", "owner"];
-
-export function isDispatcherRole(role: string | null | undefined): boolean {
-  return Boolean(role && DISPATCHER_ROLES.includes(role));
-}
+export { DISPATCHER_ROLES, isDispatcherRole } from "@/lib/dashboard-role";
 
 export function weeklyHoursNeverEnabled(hours: UserWeeklyHours): boolean {
   return WEEKDAY_KEYS.every((key) => !hours[key].enabled);
@@ -253,6 +351,21 @@ export function weeklyHoursSummary(hours: UserWeeklyHours): string {
   return `${enabledKeys.length} days set`;
 }
 
+/** Compact coverage label, e.g. "FL (3), GA (1)". */
+export function serviceTerritorySummary(
+  cities: ServiceCity[] | null | undefined,
+): string {
+  if (!cities?.length) return "—";
+  const counts = new Map<string, number>();
+  for (const city of cities) {
+    const state = city.state.trim().toUpperCase();
+    if (!state) continue;
+    counts.set(state, (counts.get(state) ?? 0) + 1);
+  }
+  if (counts.size === 0) return "—";
+  return [...counts.entries()].map(([state, count]) => `${state} (${count})`).join(", ");
+}
+
 export function workOrderLocalDate(job: {
   scheduledStart?: string | null;
   date?: string | null;
@@ -260,6 +373,33 @@ export function workOrderLocalDate(job: {
   if (job.scheduledStart) return formatLocalDate(new Date(job.scheduledStart));
   if (job.date) return job.date.slice(0, 10);
   return null;
+}
+
+const JOB_ACCENTS = [
+  "#f59e0b",
+  "#22c55e",
+  "#6366f1",
+  "#a855f7",
+  "#f43f5e",
+  "#14b8a6",
+];
+/** Untyped jobs use the same status colors as the schedule map pins. */
+const SCHEDULED_ACCENT = "#2563eb";
+const UNSCHEDULED_ACCENT = "#f36c21";
+
+/** Stable accent color per work order type, shared by every schedule view. */
+export function jobAccent(job: {
+  workOrderType?: { _id?: string; label?: string } | null;
+  scheduledStart?: string | null;
+}): string {
+  const fallback = job.scheduledStart ? SCHEDULED_ACCENT : UNSCHEDULED_ACCENT;
+  const key = job.workOrderType?._id || job.workOrderType?.label || "";
+  if (!key) return fallback;
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) | 0;
+  }
+  return JOB_ACCENTS[Math.abs(hash) % JOB_ACCENTS.length] ?? fallback;
 }
 
 export function workOrderViewHref(job: {

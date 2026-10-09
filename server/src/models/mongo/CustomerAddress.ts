@@ -19,6 +19,10 @@ export interface ICustomerAddress extends Document {
   legacyCustomerId?: number | null;
   lat: number | null;
   lng: number | null;
+  /** street = rooftop match; city = city-center pin used when the street cannot be geocoded. */
+  coordSource: "" | "street" | "city";
+  /** Street text last sent to the geocoder, so a later real street can replace a city pin. */
+  geocodedStreet: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -47,6 +51,12 @@ const customerAddressSchema = new Schema<ICustomerAddress>(
     legacyCustomerId: { type: Number, default: null, index: true },
     lat: { type: Number, default: null },
     lng: { type: Number, default: null },
+    coordSource: {
+      type: String,
+      enum: ["", "street", "city"],
+      default: "",
+    },
+    geocodedStreet: { type: String, default: "" },
   },
   { timestamps: true }
 );

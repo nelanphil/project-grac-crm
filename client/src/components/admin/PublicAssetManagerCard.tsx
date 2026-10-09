@@ -1,15 +1,15 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import { RefreshCw, Upload } from "lucide-react";
+import { Check, Copy, RefreshCw, Upload } from "lucide-react";
 import {
-  API_URL,
   ApiError,
   listPublicAssets,
   PublicAssetItem,
   togglePublicAssetStatus,
   uploadPublicAsset,
 } from "@/lib/api";
+import { publicImageUrl } from "@/lib/publicImageUrl";
 
 function randomSlug() {
   const prefix = Array.from(
@@ -35,6 +35,13 @@ export default function PublicAssetManagerCard({
   const [statusFilter, setStatusFilter] = useState<"active" | "inactive">(
     "active",
   );
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [browserOrigin, setBrowserOrigin] = useState("");
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setBrowserOrigin(window.location.origin);
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -119,7 +126,23 @@ export default function PublicAssetManagerCard({
     [assets, statusFilter],
   );
 
-  const publicBaseUrl = `${API_URL.replace(/\/$/, "")}/public-assets`;
+  const imageOrigin =
+    (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/+$/, "") ||
+    browserOrigin;
+  const previewUrl = publicImageUrl(slug.trim() || "your-slug", imageOrigin);
+
+  async function handleCopy(asset: PublicAssetItem) {
+    const url = publicImageUrl(asset.slug, imageOrigin);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedId(asset._id);
+      window.setTimeout(() => {
+        setCopiedId((current) => (current === asset._id ? null : current));
+      }, 2000);
+    } catch {
+      setError("Unable to copy the public image URL.");
+    }
+  }
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
@@ -129,8 +152,9 @@ export default function PublicAssetManagerCard({
             Public image links
           </h2>
           <p className="text-sm text-neutral-500 mt-0.5">
-            Upload an image and generate a random public slug. Deactivate or
-            restore it any time.
+            Upload an image and generate a public slug. Shared links use this
+            website at /images/your-slug, not the API host. Deactivate or
+            restore a link any time.
           </p>
         </div>
       </div>
@@ -171,6 +195,9 @@ export default function PublicAssetManagerCard({
               className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
               placeholder="random-slug"
             />
+            <span className="mt-1 block break-all text-xs text-neutral-500">
+              {previewUrl}
+            </span>
           </label>
 
           <label className="block md:col-span-2">
@@ -244,42 +271,60 @@ export default function PublicAssetManagerCard({
                   : "No inactive public image links."}
               </div>
             ) : (
-              filteredAssets.map((asset) => (
-                <div
-                  key={asset._id}
-                  className="rounded-lg border border-neutral-200 p-4"
-                >
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-brand-dark">
-                        {asset.title}
-                      </p>
-                      <a
-                        href={`${publicBaseUrl}/${asset.slug}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-1 break-all text-xs text-neutral-500 hover:text-brand-dark hover:underline"
-                      >
-                        {publicBaseUrl}/{asset.slug}
-                      </a>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`rounded-full px-2 py-1 text-xs font-medium ${asset.isActive ? "bg-emerald-100 text-emerald-700" : "bg-neutral-200 text-neutral-700"}`}
-                      >
-                        {asset.isActive ? "Active" : "Inactive"}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleToggle(asset._id, !asset.isActive)}
-                        className="rounded-md border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                      >
-                        {asset.isActive ? "Deactivate" : "Restore"}
-                      </button>
+              filteredAssets.map((asset) => {
+                const url = publicImageUrl(asset.slug, imageOrigin);
+                const copied = copiedId === asset._id;
+                return (
+                  <div
+                    key={asset._id}
+                    className="rounded-lg border border-neutral-200 p-4"
+                  >
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-brand-dark">
+                          {asset.title}
+                        </p>
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1 break-all text-xs text-neutral-500 hover:text-brand-dark hover:underline"
+                        >
+                          {url}
+                        </a>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleCopy(asset)}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                        >
+                          {copied ? (
+                            <Check className="h-3.5 w-3.5" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                          {copied ? "Copied" : "Copy"}
+                        </button>
+                        <span
+                          className={`rounded-full px-2 py-1 text-xs font-medium ${asset.isActive ? "bg-emerald-100 text-emerald-700" : "bg-neutral-200 text-neutral-700"}`}
+                        >
+                          {asset.isActive ? "Active" : "Inactive"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleToggle(asset._id, !asset.isActive)
+                          }
+                          className="rounded-md border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                        >
+                          {asset.isActive ? "Deactivate" : "Restore"}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}

@@ -10,11 +10,16 @@ import {
   searchMessagingContacts,
   previewMessage,
   sendMessages,
+  scheduleMessages,
+  listScheduledMessages,
+  rescheduleMessages,
+  cancelScheduledMessages,
   placeCall,
   listCommunications,
   listThreads,
   getThreadDetail,
   checkThreadConflict,
+  markThreadRead,
   closeThreadEndpoint,
   getWebhookInfo,
   streamCommunicationRecording,
@@ -22,7 +27,7 @@ import {
 
 const router = Router();
 
-const adminRoles = requireRole("admin", "super-admin", "owner");
+const adminRoles = requireRole("admin", "super-admin");
 
 router.get(
   "/communications/:id/recording",
@@ -51,6 +56,11 @@ router.get(
   requirePermission("messages:read"),
   getThreadDetail,
 );
+router.post(
+  "/threads/:threadId/read",
+  requirePermission("messages:read"),
+  markThreadRead,
+);
 router.patch(
   "/threads/:threadId",
   requirePermission("messages:write"),
@@ -59,6 +69,22 @@ router.patch(
 router.get("/webhook-info", requirePermission("messages:read"), getWebhookInfo);
 router.post("/preview", requirePermission("messages:read"), previewMessage);
 router.post("/send", requirePermission("messages:write"), sendMessages);
+router.post("/schedule", requirePermission("messages:write"), scheduleMessages);
+router.get(
+  "/scheduled",
+  requirePermission("messages:read"),
+  listScheduledMessages,
+);
+router.patch(
+  "/scheduled/:id",
+  requirePermission("messages:write"),
+  rescheduleMessages,
+);
+router.post(
+  "/scheduled/:id/cancel",
+  requirePermission("messages:write"),
+  cancelScheduledMessages,
+);
 router.post("/calls", requirePermission("messages:write"), placeCall);
 
 export default router;

@@ -1,19 +1,36 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { CalendarDays } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuthStore } from "@/store/useAuthStore";
 import { isDispatcherRole } from "@/lib/schedule";
 import CalendarTab from "@/components/schedule/CalendarTab";
 import TechniciansTab from "@/components/schedule/TechniciansTab";
+import Segmented from "@/components/schedule/Segmented";
 
 type TabId = "calendar" | "technicians";
 
 function SchedulePageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const user = useAuthStore((s) => s.user);
-  const dispatcher = isDispatcherRole(user?.role);
+  const dispatcher = isDispatcherRole(user);
+  const tab: TabId =
+    dispatcher && searchParams.get("tab") === "technicians"
+      ? "technicians"
+      : "calendar";
 
-  const [tab, setTab] = useState<TabId>("calendar");
+  function selectTab(next: TabId) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "technicians") params.set("tab", "technicians");
+    else params.delete("tab");
+    const qs = params.toString();
+    router.replace(qs ? `/dashboard/schedule?${qs}` : "/dashboard/schedule", {
+      scroll: false,
+    });
+  }
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "calendar", label: "Schedule Wizard" },
@@ -21,37 +38,37 @@ function SchedulePageInner() {
   ];
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-brand-dark">Schedule</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          {dispatcher
-            ? "Dispatch work onto technician calendars and manage who appears on the board."
-            : "Your assigned work orders for the selected week or month."}
-        </p>
+    <div className="flex flex-col gap-5 lg:h-[calc(100dvh-7.25rem)] lg:min-h-0 lg:-mb-20">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 pb-3">
+        <div className="flex min-w-0 items-center gap-2 text-sm">
+          <CalendarDays className="h-4 w-4 shrink-0 text-neutral-500" aria-hidden />
+          <h1 className="font-semibold text-brand-dark">Schedule</h1>
+          <span className="hidden truncate text-neutral-400 sm:inline">
+            {dispatcher
+              ? "Dispatch work onto technician calendars."
+              : "Your assigned work orders."}
+          </span>
+        </div>
+        {tabs.length > 1 && (
+          <Segmented<TabId>
+            ariaLabel="Schedule section"
+            value={tab}
+            onChange={selectTab}
+            options={tabs}
+          />
+        )}
       </div>
 
-      {tabs.length > 1 && (
-        <div className="flex gap-1 overflow-x-auto rounded-lg border border-neutral-200 bg-white p-0.5 w-fit">
-          {tabs.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setTab(item.id)}
-              className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium ${
-                tab === item.id
-                  ? "bg-brand-orange text-white"
-                  : "text-neutral-600 hover:bg-neutral-50"
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+      {tab === "calendar" && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <CalendarTab />
         </div>
       )}
-
-      {tab === "calendar" && <CalendarTab />}
-      {tab === "technicians" && dispatcher && <TechniciansTab />}
+      {tab === "technicians" && dispatcher && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <TechniciansTab />
+        </div>
+      )}
     </div>
   );
 }
@@ -59,7 +76,9 @@ function SchedulePageInner() {
 export default function SchedulePage() {
   return (
     <AuthGuard>
-      <SchedulePageInner />
+      <Suspense fallback={<p className="text-sm text-neutral-500">Loading…</p>}>
+        <SchedulePageInner />
+      </Suspense>
     </AuthGuard>
   );
 }

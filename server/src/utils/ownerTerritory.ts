@@ -9,6 +9,8 @@ import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { User, activeUserFilter } from "../models/mongo/User";
 import { lookupCountyFromCensus } from "./censusGeocoder";
 import { syncCustomerPrimaryFields } from "./customerSites";
+import { territoryOwnerUserFilter, userHasCapability } from "./jobRoles";
+import { isDispatcherRole } from "./roles";
 
 export type LocationForOwner = {
   county?: string | null;
@@ -35,7 +37,7 @@ let territoryIndex: TerritoryIndex | null = null;
 async function buildTerritoryIndex(): Promise<TerritoryIndex> {
   const owners = await User.find({
     ...activeUserFilter,
-    role: "owner",
+    ...(await territoryOwnerUserFilter()),
   })
     .select("_id territories")
     .lean();
@@ -80,7 +82,7 @@ export async function resolveOwnerForLocation(
   if (zip) {
     const byZip = await User.findOne({
       ...activeUserFilter,
-      role: "owner",
+      ...(await territoryOwnerUserFilter()),
       "territories.zips": zip,
     })
       .select("_id")
@@ -91,7 +93,7 @@ export async function resolveOwnerForLocation(
   if (county && (state === "FL" || !state)) {
     const byCounty = await User.findOne({
       ...activeUserFilter,
-      role: "owner",
+      ...(await territoryOwnerUserFilter()),
       "territories.counties": county,
     })
       .select("_id")
@@ -392,7 +394,7 @@ export async function findTerritoryConflicts(
 
   const filter: Record<string, unknown> = {
     ...activeUserFilter,
-    role: "owner",
+    ...(await territoryOwnerUserFilter()),
     $or: [
       ...(counties.length ? [{ "territories.counties": { $in: counties } }] : []),
       ...(zips.length ? [{ "territories.zips": { $in: zips } }] : []),
@@ -488,7 +490,7 @@ async function zipsClaimedByOtherOwners(
 ): Promise<string[]> {
   const others = await User.find({
     ...activeUserFilter,
-    role: "owner",
+    ...(await territoryOwnerUserFilter()),
     _id: { $ne: excludeUserId },
     "territories.zips.0": { $exists: true },
   })
@@ -523,15 +525,14 @@ const unassignedOwnerClause = {
 export async function buildOwnerCustomerFilter(user: {
   id: string;
   role: string;
+  roles?: string[];
+  jobRoles?: string[];
+  userType?: string;
 }): Promise<Record<string, unknown> | null> {
-  if (
-    user.role === "super-admin" ||
-    user.role === "admin" ||
-    user.role === "owner"
-  ) {
+  if (isDispatcherRole(user)) {
     return null;
   }
-  if (user.role !== "owner") return null;
+  if (!(await userHasCapability(user, "territoryOwner"))) return null;
 
   const ownerId = new Types.ObjectId(user.id);
   const owner = await User.findById(ownerId).select("territories").lean();
@@ -592,7 +593,13 @@ export async function buildOwnerCustomerFilter(user: {
 }
 
 export async function assertOwnerCanAccessCustomer(
-  user: { id: string; role: string },
+  user: {
+    id: string;
+    role: string;
+    roles?: string[];
+    jobRoles?: string[];
+    userType?: string;
+  },
   customer: {
     ownerUserRef?: Types.ObjectId | string | null;
     county?: string | null;
@@ -600,14 +607,10 @@ export async function assertOwnerCanAccessCustomer(
     state?: string | null;
   },
 ): Promise<boolean> {
-  if (
-    user.role === "super-admin" ||
-    user.role === "admin" ||
-    user.role === "owner"
-  ) {
+  if (isDispatcherRole(user)) {
     return true;
   }
-  if (user.role !== "owner") return true;
+  if (!(await userHasCapability(user, "territoryOwner"))) return true;
 
   const ref = customer.ownerUserRef;
   if (ref && String(ref) === user.id) return true;

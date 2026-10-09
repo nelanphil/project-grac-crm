@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Search, Trash2 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
@@ -44,11 +44,9 @@ function formatAddress(lead: LeadListItem): string {
 }
 
 function LeadsContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q")?.trim() ?? "";
   const token = useAuthStore((s) => s.token);
-  const user = useAuthStore((s) => s.user);
   const canWrite = useAuthStore((s) => s.hasPermission("leads:write"));
   const canDelete = useAuthStore((s) => s.hasPermission("leads:delete"));
 
@@ -72,12 +70,6 @@ function LeadsContent() {
   const rangeEnd = Math.min(safePage * pageSize, total);
 
   useEffect(() => {
-    if (user?.role === "customer") {
-      router.replace("/dashboard");
-    }
-  }, [user, router]);
-
-  useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(search.trim());
       setPage(1);
@@ -86,7 +78,7 @@ function LeadsContent() {
   }, [search]);
 
   useEffect(() => {
-    if (!token || user?.role === "customer") return;
+    if (!token) return;
 
     let cancelled = false;
 
@@ -118,7 +110,7 @@ function LeadsContent() {
     return () => {
       cancelled = true;
     };
-  }, [token, user, page, pageSize, debouncedSearch, status, refreshKey]);
+  }, [token, page, pageSize, debouncedSearch, status, refreshKey]);
 
   async function handleStatusChange(lead: LeadListItem, next: LeadStatus) {
     if (!token) return;
@@ -180,8 +172,6 @@ function LeadsContent() {
       setBusyId(null);
     }
   }
-
-  if (!user || user.role === "customer") return null;
 
   if (loading && leads.length === 0) {
     return (

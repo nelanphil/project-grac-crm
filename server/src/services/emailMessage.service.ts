@@ -24,6 +24,14 @@ import {
   contactHasValidEmail,
 } from "../utils/messagingContext";
 import { createPaymentLinkCache } from "../utils/paymentLinkForCustomer";
+import {
+  resolveOfferContractTemplateId,
+  type OfferContractOverride,
+} from "../utils/temporaryContractOffer";
+import {
+  ensureTemporaryContractOffer,
+  TemporaryContractOfferError,
+} from "./temporaryContractOffer";
 
 const SEND_CONCURRENCY = 5;
 
@@ -49,7 +57,11 @@ export type DispatchStaffEmailBatchInput = {
   renewalYear?: number | null;
   renewalMonth?: number | null;
   includePaymentLink?: boolean;
+  offerContractTemplateId?: string | null;
+  offerContractOverrides?: OfferContractOverride[] | null;
   createdByUserId?: string | null;
+  /** Replaces the contact's email; only honored for single-contact sends. */
+  toOverride?: string | null;
 };
 
 export type StaffEmailDispatchResultItem = {
@@ -114,6 +126,7 @@ export async function resolveEmailContent(data: {
   body: string;
   chrome: EmailChrome;
   templateRef: Types.ObjectId | null;
+  offerContractTemplateId: string | null;
 }> {
   let subjectTemplate = data.subject?.trim() ?? "";
   let bodyTemplate = data.body?.trim() ?? "";
@@ -121,6 +134,7 @@ export async function resolveEmailContent(data: {
     ? mergeEmailChrome(data.emailChrome)
     : undefined;
   let templateRef: Types.ObjectId | null = null;
+  let offerContractTemplateId: string | null = null;
 
   if (data.templateId) {
     if (!Types.ObjectId.isValid(data.templateId)) {
@@ -137,6 +151,9 @@ export async function resolveEmailContent(data: {
       );
     }
     templateRef = template._id as Types.ObjectId;
+    offerContractTemplateId = template.offerContractTemplateId
+      ? String(template.offerContractTemplateId)
+      : null;
     if (!subjectTemplate) subjectTemplate = template.subject ?? "";
     if (!bodyTemplate) bodyTemplate = template.body ?? "";
     if (!chrome) chrome = template.emailChrome ?? undefined;
@@ -154,6 +171,7 @@ export async function resolveEmailContent(data: {
     body: bodyTemplate,
     chrome: mergeEmailChrome(chrome ?? DEFAULT_EMAIL_CHROME),
     templateRef,
+    offerContractTemplateId,
   };
 }
 
@@ -215,6 +233,7 @@ export async function dispatchStaffEmailBatch(
   const paymentLinkForCustomer = wantsPayLink
     ? createPaymentLinkCache(scope)
     : null;
+  const offerInflight = new Map<string, Promise<unknown>>();
 
   const sendFromName = input.fromName?.trim() || account.fromName;
   const replyTo = input.replyTo?.trim() || undefined;
@@ -243,12 +262,18 @@ export async function dispatchStaffEmailBatch(
         };
       }
 
-      const toEmail = (built.contact.email ?? "").trim().toLowerCase();
+      const override =
+        uniqueContactIds.length === 1 ? input.toOverride?.trim() : "";
+      const toEmail = (override || built.contact.email || "")
+        .trim()
+        .toLowerCase();
       if (!contactHasValidEmail(toEmail)) {
         return {
           contactId,
           status: "failed" as const,
-          error: "Contact has no valid email",
+          error: override
+            ? "Email address is invalid"
+            : "Contact has no valid email",
         };
       }
 
@@ -263,6 +288,31 @@ export async function dispatchStaffEmailBatch(
       let context = built.context;
       let paymentUrl: string | undefined;
       if (wantsPayLink && paymentLinkForCustomer) {
+        const offerTemplateId = resolveOfferContractTemplateId(
+          contactId,
+          input.offerContractTemplateId,
+          input.offerContractOverrides,
+        );
+        if (offerTemplateId && built.contact.customerRef) {
+          const offerKey = `${built.contact.customerRef}:${offerTemplateId}`;
+          let pending = offerInflight.get(offerKey);
+          if (!pending) {
+            pending = ensureTemporaryContractOffer(
+              built.contact.customerRef,
+              offerTemplateId,
+            );
+            offerInflight.set(offerKey, pending);
+          }
+          try {
+            await pending;
+          } catch (err) {
+            if (!(err instanceof TemporaryContractOfferError)) throw err;
+            console.error(
+              `[email] temporary contract offer skipped for ${built.contact.customerRef}`,
+              err.message,
+            );
+          }
+        }
         const minted = await paymentLinkForCustomer(built.contact.customerRef);
         if (minted) {
           paymentUrl = minted.payUrl;

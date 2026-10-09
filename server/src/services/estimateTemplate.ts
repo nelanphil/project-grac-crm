@@ -14,6 +14,16 @@ export function partsForTemplate(
       part.productRef && mongoose.Types.ObjectId.isValid(part.productRef)
         ? new mongoose.Types.ObjectId(part.productRef)
         : null,
+    contractTemplateRef:
+      part.contractTemplateRef &&
+      mongoose.Types.ObjectId.isValid(part.contractTemplateRef)
+        ? new mongoose.Types.ObjectId(part.contractTemplateRef)
+        : null,
+    enrolledContractRef:
+      part.enrolledContractRef &&
+      mongoose.Types.ObjectId.isValid(part.enrolledContractRef)
+        ? new mongoose.Types.ObjectId(part.enrolledContractRef)
+        : null,
     lineType: part.lineType,
     kind: part.kind,
     partNumber: part.partNumber,
@@ -43,6 +53,12 @@ export function toPublicEstimateTemplate(
 
   const parts = ((d.parts as IEstimatePart[] | undefined) ?? []).map((part) => ({
     productRef: part.productRef ? String(part.productRef) : null,
+    contractTemplateRef: part.contractTemplateRef
+      ? String(part.contractTemplateRef)
+      : null,
+    enrolledContractRef: part.enrolledContractRef
+      ? String(part.enrolledContractRef)
+      : null,
     lineType: part.lineType,
     kind: part.kind,
     partNumber: part.partNumber,
