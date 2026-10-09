@@ -669,10 +669,13 @@ export async function updateInvoiceTax(
       : taxCentsFromDollars(computeTaxAmount(preTaxCents / 100, taxRatePercent));
 
     const nextTotal = preTaxCents + taxCents;
+    const discountCents = Number(invoice.discountCents) || 0;
     if (typeof invoice.originalAmountCents === "number") {
       invoice.originalAmountCents = nextTotal;
+      invoice.amountCents = Math.max(nextTotal - discountCents, 0);
+    } else {
+      invoice.amountCents = nextTotal;
     }
-    invoice.amountCents = nextTotal;
     invoice.taxRatePercent = taxRatePercent;
     invoice.taxCents = taxCents;
     invoice.taxOverridden = taxOverridden;
