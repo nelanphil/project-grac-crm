@@ -2,6 +2,14 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import CrashBoundary from "@/components/crash/CrashBoundary";
 import SiteChrome from "@/components/layout/SiteChrome";
+import { COMPANY } from "@/lib/constants";
+import {
+  OG_IMAGE,
+  PUBLIC_SITE_URL,
+  ROOT_DESCRIPTION,
+  ROOT_TITLE,
+  TITLE_TEMPLATE,
+} from "@/lib/seo/site";
 import "./globals.css";
 
 /** Runs in <head> before paint. Keep in sync with client/src/lib/theme.ts. */
@@ -22,15 +30,6 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3009";
-const ogImage = {
-  url: "/images/generac-product-lineup.jpg",
-  width: 1024,
-  height: 340,
-  type: "image/jpeg",
-  alt: "Generac home standby and portable generators",
-} as const;
-
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
@@ -38,24 +37,25 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
-  title: "Generator Maintenance of Florida — Expert Backup Power",
-  description:
-    "Licensed Generac home standby generator installation, maintenance, and 24/7 emergency repair for Central and South Florida.",
+  metadataBase: new URL(PUBLIC_SITE_URL),
+  title: {
+    default: ROOT_TITLE,
+    template: TITLE_TEMPLATE,
+  },
+  description: ROOT_DESCRIPTION,
   openGraph: {
     type: "website",
-    title: "Generator Maintenance of Florida, LLC",
-    description:
-      "Licensed Generac home standby generator installation, maintenance, and 24/7 emergency repair for Central and South Florida.",
+    siteName: COMPANY.name,
+    title: ROOT_TITLE,
+    description: ROOT_DESCRIPTION,
     url: "/",
-    images: [ogImage],
+    images: [OG_IMAGE],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Generator Maintenance of Florida, LLC",
-    description:
-      "Licensed Generac home standby generator installation, maintenance, and 24/7 emergency repair for Central and South Florida.",
-    images: [ogImage],
+    title: ROOT_TITLE,
+    description: ROOT_DESCRIPTION,
+    images: [OG_IMAGE],
   },
 };
 

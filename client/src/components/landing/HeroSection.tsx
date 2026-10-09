@@ -16,10 +16,10 @@ export default function HeroSection() {
       <div className="relative mx-auto max-w-7xl px-4 py-24 sm:px-6 sm:py-32 lg:px-8">
         <div className="max-w-3xl">
           <p className="text-sm font-semibold uppercase tracking-widest text-brand-orange">
-            Expert Backup Power
+            {COMPANY.name}
           </p>
-          <h1 className="mt-4 text-[1.75rem] font-bold leading-tight tracking-tight break-words sm:text-5xl lg:text-6xl">
-            With {COMPANY.name}
+          <h1 className="mt-4 text-[1.75rem] font-bold leading-tight tracking-tight break-words sm:text-4xl lg:text-5xl">
+            Generator Service in Central & South Florida
           </h1>
           <p className="mt-6 text-lg leading-relaxed text-white/80 sm:text-xl">
             Florida homeowners and businesses count on us for safe, reliable

@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import EstimateWizard from "@/components/estimate/EstimateWizard";
-import { COMPANY } from "@/lib/constants";
+import { pageMetadata } from "@/lib/seo/site";
 
-export const metadata: Metadata = {
-  title: `Get Your Free Estimate — ${COMPANY.name}`,
+export const metadata: Metadata = pageMetadata({
+  title: "Free Estimate",
   description:
     "Request a free standby generator estimate for your home or business in Central and South Florida.",
-};
+  path: "/estimate",
+});
 
 export default function EstimatePage() {
   return <EstimateWizard />;

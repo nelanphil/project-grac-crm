@@ -73,8 +73,8 @@ export default function BrandsSection() {
             <Link href={ESTIMATE_ROUTE} className="btn-primary">
               Get Your Estimate
             </Link>
-            <Link href="/#services" className="btn-secondary">
-              View Our Services
+            <Link href="/generac-generator-service" className="btn-secondary">
+              Generac Generator Service
             </Link>
           </div>
         </div>

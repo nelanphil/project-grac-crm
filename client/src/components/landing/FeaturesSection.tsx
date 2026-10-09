@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { SERVICES } from "@/lib/constants";
 
 const icons: Record<string, React.ReactNode> = {
@@ -31,8 +32,9 @@ export default function FeaturesSection() {
 
         <div className="mt-16 grid grid-cols-1 gap-8 md:grid-cols-3">
           {SERVICES.map((service) => (
-            <div
-              key={service.title}
+            <Link
+              key={service.href}
+              href={service.href}
               className="rounded-lg bg-white p-8 shadow-sm transition-shadow hover:shadow-md"
             >
               <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-brand-orange/10 text-brand-orange">
@@ -42,9 +44,27 @@ export default function FeaturesSection() {
                 {service.title}
               </h3>
               <p className="mt-3 text-neutral-600">{service.description}</p>
-            </div>
+              <p className="mt-4 text-sm font-semibold text-brand-orange">
+                Learn more
+              </p>
+            </Link>
           ))}
         </div>
+        <p className="mt-10 text-center text-neutral-600">
+          <Link
+            href="/generator-service"
+            className="font-semibold text-brand-dark underline-offset-2 hover:text-brand-orange hover:underline"
+          >
+            Generator service
+          </Link>
+          <span aria-hidden="true"> · </span>
+          <Link
+            href="/generac-generator-service"
+            className="font-semibold text-brand-dark underline-offset-2 hover:text-brand-orange hover:underline"
+          >
+            Generac generator service
+          </Link>
+        </p>
       </div>
     </section>
   );
