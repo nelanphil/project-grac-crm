@@ -2037,6 +2037,7 @@ export interface WorkOrderListItem {
   customerName?: string | null;
   customerAddress?: string;
   customerCity?: string;
+  customerState?: string;
   customerZip?: string;
   customerPhone?: string;
   customerEmail?: string;
@@ -2096,6 +2097,7 @@ export type ServiceTicketPayload = {
   customerName?: string;
   customerAddress?: string;
   customerCity?: string;
+  customerState?: string;
   customerZip?: string;
   customerPhone?: string;
   customerEmail?: string;
@@ -2926,6 +2928,82 @@ export async function getInvoice(
   });
 }
 
+export interface InvoiceTemplateItem {
+  _id: string;
+  name: string;
+  isDefault: boolean;
+  blocks: unknown[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getDefaultInvoiceTemplate(
+  token: string,
+): Promise<{ template: InvoiceTemplateItem }> {
+  return authRequest<{ template: InvoiceTemplateItem }>("/invoice-templates/default", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getInvoiceTemplates(
+  token: string,
+): Promise<{ templates: InvoiceTemplateItem[] }> {
+  return authRequest<{ templates: InvoiceTemplateItem[] }>("/invoice-templates", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createInvoiceTemplate(
+  token: string,
+  data: { name: string; isDefault?: boolean; blocks?: unknown[] },
+): Promise<{ template: InvoiceTemplateItem }> {
+  return authRequest<{ template: InvoiceTemplateItem }>("/invoice-templates", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateInvoiceTemplate(
+  token: string,
+  id: string,
+  data: { name?: string; isDefault?: boolean; blocks?: unknown[] },
+): Promise<{ template: InvoiceTemplateItem }> {
+  return authRequest<{ template: InvoiceTemplateItem }>(`/invoice-templates/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteInvoiceTemplate(
+  token: string,
+  id: string,
+): Promise<{ deletedId: string; defaultId: string }> {
+  return authRequest<{ deletedId: string; defaultId: string }>(
+    `/invoice-templates/${id}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function uploadInvoiceTemplateImage(
+  token: string,
+  file: File,
+): Promise<{ url: string }> {
+  const payload = new FormData();
+  payload.append("file", file);
+  return authRequest<{ url: string }>("/invoice-templates/images", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: payload,
+  });
+}
+
 export async function createInvoice(
   token: string,
   data: CreateInvoiceInput,
@@ -3611,6 +3689,7 @@ export interface EstimateItem {
   customerName: string;
   customerAddress: string;
   customerCity: string;
+  customerState: string;
   customerZip: string;
   customerPhone: string;
   customerEmail: string;

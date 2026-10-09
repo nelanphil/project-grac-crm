@@ -15,6 +15,7 @@ import {
   getCustomer,
   getEstimateTemplates,
 } from "@/lib/api";
+import { toUsStateCode } from "@/lib/constants";
 import {
   applyEstimateTemplate,
   emptyTicketForm,
@@ -79,6 +80,7 @@ function CreateEstimateContent() {
             `${customer.first} ${customer.last}`.trim(),
           customerAddress: site?.address ?? customer.address,
           customerCity: site?.city ?? customer.city,
+          customerState: toUsStateCode(site?.state || customer.state),
           customerZip: site?.zip ?? customer.zip,
           customerPhone: customer.phone,
           customerEmail: customer.email,

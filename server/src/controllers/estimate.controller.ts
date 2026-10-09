@@ -343,6 +343,7 @@ export async function convertEstimate(
       customerName: estimate.customerName,
       customerAddress: estimate.customerAddress,
       customerCity: estimate.customerCity,
+      customerState: estimate.customerState || "FL",
       customerZip: estimate.customerZip,
       customerPhone: estimate.customerPhone,
       customerEmail: estimate.customerEmail,

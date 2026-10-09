@@ -12,7 +12,7 @@ import {
   getWorkOrderTypes,
   WorkOrderTypeItem,
 } from "@/lib/api";
-import { COMPANY } from "@/lib/constants";
+import { COMPANY, US_STATE_CODES, US_STATES, toUsStateCode } from "@/lib/constants";
 import { formatCustomerRecordName } from "@/lib/formatName";
 import PhoneInput from "@/components/ui/PhoneInput";
 import {
@@ -111,8 +111,10 @@ export default function ServiceTicketForm({
   const lastAppliedSiteKey = useRef(
     ticketSiteKey(initial ?? emptyTicketForm()),
   );
+  const stateTouched = useRef(false);
 
   useEffect(() => {
+    stateTouched.current = false;
     if (initial) {
       setForm(initial);
       lastAppliedSiteKey.current = ticketSiteKey(initial);
@@ -125,14 +127,28 @@ export default function ServiceTicketForm({
       .then(({ customer: c }) => {
         setCustomer(c);
         setForm((prev) => {
-          if (prev.addressRef || c.addresses.length === 0) return prev;
-          const site = c.addresses.find((a) => a.isPrimary) ?? c.addresses[0];
+          const linked = prev.addressRef
+            ? c.addresses.find((a) => a._id === prev.addressRef)
+            : undefined;
+          const site =
+            linked ??
+            c.addresses.find((a) => a.isPrimary) ??
+            c.addresses[0];
+          const nextState = stateTouched.current || prev.customerState.trim()
+            ? prev.customerState || "FL"
+            : toUsStateCode(site?.state);
+          if (prev.addressRef || c.addresses.length === 0) {
+            return nextState === prev.customerState
+              ? prev
+              : { ...prev, customerState: nextState };
+          }
           const equipment = site.equipment?.[0];
           return {
             ...prev,
             addressRef: site._id,
             customerAddress: prev.customerAddress || site.address,
             customerCity: prev.customerCity || site.city,
+            customerState: nextState,
             customerZip: prev.customerZip || site.zip,
             equipmentRef: equipment?._id ?? prev.equipmentRef,
             serialNumber: prev.serialNumber || equipment?.serial || c.serial,
@@ -332,6 +348,7 @@ export default function ServiceTicketForm({
       customerName: formatCustomerRecordName(c),
       customerAddress: primary?.address ?? c.address,
       customerCity: primary?.city ?? c.city,
+      customerState: toUsStateCode(primary?.state || c.state),
       customerZip: primary?.zip ?? c.zip,
       customerPhone: c.phone,
       customerEmail: c.email,
@@ -365,6 +382,7 @@ export default function ServiceTicketForm({
       addressRef: addressId,
       customerAddress: site?.address ?? form.customerAddress,
       customerCity: site?.city ?? form.customerCity,
+      customerState: toUsStateCode(site?.state || form.customerState),
       customerZip: site?.zip ?? form.customerZip,
       equipmentRef: equipment?._id ?? "",
       serialNumber: equipment?.serial ?? "",
@@ -656,20 +674,38 @@ export default function ServiceTicketForm({
                   className={inputClass}
                 />
               </Field>
-              <Field label="City">
-                <input
-                  value={form.customerCity}
-                  onChange={(e) => patch({ customerCity: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="ZIP">
-                <input
-                  value={form.customerZip}
-                  onChange={(e) => patch({ customerZip: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
+              <div className="grid grid-cols-1 gap-3 sm:col-span-2 sm:grid-cols-6">
+                <Field label="City" className="sm:col-span-3">
+                  <input
+                    value={form.customerCity}
+                    onChange={(e) => patch({ customerCity: e.target.value })}
+                    className={inputClass}
+                  />
+                </Field>
+                <Field label="State" className="sm:col-span-1">
+                  <select
+                    value={form.customerState || "FL"}
+                    onChange={(e) => {
+                      stateTouched.current = true;
+                      patch({ customerState: e.target.value });
+                    }}
+                    className={inputClass}
+                  >
+                    {US_STATES.map((name) => (
+                      <option key={name} value={US_STATE_CODES[name]}>
+                        {US_STATE_CODES[name]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="ZIP" className="sm:col-span-2">
+                  <input
+                    value={form.customerZip}
+                    onChange={(e) => patch({ customerZip: e.target.value })}
+                    className={inputClass}
+                  />
+                </Field>
+              </div>
               <Field label="Phone">
                 <PhoneInput
                   value={form.customerPhone}

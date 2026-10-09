@@ -31,6 +31,7 @@ import {
 } from "@/lib/pagination";
 import { invoiceCustomerLabel } from "@/lib/formatName";
 import { FileText, Search } from "lucide-react";
+import InvoiceTemplateTab from "@/components/billing/invoice-template/InvoiceTemplateTab";
 
 function formatMoney(cents: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -102,6 +103,7 @@ function OrdersContent() {
   const [bulkIntent, setBulkIntent] = useState<"paid" | "unpaid" | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [tab, setTab] = useState<"invoices" | "template">("invoices");
 
   const isCustomer = isCustomerRole(user);
   const showActions = canWrite && !isCustomer;
@@ -336,6 +338,37 @@ function OrdersContent() {
         ) : null}
       </div>
 
+      {showActions ? (
+        <div className="flex gap-1 border-b border-neutral-200">
+          <button
+            type="button"
+            onClick={() => setTab("invoices")}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${
+              tab === "invoices"
+                ? "border-brand-dark text-brand-dark"
+                : "border-transparent text-neutral-500 hover:text-brand-dark"
+            }`}
+          >
+            Invoices
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("template")}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${
+              tab === "template"
+                ? "border-brand-dark text-brand-dark"
+                : "border-transparent text-neutral-500 hover:text-brand-dark"
+            }`}
+          >
+            Invoice Template
+          </button>
+        </div>
+      ) : null}
+
+      {showActions && tab === "template" ? (
+        <InvoiceTemplateTab />
+      ) : (
+      <>
       {!isCustomer ? (
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
@@ -632,6 +665,8 @@ function OrdersContent() {
             }
           />
         </div>
+      )}
+      </>
       )}
     </div>
   );

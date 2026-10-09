@@ -45,6 +45,7 @@ export interface IEstimate extends Document {
   customerName: string;
   customerAddress: string;
   customerCity: string;
+  customerState: string;
   customerZip: string;
   customerPhone: string;
   customerEmail: string;
@@ -152,6 +153,7 @@ const estimateSchema = new Schema<IEstimate>(
     customerName: { type: String, default: "" },
     customerAddress: { type: String, default: "" },
     customerCity: { type: String, default: "" },
+    customerState: { type: String, default: "FL" },
     customerZip: { type: String, default: "" },
     customerPhone: { type: String, default: "" },
     customerEmail: { type: String, default: "" },

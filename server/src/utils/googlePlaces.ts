@@ -384,3 +384,59 @@ export async function resolveUsCityAt(opts: {
     },
   };
 }
+
+function samePlaceName(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+/** Forward-geocode a city to its center. Used when a site has no street match. */
+export async function geocodeUsCityCenter(opts: {
+  apiKey: string;
+  city: string;
+  state: string;
+}): Promise<{ lat: number; lng: number } | null> {
+  const city = opts.city.trim();
+  const state = opts.state.trim().toUpperCase();
+  if (!city || !isUsStateCode(state)) return null;
+
+  const params = new URLSearchParams({
+    address: `${city}, ${state}`,
+    components: `administrative_area:${state}|country:US`,
+    key: opts.apiKey,
+  });
+
+  let data: GeocodeResponse;
+  try {
+    const res = await fetch(`${GEOCODE_URL}?${params}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    data = (await res.json()) as GeocodeResponse;
+    if (!res.ok || data.status !== "OK") return null;
+  } catch {
+    return null;
+  }
+
+  let fallback: { lat: number; lng: number } | null = null;
+  for (const result of data.results ?? []) {
+    const components = result.address_components;
+    const resolvedState = geocodeComponent(
+      components,
+      "administrative_area_level_1",
+      "short_name",
+    ).toUpperCase();
+    if (resolvedState !== state) continue;
+    const names = [
+      geocodeComponent(components, "locality", "long_name"),
+      geocodeComponent(components, "postal_town", "long_name"),
+      geocodeComponent(components, "administrative_area_level_3", "long_name"),
+      geocodeComponent(components, "sublocality_level_1", "long_name"),
+    ];
+    const lat = result.geometry?.location?.lat;
+    const lng = result.geometry?.location?.lng;
+    if (typeof lat !== "number" || typeof lng !== "number") continue;
+    const point = { lat, lng };
+    if (names.some((name) => samePlaceName(name, city))) return point;
+    if (!fallback && names.some(Boolean)) fallback = point;
+  }
+  return fallback;
+}

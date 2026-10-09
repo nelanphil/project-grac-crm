@@ -13,7 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { Check, MapPin } from "lucide-react";
+import { Check, GripVertical, MapPin } from "lucide-react";
 import type {
   ScheduleRecommendation,
   ScheduleStaffMember,
@@ -53,6 +53,13 @@ const HOURS = Array.from(
   { length: BOARD_HOUR_END - BOARD_HOUR_START },
   (_, i) => BOARD_HOUR_START + i,
 );
+const HOUR_PX = 72;
+
+function hourLabel(hour: number): string {
+  if (hour === 12) return "12 PM";
+  if (hour > 12) return `${hour - 12} PM`;
+  return `${hour} AM`;
+}
 
 function personName(
   person?: { first_name?: string; last_name?: string } | null,
@@ -488,18 +495,22 @@ function JobBlock({
   const startMin = parts.hour * 60 + parts.minute;
   const boardStart = BOARD_HOUR_START * 60;
   const boardEnd = BOARD_HOUR_END * 60;
-  const leftPct =
-    ((Math.max(startMin, boardStart) - boardStart) / (boardEnd - boardStart)) *
-    100;
-  const widthPct = Math.max(
-    4,
-    (duration / (boardEnd - boardStart)) * 100,
-  );
+  const span = boardEnd - boardStart;
+  const topPct =
+    ((Math.max(startMin, boardStart) - boardStart) / span) * 100;
+  const heightPct = Math.max(3, (duration / span) * 100);
+  const city =
+    order.address?.city?.trim() || order.customerCity?.trim() || "";
+  const typeLabel = order.workOrderType?.label?.trim() || "";
+  const detail = [city, typeLabel, minutesToLabel(duration)]
+    .filter(Boolean)
+    .join(" · ");
+  const showDetail = duration >= 60 && detail.length > 0;
 
   const accent = jobAccent(order);
   const style: CSSProperties = {
-    left: `${leftPct}%`,
-    width: `${widthPct}%`,
+    top: `${topPct}%`,
+    height: `${heightPct}%`,
     transform: transform ? CSS.Translate.toString(transform) : undefined,
     backgroundColor: `${accent}26`,
     borderLeftColor: accent,
@@ -513,22 +524,31 @@ function JobBlock({
       {...(dispatcher ? listeners : {})}
       {...(dispatcher ? attributes : {})}
       onClick={onClick}
-      title={`${order.customerName || "Job"} · ${formatLocalClock(start)} – ${formatLocalClock(end)}`}
-      className={`absolute top-1.5 bottom-1.5 overflow-hidden rounded-md border-l-[3px] px-1.5 py-0.5 text-left text-[11px] text-brand-dark transition-shadow hover:shadow-md ${
+      title={[
+        order.customerName || "Job",
+        `${formatLocalClock(start)} – ${formatLocalClock(end)}`,
+        detail,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+      className={`absolute inset-x-1 overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight text-brand-dark transition-shadow hover:shadow-md ${
         isDragging ? "opacity-40" : ""
       }`}
     >
-      <div className="truncate font-semibold">
+      <div className="font-semibold break-words">
         {order.customerName || "Job"}
       </div>
-      <div className="truncate text-neutral-500">
+      <div className="text-neutral-500">
         {formatLocalClock(start)} – {formatLocalClock(end)}
       </div>
+      {showDetail ? (
+        <div className="mt-0.5 text-neutral-600 break-words">{detail}</div>
+      ) : null}
     </button>
   );
 }
 
-function StaffRow({
+function StaffColumn({
   staff,
   jobs,
   onJobClick,
@@ -541,6 +561,20 @@ function StaffRow({
   onMap: () => void;
   dispatcher: boolean;
 }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    transform,
+    isDragging,
+  } = useDraggable({
+    id: `col:${staff._id}`,
+    disabled: !dispatcher,
+  });
+  const { setNodeRef: setHeaderDropRef, isOver: headerOver } = useDroppable({
+    id: `col:${staff._id}`,
+    disabled: !dispatcher,
+  });
   const { setNodeRef, isOver } = useDroppable({
     id: `row:${staff._id}`,
     disabled: !dispatcher,
@@ -549,24 +583,45 @@ function StaffRow({
   const initials =
     `${staff.first_name?.[0] ?? ""}${staff.last_name?.[0] ?? ""}`.toUpperCase() ||
     "?";
+  const boardHeight = HOURS.length * HOUR_PX;
 
   return (
-    <div className="grid h-full min-h-[60px] flex-1 grid-cols-[5.5rem_1fr] border-b border-neutral-200/70 last:border-b-0 md:grid-cols-[11rem_1fr]">
-      <div className="flex items-center justify-between gap-1.5 px-2 py-2 md:px-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <span
-            aria-hidden
-            className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-[10px] font-semibold text-neutral-600 ring-1 ring-neutral-200 md:flex"
+    <div className="flex min-w-[11rem] flex-1 flex-col">
+      <div
+        ref={(node) => {
+          setDragRef(node);
+          setHeaderDropRef(node);
+        }}
+        style={{
+          transform: transform ? CSS.Translate.toString(transform) : undefined,
+        }}
+        className={`sticky top-0 z-20 flex h-[4.25rem] items-center gap-1.5 border-b border-l border-neutral-200 bg-white px-2 ${
+          headerOver ? "bg-brand-orange/10" : ""
+        } ${isDragging ? "z-30 opacity-60" : ""}`}
+      >
+        {dispatcher ? (
+          <button
+            type="button"
+            aria-label={`Reorder ${staff.first_name} ${staff.last_name}`}
+            className="shrink-0 cursor-grab rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark active:cursor-grabbing"
+            {...listeners}
+            {...attributes}
           >
-            {initials}
-          </span>
-          <div className="min-w-0">
-            <div className="truncate text-xs font-semibold text-brand-dark">
-              {staff.first_name} {staff.last_name}
-            </div>
-            <div className="truncate text-[10px] text-neutral-400">
-              {(staff.roles?.length ? staff.roles : [staff.role]).join(", ")}
-            </div>
+            <GripVertical className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        ) : null}
+        <span
+          aria-hidden
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-[10px] font-semibold text-neutral-600 ring-1 ring-neutral-200"
+        >
+          {initials}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-semibold text-brand-dark">
+            {staff.first_name} {staff.last_name}
+          </div>
+          <div className="truncate text-[10px] text-neutral-400">
+            {(staff.roles?.length ? staff.roles : [staff.role]).join(", ")}
           </div>
         </div>
         <button
@@ -581,11 +636,18 @@ function StaffRow({
       </div>
       <div
         ref={setNodeRef}
-        className={`relative min-h-[60px] transition-colors ${isOver ? "bg-brand-orange/10" : ""}`}
+        style={{ height: boardHeight }}
+        className={`relative border-l border-neutral-200/70 transition-colors ${
+          isOver ? "bg-brand-orange/10" : ""
+        }`}
       >
-        <div className="pointer-events-none absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${HOURS.length}, minmax(0, 1fr))` }}>
-          {HOURS.map((h) => (
-            <div key={h} className="border-l border-neutral-200/60" />
+        <div className="pointer-events-none absolute inset-0">
+          {HOURS.map((hour, index) => (
+            <div
+              key={hour}
+              className="absolute inset-x-0 border-t border-neutral-200/60"
+              style={{ top: index * HOUR_PX }}
+            />
           ))}
         </div>
         {jobs.map((job) => (
@@ -630,32 +692,33 @@ export default function WeekBoard({
     jobsByUser.set(uid, list);
   }
 
+  const boardHeight = HOURS.length * HOUR_PX;
+
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-x-auto rounded-2xl border border-neutral-200 bg-white shadow-sm">
-      <div className="flex min-h-0 min-w-[36rem] flex-1 flex-col md:min-w-[720px]">
-        <div className="grid shrink-0 grid-cols-[5.5rem_1fr] border-b border-neutral-200 md:grid-cols-[11rem_1fr]">
-          <div className="px-2 py-2.5 text-[11px] font-medium text-neutral-400 md:px-3">
-            Technician
-          </div>
-          <div
-            className="grid text-[11px] text-neutral-400"
-            style={{ gridTemplateColumns: `repeat(${HOURS.length}, minmax(0, 1fr))` }}
-          >
-            {HOURS.map((h) => (
-              <div key={h} className="border-l border-neutral-200/60 px-1.5 py-2.5 tabular-nums">
-                {h === 12 ? "12 PM" : h > 12 ? `${h - 12} PM` : `${h} AM`}
-              </div>
-            ))}
-          </div>
+    <div className="flex h-full min-h-0 flex-col overflow-auto rounded-2xl border border-neutral-200 bg-white shadow-sm">
+      {staff.length === 0 ? (
+        <div className="px-4 py-10 text-center text-sm text-neutral-500">
+          No technicians on the board. Assign the Technician role under Users,
+          then set hours on the Technicians tab.
         </div>
-        {staff.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-neutral-500">
-            No technicians on the board. Assign the Technician role under Users,
-            then set hours on the Technicians tab.
+      ) : (
+        <div className="flex min-w-full">
+          <div className="sticky left-0 z-30 w-16 shrink-0 bg-white">
+            <div className="sticky top-0 z-40 h-[4.25rem] border-b border-neutral-200 bg-white" />
+            <div style={{ height: boardHeight }}>
+              {HOURS.map((hour) => (
+                <div
+                  key={hour}
+                  style={{ height: HOUR_PX }}
+                  className="border-t border-neutral-200/60 px-1.5 pt-1 text-[11px] tabular-nums text-neutral-400"
+                >
+                  {hourLabel(hour)}
+                </div>
+              ))}
+            </div>
           </div>
-        ) : (
-          staff.map((person) => (
-            <StaffRow
+          {staff.map((person) => (
+            <StaffColumn
               key={person._id}
               staff={person}
               jobs={jobsByUser.get(person._id) ?? []}
@@ -663,9 +726,9 @@ export default function WeekBoard({
               onJobClick={onJobClick}
               onMap={() => onMap(person._id)}
             />
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

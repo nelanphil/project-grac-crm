@@ -24,7 +24,7 @@ export const INITIAL_ESTIMATE_FORM: EstimateFormData = {
   addressLine1: "",
   addressLine2: "",
   city: "",
-  state: "",
+  state: "Florida",
   zipCode: "",
   phone: "",
   smsConsent: false,

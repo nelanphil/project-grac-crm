@@ -20,6 +20,7 @@ export const ticketSnapshotSchema = z.object({
   customerName: z.string().trim().max(200).optional(),
   customerAddress: z.string().trim().max(300).optional(),
   customerCity: z.string().trim().max(120).optional(),
+  customerState: z.string().trim().max(40).optional(),
   customerZip: z.string().trim().max(20).optional(),
   customerPhone: z.string().trim().max(40).optional(),
   customerEmail: z.string().trim().max(200).optional(),

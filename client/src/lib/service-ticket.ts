@@ -1,3 +1,4 @@
+import { toUsStateCode } from "./constants";
 import {
   DEFAULT_PRODUCT_DISCOUNTS,
   discountedLaborTotal,
@@ -57,6 +58,7 @@ export interface TicketFormState {
   customerName: string;
   customerAddress: string;
   customerCity: string;
+  customerState: string;
   customerZip: string;
   customerPhone: string;
   customerEmail: string;
@@ -183,6 +185,7 @@ export function emptyTicketForm(): TicketFormState {
     customerName: "",
     customerAddress: "",
     customerCity: "",
+    customerState: "FL",
     customerZip: "",
     customerPhone: "",
     customerEmail: "",
@@ -472,6 +475,7 @@ export function ticketToPayload(form: TicketFormState) {
     customerName: form.customerName,
     customerAddress: form.customerAddress,
     customerCity: form.customerCity,
+    customerState: form.customerState,
     customerZip: form.customerZip,
     customerPhone: form.customerPhone,
     customerEmail: form.customerEmail,
@@ -504,6 +508,7 @@ export function ticketFromRecord(record: {
   customerName?: string | null;
   customerAddress?: string | null;
   customerCity?: string | null;
+  customerState?: string | null;
   customerZip?: string | null;
   customerPhone?: string | null;
   customerEmail?: string | null;
@@ -587,6 +592,9 @@ export function ticketFromRecord(record: {
     customerName: record.customerName ?? "",
     customerAddress: record.customerAddress ?? "",
     customerCity: record.customerCity ?? "",
+    customerState: record.customerState?.trim()
+      ? toUsStateCode(record.customerState)
+      : "",
     customerZip: record.customerZip ?? "",
     customerPhone: record.customerPhone ?? "",
     customerEmail: record.customerEmail ?? "",

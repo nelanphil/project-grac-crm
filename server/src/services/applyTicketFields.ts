@@ -2,6 +2,7 @@ import mongoose, { Types } from "mongoose";
 import { Customer, ICustomer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { Equipment } from "../models/mongo/Equipment";
+import { stateCodeOrFlorida } from "../constants/usStates";
 import { syncCustomerPrimaryFields } from "../utils/customerSites";
 import { customerDisplayName } from "./notification.service";
 import {
@@ -20,6 +21,7 @@ export type TicketSnapshotFields = {
   customerName?: string;
   customerAddress?: string;
   customerCity?: string;
+  customerState?: string;
   customerZip?: string;
   customerPhone?: string;
   customerEmail?: string;
@@ -86,6 +88,7 @@ export async function resolveTicketSnapshot(opts: {
     | "last"
     | "address"
     | "city"
+    | "state"
     | "zip"
     | "phone"
     | "email"
@@ -102,16 +105,18 @@ export async function resolveTicketSnapshot(opts: {
   let address = {
     address: customer.address ?? "",
     city: customer.city ?? "",
+    state: customer.state ?? "",
     zip: customer.zip ?? "",
   };
   if (opts.addressRef && mongoose.Types.ObjectId.isValid(opts.addressRef)) {
     const site = await CustomerAddress.findById(opts.addressRef)
-      .select("address city zip")
+      .select("address city state zip")
       .lean();
     if (site) {
       address = {
         address: site.address ?? "",
         city: site.city ?? "",
+        state: site.state ?? "",
         zip: site.zip ?? "",
       };
     }
@@ -141,6 +146,9 @@ export async function resolveTicketSnapshot(opts: {
     customerName: overrides.customerName?.trim() || customerDisplayName(customer),
     customerAddress: overrides.customerAddress?.trim() || address.address,
     customerCity: overrides.customerCity?.trim() || address.city,
+    customerState: stateCodeOrFlorida(
+      overrides.customerState?.trim() || address.state,
+    ),
     customerZip: overrides.customerZip?.trim() || address.zip,
     customerPhone: overrides.customerPhone?.trim() || customer.phone || "",
     customerEmail: overrides.customerEmail?.trim() || customer.email || "",
@@ -313,6 +321,26 @@ async function ensureTicketEquipment(
   return String(created._id);
 }
 
+async function backfillBlankAddressState(
+  addressRef: unknown,
+  state: string,
+): Promise<void> {
+  const id = addressRef ? String(addressRef) : "";
+  if (!id || !mongoose.Types.ObjectId.isValid(id) || !state.trim()) return;
+  const updated = await CustomerAddress.updateOne(
+    {
+      _id: id,
+      $or: [{ state: "" }, { state: null }, { state: { $exists: false } }],
+    },
+    { $set: { state: state.trim() } },
+  );
+  if (updated.modifiedCount < 1) return;
+  const site = await CustomerAddress.findById(id).select("customerRef").lean();
+  if (site?.customerRef) {
+    await syncCustomerPrimaryFields(site.customerRef);
+  }
+}
+
 export async function applyTicketFields(
   target: Record<string, unknown>,
   body: TicketBodyFields,
@@ -367,6 +395,7 @@ export async function applyTicketFields(
     overrides: body,
   });
   Object.assign(target, snapshot);
+  await backfillBlankAddressState(target.addressRef, snapshot.customerState);
 
   applyTicketMoney(
     target as {

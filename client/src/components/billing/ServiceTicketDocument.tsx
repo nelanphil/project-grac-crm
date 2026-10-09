@@ -31,6 +31,7 @@ export type ServiceTicketView = {
   customerName: string;
   customerAddress: string;
   customerCity: string;
+  customerState?: string;
   customerZip: string;
   customerPhone: string;
   customerEmail: string;
@@ -174,7 +175,12 @@ export default function ServiceTicketDocument({
           <p className="font-semibold text-brand-dark">{ticket.customerName || "—"}</p>
           <p>{ticket.customerAddress}</p>
           <p>
-            {ticket.customerCity} {ticket.customerZip}
+            {[
+              ticket.customerCity,
+              [ticket.customerState || "FL", ticket.customerZip].filter(Boolean).join(" "),
+            ]
+              .filter(Boolean)
+              .join(", ")}
           </p>
           <p>{ticket.customerPhone}</p>
           <p>{ticket.customerEmail}</p>

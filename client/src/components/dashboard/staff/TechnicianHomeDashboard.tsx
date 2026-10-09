@@ -83,7 +83,12 @@ function timeWindow(job: WorkOrderListItem): string {
 function jobAddress(job: WorkOrderListItem): string {
   const line = formatAddressLine(job.address);
   if (line !== "—") return line;
-  const snapshot = [job.customerAddress, job.customerCity, job.customerZip]
+  const snapshot = [
+    job.customerAddress,
+    job.customerCity,
+    job.customerState,
+    job.customerZip,
+  ]
     .map((part) => part?.trim())
     .filter(Boolean)
     .join(", ");

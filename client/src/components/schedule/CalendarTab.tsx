@@ -86,9 +86,9 @@ function dropMinutes(event: DragEndEvent): number | null {
   const over = event.over;
   const translated = event.active.rect.current.translated;
   if (!over || !translated) return null;
-  const x =
-    translated.left + Math.min(translated.width, 48) / 2 - over.rect.left;
-  const ratio = Math.max(0, Math.min(0.999, x / Math.max(1, over.rect.width)));
+  const y =
+    translated.top + Math.min(translated.height, 24) / 2 - over.rect.top;
+  const ratio = Math.max(0, Math.min(0.999, y / Math.max(1, over.rect.height)));
   const total = (BOARD_HOUR_END - BOARD_HOUR_START) * 60;
   return Math.round((BOARD_HOUR_START * 60 + ratio * total) / 15) * 15;
 }
@@ -201,6 +201,48 @@ function writeRailWidth(value: number) {
   } catch {
     /* ignore private-mode storage failures */
   }
+}
+
+const STAFF_ORDER_KEY = "schedule-wizard-staff-order";
+
+function readStaffOrder(): string[] {
+  try {
+    const raw = window.localStorage.getItem(STAFF_ORDER_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStaffOrder(ids: string[]) {
+  try {
+    window.localStorage.setItem(STAFF_ORDER_KEY, JSON.stringify(ids));
+  } catch {
+    /* ignore private-mode storage failures */
+  }
+}
+
+function applyStaffOrder(
+  people: ScheduleStaffMember[],
+  order: string[],
+): ScheduleStaffMember[] {
+  const byId = new Map(people.map((person) => [person._id, person]));
+  const seen = new Set<string>();
+  const ordered: ScheduleStaffMember[] = [];
+  for (const id of order) {
+    const person = byId.get(id);
+    if (!person || seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(person);
+  }
+  for (const person of people) {
+    if (seen.has(person._id)) continue;
+    ordered.push(person);
+  }
+  return ordered;
 }
 
 async function fetchBoardData(
@@ -665,6 +707,14 @@ export default function CalendarTab({
   const [monthMode, setMonthMode] = useState<MonthMode>("calendar");
   const [surface, setSurface] = useState<SurfaceMode>("calendar");
   const [staff, setStaff] = useState<ScheduleStaffMember[]>([]);
+  const [staffOrder, setStaffOrder] = useState<string[]>([]);
+  useEffect(() => {
+    setStaffOrder(readStaffOrder());
+  }, []);
+  const orderedStaff = useMemo(
+    () => applyStaffOrder(staff, staffOrder),
+    [staff, staffOrder],
+  );
   const [jobs, setJobs] = useState<WorkOrderListItem[]>([]);
   const [calendarUnscheduled, setCalendarUnscheduled] = useState<
     WorkOrderListItem[]
@@ -1253,6 +1303,26 @@ export default function CalendarTab({
     if (!dispatcher || !canWrite) return;
     const overId = event.over?.id ? String(event.over.id) : "";
     const activeId = String(event.active.id);
+    if (activeId.startsWith("col:")) {
+      const fromId = activeId.slice(4);
+      const toId = overId.startsWith("col:")
+        ? overId.slice(4)
+        : overId.startsWith("row:")
+          ? overId.slice(4)
+          : "";
+      if (!fromId || !toId || fromId === toId) return;
+      const ids = applyStaffOrder(staff, staffOrder).map((person) => person._id);
+      const from = ids.indexOf(fromId);
+      if (from < 0) return;
+      const next = ids.slice();
+      next.splice(from, 1);
+      const target = next.indexOf(toId);
+      if (target < 0) return;
+      next.splice(target, 0, fromId);
+      writeStaffOrder(next);
+      setStaffOrder(next);
+      return;
+    }
     if (!activeId.startsWith("job:")) return;
     if (
       overId.startsWith("tech:") ||
@@ -1650,21 +1720,19 @@ export default function CalendarTab({
       onPane={surface === "map" ? setMapRailPane : undefined}
       technicianPane={surface === "map" ? technicianPane : undefined}
       routeControls={
-        surface === "map" ? (
-          <MapRouteToolbar
-            roundTrip={roundTrip}
-            onRoundTrip={setRoundTrip}
-            objective={routeObjective}
-            onObjective={setRouteObjective}
-            onOptimize={() => void runPlan(true)}
-            canOptimize={Boolean(effectiveTechId) && routeStopIds.length >= 2}
-            optimizing={routeOptimizing}
-            message={routeMessage}
-            warnings={
-              routeTotalsMatch ? (routePlan?.warnings ?? []) : []
-            }
-          />
-        ) : undefined
+        <MapRouteToolbar
+          roundTrip={roundTrip}
+          onRoundTrip={setRoundTrip}
+          objective={routeObjective}
+          onObjective={setRouteObjective}
+          onOptimize={() => void runPlan(true)}
+          canOptimize={Boolean(effectiveTechId) && routeStopIds.length >= 2}
+          optimizing={routeOptimizing}
+          message={routeMessage}
+          warnings={
+            routeTotalsMatch ? (routePlan?.warnings ?? []) : []
+          }
+        />
       }
     />
   ) : null;
@@ -1804,7 +1872,7 @@ export default function CalendarTab({
           <ScheduleSplit sidebar={rail}>
             <div className="h-full min-h-0">
               <WeekBoard
-                staff={staff}
+                staff={orderedStaff}
                 jobs={jobs}
                 selectedDate={selectedDate}
                 dispatcher={dispatcher && canWrite}

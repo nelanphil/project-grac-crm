@@ -36,7 +36,12 @@ import {
   optimizeJobOrder,
   type RouteObjective,
 } from "../utils/routeOrder";
-import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
+import { stateCodeOrFlorida } from "../constants/usStates";
+import {
+  geocodeSitePoint,
+  shouldKeepStoredSitePoint,
+  type SitePoint,
+} from "../utils/siteGeocode";
 export { DISPATCHER_ROLES, isDispatcherRole } from "../utils/roles";
 
 export function staffDisplayName(user: {
@@ -468,6 +473,31 @@ function geocodeCacheKey(input: {
     .toLowerCase();
 }
 
+function scheduleState(
+  site: { city?: string | null; state?: string | null } | null | undefined,
+): string {
+  if (!site) return "";
+  const city = (site.city ?? "").trim();
+  const state = (site.state ?? "").trim();
+  if (!city && !state) return "";
+  return stateCodeOrFlorida(state);
+}
+
+type AddressSite = {
+  _id: unknown;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  lat?: unknown;
+  lng?: unknown;
+  coordSource?: string | null;
+  geocodedStreet?: string | null;
+};
+
+const ADDRESS_POINT_FIELDS =
+  "_id lat lng address city state zip coordSource geocodedStreet";
+
 async function geocodeToLatLng(
   input: {
     address?: string;
@@ -478,23 +508,16 @@ async function geocodeToLatLng(
   cache: Map<string, LatLng | null>,
 ): Promise<LatLng | null> {
   const street = (input.address ?? "").trim();
-  if (!street) return null;
-  const key = geocodeCacheKey(input);
+  const city = (input.city ?? "").trim();
+  if (!street && !city) return null;
+  const key = geocodeCacheKey({
+    ...input,
+    state: stateCodeOrFlorida(input.state),
+  });
   if (cache.has(key)) return cache.get(key) ?? null;
   try {
-    const result = await resolveGeocodedAddress({
-      street,
-      city: (input.city ?? "").trim(),
-      state: (input.state ?? "").trim(),
-      zip: (input.zip ?? "").trim(),
-    });
-    const coords =
-      result.ok && result.match.coordinates
-        ? {
-            lat: result.match.coordinates.lat,
-            lng: result.match.coordinates.lng,
-          }
-        : null;
+    const hit = await geocodeSitePoint(input);
+    const coords = hit ? { lat: hit.lat, lng: hit.lng } : null;
     cache.set(key, coords);
     return coords;
   } catch (err) {
@@ -502,6 +525,58 @@ async function geocodeToLatLng(
     cache.set(key, null);
     return null;
   }
+}
+
+async function ensureAddressPoint(
+  site: AddressSite,
+  cache: Map<string, SitePoint | null>,
+): Promise<LatLng | null> {
+  if (shouldKeepStoredSitePoint(site)) return addressCoords(site);
+
+  const key = geocodeCacheKey({
+    address: site.address ?? "",
+    city: site.city ?? "",
+    state: stateCodeOrFlorida(site.state),
+    zip: site.zip ?? "",
+  });
+  let hit: SitePoint | null;
+  if (cache.has(key)) {
+    hit = cache.get(key) ?? null;
+  } else {
+    try {
+      hit = await geocodeSitePoint(site);
+    } catch (err) {
+      console.error("schedule address geocode error:", err);
+      hit = null;
+    }
+    cache.set(key, hit);
+  }
+  if (!hit) return addressCoords(site);
+
+  const street = (site.address ?? "").trim();
+  const stateBlank = !(site.state ?? "").trim() && Boolean((site.city ?? "").trim());
+  const current = addressCoords(site);
+  const unchanged =
+    current?.lat === hit.lat &&
+    current?.lng === hit.lng &&
+    site.coordSource === hit.source &&
+    (site.geocodedStreet ?? "").trim() === street &&
+    !stateBlank;
+  if (!unchanged) {
+    await CustomerAddress.updateOne(
+      { _id: site._id },
+      {
+        $set: {
+          lat: hit.lat,
+          lng: hit.lng,
+          coordSource: hit.source,
+          geocodedStreet: street,
+          ...(stateBlank ? { state: "FL" } : {}),
+        },
+      },
+    );
+  }
+  return { lat: hit.lat, lng: hit.lng };
 }
 
 const GEOCODE_CONCURRENCY = 5;
@@ -525,22 +600,18 @@ export async function hydrateMissingAddressCoordinates(
       { lng: { $exists: false } },
     ],
   })
-    .select("address city state zip lat lng")
+    .select(ADDRESS_POINT_FIELDS)
     .lean();
 
-  const cache = new Map<string, LatLng | null>();
+  const cache = new Map<string, SitePoint | null>();
   const updated: Array<{ addressId: string; lat: number; lng: number }> = [];
 
   for (let i = 0; i < docs.length; i += GEOCODE_CONCURRENCY) {
     const batch = docs.slice(i, i + GEOCODE_CONCURRENCY);
     const results = await Promise.all(
       batch.map(async (site) => {
-        const dest = await geocodeToLatLng(site, cache);
+        const dest = await ensureAddressPoint(site, cache);
         if (!dest) return null;
-        await CustomerAddress.updateOne(
-          { _id: site._id },
-          { $set: { lat: dest.lat, lng: dest.lng } },
-        );
         return {
           addressId: String(site._id),
           lat: dest.lat,
@@ -647,6 +718,7 @@ export async function suggestAssignees(opts: {
     opts.estimatedMinutes ?? estimatedMinutesForWorkOrder(workOrder);
 
   const geocodeCache = new Map<string, LatLng | null>();
+  const siteCache = new Map<string, SitePoint | null>();
 
   let dest: LatLng | null = null;
   let jobCity = "";
@@ -656,42 +728,24 @@ export async function suggestAssignees(opts: {
   ) => {
     if (!site) return;
     if (!jobCity && site.city) jobCity = site.city.trim();
-    if (!jobState && site.state) jobState = site.state.trim();
+    if (!jobState) jobState = scheduleState(site);
   };
   if (workOrder.addressRef) {
     const site = await CustomerAddress.findById(workOrder.addressRef)
-      .select("lat lng address city state zip")
+      .select(ADDRESS_POINT_FIELDS)
       .lean();
     rememberPlace(site);
-    dest = addressCoords(site);
-    if (!dest && site) {
-      dest = await geocodeToLatLng(site, geocodeCache);
-      if (dest) {
-        await CustomerAddress.updateOne(
-          { _id: site._id },
-          { $set: { lat: dest.lat, lng: dest.lng } },
-        );
-      }
-    }
+    if (site) dest = await ensureAddressPoint(site, siteCache);
   }
   if (!dest && workOrder.customerRef) {
     const fallback = await CustomerAddress.findOne({
       customerRef: workOrder.customerRef,
     })
       .sort({ isPrimary: -1 })
-      .select("lat lng address city state zip")
+      .select(ADDRESS_POINT_FIELDS)
       .lean();
     rememberPlace(fallback);
-    dest = addressCoords(fallback);
-    if (!dest && fallback) {
-      dest = await geocodeToLatLng(fallback, geocodeCache);
-      if (dest) {
-        await CustomerAddress.updateOne(
-          { _id: fallback._id },
-          { $set: { lat: dest.lat, lng: dest.lng } },
-        );
-      }
-    }
+    if (fallback) dest = await ensureAddressPoint(fallback, siteCache);
   }
 
   let staff = await listSchedulableStaff();
@@ -748,7 +802,7 @@ export async function suggestAssignees(opts: {
   const [jobAddresses, jobCustomers] = await Promise.all([
     jobAddressIds.length > 0
       ? CustomerAddress.find({ _id: { $in: jobAddressIds } })
-          .select("_id lat lng address city state zip")
+          .select(ADDRESS_POINT_FIELDS)
           .lean()
       : [],
     jobCustomerIds.length > 0
@@ -771,16 +825,12 @@ export async function suggestAssignees(opts: {
   );
 
   for (const [id, coords] of [...jobCoords.entries()]) {
-    if (coords) continue;
     const addr = jobAddressById.get(id);
     if (!addr) continue;
-    const geocoded = await geocodeToLatLng(addr, geocodeCache);
+    if (coords && shouldKeepStoredSitePoint(addr)) continue;
+    const geocoded = await ensureAddressPoint(addr, siteCache);
     if (!geocoded) continue;
     jobCoords.set(id, geocoded);
-    await CustomerAddress.updateOne(
-      { _id: addr._id },
-      { $set: { lat: geocoded.lat, lng: geocoded.lng } },
-    );
   }
 
   const suggestions: SuggestCandidate[] = [];
@@ -1130,7 +1180,7 @@ export async function recommendAssignees(opts: {
       | undefined,
   ): JobSite => ({
     city: (address?.city ?? "").trim(),
-    state: (address?.state ?? "").trim(),
+    state: scheduleState(address),
     coords: addressCoords(address ?? null),
   });
 
@@ -1912,20 +1962,11 @@ async function coordsByAddressId(
   const coords = new Map<string, LatLng | null>();
   if (addressIds.length === 0) return coords;
   const addresses = await CustomerAddress.find({ _id: { $in: addressIds } })
-    .select("_id lat lng address city state zip")
+    .select(ADDRESS_POINT_FIELDS)
     .lean();
-  const geocodeCache = new Map<string, LatLng | null>();
+  const siteCache = new Map<string, SitePoint | null>();
   for (const address of addresses) {
-    let point = addressCoords(address);
-    if (!point) {
-      point = await geocodeToLatLng(address, geocodeCache);
-      if (point) {
-        await CustomerAddress.updateOne(
-          { _id: address._id },
-          { $set: { lat: point.lat, lng: point.lng } },
-        );
-      }
-    }
+    const point = await ensureAddressPoint(address, siteCache);
     coords.set(String(address._id), point);
   }
   return coords;

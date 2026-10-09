@@ -83,6 +83,7 @@ import {
 } from "../utils/ownerTerritory";
 import { User } from "../models/mongo/User";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
+import { geocodeSitePoint } from "../utils/siteGeocode";
 import { mintCheckoutKey } from "../utils/checkoutKey";
 import { buildTokenSearchFilter } from "../utils/textSearch";
 import {
@@ -1885,21 +1886,13 @@ export async function createCustomerAddress(
     const county = normalizeCountyName(parsed.data.county);
     const countyManual = parsed.data.countyManual === true || Boolean(county);
 
-    let lat: number | null = null;
-    let lng: number | null = null;
     const street = trimStr(parsed.data.address);
-    if (street) {
-      const geocode = await resolveGeocodedAddress({
-        street,
-        city: trimStr(parsed.data.city),
-        state: trimStr(parsed.data.state),
-        zip: trimStr(parsed.data.zip),
-      });
-      if (geocode.ok) {
-        lat = geocode.match.coordinates?.lat ?? null;
-        lng = geocode.match.coordinates?.lng ?? null;
-      }
-    }
+    const point = await geocodeSitePoint({
+      address: street,
+      city: trimStr(parsed.data.city),
+      state: trimStr(parsed.data.state),
+      zip: trimStr(parsed.data.zip),
+    });
 
     const address = await CustomerAddress.create({
       customerRef: customer._id,
@@ -1913,8 +1906,10 @@ export async function createCustomerAddress(
       isPrimary: makePrimary,
       propertyType: parsed.data.propertyType,
       legacyCustomerId: null,
-      lat,
-      lng,
+      lat: point?.lat ?? null,
+      lng: point?.lng ?? null,
+      coordSource: point?.source ?? "",
+      geocodedStreet: point ? street : "",
     });
 
     await syncCustomerPrimaryFields(customer._id);
@@ -1995,16 +1990,19 @@ export async function updateCustomerAddress(
       parsed.data.city !== undefined ||
       parsed.data.state !== undefined ||
       parsed.data.zip !== undefined;
-    if (addressFieldsChanged && trimStr(address.address)) {
-      const geocode = await resolveGeocodedAddress({
-        street: trimStr(address.address),
+    if (addressFieldsChanged) {
+      const street = trimStr(address.address);
+      const point = await geocodeSitePoint({
+        address: street,
         city: trimStr(address.city),
         state: trimStr(address.state),
         zip: trimStr(address.zip),
       });
-      if (geocode.ok) {
-        address.lat = geocode.match.coordinates?.lat ?? null;
-        address.lng = geocode.match.coordinates?.lng ?? null;
+      if (point) {
+        address.lat = point.lat;
+        address.lng = point.lng;
+        address.coordSource = point.source;
+        address.geocodedStreet = street;
       }
     }
     if (parsed.data.propertyType !== undefined)

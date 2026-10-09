@@ -262,6 +262,22 @@ export const US_STATES = [
   "Wyoming",
 ] as const;
 
+/** Two-letter code. Blank values become FL. Full names such as "Florida" are accepted. */
+export function toUsStateCode(
+  value: string | null | undefined,
+  fallback = "FL",
+): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return fallback;
+  const upper = raw.toUpperCase();
+  const codes = Object.values(US_STATE_CODES) as string[];
+  if (codes.includes(upper)) return upper;
+  const named = (
+    Object.entries(US_STATE_CODES) as [string, string][]
+  ).find(([name]) => name.toLowerCase() === raw.toLowerCase());
+  return named?.[1] ?? fallback;
+}
+
 export const US_STATE_CODES: Record<(typeof US_STATES)[number], string> = {
   Florida: "FL",
   Alabama: "AL",

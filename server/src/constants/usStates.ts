@@ -63,3 +63,20 @@ export const US_STATE_BOUNDS: Record<string, StateBounds> = {
 export function isUsStateCode(value: string): boolean {
   return Object.prototype.hasOwnProperty.call(US_STATE_BOUNDS, value);
 }
+
+/** Two-letter code, or "" when the value is blank or not a US state. */
+export function normalizeUsStateCode(value: string | null | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  const upper = raw.toUpperCase();
+  if (isUsStateCode(upper)) return upper;
+  const match = Object.entries(US_STATE_BOUNDS).find(
+    ([, bounds]) => bounds.name.toLowerCase() === raw.toLowerCase(),
+  );
+  return match?.[0] ?? "";
+}
+
+/** Blank or unrecognized states become FL. */
+export function stateCodeOrFlorida(value: string | null | undefined): string {
+  return normalizeUsStateCode(value) || "FL";
+}

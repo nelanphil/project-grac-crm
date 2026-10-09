@@ -111,6 +111,7 @@ function WorkOrderDetailContent() {
     customerName: order.customerName ?? "",
     customerAddress: order.customerAddress ?? "",
     customerCity: order.customerCity ?? "",
+    customerState: order.customerState ?? "FL",
     customerZip: order.customerZip ?? "",
     customerPhone: order.customerPhone ?? "",
     customerEmail: order.customerEmail ?? "",
