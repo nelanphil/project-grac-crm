@@ -159,9 +159,21 @@ function refineMessagingSend(
   }
 }
 
-export const messagingSendSchema = messagingSendObject.superRefine(
-  refineMessagingSend,
-);
+export const messagingSendSchema = messagingSendObject
+  .extend({
+    /** Replaces the contact's phone number for a single-contact send. */
+    toOverride: z.string().trim().min(1).max(40).optional(),
+  })
+  .superRefine(refineMessagingSend)
+  .superRefine((data, ctx) => {
+    if (data.toOverride && data.contactIds.length !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["toOverride"],
+        message: "toOverride can only be used when sending to a single contact",
+      });
+    }
+  });
 
 export type MessagingSendInput = z.infer<typeof messagingSendSchema>;
 

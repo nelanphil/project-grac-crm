@@ -397,6 +397,86 @@ export function ticketTotals(form: TicketFormState) {
   };
 }
 
+/** Rows that `ticketToPayload` sends; blank rows stay client-only. */
+export function isPersistedTicketRow(row: TicketPartRow): boolean {
+  if (row.lineType === "note") return Boolean(row.description.trim());
+  if (row.lineType === "agreement") {
+    return Boolean(row.contractTemplateRef.trim() || row.description.trim());
+  }
+  return Boolean(row.partNumber.trim() || row.description.trim());
+}
+
+/** Agreement contract refs the server enrolled for the rows in `sent`, keyed by row id. */
+export function enrolledRefsFromSave(
+  sent: TicketPartRow[],
+  saved: TicketPartRow[],
+): Map<string, string> {
+  const sentRows = sent.filter(isPersistedTicketRow);
+  const savedRows = saved.filter(isPersistedTicketRow);
+  const refs = new Map<string, string>();
+  sentRows.forEach((row, index) => {
+    const match = savedRows[index];
+    if (
+      row.lineType === "agreement" &&
+      !row.enrolledContractRef &&
+      match?.lineType === "agreement" &&
+      match.contractTemplateRef === row.contractTemplateRef &&
+      match.enrolledContractRef
+    ) {
+      refs.set(row.id, match.enrolledContractRef);
+    }
+  });
+  return refs;
+}
+
+export function applyEnrolledRefs(
+  parts: TicketPartRow[],
+  refs: Map<string, string>,
+): TicketPartRow[] {
+  if (refs.size === 0) return parts;
+  let changed = false;
+  const next = parts.map((row) => {
+    const ref = refs.get(row.id);
+    if (!ref || row.lineType !== "agreement" || row.enrolledContractRef) {
+      return row;
+    }
+    changed = true;
+    return { ...row, enrolledContractRef: ref };
+  });
+  return changed ? next : parts;
+}
+
+/**
+ * Copies ids the server assigned during a save (ticket number, created
+ * equipment, enrolled agreements) into the form without touching fields the
+ * user changed while the save was running.
+ */
+export function mergeSavedTicket(
+  current: TicketFormState,
+  sent: TicketFormState,
+  saved: TicketFormState,
+): TicketFormState {
+  const number = current.number || saved.number;
+  const customerRef = current.customerRef || saved.customerRef;
+  const equipmentRef =
+    current.equipmentRef === sent.equipmentRef && saved.equipmentRef
+      ? saved.equipmentRef
+      : current.equipmentRef;
+  const parts = applyEnrolledRefs(
+    current.parts,
+    enrolledRefsFromSave(sent.parts, saved.parts),
+  );
+  if (
+    number === current.number &&
+    customerRef === current.customerRef &&
+    equipmentRef === current.equipmentRef &&
+    parts === current.parts
+  ) {
+    return current;
+  }
+  return { ...current, number, customerRef, equipmentRef, parts };
+}
+
 export function ticketToPayload(form: TicketFormState) {
   const totals = ticketTotals(form);
   return {
@@ -419,13 +499,7 @@ export function ticketToPayload(form: TicketFormState) {
     miscExp: totals.miscExp,
     shipping: totals.shipping,
     parts: form.parts
-      .filter((row) => {
-        if (row.lineType === "note") return Boolean(row.description.trim());
-        if (row.lineType === "agreement") {
-          return Boolean(row.contractTemplateRef.trim() || row.description.trim());
-        }
-        return Boolean(row.partNumber.trim() || row.description.trim());
-      })
+      .filter(isPersistedTicketRow)
       .map((row) =>
         row.lineType === "note"
           ? {

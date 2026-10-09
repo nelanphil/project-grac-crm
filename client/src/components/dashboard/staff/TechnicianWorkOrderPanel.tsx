@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import AutosaveStatus from "@/components/billing/AutosaveStatus";
 import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
 import ServiceTicketDocument, {
   type ServiceTicketView,
@@ -10,7 +11,6 @@ import TicketLineItemsEditor from "@/components/billing/TicketLineItemsEditor";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 import WorkOrderInvoiceSend from "@/components/dashboard/staff/WorkOrderInvoiceSend";
 import {
-  ApiError,
   getWorkOrderTypes,
   updateWorkOrder,
   type WorkOrderListItem,
@@ -18,15 +18,30 @@ import {
 } from "@/lib/api";
 import { isDispatcherRole, type RoleLike } from "@/lib/dashboard-role";
 import {
+  applyEnrolledRefs,
+  emptyTicketForm,
+  enrolledRefsFromSave,
   hasEquipmentProductLines,
   nextTicketWorkOrderType,
   ticketFromRecord,
   ticketToPayload,
   workOrderTypeSaveIssue,
+  type TicketFormState,
   type TicketPartRow,
 } from "@/lib/service-ticket";
+import { useWorkOrderAutosave } from "@/lib/useWorkOrderAutosave";
 
 type PanelUser = RoleLike & { id: string };
+
+type ProductsDraft = Pick<
+  TicketFormState,
+  "parts" | "workOrderTypeRef" | "workOrderTypeLabel" | "trackedEquipment"
+>;
+
+function serializeProductsDraft(draft: ProductsDraft): string {
+  const { parts } = ticketToPayload({ ...emptyTicketForm(), parts: draft.parts });
+  return JSON.stringify({ parts, workOrderTypeRef: draft.workOrderTypeRef });
+}
 
 async function saveWorkOrder(
   token: string,
@@ -122,9 +137,6 @@ export function DesktopWorkOrderPanel({
   onClose: () => void;
   onSaved: (order: WorkOrderListItem) => void;
 }) {
-  const [submitting, setSubmitting] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
   return (
     <section className="min-w-0 space-y-3 rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] p-4">
       <div className="flex items-center justify-between gap-3">
@@ -138,11 +150,6 @@ export function DesktopWorkOrderPanel({
         </button>
       </div>
       <PanelStatus loading={loading} error={error} />
-      {saveError ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {saveError}
-        </p>
-      ) : null}
       {order && token && user ? (
         canWrite ? (
           <ServiceTicketForm
@@ -150,21 +157,12 @@ export function DesktopWorkOrderPanel({
             variant="work-order"
             initial={ticketFromRecord(order)}
             recordId={order._id}
-            submitting={submitting}
             submitLabel="Save work order"
-            onSubmit={async (payload) => {
-              setSubmitting(true);
-              setSaveError(null);
-              try {
-                const updated = await saveWorkOrder(token, order, payload, user);
-                onSaved(updated);
-              } catch (err) {
-                setSaveError(
-                  err instanceof ApiError ? err.message : "Failed to save work order.",
-                );
-              } finally {
-                setSubmitting(false);
-              }
+            onSubmit={() => {}}
+            autoSave={async (payload) => {
+              const updated = await saveWorkOrder(token, order, payload, user);
+              onSaved(updated);
+              return ticketFromRecord(updated);
             }}
           />
         ) : (
@@ -237,19 +235,17 @@ export function MobileWorkOrderPanel({
   const [trackedEquipment, setTrackedEquipment] = useState(false);
   const [workOrderTypes, setWorkOrderTypes] = useState<WorkOrderTypeItem[]>([]);
   const [workOrderTypesLoaded, setWorkOrderTypesLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!order) return;
+  // Saves hand back a new `order`; only a different work order resets the draft.
+  if (order && order._id !== loadedFor) {
     const form = ticketFromRecord(order);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoadedFor(order._id);
     setParts(form.parts);
     setWorkOrderTypeRef(form.workOrderTypeRef);
     setWorkOrderTypeLabel(form.workOrderTypeLabel);
     setTrackedEquipment(form.trackedEquipment);
-    setSaveError(null);
-  }, [order]);
+  }
 
   useEffect(() => {
     if (!token) return;
@@ -298,6 +294,36 @@ export function MobileWorkOrderPanel({
     typesLoaded: workOrderTypesLoaded,
   });
 
+  const draft = useMemo<ProductsDraft>(
+    () => ({
+      parts,
+      workOrderTypeRef,
+      workOrderTypeLabel,
+      trackedEquipment: hasEquipmentLines,
+    }),
+    [parts, workOrderTypeRef, workOrderTypeLabel, hasEquipmentLines],
+  );
+  const saveProducts = useCallback(
+    async (sent: ProductsDraft) => {
+      if (!order || !token) throw new Error("Work order is not loaded.");
+      const payload = ticketToPayload({ ...ticketFromRecord(order), ...sent });
+      const updated = await saveWorkOrder(token, order, payload, user);
+      onSaved(updated);
+      const refs = enrolledRefsFromSave(
+        sent.parts,
+        ticketFromRecord(updated).parts,
+      );
+      setParts((current) => applyEnrolledRefs(current, refs));
+    },
+    [order, token, user, onSaved],
+  );
+  const autosave = useWorkOrderAutosave({
+    value: draft,
+    serialize: serializeProductsDraft,
+    save: saveProducts,
+    blocked: !canWrite || !order || typeSaveIssue.blocked,
+  });
+
   return (
     <section className="min-w-0 space-y-4 rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] p-4">
       <div className="flex items-center justify-between gap-3">
@@ -318,7 +344,12 @@ export function MobileWorkOrderPanel({
               Products
             </h3>
             {canWrite ? (
-              <>
+              <div
+                className="min-w-0 space-y-2"
+                onChangeCapture={autosave.arm}
+                onClickCapture={autosave.arm}
+                onBlurCapture={autosave.flush}
+              >
                 <TicketLineItemsEditor parts={parts} onChange={setParts} />
                 {hasEquipmentLines ? (
                   <EquipmentWorkOrderTypeChoice
@@ -333,39 +364,13 @@ export function MobileWorkOrderPanel({
                 ) : typeSaveIssue.message ? (
                   <p className="text-sm text-red-700">{typeSaveIssue.message}</p>
                 ) : null}
-                {saveError ? (
-                  <p className="text-sm text-red-700">{saveError}</p>
-                ) : null}
-                <button
-                  type="button"
-                  disabled={saving || typeSaveIssue.blocked}
-                  onClick={() => {
-                    if (typeSaveIssue.blocked) return;
-                    setSaving(true);
-                    setSaveError(null);
-                    const form = {
-                      ...ticketFromRecord(order),
-                      parts,
-                      workOrderTypeRef,
-                      workOrderTypeLabel,
-                      trackedEquipment: hasEquipmentLines,
-                    };
-                    void saveWorkOrder(token, order, ticketToPayload(form), user)
-                      .then(onSaved)
-                      .catch((err: unknown) => {
-                        setSaveError(
-                          err instanceof ApiError
-                            ? err.message
-                            : "Failed to save products.",
-                        );
-                      })
-                      .finally(() => setSaving(false));
-                  }}
-                  className="rounded-md bg-brand-dark px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
-                >
-                  {saving ? "Saving…" : "Save products"}
-                </button>
-              </>
+                <AutosaveStatus
+                  status={autosave.status}
+                  error={autosave.error}
+                  onRetry={autosave.retry}
+                  className="text-xs"
+                />
+              </div>
             ) : (
               <ProductLines order={order} />
             )}

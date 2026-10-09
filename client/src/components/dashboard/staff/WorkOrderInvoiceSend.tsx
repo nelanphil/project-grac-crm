@@ -89,13 +89,16 @@ export default function WorkOrderInvoiceSend({
   const canSend = useAuthStore((s) => s.hasPermission("messages:write"));
   const enabled = canSend && !isCustomerRole(user);
   const [invoice, setInvoice] = useState<InvoiceItem | null>(null);
-  const [loadedFor, setLoadedFor] = useState<WorkOrderListItem | null>(null);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const orderId = order._id;
+  // Autosave replaces `order` on every edit; only these fields change the invoice.
+  const invoiceKey = `${orderId}:${order.total}:${order.customerRef ?? ""}:${order.paid}`;
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    getInvoices(token, { workOrderRef: order._id })
+    getInvoices(token, { workOrderRef: orderId })
       .then(({ invoices }) => {
         const match = pickInvoice(invoices);
         return match ? getInvoice(token, match._id).then((res) => res.invoice) : null;
@@ -113,27 +116,27 @@ export default function WorkOrderInvoiceSend({
         );
       })
       .finally(() => {
-        if (!cancelled) setLoadedFor(order);
+        if (!cancelled) setLoadedFor(orderId);
       });
     return () => {
       cancelled = true;
     };
-  }, [enabled, token, order]);
+  }, [enabled, token, orderId, invoiceKey]);
 
   if (!enabled) return null;
 
-  const loading = loadedFor === null || loadedFor._id !== order._id;
+  const loading = loadedFor !== orderId;
   const missingReason = loading
     ? "Loading invoice…"
     : error
       ? error
       : !invoice
-        ? "Save a billable amount on this work order to create its invoice."
+        ? "Add a customer and a total above $0 to create this invoice."
         : null;
 
   return (
     <SendControls
-      key={invoice ? `${invoice._id}:${invoice.updatedAt}` : "none"}
+      key={invoice ? invoice._id : "none"}
       invoice={loading ? null : invoice}
       missingReason={missingReason}
     />

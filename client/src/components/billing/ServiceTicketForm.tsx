@@ -1,6 +1,14 @@
 "use client";
 
-import { FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   CustomerDetail,
   CustomerListItem,
@@ -29,11 +37,14 @@ import {
   applyDiscountsToParts,
   emptyTicketForm,
   hasEquipmentProductLines,
+  mergeSavedTicket,
   nextTicketWorkOrderType,
   ticketToPayload,
   ticketTotals,
   workOrderTypeSaveIssue,
 } from "@/lib/service-ticket";
+import { useWorkOrderAutosave } from "@/lib/useWorkOrderAutosave";
+import AutosaveStatus from "@/components/billing/AutosaveStatus";
 import { useAuthStore } from "@/store/useAuthStore";
 import { timeWindowError } from "@/lib/schedule";
 import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
@@ -69,6 +80,10 @@ function formatMoney(amount: number): string {
   }).format(amount || 0);
 }
 
+function serializeTicket(form: TicketFormState): string {
+  return JSON.stringify(ticketToPayload(form));
+}
+
 function technicianDisplayName(tech: {
   first_name?: string;
   last_name?: string;
@@ -85,6 +100,7 @@ export default function ServiceTicketForm({
   onSubmit,
   extraActions,
   invoiceAction,
+  autoSave,
 }: {
   variant: TicketVariant;
   initial?: TicketFormState;
@@ -94,6 +110,11 @@ export default function ServiceTicketForm({
   onSubmit: (payload: ReturnType<typeof ticketToPayload>) => void | Promise<void>;
   extraActions?: ReactNode;
   invoiceAction?: ReactNode;
+  /**
+   * Saves an existing record as the user edits instead of showing a submit
+   * button. Must throw on failure and resolve with the saved record as form state.
+   */
+  autoSave?: (payload: ReturnType<typeof ticketToPayload>) => Promise<TicketFormState>;
 }) {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
@@ -112,14 +133,20 @@ export default function ServiceTicketForm({
     ticketSiteKey(initial ?? emptyTicketForm()),
   );
   const stateTouched = useRef(false);
+  const initialAppliedFor = useRef<string | undefined>(undefined);
+  const autoSaving = Boolean(autoSave);
 
   useEffect(() => {
+    // Autosaved records feed each save back as `initial`; resetting to it
+    // would drop edits typed while the save was in flight.
+    if (autoSaving && initial && initialAppliedFor.current === recordId) return;
+    initialAppliedFor.current = recordId;
     stateTouched.current = false;
     if (initial) {
       setForm(initial);
       lastAppliedSiteKey.current = ticketSiteKey(initial);
     }
-  }, [initial]);
+  }, [initial, autoSaving, recordId]);
 
   useEffect(() => {
     if (!token || !form.customerRef) return;
@@ -406,6 +433,11 @@ export default function ServiceTicketForm({
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (autoSave) {
+      autosave.arm();
+      autosave.flush();
+      return;
+    }
     if (!form.customerId) return;
     if (variant === "work-order" && timeWindowError(form.startTime, form.endTime)) {
       return;
@@ -445,9 +477,37 @@ export default function ServiceTicketForm({
     types: workOrderTypes,
     typesLoaded: workOrderTypesLoaded,
   });
+  const autosaveBlockedReason = !form.customerId
+    ? "choose a customer."
+    : windowError
+      ? windowError
+      : typeSaveIssue.blocked
+        ? typeSaveIssue.message || "loading work order types…"
+        : null;
+
+  const saveDraft = useCallback(
+    async (sent: TicketFormState) => {
+      if (!autoSave) return;
+      const saved = await autoSave(ticketToPayload(sent));
+      setForm((current) => mergeSavedTicket(current, sent, saved));
+    },
+    [autoSave],
+  );
+  const autosave = useWorkOrderAutosave({
+    value: form,
+    serialize: serializeTicket,
+    save: saveDraft,
+    blocked: !autoSave || autosaveBlockedReason !== null,
+  });
 
   return (
-    <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6 print:hidden">
+    <form
+      onSubmit={(e) => void handleSubmit(e)}
+      onChangeCapture={autoSave ? autosave.arm : undefined}
+      onClickCapture={autoSave ? autosave.arm : undefined}
+      onBlurCapture={autoSave ? autosave.flush : undefined}
+      className="space-y-6 print:hidden"
+    >
       <article className="rounded-xl border border-neutral-200 bg-white px-4 py-6 shadow-sm sm:px-8">
         <header className="border-b border-neutral-200 pb-5 text-center">
           <p className="text-3xl font-black tracking-[0.2em] text-brand-dark">
@@ -945,14 +1005,25 @@ export default function ServiceTicketForm({
             <div />
           )}
           <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+            {autoSave ? (
+              <AutosaveStatus
+                status={autosave.status}
+                error={autosave.error}
+                blockedReason={autosaveBlockedReason}
+                onRetry={autosave.retry}
+                className="mr-auto sm:mr-2"
+              />
+            ) : null}
             {extraActions}
-            <button
-              type="submit"
-              disabled={submitting || !form.customerId || typeSaveIssue.blocked}
-              className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
-            >
-              {submitting ? "Saving…" : submitLabel}
-            </button>
+            {autoSave ? null : (
+              <button
+                type="submit"
+                disabled={submitting || !form.customerId || typeSaveIssue.blocked}
+                className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
+              >
+                {submitting ? "Saving…" : submitLabel}
+              </button>
+            )}
           </div>
         </div>
       </article>

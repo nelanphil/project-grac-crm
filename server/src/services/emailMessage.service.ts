@@ -60,6 +60,8 @@ export type DispatchStaffEmailBatchInput = {
   offerContractTemplateId?: string | null;
   offerContractOverrides?: OfferContractOverride[] | null;
   createdByUserId?: string | null;
+  /** Replaces the contact's email; only honored for single-contact sends. */
+  toOverride?: string | null;
 };
 
 export type StaffEmailDispatchResultItem = {
@@ -260,12 +262,18 @@ export async function dispatchStaffEmailBatch(
         };
       }
 
-      const toEmail = (built.contact.email ?? "").trim().toLowerCase();
+      const override =
+        uniqueContactIds.length === 1 ? input.toOverride?.trim() : "";
+      const toEmail = (override || built.contact.email || "")
+        .trim()
+        .toLowerCase();
       if (!contactHasValidEmail(toEmail)) {
         return {
           contactId,
           status: "failed" as const,
-          error: "Contact has no valid email",
+          error: override
+            ? "Email address is invalid"
+            : "Contact has no valid email",
         };
       }
 

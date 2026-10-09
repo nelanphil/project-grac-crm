@@ -346,7 +346,10 @@ export async function dispatchMessagingBatch(
           };
         }
 
-        const toE164Number = toE164(built.contact.phone);
+        const phoneOverride =
+          uniqueContactIds.length === 1 ? data.toOverride?.trim() : "";
+        const toPhone = phoneOverride || built.contact.phone;
+        const toE164Number = toE164(toPhone);
         let paymentUrl: string | null = null;
         if (wantsPayLink && paymentLinkForCustomer) {
           paymentUrl = await resolveSmsPaymentUrl({
@@ -420,7 +423,7 @@ export async function dispatchMessagingBatch(
             channel,
             direction: "outbound",
             fromNumber,
-            toNumber: built.contact.phone || "",
+            toNumber: toPhone || "",
             body: rendered,
             mediaUrls,
             customerRef,
@@ -428,7 +431,9 @@ export async function dispatchMessagingBatch(
             threadRef: thread._id,
             templateRef,
             status: "failed",
-            errorMessage: "Contact phone number is invalid",
+            errorMessage: phoneOverride
+              ? "Phone number is invalid"
+              : "Contact phone number is invalid",
             createdByUserRef: userId ?? null,
           });
           await touchThreadAfterMessage(thread._id, {
@@ -440,7 +445,9 @@ export async function dispatchMessagingBatch(
           return {
             contactId,
             status: "failed" as const,
-            error: "Contact phone number is invalid",
+            error: phoneOverride
+              ? "Phone number is invalid"
+              : "Contact phone number is invalid",
           };
         }
 

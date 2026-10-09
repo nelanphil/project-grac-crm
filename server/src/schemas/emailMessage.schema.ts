@@ -88,8 +88,21 @@ function refineRenewalPair(
 }
 
 export const emailMessageSendSchema = emailMessageSendFields
+  .extend({
+    /** Replaces the contact's email for a single-contact send. */
+    toOverride: z.string().trim().email().max(255).optional(),
+  })
   .superRefine(refineSendContent)
-  .superRefine(refineRenewalPair);
+  .superRefine(refineRenewalPair)
+  .superRefine((data, ctx) => {
+    if (data.toOverride && data.contactIds.length !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["toOverride"],
+        message: "toOverride can only be used when sending to a single contact",
+      });
+    }
+  });
 
 export const emailMessageScheduleSchema = emailMessageSendFields
   .extend({

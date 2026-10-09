@@ -5507,6 +5507,8 @@ export async function sendMessagingMessages(
       contactId: string;
       contractTemplateId: string | null;
     }[];
+    /** Replaces the contact's phone number for a single-contact send. */
+    toOverride?: string;
   },
 ): Promise<MessagingSendResponse> {
   return authRequest<MessagingSendResponse>("/messaging/send", {
@@ -6113,6 +6115,8 @@ export async function sendEmailMessages(
       contactId: string;
       contractTemplateId: string | null;
     }[];
+    /** Replaces the contact's email for a single-contact send. */
+    toOverride?: string;
   },
 ): Promise<EmailSendResponse> {
   return authRequest<EmailSendResponse>("/email-messages/send", {

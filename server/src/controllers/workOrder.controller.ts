@@ -15,6 +15,7 @@ import {
   actorFromRequest,
   customerDisplayName,
   logNotificationAsync,
+  logNotificationThrottledAsync,
 } from "../services/notification.service";
 import {
   applyAssignmentSideEffects,
@@ -34,6 +35,8 @@ import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { findWorkOrderIdsMatchingNoteSearch } from "./workOrderNote.controller";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
+/** Autosave patches often; one "updated" event per editor per window is enough. */
+const WORK_ORDER_UPDATE_NOTIFY_WINDOW_MS = 10 * 60 * 1000;
 
 function timeWindowIsInvalid(start: unknown, end: unknown): boolean {
   const startTime = typeof start === "string" ? start : "";
@@ -675,14 +678,17 @@ export async function updateWorkOrder(
       if (warn) warnings.push(warn);
     }
 
-    logNotificationAsync({
-      entityType: "work_order",
-      action: "updated",
-      entityId: String(workOrder._id),
-      customerRef: workOrder.customerRef ?? null,
-      summary: "Work order updated",
-      ...actorFromRequest(req.user),
-    });
+    logNotificationThrottledAsync(
+      {
+        entityType: "work_order",
+        action: "updated",
+        entityId: String(workOrder._id),
+        customerRef: workOrder.customerRef ?? null,
+        summary: "Work order updated",
+        ...actorFromRequest(req.user),
+      },
+      WORK_ORDER_UPDATE_NOTIFY_WINDOW_MS,
+    );
 
     const lean = workOrder.toObject() as unknown as Record<string, unknown>;
     const [enriched] = await enrichWithAddress([lean]);

@@ -364,6 +364,7 @@ export async function sendEmailMessages(
           : content.offerContractTemplateId,
       offerContractOverrides: data.offerContractOverrides,
       createdByUserId: req.user?.id ?? null,
+      toOverride: data.toOverride,
     });
     res.json(result);
   } catch (err) {

@@ -28,7 +28,9 @@ import {
   sendMessagingMessages,
   TwilioAccountItem,
 } from "@/lib/api";
+import { formatUsPhoneInput, isValidUsPhone } from "@/lib/formatPhone";
 import {
+  hasValidContactEmail,
   invoiceEmailBodyHtml,
   invoiceEmailSubject,
   invoiceSmsBody,
@@ -157,6 +159,8 @@ export function useInvoiceCustomerSend(
   const [sent, setSent] = useState(false);
   const [defaultSaving, setDefaultSaving] = useState(false);
   const [defaultError, setDefaultError] = useState<string | null>(null);
+  const [emailToEdit, setEmailToEdit] = useState<string | null>(null);
+  const [phoneToEdit, setPhoneToEdit] = useState<string | null>(null);
 
   const invoiceId = invoice?._id ?? "";
   const customerRef = invoice?.customerRef ?? "";
@@ -169,6 +173,8 @@ export function useInvoiceCustomerSend(
     setPreviewError(null);
     setPreviewKey("");
     setSeededFor("");
+    setEmailToEdit(null);
+    setPhoneToEdit(null);
   }
   if (invoice && templatesReady && seededFor !== invoice._id) {
     const emailTemplate =
@@ -203,6 +209,21 @@ export function useInvoiceCustomerSend(
   const phoneContact = pickInvoicePhoneContact(contacts);
   const emailContactId = emailContact?._id ?? "";
   const phoneContactId = phoneContact?._id ?? "";
+  const contactEmail = (emailContact?.email ?? "").trim();
+  const contactPhone = (phoneContact?.phone ?? "").trim();
+  const emailTo = emailToEdit ?? contactEmail;
+  const phoneTo = phoneToEdit ?? contactPhone;
+  const emailOverride =
+    emailToEdit !== null &&
+    emailToEdit.trim().toLowerCase() !== contactEmail.toLowerCase()
+      ? emailToEdit.trim()
+      : undefined;
+  const phoneOverride =
+    phoneToEdit !== null &&
+    phoneToEdit.replace(/\D/g, "") !==
+      contactPhone.replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "")
+      ? phoneToEdit.trim()
+      : undefined;
   const emailAccount =
     emailAccounts.find((account) => account._id === emailAccountId) ??
     emailAccounts[0] ??
@@ -452,7 +473,7 @@ export function useInvoiceCustomerSend(
   }
 
   async function send() {
-    if (!token || !invoice || !channel || sending) return;
+    if (!token || !invoice || !channel || sending || recipientError) return;
     const contact = channel === "email" ? emailContact : phoneContact;
     if (!contact) return;
     setSending(true);
@@ -471,6 +492,7 @@ export function useInvoiceCustomerSend(
           emailAccountId: emailAccount._id,
           fromName: emailAccount.fromName,
           includePaymentLink: payLink,
+          toOverride: emailOverride,
         });
         const failed = result.results.find((item) => item.status !== "sent");
         if (failed || result.summary.failed > 0) {
@@ -488,6 +510,7 @@ export function useInvoiceCustomerSend(
           twilioAccountId: smsOption.accountId,
           fromNumber: smsOption.fromNumber,
           includePaymentLink: payLink,
+          toOverride: phoneOverride,
         });
         const failed = result.results.find((item) => item.status !== "sent");
         if (failed || result.summary.failed > 0) {
@@ -535,14 +558,17 @@ export function useInvoiceCustomerSend(
   const previewReady = previewKey === requestKey && !previewError;
 
   const activeContact = channel === "text" ? phoneContact : emailContact;
+  const recipientTo = channel === "text" ? phoneTo : emailTo;
+  const recipientError =
+    channel === "email" && emailToEdit !== null && !hasValidContactEmail(emailTo)
+      ? "Enter a valid email address."
+      : channel === "text" && phoneToEdit !== null && !isValidUsPhone(phoneTo)
+        ? "Enter a 10-digit phone number."
+        : null;
   const recipientLabel = activeContact
-    ? channel === "text"
-      ? [contactName(activeContact), activeContact.phone]
-          .filter(Boolean)
-          .join(" · ")
-      : [contactName(activeContact), activeContact.email]
-          .filter(Boolean)
-          .join(" · ")
+    ? [contactName(activeContact), recipientTo.trim()]
+        .filter(Boolean)
+        .join(" · ")
     : "";
 
   return {
@@ -591,8 +617,32 @@ export function useInvoiceCustomerSend(
     defaultSaving,
     defaultError,
     recipientLabel,
+    recipientTo,
+    recipientError,
+    recipientEdited:
+      channel === "text" ? phoneOverride !== undefined : emailOverride !== undefined,
+    contactRecipient: channel === "text" ? contactPhone : contactEmail,
+    setRecipientTo: (value: string) => {
+      setSent(false);
+      if (channel === "text") {
+        const digits = value.replace(/\D/g, "");
+        setPhoneToEdit(
+          formatUsPhoneInput(
+            digits.length === 11 && digits.startsWith("1")
+              ? digits.slice(1)
+              : value,
+          ),
+        );
+      }
+      else if (channel === "email") setEmailToEdit(value);
+    },
+    resetRecipient: () => {
+      setSent(false);
+      if (channel === "text") setPhoneToEdit(null);
+      else if (channel === "email") setEmailToEdit(null);
+    },
     composerOpen: channel !== null,
-    canSend: previewReady && !messageEmpty && !sending,
+    canSend: previewReady && !messageEmpty && !sending && !recipientError,
     emailDisabledReason: disabledReason("email"),
     textDisabledReason: disabledReason("text"),
     openChannel,
@@ -642,7 +692,10 @@ export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
   const [confirmingChannel, setConfirmingChannel] = useState<Channel | null>(
     null,
   );
+  const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
   if (!send.channel) return null;
+  const editingRecipient =
+    editingChannel === send.channel || send.recipientError !== null;
   const isEmail = send.channel === "email";
   const confirming = confirmingChannel === send.channel && send.canSend;
   const templates = send.templates.filter((template) =>
@@ -677,10 +730,82 @@ export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
           Close
         </button>
       </div>
-      <p className="mt-2">
-        <span className="text-neutral-500">To </span>
-        {send.recipientLabel}
-      </p>
+      {editingRecipient ? (
+        <label className="mt-2 block">
+          <span className="text-neutral-500">
+            {isEmail ? "To email address" : "To phone number"}
+          </span>
+          <input
+            type={isEmail ? "email" : "tel"}
+            inputMode={isEmail ? "email" : "tel"}
+            autoComplete="off"
+            autoFocus
+            value={send.recipientTo}
+            onChange={(event) => send.setRecipientTo(event.target.value)}
+            aria-invalid={send.recipientError ? true : undefined}
+            className={fieldClass}
+          />
+          {send.recipientError ? (
+            <span className="mt-1 block text-xs text-red-700">
+              {send.recipientError}
+            </span>
+          ) : send.recipientEdited ? (
+            <span className="mt-1 block text-xs text-neutral-500">
+              Used for this send only. The customer&apos;s contact keeps{" "}
+              {send.contactRecipient || "its saved value"}.
+            </span>
+          ) : null}
+          <span className="mt-1 flex gap-3 text-xs">
+            <button
+              type="button"
+              disabled={Boolean(send.recipientError)}
+              onClick={() => setEditingChannel(null)}
+              className="font-medium text-brand-orange hover:underline disabled:opacity-60"
+            >
+              Done
+            </button>
+            {send.recipientEdited || send.recipientError ? (
+              <button
+                type="button"
+                onClick={() => {
+                  send.resetRecipient();
+                  setEditingChannel(null);
+                }}
+                className="font-medium text-neutral-600 hover:underline"
+              >
+                Reset
+              </button>
+            ) : null}
+          </span>
+        </label>
+      ) : (
+        <p className="mt-2 flex flex-wrap items-baseline gap-x-2">
+          <span>
+            <span className="text-neutral-500">To </span>
+            {send.recipientLabel}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setConfirmingChannel(null);
+              send.setRecipientTo(send.recipientTo);
+              setEditingChannel(send.channel);
+            }}
+            className="text-xs font-medium text-brand-orange hover:underline"
+          >
+            Change
+          </button>
+          {send.recipientEdited ? (
+            <button
+              type="button"
+              onClick={send.resetRecipient}
+              className="text-xs font-medium text-neutral-600 hover:underline"
+            >
+              Reset
+            </button>
+          ) : null}
+        </p>
+      )}
       {showEmailPicker ? (
         <label className="mt-3 block">
           <span className="text-neutral-500">From</span>

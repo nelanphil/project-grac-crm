@@ -127,6 +127,31 @@ export function logNotificationAsync(input: LogNotificationInput): void {
   void logNotification(input);
 }
 
+/**
+ * Like `logNotificationAsync`, but skips the event when the same actor already
+ * logged the same action on the same entity within `windowMs` (e.g. autosave).
+ */
+export function logNotificationThrottledAsync(
+  input: LogNotificationInput,
+  windowMs: number,
+): void {
+  void (async () => {
+    try {
+      const recent = await NotificationEvent.exists({
+        entityType: input.entityType,
+        action: input.action,
+        entityId: String(input.entityId),
+        actorUserId: toObjectId(input.actorUserId),
+        createdAt: { $gte: new Date(Date.now() - windowMs) },
+      });
+      if (recent) return;
+    } catch (err) {
+      console.error("[notifications] throttle lookup failed", err);
+    }
+    await logNotification(input);
+  })();
+}
+
 export { resolveCustomerRefsForUser };
 
 async function resolveOwnerCustomerRefs(

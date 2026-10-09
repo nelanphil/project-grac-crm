@@ -23,7 +23,7 @@ import {
   WorkOrderListItem,
 } from "@/lib/api";
 import { isDispatcherRole } from "@/lib/schedule";
-import { ticketFromRecord } from "@/lib/service-ticket";
+import { ticketFromRecord, type ticketToPayload } from "@/lib/service-ticket";
 
 export default function WorkOrderDetailPage() {
   return (
@@ -162,6 +162,19 @@ function WorkOrderDetailContent() {
       />
     ) : null;
 
+  async function saveOrder(payload: ReturnType<typeof ticketToPayload>) {
+    if (!token || !order) throw new Error("Work order is not loaded.");
+    const { assignedUserRef, ...rest } = payload;
+    const nextAssigned = assignedUserRef ?? null;
+    const prevAssigned = order.assignedUserRef ?? null;
+    return updateWorkOrder(token, order._id, {
+      ...rest,
+      ...(isDispatcherRole(user) && nextAssigned !== prevAssigned
+        ? { assignedUserRef: nextAssigned }
+        : {}),
+    });
+  }
+
   const invoiceAction =
     token ? (
       <InvoiceWorkOrderButton
@@ -256,21 +269,22 @@ function WorkOrderDetailContent() {
                 </button>
               ) : null
             }
+            autoSave={async (payload) => {
+              if (!token) throw new Error("You are signed out.");
+              const updated = await saveOrder(payload);
+              setError(null);
+              setOrder(updated);
+              if (updated.total !== order.total || updated.paid !== order.paid) {
+                setInvoiceListVersion((version) => version + 1);
+              }
+              return ticketFromRecord(updated);
+            }}
             onSubmit={async (payload) => {
               if (!token) return;
               setSubmitting(true);
               setError(null);
               try {
-                const { assignedUserRef, ...rest } = payload;
-                const nextAssigned = assignedUserRef ?? null;
-                const prevAssigned = order.assignedUserRef ?? null;
-                const updated = await updateWorkOrder(token, order._id, {
-                  ...rest,
-                  ...(isDispatcherRole(user) && nextAssigned !== prevAssigned
-                    ? { assignedUserRef: nextAssigned }
-                    : {}),
-                });
-                setOrder(updated);
+                setOrder(await saveOrder(payload));
               } catch (err) {
                 setError(
                   err instanceof ApiError ? err.message : "Failed to save work order.",
