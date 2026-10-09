@@ -8,10 +8,12 @@ import type {
   InvoiceServiceAddress,
 } from "@/lib/api";
 import { COMPANY } from "@/lib/constants";
-import type {
-  InvoiceBlock,
-  InvoiceColumnsBlock,
-  InvoiceLeafBlock,
+import {
+  invoiceTextCss,
+  type InvoiceBlock,
+  type InvoiceColumnsBlock,
+  type InvoiceLeafBlock,
+  type InvoiceTextStyle,
 } from "@/lib/invoice-template";
 
 function formatMoney(cents: number): string {
@@ -57,9 +59,9 @@ function addressesEqual(
   );
 }
 
-function FieldLabel({ children }: { children: ReactNode }) {
+function FieldLabel({ children, style }: { children: ReactNode; style: InvoiceTextStyle }) {
   return (
-    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+    <p className="uppercase tracking-wide" style={invoiceTextCss(style)}>
       {children}
     </p>
   );
@@ -213,16 +215,19 @@ function LeafBody({
     case "heading":
       return (
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">
+          <p className="uppercase tracking-[0.2em]" style={invoiceTextCss(block.labelStyle)}>
             {block.label}
           </p>
           {block.showNumber ? (
-            <p className="mt-1 break-words text-2xl font-bold text-brand-dark">
+            <p className="mt-1 break-words" style={invoiceTextCss(block.valueStyle)}>
               {invoice.number}
             </p>
           ) : null}
           {block.showSource ? (
-            <p className={`mt-1 text-sm text-neutral-500 ${isCustomer ? "" : "capitalize"}`}>
+            <p
+              className={`mt-1 ${isCustomer ? "" : "capitalize"}`}
+              style={invoiceTextCss(block.labelStyle)}
+            >
               {invoice.sourceType.replace(/_/g, " ")}
             </p>
           ) : null}
@@ -233,32 +238,29 @@ function LeafBody({
         block.showName || block.showPhone || block.showEmail || block.showLicense;
       if (!visible) return editing ? <Placeholder>Company details are hidden.</Placeholder> : null;
       return (
-        <div className="space-y-0.5 text-sm text-neutral-600">
+        <div className="space-y-0.5">
           {block.showName ? (
-            <p className="font-semibold text-brand-dark">{COMPANY.name}</p>
+            <p style={invoiceTextCss(block.valueStyle)}>{COMPANY.name}</p>
           ) : null}
           {block.showPhone ? (
-            <p>
-              <a
-                href={COMPANY.phoneHref}
-                className="hover:text-brand-orange print:text-neutral-600 print:no-underline"
-              >
+            <p style={invoiceTextCss(block.labelStyle)}>
+              <a href={COMPANY.phoneHref} className="hover:text-brand-orange print:no-underline">
                 {COMPANY.phone}
               </a>
             </p>
           ) : null}
           {block.showEmail ? (
-            <p>
+            <p style={invoiceTextCss(block.labelStyle)}>
               <a
                 href={`mailto:${COMPANY.email}`}
-                className="hover:text-brand-orange print:text-neutral-600 print:no-underline"
+                className="hover:text-brand-orange print:no-underline"
               >
                 {COMPANY.email}
               </a>
             </p>
           ) : null}
           {block.showLicense ? (
-            <p className="text-xs text-neutral-500">{COMPANY.license}</p>
+            <p style={invoiceTextCss(block.labelStyle)}>{COMPANY.license}</p>
           ) : null}
         </div>
       );
@@ -268,14 +270,14 @@ function LeafBody({
       const lines = billTo ? formatAddressLines(billTo) : [];
       return (
         <div className={block.align === "right" ? "sm:text-right" : undefined}>
-          <FieldLabel>{block.label}</FieldLabel>
+          <FieldLabel style={block.labelStyle}>{block.label}</FieldLabel>
           {billTo ? (
-            <div className="mt-2 space-y-0.5 text-sm text-neutral-700">
-              <p className="font-semibold text-brand-dark">
+            <div className="mt-2 space-y-0.5" style={invoiceTextCss(block.valueStyle)}>
+              <p>
                 {!isCustomer && invoice.customerRef ? (
                   <Link
                     href={`/dashboard/customers/detail?id=${invoice.customerRef}`}
-                    className="hover:text-brand-orange print:text-brand-dark print:no-underline"
+                    className="hover:text-brand-orange print:no-underline"
                   >
                     {billTo.name}
                   </Link>
@@ -290,7 +292,7 @@ function LeafBody({
               {block.showEmail && billTo.email ? <p>{billTo.email}</p> : null}
             </div>
           ) : (
-            <p className="mt-2 text-sm font-medium text-brand-dark">
+            <p className="mt-2" style={invoiceTextCss(block.valueStyle)}>
               Customer #{invoice.customerId}
             </p>
           )}
@@ -314,9 +316,10 @@ function LeafBody({
         <div className="grid grid-cols-2 gap-4 border-b border-neutral-200 pb-6 sm:grid-cols-4">
           {fields.map((field) => (
             <div key={field.label}>
-              <FieldLabel>{field.label}</FieldLabel>
+              <FieldLabel style={block.labelStyle}>{field.label}</FieldLabel>
               <p
-                className={`mt-1 text-sm font-medium text-brand-dark ${field.capitalize ? "capitalize" : ""}`}
+                className={`mt-1 ${field.capitalize ? "capitalize" : ""}`}
+                style={invoiceTextCss(block.valueStyle)}
               >
                 {field.value}
               </p>
@@ -337,11 +340,9 @@ function LeafBody({
       const lines = formatAddressLines(serviceAddress);
       return (
         <div className="border-b border-neutral-200 pb-6">
-          <FieldLabel>{block.label}</FieldLabel>
-          <div className="mt-2 space-y-0.5 text-sm text-neutral-700">
-            {serviceAddress.label ? (
-              <p className="font-semibold text-brand-dark">{serviceAddress.label}</p>
-            ) : null}
+          <FieldLabel style={block.labelStyle}>{block.label}</FieldLabel>
+          <div className="mt-2 space-y-0.5" style={invoiceTextCss(block.valueStyle)}>
+            {serviceAddress.label ? <p>{serviceAddress.label}</p> : null}
             {lines.map((line) => (
               <p key={line}>{line}</p>
             ))}
@@ -351,13 +352,19 @@ function LeafBody({
     }
     case "lineItems":
       return (
-        <table className="min-w-full text-sm">
+        <table className="min-w-full">
           <thead>
             <tr className="border-b border-neutral-300">
-              <th className="py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              <th
+                className="py-3 text-left uppercase tracking-wide"
+                style={invoiceTextCss(block.labelStyle)}
+              >
                 {block.descriptionLabel}
               </th>
-              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              <th
+                className="py-3 text-right uppercase tracking-wide"
+                style={invoiceTextCss(block.labelStyle)}
+              >
                 {block.amountLabel}
               </th>
             </tr>
@@ -365,15 +372,20 @@ function LeafBody({
           <tbody>
             {invoice.lineItems.length === 0 ? (
               <tr>
-                <td colSpan={2} className="py-6 text-neutral-500">
+                <td colSpan={2} className="py-6" style={invoiceTextCss(block.valueStyle)}>
                   No line items.
                 </td>
               </tr>
             ) : (
               invoice.lineItems.map((item, index) => (
                 <tr key={`${item.description}-${index}`} className="border-b border-neutral-100">
-                  <td className="break-words py-3 pr-3 text-neutral-700">{item.description}</td>
-                  <td className="py-3 text-right font-medium text-brand-dark">
+                  <td
+                    className="break-words py-3 pr-3"
+                    style={invoiceTextCss(block.valueStyle)}
+                  >
+                    {item.description}
+                  </td>
+                  <td className="py-3 text-right" style={invoiceTextCss(block.valueStyle)}>
                     {formatMoney(item.amountCents)}
                   </td>
                 </tr>
@@ -389,20 +401,23 @@ function LeafBody({
         ? Math.max(subtotal - (invoice.discountCents ?? 0), 0)
         : invoice.amountCents;
       return (
-        <div className="ml-auto w-full max-w-xs text-sm">
+        <div className="ml-auto w-full max-w-xs">
           {hasDiscount ? (
             <>
-              <div className="flex justify-between gap-4 text-neutral-600">
+              <div className="flex justify-between gap-4" style={invoiceTextCss(block.labelStyle)}>
                 <span>Subtotal</span>
                 <span>{formatMoney(subtotal)}</span>
               </div>
-              <div className="mt-2 flex justify-between gap-4 text-emerald-700">
+              <div
+                className="mt-2 flex justify-between gap-4"
+                style={invoiceTextCss(block.labelStyle)}
+              >
                 <span>Discount{invoice.discountCode ? ` ${invoice.discountCode}` : ""}</span>
                 <span>−{formatMoney(invoice.discountCents ?? 0)}</span>
               </div>
             </>
           ) : null}
-          <div className="mt-3 flex justify-between gap-4 text-base font-semibold text-brand-dark">
+          <div className="mt-3 flex justify-between gap-4" style={invoiceTextCss(block.valueStyle)}>
             <span>{block.totalLabel}</span>
             <span>{formatMoney(total)}</span>
           </div>
@@ -418,10 +433,14 @@ function LeafBody({
       }
       return (
         <div className="border-t border-neutral-200 pt-6">
-          <FieldLabel>{block.label}</FieldLabel>
+          <FieldLabel style={block.labelStyle}>{block.label}</FieldLabel>
           <ul className="mt-2 space-y-3">
             {notes.map((note) => (
-              <li key={note._id} className="whitespace-pre-wrap text-sm text-neutral-700">
+              <li
+                key={note._id}
+                className="whitespace-pre-wrap"
+                style={invoiceTextCss(block.valueStyle)}
+              >
                 {note.content}
               </li>
             ))}
@@ -436,8 +455,9 @@ function LeafBody({
         ) : null;
       }
       return (
-        <p className={`text-xs text-neutral-500 ${isCustomer ? "" : "capitalize"}`}>
-          {block.label}: {invoice.paymentProvider}
+        <p className={isCustomer ? "" : "capitalize"}>
+          <span style={invoiceTextCss(block.labelStyle)}>{block.label}: </span>
+          <span style={invoiceTextCss(block.valueStyle)}>{invoice.paymentProvider}</span>
         </p>
       );
     }

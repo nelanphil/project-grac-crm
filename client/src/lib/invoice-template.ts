@@ -4,6 +4,140 @@ export type InvoiceAlign = "left" | "center" | "right";
 export type InvoiceTextTone = "body" | "muted";
 export type InvoiceImageWidth = "sm" | "md" | "full";
 
+export const INVOICE_FONTS = ["inter", "georgia", "times", "arial", "courier"] as const;
+export type InvoiceFont = (typeof INVOICE_FONTS)[number];
+
+export const INVOICE_FONT_LABELS: Record<InvoiceFont, string> = {
+  inter: "Inter",
+  georgia: "Georgia",
+  times: "Times New Roman",
+  arial: "Arial",
+  courier: "Courier New",
+};
+
+export const INVOICE_FONT_STACK: Record<InvoiceFont, string> = {
+  inter: "var(--font-inter), system-ui, sans-serif",
+  georgia: "Georgia, 'Times New Roman', serif",
+  times: "'Times New Roman', Times, serif",
+  arial: "Arial, Helvetica, sans-serif",
+  courier: "'Courier New', Courier, monospace",
+};
+
+export const INVOICE_FONT_SIZES = [12, 14, 16, 18, 20, 24, 30, 36] as const;
+export type InvoiceFontSize = (typeof INVOICE_FONT_SIZES)[number];
+
+export const INVOICE_FONT_WEIGHTS = [400, 500, 600, 700] as const;
+export type InvoiceFontWeight = (typeof INVOICE_FONT_WEIGHTS)[number];
+
+export const INVOICE_FONT_WEIGHT_LABELS: Record<InvoiceFontWeight, string> = {
+  400: "Regular",
+  500: "Medium",
+  600: "Semibold",
+  700: "Bold",
+};
+
+export interface InvoiceTextStyle {
+  font: InvoiceFont;
+  size: InvoiceFontSize;
+  weight: InvoiceFontWeight;
+  color: string;
+}
+
+export const FIELD_BLOCK_TYPES = [
+  "company",
+  "heading",
+  "billTo",
+  "meta",
+  "serviceAddress",
+  "lineItems",
+  "notes",
+  "totals",
+  "paymentMethod",
+] as const;
+export type InvoiceFieldBlockType = (typeof FIELD_BLOCK_TYPES)[number];
+
+const captionStyle: InvoiceTextStyle = {
+  font: "inter",
+  size: 12,
+  weight: 600,
+  color: "#737373",
+};
+const bodyStyle: InvoiceTextStyle = {
+  font: "inter",
+  size: 14,
+  weight: 400,
+  color: "#404040",
+};
+const nameStyle: InvoiceTextStyle = {
+  font: "inter",
+  size: 14,
+  weight: 600,
+  color: "#231f20",
+};
+
+/** Keep in sync with server/src/schemas/invoiceTemplate.schema.ts */
+export const FIELD_STYLE_DEFAULTS: Record<
+  InvoiceFieldBlockType,
+  { labelStyle: InvoiceTextStyle; valueStyle: InvoiceTextStyle }
+> = {
+  company: {
+    labelStyle: { font: "inter", size: 14, weight: 400, color: "#666666" },
+    valueStyle: nameStyle,
+  },
+  heading: {
+    labelStyle: captionStyle,
+    valueStyle: { font: "inter", size: 24, weight: 700, color: "#231f20" },
+  },
+  billTo: { labelStyle: captionStyle, valueStyle: nameStyle },
+  meta: {
+    labelStyle: captionStyle,
+    valueStyle: { font: "inter", size: 14, weight: 500, color: "#231f20" },
+  },
+  serviceAddress: { labelStyle: captionStyle, valueStyle: bodyStyle },
+  lineItems: { labelStyle: captionStyle, valueStyle: bodyStyle },
+  notes: { labelStyle: captionStyle, valueStyle: bodyStyle },
+  totals: {
+    labelStyle: { font: "inter", size: 14, weight: 400, color: "#666666" },
+    valueStyle: { font: "inter", size: 16, weight: 600, color: "#231f20" },
+  },
+  paymentMethod: {
+    labelStyle: { font: "inter", size: 12, weight: 400, color: "#737373" },
+    valueStyle: { font: "inter", size: 12, weight: 400, color: "#737373" },
+  },
+};
+
+export function fieldStylePair(type: InvoiceFieldBlockType): {
+  labelStyle: InvoiceTextStyle;
+  valueStyle: InvoiceTextStyle;
+} {
+  const styles = FIELD_STYLE_DEFAULTS[type];
+  return {
+    labelStyle: { ...styles.labelStyle },
+    valueStyle: { ...styles.valueStyle },
+  };
+}
+
+export function invoiceTextCss(style: InvoiceTextStyle): {
+  fontFamily: string;
+  fontSize: string;
+  fontWeight: number;
+  color: string;
+} {
+  return {
+    fontFamily: INVOICE_FONT_STACK[style.font],
+    fontSize: `${style.size / 16}rem`,
+    fontWeight: style.weight,
+    color: style.color,
+  };
+}
+
+export function colorInputValue(color: string): string {
+  if (/^#[0-9a-fA-F]{6}$/.test(color)) return color;
+  const short = /^#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/.exec(color);
+  if (!short) return "#737373";
+  return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
+}
+
 export interface InvoiceTextBlock {
   id: string;
   type: "text";
@@ -39,6 +173,8 @@ export interface InvoiceCompanyBlock {
   showPhone: boolean;
   showEmail: boolean;
   showLicense: boolean;
+  labelStyle: InvoiceTextStyle;
+  valueStyle: InvoiceTextStyle;
 }
 
 export interface InvoiceHeadingBlock {
@@ -47,6 +183,8 @@ export interface InvoiceHeadingBlock {
   label: string;
   showNumber: boolean;
   showSource: boolean;
+  labelStyle: InvoiceTextStyle;
+  valueStyle: InvoiceTextStyle;
 }
 
 export interface InvoiceBillToBlock {
@@ -56,6 +194,8 @@ export interface InvoiceBillToBlock {
   showPhone: boolean;
   showEmail: boolean;
   align: InvoiceAlign;
+  labelStyle: InvoiceTextStyle;
+  valueStyle: InvoiceTextStyle;
 }
 
 export interface InvoiceMetaBlock {
@@ -65,12 +205,16 @@ export interface InvoiceMetaBlock {
   showDue: boolean;
   showStatus: boolean;
   showPaid: boolean;
+  labelStyle: InvoiceTextStyle;
+  valueStyle: InvoiceTextStyle;
 }
 
 export interface InvoiceServiceAddressBlock {
   id: string;
   type: "serviceAddress";
   label: string;
+  labelStyle: InvoiceTextStyle;
+  valueStyle: InvoiceTextStyle;
 }
 
 export interface InvoiceLineItemsBlock {
@@ -78,24 +222,32 @@ export interface InvoiceLineItemsBlock {
   type: "lineItems";
   descriptionLabel: string;
   amountLabel: string;
+  labelStyle: InvoiceTextStyle;
+  valueStyle: InvoiceTextStyle;
 }
 
 export interface InvoiceNotesBlock {
   id: string;
   type: "notes";
   label: string;
+  labelStyle: InvoiceTextStyle;
+  valueStyle: InvoiceTextStyle;
 }
 
 export interface InvoiceTotalsBlock {
   id: string;
   type: "totals";
   totalLabel: string;
+  labelStyle: InvoiceTextStyle;
+  valueStyle: InvoiceTextStyle;
 }
 
 export interface InvoicePaymentMethodBlock {
   id: string;
   type: "paymentMethod";
   label: string;
+  labelStyle: InvoiceTextStyle;
+  valueStyle: InvoiceTextStyle;
 }
 
 export type InvoiceLeafBlock =
@@ -158,6 +310,7 @@ const DEFAULT_BLOCKS: InvoiceBlock[] = [
         label: "Invoice",
         showNumber: true,
         showSource: true,
+        ...fieldStylePair("heading"),
       },
       {
         id: "company",
@@ -166,6 +319,7 @@ const DEFAULT_BLOCKS: InvoiceBlock[] = [
         showPhone: true,
         showEmail: true,
         showLicense: true,
+        ...fieldStylePair("company"),
       },
     ],
     right: [
@@ -176,6 +330,7 @@ const DEFAULT_BLOCKS: InvoiceBlock[] = [
         showPhone: true,
         showEmail: true,
         align: "right",
+        ...fieldStylePair("billTo"),
       },
     ],
   },
@@ -186,32 +341,38 @@ const DEFAULT_BLOCKS: InvoiceBlock[] = [
     showDue: true,
     showStatus: true,
     showPaid: true,
+    ...fieldStylePair("meta"),
   },
   {
     id: "service-address",
     type: "serviceAddress",
     label: "Service address",
+    ...fieldStylePair("serviceAddress"),
   },
   {
     id: "line-items",
     type: "lineItems",
     descriptionLabel: "Description",
     amountLabel: "Amount",
+    ...fieldStylePair("lineItems"),
   },
   {
     id: "totals",
     type: "totals",
     totalLabel: "Total due",
+    ...fieldStylePair("totals"),
   },
   {
     id: "notes",
     type: "notes",
     label: "Notes",
+    ...fieldStylePair("notes"),
   },
   {
     id: "payment-method",
     type: "paymentMethod",
     label: "Payment method",
+    ...fieldStylePair("paymentMethod"),
   },
   {
     id: "footer",
@@ -252,9 +413,17 @@ export function createBlock(type: InvoiceBlockType): InvoiceBlock {
         showPhone: true,
         showEmail: true,
         showLicense: true,
+        ...fieldStylePair("company"),
       };
     case "heading":
-      return { id, type, label: "Invoice", showNumber: true, showSource: true };
+      return {
+        id,
+        type,
+        label: "Invoice",
+        showNumber: true,
+        showSource: true,
+        ...fieldStylePair("heading"),
+      };
     case "billTo":
       return {
         id,
@@ -263,6 +432,7 @@ export function createBlock(type: InvoiceBlockType): InvoiceBlock {
         showPhone: true,
         showEmail: true,
         align: "left",
+        ...fieldStylePair("billTo"),
       };
     case "meta":
       return {
@@ -272,17 +442,24 @@ export function createBlock(type: InvoiceBlockType): InvoiceBlock {
         showDue: true,
         showStatus: true,
         showPaid: true,
+        ...fieldStylePair("meta"),
       };
     case "serviceAddress":
-      return { id, type, label: "Service address" };
+      return { id, type, label: "Service address", ...fieldStylePair("serviceAddress") };
     case "lineItems":
-      return { id, type, descriptionLabel: "Description", amountLabel: "Amount" };
+      return {
+        id,
+        type,
+        descriptionLabel: "Description",
+        amountLabel: "Amount",
+        ...fieldStylePair("lineItems"),
+      };
     case "notes":
-      return { id, type, label: "Notes" };
+      return { id, type, label: "Notes", ...fieldStylePair("notes") };
     case "totals":
-      return { id, type, totalLabel: "Total due" };
+      return { id, type, totalLabel: "Total due", ...fieldStylePair("totals") };
     case "paymentMethod":
-      return { id, type, label: "Payment method" };
+      return { id, type, label: "Payment method", ...fieldStylePair("paymentMethod") };
     case "columns":
       return { id, type, showDivider: false, left: [], right: [] };
   }
@@ -310,6 +487,29 @@ function readBool(value: unknown, fallback: boolean): boolean {
 
 function readAlign(value: unknown, fallback: InvoiceAlign): InvoiceAlign {
   return value === "left" || value === "center" || value === "right" ? value : fallback;
+}
+
+function readStyle(value: unknown, fallback: InvoiceTextStyle): InvoiceTextStyle {
+  const record = isRecord(value) ? value : {};
+  const font = INVOICE_FONTS.find((item) => item === record.font) ?? fallback.font;
+  const size = INVOICE_FONT_SIZES.find((item) => item === record.size) ?? fallback.size;
+  const weight = INVOICE_FONT_WEIGHTS.find((item) => item === record.weight) ?? fallback.weight;
+  const color =
+    typeof record.color === "string" && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(record.color)
+      ? record.color
+      : fallback.color;
+  return { font, size, weight, color };
+}
+
+function readFieldStyles(
+  value: Record<string, unknown>,
+  type: InvoiceFieldBlockType,
+): { labelStyle: InvoiceTextStyle; valueStyle: InvoiceTextStyle } {
+  const defaults = fieldStylePair(type);
+  return {
+    labelStyle: readStyle(value.labelStyle, defaults.labelStyle),
+    valueStyle: readStyle(value.valueStyle, defaults.valueStyle),
+  };
 }
 
 function parseLeaf(value: unknown): InvoiceLeafBlock | null {
@@ -351,6 +551,7 @@ function parseLeaf(value: unknown): InvoiceLeafBlock | null {
         showPhone: readBool(value.showPhone, true),
         showEmail: readBool(value.showEmail, true),
         showLicense: readBool(value.showLicense, true),
+        ...readFieldStyles(value, "company"),
       };
     case "heading":
       return {
@@ -359,6 +560,7 @@ function parseLeaf(value: unknown): InvoiceLeafBlock | null {
         label: readString(value.label, "Invoice") || "Invoice",
         showNumber: readBool(value.showNumber, true),
         showSource: readBool(value.showSource, true),
+        ...readFieldStyles(value, "heading"),
       };
     case "billTo":
       return {
@@ -368,6 +570,7 @@ function parseLeaf(value: unknown): InvoiceLeafBlock | null {
         showPhone: readBool(value.showPhone, true),
         showEmail: readBool(value.showEmail, true),
         align: readAlign(value.align, "left"),
+        ...readFieldStyles(value, "billTo"),
       };
     case "meta":
       return {
@@ -377,12 +580,14 @@ function parseLeaf(value: unknown): InvoiceLeafBlock | null {
         showDue: readBool(value.showDue, true),
         showStatus: readBool(value.showStatus, true),
         showPaid: readBool(value.showPaid, true),
+        ...readFieldStyles(value, "meta"),
       };
     case "serviceAddress":
       return {
         id,
         type: "serviceAddress",
         label: readString(value.label, "Service address") || "Service address",
+        ...readFieldStyles(value, "serviceAddress"),
       };
     case "lineItems":
       return {
@@ -390,24 +595,28 @@ function parseLeaf(value: unknown): InvoiceLeafBlock | null {
         type: "lineItems",
         descriptionLabel: readString(value.descriptionLabel, "Description") || "Description",
         amountLabel: readString(value.amountLabel, "Amount") || "Amount",
+        ...readFieldStyles(value, "lineItems"),
       };
     case "notes":
       return {
         id,
         type: "notes",
         label: readString(value.label, "Notes") || "Notes",
+        ...readFieldStyles(value, "notes"),
       };
     case "totals":
       return {
         id,
         type: "totals",
         totalLabel: readString(value.totalLabel, "Total due") || "Total due",
+        ...readFieldStyles(value, "totals"),
       };
     case "paymentMethod":
       return {
         id,
         type: "paymentMethod",
         label: readString(value.label, "Payment method") || "Payment method",
+        ...readFieldStyles(value, "paymentMethod"),
       };
     default:
       return null;

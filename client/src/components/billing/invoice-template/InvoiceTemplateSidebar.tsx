@@ -1,7 +1,24 @@
 "use client";
 
-import { BLOCK_CATALOG, blockLabel, siblingMeta } from "@/lib/invoice-template";
-import type { InvoiceBlock, InvoiceBlockType } from "@/lib/invoice-template";
+import { useRef } from "react";
+import {
+  BLOCK_CATALOG,
+  INVOICE_FONT_LABELS,
+  INVOICE_FONT_SIZES,
+  INVOICE_FONT_STACK,
+  INVOICE_FONT_WEIGHT_LABELS,
+  INVOICE_FONT_WEIGHTS,
+  INVOICE_FONTS,
+  blockLabel,
+  colorInputValue,
+  siblingMeta,
+} from "@/lib/invoice-template";
+import type {
+  InvoiceBlock,
+  InvoiceBlockType,
+  InvoiceFieldBlockType,
+  InvoiceTextStyle,
+} from "@/lib/invoice-template";
 
 const inputClass =
   "w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange";
@@ -28,6 +45,221 @@ function CheckRow({
       />
       {label}
     </label>
+  );
+}
+
+const fieldButtonClass =
+  "rounded-md border border-neutral-300 px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40";
+
+function StyleFields({
+  title,
+  style,
+  onChange,
+}: {
+  title: string;
+  style: InvoiceTextStyle;
+  onChange: (style: InvoiceTextStyle) => void;
+}) {
+  return (
+    <fieldset className="space-y-2">
+      <legend className="text-xs font-semibold uppercase tracking-wide text-neutral-500">{title}</legend>
+      <label className="block text-sm text-neutral-700">
+        Font
+        <select
+          className={`${inputClass} mt-1`}
+          value={style.font}
+          onChange={(event) => onChange({ ...style, font: event.target.value as InvoiceTextStyle["font"] })}
+        >
+          {INVOICE_FONTS.map((font) => (
+            <option key={font} value={font} style={{ fontFamily: INVOICE_FONT_STACK[font] }}>
+              {INVOICE_FONT_LABELS[font]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-sm text-neutral-700">
+        Size
+        <select
+          className={`${inputClass} mt-1`}
+          value={style.size}
+          onChange={(event) =>
+            onChange({ ...style, size: Number(event.target.value) as InvoiceTextStyle["size"] })
+          }
+        >
+          {INVOICE_FONT_SIZES.map((size) => (
+            <option key={size} value={size}>
+              {size}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-sm text-neutral-700">
+        Weight
+        <select
+          className={`${inputClass} mt-1`}
+          value={style.weight}
+          onChange={(event) =>
+            onChange({ ...style, weight: Number(event.target.value) as InvoiceTextStyle["weight"] })
+          }
+        >
+          {INVOICE_FONT_WEIGHTS.map((weight) => (
+            <option key={weight} value={weight}>
+              {INVOICE_FONT_WEIGHT_LABELS[weight]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-sm text-neutral-700">
+        Color
+        <input
+          type="color"
+          className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-neutral-200 bg-white"
+          value={colorInputValue(style.color)}
+          onChange={(event) => onChange({ ...style, color: event.target.value })}
+        />
+      </label>
+    </fieldset>
+  );
+}
+
+function styleGroupTitles(type: InvoiceFieldBlockType): { label: string; value: string } {
+  if (type === "company") return { label: "Details", value: "Name" };
+  if (type === "totals") return { label: "Other rows", value: "Total due" };
+  return { label: "Label", value: "Value" };
+}
+
+function StyleGroups({
+  block,
+  onChange,
+}: {
+  block: Extract<InvoiceBlock, { type: InvoiceFieldBlockType }>;
+  onChange: (patch: Record<string, unknown>) => void;
+}) {
+  const titles = styleGroupTitles(block.type);
+  const labelGroup = (
+    <StyleFields
+      title={titles.label}
+      style={block.labelStyle}
+      onChange={(labelStyle) => onChange({ labelStyle })}
+    />
+  );
+  const valueGroup = (
+    <StyleFields
+      title={titles.value}
+      style={block.valueStyle}
+      onChange={(valueStyle) => onChange({ valueStyle })}
+    />
+  );
+  const nameFirst = block.type === "company";
+  return (
+    <div className="space-y-3 border-t border-neutral-100 pt-3">
+      {nameFirst ? valueGroup : labelGroup}
+      {nameFirst ? labelGroup : valueGroup}
+    </div>
+  );
+}
+
+function ImageSettings({
+  block,
+  onChange,
+  uploading,
+  uploadError,
+  onUploadImage,
+}: {
+  block: Extract<InvoiceBlock, { type: "image" }>;
+  onChange: (patch: Record<string, unknown>) => void;
+  uploading: boolean;
+  uploadError: string | null;
+  onUploadImage: (file: File) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className="space-y-3">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        className="sr-only"
+        disabled={uploading}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) onUploadImage(file);
+        }}
+      />
+      {block.url ? (
+        <div className="space-y-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={block.url}
+            alt={block.alt || ""}
+            className="max-h-24 max-w-full rounded border border-neutral-200 object-contain"
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={fieldButtonClass}
+              disabled={uploading}
+              onClick={() => inputRef.current?.click()}
+            >
+              Replace
+            </button>
+            <button
+              type="button"
+              className={fieldButtonClass}
+              disabled={uploading}
+              onClick={() => onChange({ url: "" })}
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className={fieldButtonClass}
+          disabled={uploading}
+          onClick={() => inputRef.current?.click()}
+        >
+          Upload from device
+        </button>
+      )}
+      {uploading ? <p className="text-xs text-neutral-500">Uploading…</p> : null}
+      {uploadError ? <p className="text-xs text-red-700">{uploadError}</p> : null}
+      <label className="block text-sm text-neutral-700">
+        Alt text
+        <input
+          className={`${inputClass} mt-1`}
+          value={block.alt}
+          onChange={(event) => onChange({ alt: event.target.value })}
+        />
+      </label>
+      <label className="block text-sm text-neutral-700">
+        Width
+        <select
+          className={`${inputClass} mt-1`}
+          value={block.width}
+          onChange={(event) => onChange({ width: event.target.value })}
+        >
+          <option value="sm">Small</option>
+          <option value="md">Medium</option>
+          <option value="full">Full</option>
+        </select>
+      </label>
+      <label className="block text-sm text-neutral-700">
+        Alignment
+        <select
+          className={`${inputClass} mt-1`}
+          value={block.align}
+          onChange={(event) => onChange({ align: event.target.value })}
+        >
+          <option value="left">Left</option>
+          <option value="center">Center</option>
+          <option value="right">Right</option>
+        </select>
+      </label>
+    </div>
   );
 }
 
@@ -76,65 +308,13 @@ function BlockSettings({
       );
     case "image":
       return (
-        <div className="space-y-3">
-          <label className="block text-sm text-neutral-700">
-            Upload
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp"
-              className="mt-1 block w-full text-sm"
-              disabled={uploading}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                if (file) onUploadImage(file);
-              }}
-            />
-          </label>
-          {uploading ? <p className="text-xs text-neutral-500">Uploading…</p> : null}
-          {uploadError ? <p className="text-xs text-red-700">{uploadError}</p> : null}
-          <label className="block text-sm text-neutral-700">
-            Image URL
-            <input
-              className={`${inputClass} mt-1`}
-              value={block.url}
-              placeholder="https://"
-              onChange={(event) => onChange({ url: event.target.value })}
-            />
-          </label>
-          <label className="block text-sm text-neutral-700">
-            Alt text
-            <input
-              className={`${inputClass} mt-1`}
-              value={block.alt}
-              onChange={(event) => onChange({ alt: event.target.value })}
-            />
-          </label>
-          <label className="block text-sm text-neutral-700">
-            Width
-            <select
-              className={`${inputClass} mt-1`}
-              value={block.width}
-              onChange={(event) => onChange({ width: event.target.value })}
-            >
-              <option value="sm">Small</option>
-              <option value="md">Medium</option>
-              <option value="full">Full</option>
-            </select>
-          </label>
-          <label className="block text-sm text-neutral-700">
-            Alignment
-            <select
-              className={`${inputClass} mt-1`}
-              value={block.align}
-              onChange={(event) => onChange({ align: event.target.value })}
-            >
-              <option value="left">Left</option>
-              <option value="center">Center</option>
-              <option value="right">Right</option>
-            </select>
-          </label>
-        </div>
+        <ImageSettings
+          block={block}
+          onChange={onChange}
+          uploading={uploading}
+          uploadError={uploadError}
+          onUploadImage={onUploadImage}
+        />
       );
     case "spacer":
       return (
@@ -168,11 +348,14 @@ function BlockSettings({
       );
     case "company":
       return (
-        <div className="space-y-2">
-          <CheckRow label="Name" checked={block.showName} onChange={(showName) => onChange({ showName })} />
-          <CheckRow label="Phone" checked={block.showPhone} onChange={(showPhone) => onChange({ showPhone })} />
-          <CheckRow label="Email" checked={block.showEmail} onChange={(showEmail) => onChange({ showEmail })} />
-          <CheckRow label="License" checked={block.showLicense} onChange={(showLicense) => onChange({ showLicense })} />
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <CheckRow label="Name" checked={block.showName} onChange={(showName) => onChange({ showName })} />
+            <CheckRow label="Phone" checked={block.showPhone} onChange={(showPhone) => onChange({ showPhone })} />
+            <CheckRow label="Email" checked={block.showEmail} onChange={(showEmail) => onChange({ showEmail })} />
+            <CheckRow label="License" checked={block.showLicense} onChange={(showLicense) => onChange({ showLicense })} />
+          </div>
+          <StyleGroups block={block} onChange={onChange} />
         </div>
       );
     case "heading":
@@ -188,6 +371,7 @@ function BlockSettings({
           </label>
           <CheckRow label="Invoice number" checked={block.showNumber} onChange={(showNumber) => onChange({ showNumber })} />
           <CheckRow label="Source" checked={block.showSource} onChange={(showSource) => onChange({ showSource })} />
+          <StyleGroups block={block} onChange={onChange} />
         </div>
       );
     case "billTo":
@@ -214,6 +398,7 @@ function BlockSettings({
           </label>
           <CheckRow label="Phone" checked={block.showPhone} onChange={(showPhone) => onChange({ showPhone })} />
           <CheckRow label="Email" checked={block.showEmail} onChange={(showEmail) => onChange({ showEmail })} />
+          <StyleGroups block={block} onChange={onChange} />
         </div>
       );
     case "meta":
@@ -223,20 +408,24 @@ function BlockSettings({
           <CheckRow label="Due" checked={block.showDue} onChange={(showDue) => onChange({ showDue })} />
           <CheckRow label="Status" checked={block.showStatus} onChange={(showStatus) => onChange({ showStatus })} />
           <CheckRow label="Paid" checked={block.showPaid} onChange={(showPaid) => onChange({ showPaid })} />
+          <StyleGroups block={block} onChange={onChange} />
         </div>
       );
     case "serviceAddress":
     case "notes":
     case "paymentMethod":
       return (
-        <label className="block text-sm text-neutral-700">
-          Label
-          <input
-            className={`${inputClass} mt-1`}
-            value={block.label}
-            onChange={(event) => onChange({ label: event.target.value })}
-          />
-        </label>
+        <div className="space-y-3">
+          <label className="block text-sm text-neutral-700">
+            Label
+            <input
+              className={`${inputClass} mt-1`}
+              value={block.label}
+              onChange={(event) => onChange({ label: event.target.value })}
+            />
+          </label>
+          <StyleGroups block={block} onChange={onChange} />
+        </div>
       );
     case "lineItems":
       return (
@@ -257,18 +446,22 @@ function BlockSettings({
               onChange={(event) => onChange({ amountLabel: event.target.value })}
             />
           </label>
+          <StyleGroups block={block} onChange={onChange} />
         </div>
       );
     case "totals":
       return (
-        <label className="block text-sm text-neutral-700">
-          Total label
-          <input
-            className={`${inputClass} mt-1`}
-            value={block.totalLabel}
-            onChange={(event) => onChange({ totalLabel: event.target.value })}
-          />
-        </label>
+        <div className="space-y-3">
+          <label className="block text-sm text-neutral-700">
+            Total label
+            <input
+              className={`${inputClass} mt-1`}
+              value={block.totalLabel}
+              onChange={(event) => onChange({ totalLabel: event.target.value })}
+            />
+          </label>
+          <StyleGroups block={block} onChange={onChange} />
+        </div>
       );
     default:
       return null;

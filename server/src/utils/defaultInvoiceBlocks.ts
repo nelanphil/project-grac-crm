@@ -2,6 +2,8 @@
  * Seeded layout matching the original invoice document.
  * Keep in sync with client/src/lib/invoice-template.ts.
  */
+import { fieldStylePair } from "../schemas/invoiceTemplate.schema";
+
 export const DEFAULT_INVOICE_TEMPLATE_NAME = "Standard invoice";
 
 export function defaultInvoiceBlocks(): Record<string, unknown>[] {
@@ -17,6 +19,7 @@ export function defaultInvoiceBlocks(): Record<string, unknown>[] {
           label: "Invoice",
           showNumber: true,
           showSource: true,
+          ...fieldStylePair("heading"),
         },
         {
           id: "company",
@@ -25,6 +28,7 @@ export function defaultInvoiceBlocks(): Record<string, unknown>[] {
           showPhone: true,
           showEmail: true,
           showLicense: true,
+          ...fieldStylePair("company"),
         },
       ],
       right: [
@@ -35,6 +39,7 @@ export function defaultInvoiceBlocks(): Record<string, unknown>[] {
           showPhone: true,
           showEmail: true,
           align: "right",
+          ...fieldStylePair("billTo"),
         },
       ],
     },
@@ -45,32 +50,38 @@ export function defaultInvoiceBlocks(): Record<string, unknown>[] {
       showDue: true,
       showStatus: true,
       showPaid: true,
+      ...fieldStylePair("meta"),
     },
     {
       id: "service-address",
       type: "serviceAddress",
       label: "Service address",
+      ...fieldStylePair("serviceAddress"),
     },
     {
       id: "line-items",
       type: "lineItems",
       descriptionLabel: "Description",
       amountLabel: "Amount",
+      ...fieldStylePair("lineItems"),
     },
     {
       id: "totals",
       type: "totals",
       totalLabel: "Total due",
+      ...fieldStylePair("totals"),
     },
     {
       id: "notes",
       type: "notes",
       label: "Notes",
+      ...fieldStylePair("notes"),
     },
     {
       id: "payment-method",
       type: "paymentMethod",
       label: "Payment method",
+      ...fieldStylePair("paymentMethod"),
     },
     {
       id: "footer",
