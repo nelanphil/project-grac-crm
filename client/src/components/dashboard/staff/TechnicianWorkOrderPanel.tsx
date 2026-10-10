@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import AutosaveStatus from "@/components/billing/AutosaveStatus";
 import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
 import {
-  ExerciseDaySelect,
+  ExerciseDayMenu,
   ExerciseTimeInput,
 } from "@/components/billing/ExerciseScheduleFields";
 import ServiceTicketDocument, {
@@ -459,7 +459,7 @@ export function MobileWorkOrderPanel({
                   />
                 </EquipmentField>
                 <EquipmentField label="Exercise Day">
-                  <ExerciseDaySelect
+                  <ExerciseDayMenu
                     value={exerciseDay}
                     onChange={setExerciseDay}
                     className={equipmentInputClass}

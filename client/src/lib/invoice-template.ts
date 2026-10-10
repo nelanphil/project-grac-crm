@@ -3,6 +3,44 @@ import type { InvoiceItem } from "@/lib/api";
 export type InvoiceAlign = "left" | "center" | "right";
 export type InvoiceTextTone = "body" | "muted";
 export type InvoiceImageWidth = "sm" | "md" | "full";
+export const INVOICE_IMAGE_ASPECTS = ["auto", "1/1", "4/3", "3/2", "16/9", "2/1", "3/1"] as const;
+export type InvoiceImageAspect = (typeof INVOICE_IMAGE_ASPECTS)[number];
+export const INVOICE_IMAGE_FITS = ["contain", "cover"] as const;
+export type InvoiceImageFit = (typeof INVOICE_IMAGE_FITS)[number];
+export const INVOICE_COLUMN_SPLITS = [33, 40, 50, 60, 67] as const;
+export type InvoiceColumnSplit = (typeof INVOICE_COLUMN_SPLITS)[number];
+export const INVOICE_COLUMN_VALIGNS = ["top", "center", "bottom"] as const;
+export type InvoiceColumnValign = (typeof INVOICE_COLUMN_VALIGNS)[number];
+
+export const INVOICE_IMAGE_ASPECT_LABELS: Record<InvoiceImageAspect, string> = {
+  auto: "Natural",
+  "1/1": "Square",
+  "4/3": "4:3",
+  "3/2": "3:2",
+  "16/9": "16:9",
+  "2/1": "2:1",
+  "3/1": "3:1",
+};
+
+export const INVOICE_COLUMN_SPLIT_LABELS: Record<InvoiceColumnSplit, string> = {
+  33: "Left third",
+  40: "Left 40%",
+  50: "Even",
+  60: "Left 60%",
+  67: "Left two thirds",
+};
+
+export function imagePercentFromWidth(width: InvoiceImageWidth): number {
+  if (width === "sm") return 40;
+  if (width === "full") return 100;
+  return 70;
+}
+
+export function imageWidthFromPercent(percent: number): InvoiceImageWidth {
+  if (percent <= 55) return "sm";
+  if (percent >= 90) return "full";
+  return "md";
+}
 
 export const INVOICE_FONTS = ["inter", "georgia", "times", "arial", "courier"] as const;
 export type InvoiceFont = (typeof INVOICE_FONTS)[number];
@@ -152,6 +190,10 @@ export interface InvoiceImageBlock {
   url: string;
   alt: string;
   width: InvoiceImageWidth;
+  widthPercent: number;
+  maxHeight: number;
+  aspect: InvoiceImageAspect;
+  fit: InvoiceImageFit;
   align: InvoiceAlign;
 }
 
@@ -269,6 +311,8 @@ export interface InvoiceColumnsBlock {
   id: string;
   type: "columns";
   showDivider: boolean;
+  split: InvoiceColumnSplit;
+  valign: InvoiceColumnValign;
   left: InvoiceLeafBlock[];
   right: InvoiceLeafBlock[];
 }
@@ -303,6 +347,8 @@ const DEFAULT_BLOCKS: InvoiceBlock[] = [
     id: "header-columns",
     type: "columns",
     showDivider: true,
+    split: 50,
+    valign: "top",
     left: [
       {
         id: "heading",
@@ -400,7 +446,18 @@ export function createBlock(type: InvoiceBlockType): InvoiceBlock {
     case "text":
       return { id, type, html: "<p></p>", align: "left", tone: "body" };
     case "image":
-      return { id, type, url: "", alt: "", width: "md", align: "center" };
+      return {
+        id,
+        type,
+        url: "",
+        alt: "",
+        width: "md",
+        widthPercent: 70,
+        maxHeight: 0,
+        aspect: "auto",
+        fit: "contain",
+        align: "center",
+      };
     case "spacer":
       return { id, type, height: 24 };
     case "divider":
@@ -461,7 +518,7 @@ export function createBlock(type: InvoiceBlockType): InvoiceBlock {
     case "paymentMethod":
       return { id, type, label: "Payment method", ...fieldStylePair("paymentMethod") };
     case "columns":
-      return { id, type, showDivider: false, left: [], right: [] };
+      return { id, type, showDivider: false, split: 50, valign: "top", left: [], right: [] };
   }
 }
 
@@ -487,6 +544,39 @@ function readBool(value: unknown, fallback: boolean): boolean {
 
 function readAlign(value: unknown, fallback: InvoiceAlign): InvoiceAlign {
   return value === "left" || value === "center" || value === "right" ? value : fallback;
+}
+
+function readImageWidth(value: unknown): InvoiceImageWidth {
+  return value === "sm" || value === "full" ? value : "md";
+}
+
+function readWidthPercent(value: unknown, width: InvoiceImageWidth): number {
+  const percent = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(percent)) return imagePercentFromWidth(width);
+  return Math.min(100, Math.max(20, Math.round(percent)));
+}
+
+function readMaxHeight(value: unknown): number {
+  const height = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(height) || height <= 0) return 0;
+  return Math.min(280, Math.max(32, Math.round(height)));
+}
+
+function readAspect(value: unknown): InvoiceImageAspect {
+  return INVOICE_IMAGE_ASPECTS.find((item) => item === value) ?? "auto";
+}
+
+function readFit(value: unknown): InvoiceImageFit {
+  return value === "cover" ? "cover" : "contain";
+}
+
+function readSplit(value: unknown): InvoiceColumnSplit {
+  const split = typeof value === "number" ? value : Number(value);
+  return INVOICE_COLUMN_SPLITS.find((item) => item === split) ?? 50;
+}
+
+function readValign(value: unknown): InvoiceColumnValign {
+  return value === "center" || value === "bottom" ? value : "top";
 }
 
 function readStyle(value: unknown, fallback: InvoiceTextStyle): InvoiceTextStyle {
@@ -526,15 +616,21 @@ function parseLeaf(value: unknown): InvoiceLeafBlock | null {
         align: readAlign(value.align, "left"),
         tone: value.tone === "muted" ? "muted" : "body",
       };
-    case "image":
+    case "image": {
+      const width = readImageWidth(value.width);
       return {
         id,
         type: "image",
         url: readString(value.url, ""),
         alt: readString(value.alt, ""),
-        width: value.width === "sm" || value.width === "full" ? value.width : "md",
+        width,
+        widthPercent: readWidthPercent(value.widthPercent, width),
+        maxHeight: readMaxHeight(value.maxHeight),
+        aspect: readAspect(value.aspect),
+        fit: readFit(value.fit),
         align: readAlign(value.align, "center"),
       };
+    }
     case "spacer":
       return {
         id,
@@ -637,6 +733,8 @@ export function normalizeBlocks(input: unknown): InvoiceBlock[] {
       id: item.id,
       type: "columns",
       showDivider: readBool(item.showDivider, false),
+      split: readSplit(item.split),
+      valign: readValign(item.valign),
       left: Array.isArray(item.left)
         ? item.left.map(parseLeaf).filter((block): block is InvoiceLeafBlock => block != null)
         : [],

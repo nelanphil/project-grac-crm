@@ -12,6 +12,8 @@ export function defaultInvoiceBlocks(): Record<string, unknown>[] {
       id: "header-columns",
       type: "columns",
       showDivider: true,
+      split: 50,
+      valign: "top",
       left: [
         {
           id: "heading",

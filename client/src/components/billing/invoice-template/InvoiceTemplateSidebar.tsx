@@ -3,20 +3,31 @@
 import { useRef } from "react";
 import {
   BLOCK_CATALOG,
+  INVOICE_COLUMN_SPLITS,
+  INVOICE_COLUMN_SPLIT_LABELS,
+  INVOICE_COLUMN_VALIGNS,
   INVOICE_FONT_LABELS,
   INVOICE_FONT_SIZES,
   INVOICE_FONT_STACK,
   INVOICE_FONT_WEIGHT_LABELS,
   INVOICE_FONT_WEIGHTS,
   INVOICE_FONTS,
+  INVOICE_IMAGE_ASPECTS,
+  INVOICE_IMAGE_ASPECT_LABELS,
+  INVOICE_IMAGE_FITS,
   blockLabel,
   colorInputValue,
+  imageWidthFromPercent,
   siblingMeta,
 } from "@/lib/invoice-template";
 import type {
   InvoiceBlock,
   InvoiceBlockType,
+  InvoiceColumnSplit,
+  InvoiceColumnValign,
   InvoiceFieldBlockType,
+  InvoiceImageAspect,
+  InvoiceImageFit,
   InvoiceTextStyle,
 } from "@/lib/invoice-template";
 
@@ -159,6 +170,16 @@ function StyleGroups({
   );
 }
 
+function maxHeightSliderValue(maxHeight: number): number {
+  if (maxHeight <= 0) return 0;
+  return 1 + Math.round((Math.min(280, Math.max(32, maxHeight)) - 32) / 8);
+}
+
+function maxHeightFromSlider(slider: number): number {
+  if (slider <= 0) return 0;
+  return Math.min(280, 32 + (slider - 1) * 8);
+}
+
 function ImageSettings({
   block,
   onChange,
@@ -236,17 +257,62 @@ function ImageSettings({
         />
       </label>
       <label className="block text-sm text-neutral-700">
-        Width
+        Width ({block.widthPercent}%)
+        <input
+          type="range"
+          min={20}
+          max={100}
+          value={block.widthPercent}
+          className="mt-2 w-full"
+          onChange={(event) => {
+            const widthPercent = Number(event.target.value);
+            onChange({ widthPercent, width: imageWidthFromPercent(widthPercent) });
+          }}
+        />
+      </label>
+      <label className="block text-sm text-neutral-700">
+        Max height ({block.maxHeight === 0 ? "Natural" : `${block.maxHeight}px`})
+        <input
+          type="range"
+          min={0}
+          max={32}
+          value={maxHeightSliderValue(block.maxHeight)}
+          className="mt-2 w-full"
+          onChange={(event) => onChange({ maxHeight: maxHeightFromSlider(Number(event.target.value)) })}
+        />
+      </label>
+      <label className="block text-sm text-neutral-700">
+        Ratio
         <select
           className={`${inputClass} mt-1`}
-          value={block.width}
-          onChange={(event) => onChange({ width: event.target.value })}
+          value={block.aspect}
+          onChange={(event) => onChange({ aspect: event.target.value as InvoiceImageAspect })}
         >
-          <option value="sm">Small</option>
-          <option value="md">Medium</option>
-          <option value="full">Full</option>
+          {INVOICE_IMAGE_ASPECTS.map((aspect) => (
+            <option key={aspect} value={aspect}>
+              {INVOICE_IMAGE_ASPECT_LABELS[aspect]}
+            </option>
+          ))}
         </select>
       </label>
+      <label className="block text-sm text-neutral-700">
+        Fit
+        <select
+          className={`${inputClass} mt-1`}
+          value={block.fit}
+          disabled={block.aspect === "auto"}
+          onChange={(event) => onChange({ fit: event.target.value as InvoiceImageFit })}
+        >
+          {INVOICE_IMAGE_FITS.map((fit) => (
+            <option key={fit} value={fit}>
+              {fit === "contain" ? "Contain" : "Cover"}
+            </option>
+          ))}
+        </select>
+      </label>
+      {block.aspect === "auto" ? (
+        <p className="text-xs text-neutral-500">Fit applies when a ratio is set.</p>
+      ) : null}
       <label className="block text-sm text-neutral-700">
         Alignment
         <select
@@ -339,6 +405,36 @@ function BlockSettings({
             Content blocks added while this row is selected go in the left column. Use Add text
             inside an empty column to start the other side.
           </p>
+          <label className="block text-sm text-neutral-700">
+            Column split
+            <select
+              className={`${inputClass} mt-1`}
+              value={block.split}
+              onChange={(event) =>
+                onChange({ split: Number(event.target.value) as InvoiceColumnSplit })
+              }
+            >
+              {INVOICE_COLUMN_SPLITS.map((split) => (
+                <option key={split} value={split}>
+                  {INVOICE_COLUMN_SPLIT_LABELS[split]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm text-neutral-700">
+            Vertical alignment
+            <select
+              className={`${inputClass} mt-1`}
+              value={block.valign}
+              onChange={(event) => onChange({ valign: event.target.value as InvoiceColumnValign })}
+            >
+              {INVOICE_COLUMN_VALIGNS.map((valign) => (
+                <option key={valign} value={valign}>
+                  {valign === "top" ? "Top" : valign === "center" ? "Center" : "Bottom"}
+                </option>
+              ))}
+            </select>
+          </label>
           <CheckRow
             label="Divider below"
             checked={block.showDivider}

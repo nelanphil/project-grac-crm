@@ -11,6 +11,8 @@ import { COMPANY } from "@/lib/constants";
 import {
   invoiceTextCss,
   type InvoiceBlock,
+  type InvoiceColumnSplit,
+  type InvoiceColumnValign,
   type InvoiceColumnsBlock,
   type InvoiceLeafBlock,
   type InvoiceTextStyle,
@@ -86,6 +88,26 @@ function showServiceAddress(invoice: InvoiceItem): boolean {
   );
 }
 
+function aspectRatioValue(aspect: string): number {
+  const [width, height] = aspect.split("/").map(Number);
+  if (!width || !height) return 1;
+  return width / height;
+}
+
+const COLUMN_SPLIT_CLASS: Record<InvoiceColumnSplit, string> = {
+  33: "sm:grid-cols-[33fr_67fr]",
+  40: "sm:grid-cols-[40fr_60fr]",
+  50: "sm:grid-cols-2",
+  60: "sm:grid-cols-[60fr_40fr]",
+  67: "sm:grid-cols-[67fr_33fr]",
+};
+
+const COLUMN_VALIGN_CLASS: Record<InvoiceColumnValign, string> = {
+  top: "sm:items-start",
+  center: "sm:items-center",
+  bottom: "sm:items-end",
+};
+
 export function InvoiceColumnsFrame({
   block,
   left,
@@ -97,7 +119,9 @@ export function InvoiceColumnsFrame({
 }) {
   return (
     <div className={block.showDivider ? "border-b border-neutral-200 pb-6" : undefined}>
-      <div className="grid gap-6 sm:grid-cols-2 sm:items-start">
+      <div
+        className={`grid gap-6 ${COLUMN_SPLIT_CLASS[block.split]} ${COLUMN_VALIGN_CLASS[block.valign]}`}
+      >
         <div className="min-w-0 space-y-5">{left}</div>
         <div className="min-w-0 space-y-5">{right}</div>
       </div>
@@ -190,8 +214,6 @@ function LeafBody({
       return <div style={{ textAlign: block.align }}>{body}</div>;
     }
     case "image": {
-      const widthClass =
-        block.width === "sm" ? "max-w-32" : block.width === "md" ? "max-w-64" : "w-full";
       const alignClass =
         block.align === "center"
           ? "justify-center"
@@ -201,10 +223,47 @@ function LeafBody({
       if (!block.url) {
         return editing ? <Placeholder>Add an image from the sidebar.</Placeholder> : null;
       }
+      const framed = block.aspect !== "auto";
+      const ratio = framed ? aspectRatioValue(block.aspect) : null;
+      const capped = block.maxHeight > 0;
+      const frameStyle = {
+        width:
+          capped && ratio
+            ? `min(${block.widthPercent}%, ${Math.round(block.maxHeight * ratio)}px)`
+            : `${block.widthPercent}%`,
+        maxHeight: capped ? block.maxHeight : undefined,
+        aspectRatio: framed ? block.aspect : undefined,
+      };
       return (
-        <div className={`flex ${alignClass}`}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={block.url} alt={block.alt} className={`${widthClass} h-auto`} />
+        <div className={`flex w-full ${alignClass}`}>
+          {framed ? (
+            <div className="relative max-w-full overflow-hidden" style={frameStyle}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={block.url}
+                alt={block.alt}
+                className={`absolute inset-0 h-full w-full ${
+                  block.fit === "cover" ? "object-cover" : "object-contain"
+                }`}
+              />
+            </div>
+          ) : (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={block.url}
+              alt={block.alt}
+              className="h-auto max-w-full object-contain"
+              style={
+                capped
+                  ? {
+                      width: "auto",
+                      maxWidth: `${block.widthPercent}%`,
+                      maxHeight: block.maxHeight,
+                    }
+                  : { width: `${block.widthPercent}%` }
+              }
+            />
+          )}
         </div>
       );
     }

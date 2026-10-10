@@ -9,6 +9,16 @@ const idSchema = z
   .regex(/^[a-zA-Z0-9_-]+$/, "Invalid block id");
 
 const alignSchema = z.enum(["left", "center", "right"]);
+const imageAspectSchema = z.enum(["auto", "1/1", "4/3", "3/2", "16/9", "2/1", "3/1"]);
+const imageFitSchema = z.enum(["contain", "cover"]);
+const columnSplitSchema = z.union([
+  z.literal(33),
+  z.literal(40),
+  z.literal(50),
+  z.literal(60),
+  z.literal(67),
+]);
+const columnValignSchema = z.enum(["top", "center", "bottom"]);
 
 const fontSchema = z.enum(["inter", "georgia", "times", "arial", "courier"]);
 const fontSizeSchema = z.union([
@@ -133,6 +143,13 @@ const imageBlockSchema = z.object({
     ),
   alt: z.string().max(200),
   width: z.enum(["sm", "md", "full"]),
+  widthPercent: z.number().int().min(20).max(100).optional(),
+  maxHeight: z
+    .union([z.literal(0), z.number().int().min(32).max(280)])
+    .optional()
+    .default(0),
+  aspect: imageAspectSchema.optional().default("auto"),
+  fit: imageFitSchema.optional().default("contain"),
   align: alignSchema,
 });
 
@@ -251,6 +268,8 @@ const columnsBlockSchema = z.object({
   id: idSchema,
   type: z.literal("columns"),
   showDivider: z.boolean(),
+  split: columnSplitSchema.optional().default(50),
+  valign: columnValignSchema.optional().default("top"),
   left: z.array(leafBlockSchema).max(20),
   right: z.array(leafBlockSchema).max(20),
 });
@@ -303,15 +322,24 @@ export const invoiceBlocksSchema = z
     }
   });
 
+function imagePercentFromWidth(width: "sm" | "md" | "full"): number {
+  if (width === "sm") return 40;
+  if (width === "full") return 100;
+  return 70;
+}
+
 function sanitizeLeaf(block: InvoiceLeafBlock): InvoiceLeafBlock {
-  if (block.type !== "text") return block;
-  return { ...block, html: sanitizeInvoiceTextHtml(block.html) };
+  if (block.type === "text") return { ...block, html: sanitizeInvoiceTextHtml(block.html) };
+  if (block.type !== "image") return block;
+  return {
+    ...block,
+    widthPercent: block.widthPercent ?? imagePercentFromWidth(block.width),
+  };
 }
 
 export function sanitizeInvoiceBlocks(blocks: InvoiceBlock[]): InvoiceBlock[] {
   return blocks.map((block) => {
-    if (block.type === "text") return sanitizeLeaf(block);
-    if (block.type !== "columns") return block;
+    if (block.type !== "columns") return sanitizeLeaf(block);
     return {
       ...block,
       left: block.left.map(sanitizeLeaf),
