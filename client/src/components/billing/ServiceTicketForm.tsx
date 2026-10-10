@@ -49,6 +49,10 @@ import AutosaveStatus from "@/components/billing/AutosaveStatus";
 import { useAuthStore } from "@/store/useAuthStore";
 import { timeWindowError } from "@/lib/schedule";
 import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
+import {
+  ExerciseDaySelect,
+  ExerciseTimeInput,
+} from "@/components/billing/ExerciseScheduleFields";
 import TicketLineItemsEditor from "@/components/billing/TicketLineItemsEditor";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 
@@ -867,16 +871,16 @@ export default function ServiceTicketForm({
                 />
               </Field>
               <Field label="Exercise Day">
-                <input
+                <ExerciseDaySelect
                   value={form.exerciseDay}
-                  onChange={(e) => patch({ exerciseDay: e.target.value })}
+                  onChange={(exerciseDay) => patch({ exerciseDay })}
                   className={inputClass}
                 />
               </Field>
               <Field label="Time Set">
-                <input
+                <ExerciseTimeInput
                   value={form.exerciseTime}
-                  onChange={(e) => patch({ exerciseTime: e.target.value })}
+                  onChange={(exerciseTime) => patch({ exerciseTime })}
                   className={inputClass}
                 />
               </Field>

@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import AutosaveStatus from "@/components/billing/AutosaveStatus";
 import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
+import {
+  ExerciseDaySelect,
+  ExerciseTimeInput,
+} from "@/components/billing/ExerciseScheduleFields";
 import ServiceTicketDocument, {
   type ServiceTicketView,
 } from "@/components/billing/ServiceTicketDocument";
@@ -29,18 +33,73 @@ import {
   type TicketFormState,
   type TicketPartRow,
 } from "@/lib/service-ticket";
+import {
+  exerciseDayLabel,
+  exerciseTimeLabel,
+} from "@/lib/exercise-schedule";
 import { useWorkOrderAutosave } from "@/lib/useWorkOrderAutosave";
 
 type PanelUser = RoleLike & { id: string };
 
 type ProductsDraft = Pick<
   TicketFormState,
-  "parts" | "workOrderTypeRef" | "workOrderTypeLabel" | "trackedEquipment"
+  | "parts"
+  | "workOrderTypeRef"
+  | "workOrderTypeLabel"
+  | "trackedEquipment"
+  | "serialNumber"
+  | "generatorModel"
+  | "runHours"
+  | "exerciseDay"
+  | "exerciseTime"
 >;
 
 function serializeProductsDraft(draft: ProductsDraft): string {
-  const { parts } = ticketToPayload({ ...emptyTicketForm(), parts: draft.parts });
-  return JSON.stringify({ parts, workOrderTypeRef: draft.workOrderTypeRef });
+  const { parts, serialNumber, generatorModel, runHours, exerciseDay, exerciseTime } =
+    ticketToPayload({
+      ...emptyTicketForm(),
+      parts: draft.parts,
+      serialNumber: draft.serialNumber,
+      generatorModel: draft.generatorModel,
+      runHours: draft.runHours,
+      exerciseDay: draft.exerciseDay,
+      exerciseTime: draft.exerciseTime,
+    });
+  return JSON.stringify({
+    parts,
+    workOrderTypeRef: draft.workOrderTypeRef,
+    serialNumber,
+    generatorModel,
+    runHours,
+    exerciseDay,
+    exerciseTime,
+  });
+}
+
+const equipmentInputClass =
+  "w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue";
+
+function EquipmentField({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block min-w-0">
+      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function displayValue(value: string | number | null | undefined): string {
+  if (value == null) return "—";
+  const text = String(value).trim();
+  return text || "—";
 }
 
 async function saveWorkOrder(
@@ -233,6 +292,11 @@ export function MobileWorkOrderPanel({
   const [workOrderTypeRef, setWorkOrderTypeRef] = useState<string | null>(null);
   const [workOrderTypeLabel, setWorkOrderTypeLabel] = useState("");
   const [trackedEquipment, setTrackedEquipment] = useState(false);
+  const [serialNumber, setSerialNumber] = useState("");
+  const [generatorModel, setGeneratorModel] = useState("");
+  const [runHours, setRunHours] = useState("");
+  const [exerciseDay, setExerciseDay] = useState("");
+  const [exerciseTime, setExerciseTime] = useState("");
   const [workOrderTypes, setWorkOrderTypes] = useState<WorkOrderTypeItem[]>([]);
   const [workOrderTypesLoaded, setWorkOrderTypesLoaded] = useState(false);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -245,6 +309,11 @@ export function MobileWorkOrderPanel({
     setWorkOrderTypeRef(form.workOrderTypeRef);
     setWorkOrderTypeLabel(form.workOrderTypeLabel);
     setTrackedEquipment(form.trackedEquipment);
+    setSerialNumber(form.serialNumber);
+    setGeneratorModel(form.generatorModel);
+    setRunHours(form.runHours);
+    setExerciseDay(form.exerciseDay);
+    setExerciseTime(form.exerciseTime);
   }
 
   useEffect(() => {
@@ -300,8 +369,23 @@ export function MobileWorkOrderPanel({
       workOrderTypeRef,
       workOrderTypeLabel,
       trackedEquipment: hasEquipmentLines,
+      serialNumber,
+      generatorModel,
+      runHours,
+      exerciseDay,
+      exerciseTime,
     }),
-    [parts, workOrderTypeRef, workOrderTypeLabel, hasEquipmentLines],
+    [
+      parts,
+      workOrderTypeRef,
+      workOrderTypeLabel,
+      hasEquipmentLines,
+      serialNumber,
+      generatorModel,
+      runHours,
+      exerciseDay,
+      exerciseTime,
+    ],
   );
   const saveProducts = useCallback(
     async (sent: ProductsDraft) => {
@@ -339,17 +423,60 @@ export function MobileWorkOrderPanel({
       <PanelStatus loading={loading} error={error} />
       {order && token && user ? (
         <>
-          <div className="min-w-0 space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-              Products
-            </h3>
-            {canWrite ? (
-              <div
-                className="min-w-0 space-y-2"
-                onChangeCapture={autosave.arm}
-                onClickCapture={autosave.arm}
-                onBlurCapture={autosave.flush}
-              >
+          {canWrite ? (
+            <div
+              className="min-w-0 space-y-4"
+              onChangeCapture={autosave.arm}
+              onClickCapture={autosave.arm}
+              onBlurCapture={autosave.flush}
+            >
+              <div className="min-w-0 space-y-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                  Equipment
+                </h3>
+                <EquipmentField label="Model">
+                  <input
+                    value={generatorModel}
+                    onChange={(event) => setGeneratorModel(event.target.value)}
+                    className={equipmentInputClass}
+                  />
+                </EquipmentField>
+                <EquipmentField label="Serial number">
+                  <input
+                    value={serialNumber}
+                    onChange={(event) => setSerialNumber(event.target.value)}
+                    className={equipmentInputClass}
+                  />
+                </EquipmentField>
+                <EquipmentField label="Run hours">
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    value={runHours}
+                    onChange={(event) => setRunHours(event.target.value)}
+                    className={equipmentInputClass}
+                  />
+                </EquipmentField>
+                <EquipmentField label="Exercise Day">
+                  <ExerciseDaySelect
+                    value={exerciseDay}
+                    onChange={setExerciseDay}
+                    className={equipmentInputClass}
+                  />
+                </EquipmentField>
+                <EquipmentField label="Time Set">
+                  <ExerciseTimeInput
+                    value={exerciseTime}
+                    onChange={setExerciseTime}
+                    className={equipmentInputClass}
+                  />
+                </EquipmentField>
+              </div>
+              <div className="min-w-0 space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                  Products
+                </h3>
                 <TicketLineItemsEditor parts={parts} onChange={setParts} />
                 {hasEquipmentLines ? (
                   <EquipmentWorkOrderTypeChoice
@@ -364,17 +491,49 @@ export function MobileWorkOrderPanel({
                 ) : typeSaveIssue.message ? (
                   <p className="text-sm text-red-700">{typeSaveIssue.message}</p>
                 ) : null}
-                <AutosaveStatus
-                  status={autosave.status}
-                  error={autosave.error}
-                  onRetry={autosave.retry}
-                  className="text-xs"
-                />
               </div>
-            ) : (
-              <ProductLines order={order} />
-            )}
-          </div>
+              <AutosaveStatus
+                status={autosave.status}
+                error={autosave.error}
+                onRetry={autosave.retry}
+                className="text-xs"
+              />
+            </div>
+          ) : (
+            <>
+              <div className="min-w-0 space-y-2 text-sm">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                  Equipment
+                </h3>
+                <p className="break-words text-[var(--staff-ink)]">
+                  <span className="text-[var(--staff-muted)]">Model </span>
+                  {displayValue(order.generatorModel)}
+                </p>
+                <p className="break-words text-[var(--staff-ink)]">
+                  <span className="text-[var(--staff-muted)]">Serial number </span>
+                  {displayValue(order.serialNumber)}
+                </p>
+                <p className="break-words text-[var(--staff-ink)]">
+                  <span className="text-[var(--staff-muted)]">Run hours </span>
+                  {displayValue(order.runHours)}
+                </p>
+                <p className="break-words text-[var(--staff-ink)]">
+                  <span className="text-[var(--staff-muted)]">Exercise Day </span>
+                  {displayValue(exerciseDayLabel(order.exerciseDay))}
+                </p>
+                <p className="break-words text-[var(--staff-ink)]">
+                  <span className="text-[var(--staff-muted)]">Time Set </span>
+                  {displayValue(exerciseTimeLabel(order.exerciseTime))}
+                </p>
+              </div>
+              <div className="min-w-0 space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+                  Products
+                </h3>
+                <ProductLines order={order} />
+              </div>
+            </>
+          )}
           <WorkOrderNotesPanel
             token={token}
             recordId={order._id}
