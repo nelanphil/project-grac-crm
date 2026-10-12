@@ -2467,6 +2467,42 @@ export interface ScheduleRecommendation {
   reason: string;
 }
 
+export interface SlotTechnicianRecommendation {
+  userId: string;
+  first_name: string;
+  last_name: string;
+  /** False when this date is outside the technician's working schedule. */
+  available: boolean;
+  /** True when the requested window fits their hours and does not overlap another job. */
+  fits: boolean;
+  reason: string;
+}
+
+export async function recommendTechnicianForSlot(
+  token: string,
+  data: {
+    date: string;
+    startTime: string;
+    endTime: string;
+    addressRef?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    workOrderTypeRef?: string;
+    excludeWorkOrderId?: string;
+  },
+): Promise<{
+  technicians: SlotTechnicianRecommendation[];
+  recommendation: SlotTechnicianRecommendation | null;
+}> {
+  return authRequest("/schedule/technician-recommendation", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
 export async function getScheduleRecommendations(
   token: string,
   data: { date: string; workOrderIds: string[] },

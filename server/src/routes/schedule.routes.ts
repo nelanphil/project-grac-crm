@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import {
   authenticate,
+  requireAnyPermission,
   requirePermission,
   AuthRequest,
 } from "../middleware/auth.middleware";
@@ -10,6 +11,7 @@ import {
   getScheduleTechnicians,
   postScheduleSuggest,
   postScheduleRecommendations,
+  postScheduleTechnicianRecommendation,
   postSchedulePlace,
   getScheduleStartOptions,
   postScheduleGeocodeMissing,
@@ -46,6 +48,13 @@ router.post(
   "/recommendations",
   requirePermission("jobs:write"),
   (req, res: Response) => postScheduleRecommendations(req as AuthRequest, res),
+);
+
+router.post(
+  "/technician-recommendation",
+  requireAnyPermission("jobs:read", "estimates:read"),
+  (req, res: Response) =>
+    postScheduleTechnicianRecommendation(req as AuthRequest, res),
 );
 
 router.post("/place", requirePermission("jobs:write"), (req, res: Response) =>

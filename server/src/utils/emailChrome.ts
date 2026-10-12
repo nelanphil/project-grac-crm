@@ -35,7 +35,7 @@ const COMPANY = {
   name: "Generator Maintenance of Florida",
   tagline: "Expert Backup Power for Central & South Florida",
   phone: "(386) 631-8982",
-  email: "info@generatormaintenancefl.com",
+  email: "contact@genmaintoffl.com",
 } as const;
 
 function escapeHtml(value: string): string {

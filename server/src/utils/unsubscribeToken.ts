@@ -84,7 +84,7 @@ export function buildUnsubscribeOneClickUrl(
   return `${base}/email-preferences/one-click?token=${encodeURIComponent(token)}`;
 }
 
-const UNSUBSCRIBE_MAILTO = "info@generatormaintenancefl.com";
+const UNSUBSCRIBE_MAILTO = "contact@genmaintoffl.com";
 
 export function listUnsubscribeHeaders(
   email: string,

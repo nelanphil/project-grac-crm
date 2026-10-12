@@ -12,6 +12,7 @@ import {
 import {
   CustomerDetail,
   CustomerListItem,
+  SlotTechnicianRecommendation,
   TechnicianListItem,
   getContractsForCustomer,
   getCustomer,
@@ -19,6 +20,7 @@ import {
   getTaxSettings,
   getTechnicians,
   getWorkOrderTypes,
+  recommendTechnicianForSlot,
   WorkOrderTypeItem,
 } from "@/lib/api";
 import { COMPANY, US_STATE_CODES, US_STATES, toUsStateCode } from "@/lib/constants";
@@ -106,6 +108,28 @@ function technicianDisplayName(tech: {
   return `${tech.first_name ?? ""} ${tech.last_name ?? ""}`.trim();
 }
 
+function splitPersonName(name: string): { first_name: string; last_name: string } {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return { first_name: parts[0] ?? name.trim(), last_name: "" };
+  return {
+    first_name: parts.slice(0, -1).join(" "),
+    last_name: parts[parts.length - 1] ?? "",
+  };
+}
+
+function compareTechnicianNames(
+  a: { first_name?: string; last_name?: string },
+  b: { first_name?: string; last_name?: string },
+): number {
+  const byLast = (a.last_name ?? "").localeCompare(b.last_name ?? "", undefined, {
+    sensitivity: "base",
+  });
+  if (byLast !== 0) return byLast;
+  return (a.first_name ?? "").localeCompare(b.first_name ?? "", undefined, {
+    sensitivity: "base",
+  });
+}
+
 export default function ServiceTicketForm({
   variant,
   initial,
@@ -142,6 +166,13 @@ export default function ServiceTicketForm({
   const [techQuery, setTechQuery] = useState("");
   const [techResults, setTechResults] = useState<TechnicianListItem[]>([]);
   const [techConflict, setTechConflict] = useState(false);
+  const [schedulableTechnicians, setSchedulableTechnicians] = useState<
+    TechnicianListItem[]
+  >([]);
+  const [slotRank, setSlotRank] = useState<{
+    technicians: SlotTechnicianRecommendation[];
+    recommendation: SlotTechnicianRecommendation | null;
+  } | null>(null);
   const [workOrderTypes, setWorkOrderTypes] = useState<WorkOrderTypeItem[]>([]);
   const [workOrderTypesLoaded, setWorkOrderTypesLoaded] = useState(false);
   const lastAppliedSiteKey = useRef(
@@ -149,6 +180,8 @@ export default function ServiceTicketForm({
   );
   const stateTouched = useRef(false);
   const initialAppliedFor = useRef<string | undefined>(undefined);
+  const techChoiceLocked = useRef(Boolean(initial?.assignedUserRef));
+  const autoAppliedTechId = useRef<string | null>(null);
   const autoSaving = Boolean(autoSave);
 
   useEffect(() => {
@@ -157,6 +190,8 @@ export default function ServiceTicketForm({
     if (autoSaving && initial && initialAppliedFor.current === recordId) return;
     initialAppliedFor.current = recordId;
     stateTouched.current = false;
+    techChoiceLocked.current = Boolean(initial?.assignedUserRef);
+    autoAppliedTechId.current = null;
     if (initial) {
       setForm(initial);
       lastAppliedSiteKey.current = ticketSiteKey(initial);
@@ -281,7 +316,7 @@ export default function ServiceTicketForm({
   }
 
   useEffect(() => {
-    if (!token || techQuery.trim().length < 2) {
+    if (variant === "work-order" || !token || techQuery.trim().length < 2) {
       setTechResults([]);
       return;
     }
@@ -295,10 +330,10 @@ export default function ServiceTicketForm({
         .catch(() => setTechResults([]));
     }, 250);
     return () => clearTimeout(t);
-  }, [token, techQuery, form.date, recordId]);
+  }, [variant, token, techQuery, form.date, recordId]);
 
   useEffect(() => {
-    if (!token || !form.assignedUserRef || !form.date) {
+    if (variant === "work-order" || !token || !form.assignedUserRef || !form.date) {
       if (!form.assignedUserRef) setTechConflict(false);
       return;
     }
@@ -319,7 +354,101 @@ export default function ServiceTicketForm({
     return () => {
       cancelled = true;
     };
-  }, [token, form.assignedUserRef, form.date, form.tech, recordId]);
+  }, [variant, token, form.assignedUserRef, form.date, form.tech, recordId]);
+
+  useEffect(() => {
+    if (!token || variant !== "work-order") return;
+    let cancelled = false;
+    getTechnicians(token, { all: true })
+      .then((res) => {
+        if (!cancelled) setSchedulableTechnicians(res.technicians);
+      })
+      .catch(() => {
+        if (!cancelled) setSchedulableTechnicians([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, variant]);
+
+  useEffect(() => {
+    if (!token || variant !== "work-order") return;
+    const city = form.customerCity.trim();
+    const hasSite = Boolean(form.addressRef || city);
+    if (
+      !form.date ||
+      !form.startTime ||
+      !form.endTime ||
+      timeWindowError(form.startTime, form.endTime) ||
+      !hasSite
+    ) {
+      setSlotRank(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      recommendTechnicianForSlot(token, {
+        date: form.date,
+        startTime: form.startTime,
+        endTime: form.endTime,
+        addressRef: form.addressRef || undefined,
+        address: form.customerAddress.trim() || undefined,
+        city: city || undefined,
+        state: form.customerState.trim() || undefined,
+        zip: form.customerZip.trim() || undefined,
+        workOrderTypeRef: form.workOrderTypeRef || undefined,
+        excludeWorkOrderId: recordId,
+      })
+        .then((res) => {
+          if (!cancelled) setSlotRank(res);
+        })
+        .catch(() => {
+          if (!cancelled) setSlotRank(null);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    token,
+    variant,
+    form.date,
+    form.startTime,
+    form.endTime,
+    form.addressRef,
+    form.customerAddress,
+    form.customerCity,
+    form.customerState,
+    form.customerZip,
+    form.workOrderTypeRef,
+    recordId,
+  ]);
+
+  const recommendedTech = slotRank?.recommendation ?? null;
+  useEffect(() => {
+    if (variant !== "work-order" || !recommendedTech || techChoiceLocked.current) {
+      return;
+    }
+    const name = technicianDisplayName(recommendedTech);
+    setForm((prev) => {
+      if (
+        prev.assignedUserRef &&
+        prev.assignedUserRef !== autoAppliedTechId.current
+      ) {
+        return prev;
+      }
+      if (prev.assignedUserRef === recommendedTech.userId && prev.tech === name) {
+        return prev;
+      }
+      autoAppliedTechId.current = recommendedTech.userId;
+      return {
+        ...prev,
+        tech: name,
+        assignedUserRef: recommendedTech.userId,
+      };
+    });
+  }, [recommendedTech, variant]);
 
   useEffect(() => {
     if (!token || !form.customerId) {
@@ -392,6 +521,29 @@ export default function ServiceTicketForm({
   }, [token, form.customerId, form.addressRef, form.equipmentRef]);
 
   const totals = useMemo(() => ticketTotals(form), [form]);
+  const technicianChoices = useMemo(() => {
+    const options = [...schedulableTechnicians];
+    if (
+      form.assignedUserRef &&
+      !options.some((tech) => tech._id === form.assignedUserRef)
+    ) {
+      const name = splitPersonName(form.tech);
+      options.push({
+        _id: form.assignedUserRef,
+        first_name: name.first_name || "Assigned technician",
+        last_name: name.last_name,
+        jobsOnDate: 0,
+      });
+    }
+    options.sort(compareTechnicianNames);
+    return options;
+  }, [schedulableTechnicians, form.assignedUserRef, form.tech]);
+  const selectedSlot = slotRank?.technicians.find(
+    (tech) => tech.userId === form.assignedUserRef,
+  );
+  const selectedDoesNotFit = Boolean(
+    form.assignedUserRef && selectedSlot && !selectedSlot.fits,
+  );
   const discountRules = form.contractDiscount ?? DEFAULT_PRODUCT_DISCOUNTS;
   const discountBanner = form.contractDiscount
     ? formatDiscountSummary(form.contractDiscount, form.contractDiscount.label)
@@ -436,6 +588,24 @@ export default function ServiceTicketForm({
     setTechQuery("");
     setTechResults([]);
     setTechConflict(tech.jobsOnDate > 0);
+  }
+
+  function selectWorkOrderTechnician(userId: string) {
+    if (!userId) {
+      techChoiceLocked.current = false;
+      autoAppliedTechId.current = null;
+      patch({ tech: "", assignedUserRef: null });
+      return;
+    }
+    techChoiceLocked.current = true;
+    const listed = schedulableTechnicians.find((tech) => tech._id === userId);
+    const ranked = slotRank?.technicians.find((tech) => tech.userId === userId);
+    const name = listed
+      ? technicianDisplayName(listed)
+      : ranked
+        ? technicianDisplayName(ranked)
+        : form.tech;
+    patch({ tech: name, assignedUserRef: userId });
   }
 
   function applyAddress(addressId: string) {
@@ -625,53 +795,81 @@ export default function ServiceTicketForm({
               </select>
             </Field>
           ) : null}
-          <div className="relative">
+          {variant === "work-order" ? (
             <Field label="Technician">
-              <input
-                value={techQuery || form.tech}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setTechQuery(value);
-                  patch({
-                    tech: value,
-                    ...(value.trim() !== form.tech.trim()
-                      ? { assignedUserRef: null }
-                      : {}),
-                  });
-                  setTechConflict(false);
-                }}
-                placeholder="Search technicians"
+              <select
+                value={form.assignedUserRef ?? ""}
+                onChange={(e) => selectWorkOrderTechnician(e.target.value)}
                 className={inputClass}
-              />
-            </Field>
-            {techResults.length > 0 ? (
-              <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
-                {techResults.map((tech) => (
-                  <li key={tech._id}>
-                    <button
-                      type="button"
-                      onClick={() => applyTechnician(tech)}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                    >
-                      <span className="font-medium text-brand-dark">
-                        {technicianDisplayName(tech)}
-                      </span>
-                      {tech.jobsOnDate > 0 ? (
-                        <span className="mt-0.5 block text-xs text-amber-700">
-                          Already has a job on this date
-                        </span>
-                      ) : null}
-                    </button>
-                  </li>
+              >
+                <option value="">Select technician</option>
+                {technicianChoices.map((tech) => (
+                  <option key={tech._id} value={tech._id}>
+                    {technicianDisplayName(tech)}
+                    {tech._id === recommendedTech?.userId ? " (Recommended)" : ""}
+                  </option>
                 ))}
-              </ul>
-            ) : null}
-            {techConflict ? (
-              <p className="mt-1 text-xs text-amber-700">
-                This technician already has a job on this date
-              </p>
-            ) : null}
-          </div>
+              </select>
+              {recommendedTech &&
+              !(selectedDoesNotFit && form.assignedUserRef === recommendedTech.userId) ? (
+                <p className="mt-1 text-xs text-neutral-500">
+                  Recommended: {technicianDisplayName(recommendedTech)} —{" "}
+                  {recommendedTech.reason}
+                </p>
+              ) : null}
+              {selectedDoesNotFit && selectedSlot ? (
+                <p className="mt-1 text-xs text-amber-700">{selectedSlot.reason}</p>
+              ) : null}
+            </Field>
+          ) : (
+            <div className="relative">
+              <Field label="Technician">
+                <input
+                  value={techQuery || form.tech}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTechQuery(value);
+                    patch({
+                      tech: value,
+                      ...(value.trim() !== form.tech.trim()
+                        ? { assignedUserRef: null }
+                        : {}),
+                    });
+                    setTechConflict(false);
+                  }}
+                  placeholder="Search technicians"
+                  className={inputClass}
+                />
+              </Field>
+              {techResults.length > 0 ? (
+                <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
+                  {techResults.map((tech) => (
+                    <li key={tech._id}>
+                      <button
+                        type="button"
+                        onClick={() => applyTechnician(tech)}
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                      >
+                        <span className="font-medium text-brand-dark">
+                          {technicianDisplayName(tech)}
+                        </span>
+                        {tech.jobsOnDate > 0 ? (
+                          <span className="mt-0.5 block text-xs text-amber-700">
+                            Already has a job on this date
+                          </span>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {techConflict ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  This technician already has a job on this date
+                </p>
+              ) : null}
+            </div>
+          )}
           {variant === "estimate" ? (
             <Field label="Status">
               <select

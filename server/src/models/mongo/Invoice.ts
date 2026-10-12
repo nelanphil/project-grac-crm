@@ -46,6 +46,8 @@ export interface IInvoice extends Document {
   dueDate: Date | null;
   issuedAt: Date;
   paidAt: Date | null;
+  /** Set while a customer payment receipt email is claimed or sent. */
+  paymentReceiptSentAt: Date | null;
   paymentProvider: PaymentProviderName | null;
   paymentProviderAccountRef?: Types.ObjectId | null;
   providerCheckoutId?: string | null;
@@ -116,6 +118,7 @@ const invoiceSchema = new Schema<IInvoice>(
     dueDate: { type: Date, default: null },
     issuedAt: { type: Date, default: Date.now },
     paidAt: { type: Date, default: null },
+    paymentReceiptSentAt: { type: Date, default: null },
     paymentProvider: {
       type: String,
       enum: PAYMENT_PROVIDERS,

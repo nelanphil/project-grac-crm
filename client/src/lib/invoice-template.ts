@@ -425,7 +425,7 @@ const DEFAULT_BLOCKS: InvoiceBlock[] = [
     type: "text",
     align: "center",
     tone: "muted",
-    html: "<p>Thank you for your business.</p><p>Questions? Call (386) 631-8982 or email info@generatormaintenancefl.com</p>",
+    html: "<p>Thank you for your business.</p><p>Questions? Call (386) 631-8982 or email contact@genmaintoffl.com</p>",
   },
 ];
 

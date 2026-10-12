@@ -6,7 +6,7 @@ export const COMPANY = {
   tagline: "Expert Backup Power for Central & South Florida",
   phone: "(386) 631-8982",
   phoneHref: "tel:+13866318982",
-  email: "info@generatormaintenancefl.com",
+  email: "contact@genmaintoffl.com",
   license: "Licensed & Insured",
 } as const;
 
@@ -205,6 +205,7 @@ export const FOOTER_LINKS = {
   ],
   Contact: [
     { label: COMPANY.phone, href: COMPANY.phoneHref },
+    { label: COMPANY.email, href: `mailto:${COMPANY.email}` },
     { label: "Contact Us", href: "/contact" },
   ],
   Legal: [

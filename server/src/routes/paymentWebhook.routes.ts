@@ -3,6 +3,7 @@ import {
   PAYMENT_PROVIDERS,
   PaymentProviderName,
 } from "../models/mongo/PaymentProviderAccount";
+import type { IInvoice } from "../models/mongo/Invoice";
 import { getAdapter } from "../payments/registry";
 import { getPaymentProviderAccountsForWebhook } from "../services/paymentProvider.service";
 import { finalizeRedemptionsForInvoices } from "../services/discount.service";
@@ -10,6 +11,7 @@ import {
   findInvoicesForWebhook,
   markInvoicePaid,
 } from "../services/invoice.service";
+import { sendPaymentReceipt } from "../services/paymentReceipt.service";
 
 const router = Router();
 
@@ -52,16 +54,22 @@ router.post("/:provider", async (req: Request, res: Response) => {
     }
 
     if (verified.status === "paid") {
+      const newlyPaid: IInvoice[] = [];
       for (const invoice of invoices) {
+        if (invoice.status === "paid") continue;
         await markInvoicePaid({
           invoice,
           providerPaymentId: verified.providerPaymentId,
           providerOrderId: verified.providerOrderId,
         });
+        newlyPaid.push(invoice);
       }
       await finalizeRedemptionsForInvoices(
         invoices.map((invoice) => String(invoice._id)),
       );
+      for (const invoice of newlyPaid) {
+        await sendPaymentReceipt(invoice);
+      }
     } else if (verified.status === "failed") {
       for (const invoice of invoices) {
         if (invoice.status !== "paid") {

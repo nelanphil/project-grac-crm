@@ -1371,6 +1371,287 @@ export async function recommendAssignees(opts: {
   };
 }
 
+export type SlotTechnicianRecommendation = {
+  userId: string;
+  first_name: string;
+  last_name: string;
+  /** False when this date is outside the technician's working schedule. */
+  available: boolean;
+  /** True when the requested window is inside working hours and does not overlap another job. */
+  fits: boolean;
+  reason: string;
+};
+
+type SlotPick = {
+  tech: LeanUser;
+  tier: number;
+  available: boolean;
+  insideHours: boolean;
+  overlaps: boolean;
+  fits: boolean;
+  qualified: boolean;
+  miles: number;
+  kind: "job" | "home" | null;
+};
+
+function slotRecommendationReason(pick: SlotPick): string {
+  if (!pick.available) return "Not working this day";
+  if (!pick.insideHours) return "Outside working hours";
+  if (pick.overlaps) return "Overlaps another job";
+  const parts: string[] = [];
+  if (pick.tier === 0) parts.push("In territory");
+  else if (pick.tier === 1) parts.push("Near territory");
+  if (pick.kind && Number.isFinite(pick.miles)) {
+    const rounded = Math.round(pick.miles);
+    const miles = rounded < 1 ? "<1" : String(rounded);
+    parts.push(
+      pick.kind === "job"
+        ? `${miles} mi from another job`
+        : `${miles} mi from home`,
+    );
+  }
+  return parts.join(" · ") || "Available";
+}
+
+function compareSlotPicks(a: SlotPick, b: SlotPick): number {
+  if (a.fits !== b.fits) return a.fits ? -1 : 1;
+  if (a.qualified !== b.qualified) return a.qualified ? -1 : 1;
+  if (a.available !== b.available) return a.available ? -1 : 1;
+  if (a.tier !== b.tier) return a.tier - b.tier;
+  const aKnown = Number.isFinite(a.miles);
+  const bKnown = Number.isFinite(b.miles);
+  if (aKnown !== bKnown) return aKnown ? -1 : 1;
+  if (aKnown && bKnown && a.miles !== b.miles) return a.miles - b.miles;
+  return staffDisplayName(a.tech).localeCompare(staffDisplayName(b.tech));
+}
+
+function nearestSiteMiles(
+  site: LatLng | null,
+  home: LatLng | null,
+  jobs: Array<{ coords: LatLng | null }>,
+): { miles: number; kind: "job" | "home" | null } {
+  if (!site) return { miles: Number.POSITIVE_INFINITY, kind: null };
+  let miles = Number.POSITIVE_INFINITY;
+  let kind: "job" | "home" | null = null;
+  if (home) {
+    miles = haversineMiles(site, home);
+    kind = "home";
+  }
+  for (const job of jobs) {
+    if (!job.coords) continue;
+    const distance = haversineMiles(site, job.coords);
+    if (distance < miles) {
+      miles = distance;
+      kind = "job";
+    }
+  }
+  return { miles, kind };
+}
+
+async function resolveSlotSite(opts: {
+  addressRef?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+}): Promise<{ city: string; state: string; coords: LatLng | null }> {
+  const typed = {
+    address: (opts.address ?? "").trim(),
+    city: (opts.city ?? "").trim(),
+    state: (opts.state ?? "").trim(),
+    zip: (opts.zip ?? "").trim(),
+  };
+  let site = typed;
+  if (opts.addressRef && mongoose.Types.ObjectId.isValid(opts.addressRef)) {
+    const saved = await CustomerAddress.findById(opts.addressRef)
+      .select("address city state zip lat lng")
+      .lean();
+    if (saved) {
+      site = {
+        address: (saved.address ?? "").trim() || typed.address,
+        city: (saved.city ?? "").trim() || typed.city,
+        state: (saved.state ?? "").trim() || typed.state,
+        zip: (saved.zip ?? "").trim() || typed.zip,
+      };
+      const stored = addressCoords(saved);
+      if (stored) {
+        return { city: site.city, state: scheduleState(site), coords: stored };
+      }
+    }
+  }
+  const coords = await geocodeToLatLng(site, new Map());
+  return { city: site.city, state: scheduleState(site), coords };
+}
+
+/**
+ * Rank schedulable technicians for a time window and site that may not be
+ * saved as a work order yet. Uses territory, straight-line distance, working
+ * hours, and overlap. Does not call Google for drive times.
+ */
+export async function recommendTechnicianForSlot(opts: {
+  date: string;
+  startTime: string;
+  endTime: string;
+  addressRef?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  workOrderTypeRef?: string;
+  excludeWorkOrderId?: string;
+}): Promise<{
+  technicians: SlotTechnicianRecommendation[];
+  recommendation: SlotTechnicianRecommendation | null;
+}> {
+  const staff = await listSchedulableStaff();
+  if (staff.length === 0) {
+    return { technicians: [], recommendation: null };
+  }
+
+  const slotStart = localDateToUtc(opts.date, opts.startTime);
+  const slotEnd = localDateToUtc(opts.date, opts.endTime);
+  const excludeId =
+    opts.excludeWorkOrderId &&
+    mongoose.Types.ObjectId.isValid(opts.excludeWorkOrderId)
+      ? opts.excludeWorkOrderId
+      : "";
+
+  const typeId =
+    opts.workOrderTypeRef &&
+    mongoose.Types.ObjectId.isValid(opts.workOrderTypeRef)
+      ? opts.workOrderTypeRef
+      : "";
+  const [site, workOrderType] = await Promise.all([
+    resolveSlotSite(opts),
+    typeId
+      ? WorkOrderType.findById(typeId).select("qualifiedUserRefs").lean()
+      : null,
+  ]);
+  const qualifiedIds = new Set(
+    (workOrderType?.qualifiedUserRefs ?? []).map((id) => id.toString()),
+  );
+  const hasQualified = qualifiedIds.size > 0;
+
+  const { start: dayStart, end: dayEnd } = rangeUtc(opts.date, opts.date);
+  const dayJobs = await WorkOrder.find({
+    assignedUserRef: { $in: staff.map((tech) => tech._id) },
+    scheduledStart: { $gte: dayStart, $lte: dayEnd },
+    completed: { $ne: true },
+    ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+    $or: [
+      { appointmentCanceledAt: null },
+      { appointmentCanceledAt: { $exists: false } },
+    ],
+  })
+    .select("assignedUserRef scheduledStart scheduledEnd addressRef")
+    .lean();
+
+  const addressIds = [
+    ...new Set(
+      dayJobs
+        .map((job) => job.addressRef?.toString())
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const addresses =
+    addressIds.length > 0
+      ? await CustomerAddress.find({ _id: { $in: addressIds } })
+          .select("_id lat lng")
+          .lean()
+      : [];
+  const coordsByAddress = new Map(
+    addresses.map((address) => [
+      address._id.toString(),
+      addressCoords(address),
+    ]),
+  );
+
+  const dayJobsByUser = new Map<
+    string,
+    Array<{
+      scheduledStart: Date | null;
+      scheduledEnd: Date | null;
+      coords: LatLng | null;
+    }>
+  >();
+  for (const job of dayJobs) {
+    const key = job.assignedUserRef?.toString() ?? "";
+    if (!key) continue;
+    const list = dayJobsByUser.get(key) ?? [];
+    list.push({
+      scheduledStart: job.scheduledStart ? new Date(job.scheduledStart) : null,
+      scheduledEnd: job.scheduledEnd ? new Date(job.scheduledEnd) : null,
+      coords: job.addressRef
+        ? (coordsByAddress.get(job.addressRef.toString()) ?? null)
+        : null,
+    });
+    dayJobsByUser.set(key, list);
+  }
+
+  const picks: SlotPick[] = staff.map((tech) => {
+    const window = resolveDayWindow(
+      tech.weeklyHours,
+      tech.scheduleExceptions,
+      opts.date,
+    );
+    const range = windowToUtcRange(opts.date, window);
+    const available = range != null;
+    const insideHours =
+      range != null &&
+      slotStart.getTime() >= range.start.getTime() &&
+      slotEnd.getTime() <= range.end.getTime();
+    const existing = dayJobsByUser.get(String(tech._id)) ?? [];
+    const overlaps = existing.some(
+      (job) =>
+        job.scheduledStart &&
+        job.scheduledEnd &&
+        rangesOverlap(
+          slotStart,
+          slotEnd,
+          job.scheduledStart,
+          job.scheduledEnd,
+        ),
+    );
+    const distance = nearestSiteMiles(
+      site.coords,
+      homeCoords(tech.homeLocation),
+      existing,
+    );
+    return {
+      tech,
+      tier: territoryTier(
+        tech.serviceCities,
+        site.city,
+        site.state,
+        site.coords,
+      ),
+      available,
+      insideHours,
+      overlaps,
+      fits: insideHours && !overlaps,
+      qualified: hasQualified && qualifiedIds.has(String(tech._id)),
+      miles: distance.miles,
+      kind: distance.kind,
+    };
+  });
+
+  picks.sort(compareSlotPicks);
+  const technicians = picks.map((pick) => ({
+    userId: String(pick.tech._id),
+    first_name: pick.tech.first_name,
+    last_name: pick.tech.last_name,
+    available: pick.available,
+    fits: pick.fits,
+    reason: slotRecommendationReason(pick),
+  }));
+  const recommendation =
+    technicians.find((tech) => tech.fits) ??
+    technicians.find((tech) => tech.available) ??
+    null;
+
+  return { technicians, recommendation };
+}
+
 export async function dayRouteForUser(opts: {
   userId: string;
   date: string;

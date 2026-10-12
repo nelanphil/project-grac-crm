@@ -14,6 +14,7 @@ import {
   staffDisplayName,
   suggestAssignees,
   recommendAssignees,
+  recommendTechnicianForSlot,
   placeWorkOrder,
   startOptionsForWorkOrder,
   toPublicStaff,
@@ -67,6 +68,48 @@ const recommendationsSchema = z.object({
   date: z.string().regex(localDateRe),
   workOrderIds: z.array(z.string().min(1)).max(200),
 });
+
+const hhmmRe = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const technicianRecommendationSchema = z
+  .object({
+    date: z.string().regex(localDateRe, "date must be YYYY-MM-DD"),
+    startTime: z.string().regex(hhmmRe, "startTime must be HH:mm"),
+    endTime: z.string().regex(hhmmRe, "endTime must be HH:mm"),
+    addressRef: z.string().optional(),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    zip: z.string().optional(),
+    workOrderTypeRef: z.string().optional(),
+    excludeWorkOrderId: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.endTime <= data.startTime) {
+      ctx.addIssue({
+        code: "custom",
+        message: "End time must be after start time",
+        path: ["endTime"],
+      });
+    }
+    if (!data.addressRef?.trim() && !data.city?.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A city or address is required",
+        path: ["city"],
+      });
+    }
+    for (const field of ["addressRef", "workOrderTypeRef", "excludeWorkOrderId"] as const) {
+      const value = data[field]?.trim();
+      if (value && !mongoose.Types.ObjectId.isValid(value)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `Invalid ${field}`,
+          path: [field],
+        });
+      }
+    }
+  });
 
 const placeSchema = z.object({
   workOrderId: z.string().min(1),
@@ -313,6 +356,38 @@ export async function postScheduleRecommendations(
   } catch (err) {
     console.error("POST /schedule/recommendations error:", err);
     res.status(500).json({ message: "Failed to recommend technicians" });
+  }
+}
+
+export async function postScheduleTechnicianRecommendation(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const permissions = req.user?.permissions ?? [];
+    if (
+      !permissions.includes("jobs:read") &&
+      !permissions.includes("estimates:read")
+    ) {
+      res.status(403).json({
+        message: "Missing permission: jobs:read or estimates:read",
+      });
+      return;
+    }
+
+    const parsed = technicianRecommendationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const result = await recommendTechnicianForSlot(parsed.data);
+    res.json(result);
+  } catch (err) {
+    console.error("POST /schedule/technician-recommendation error:", err);
+    res.status(500).json({ message: "Failed to recommend a technician" });
   }
 }
 
