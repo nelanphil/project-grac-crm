@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isFloridaCounty } from "../constants/floridaCounties";
 import { isUsStateCode } from "../constants/usStates";
+import { canonicalPhoneDigits, formatUsPhone } from "../utils/customerSites";
 
 const usernameField = z
   .union([
@@ -67,6 +68,22 @@ const homeLocationSchema = z
     lng: z.number().nullable().optional(),
   })
   .optional();
+
+const phoneField = z
+  .string()
+  .trim()
+  .max(40)
+  .optional()
+  .superRefine((value, ctx) => {
+    if (!value) return;
+    if (!canonicalPhoneDigits(value)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Enter a 10-digit phone number",
+      });
+    }
+  })
+  .transform((value) => (value ? formatUsPhone(value) : value));
 
 const SERVICE_CITY_LIMIT = 200;
 
@@ -175,6 +192,7 @@ export const updateUserSchema = z.object({
   homeLocation: homeLocationSchema,
   serviceCities: serviceCitiesSchema,
   scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
+  phone: phoneField,
 });
 
 export const forgotPasswordSchema = z.object({

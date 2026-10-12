@@ -18,6 +18,7 @@ import { JobRole } from "../models/mongo/JobRole";
 import { Customer } from "../models/mongo/Customer";
 import { createUserSchema, updateUserSchema } from "../schemas/user.schema";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
+import { formatUsPhone } from "../utils/customerSites";
 import { updateRoleSchema } from "../schemas/auth.schema";
 import {
   applyUsername,
@@ -180,6 +181,7 @@ function formatUser(
     weeklyHours?: IWeeklyHours | null;
     serviceCities?: IServiceCity[] | null;
     scheduleExceptions?: IScheduleException[] | null;
+    phone?: string | null;
     lastLoginAt?: Date | null;
     lastLoginLocation?: IUserLoginLocation | null;
     createdAt: Date;
@@ -210,6 +212,7 @@ function formatUser(
     weeklyHours: formatWeeklyHours(user.weeklyHours),
     serviceCities: formatServiceCities(user.serviceCities),
     scheduleExceptions: user.scheduleExceptions ?? [],
+    phone: formatUsPhone(user.phone),
     lastLoginAt: user.lastLoginAt ?? null,
     lastLoginLocation: user.lastLoginLocation ?? null,
     createdAt: user.createdAt,
@@ -739,6 +742,10 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
 
     if (parsed.data.scheduleExceptions !== undefined) {
       user.scheduleExceptions = parsed.data.scheduleExceptions;
+    }
+
+    if (parsed.data.phone !== undefined) {
+      user.phone = parsed.data.phone;
     }
 
     await user.save();

@@ -18,6 +18,7 @@ import {
   validateCustomerAddress,
 } from "@/lib/api";
 import { userHasCapability } from "@/lib/dashboard-role";
+import { isValidUsPhone } from "@/lib/formatPhone";
 import {
   defaultWeeklyHours,
   emptyHomeLocation,
@@ -51,6 +52,7 @@ function TechnicianEditor() {
   const [weeklyHours, setWeeklyHours] = useState<UserWeeklyHours>(
     defaultWeeklyHours(true),
   );
+  const [phone, setPhone] = useState("");
   const [home, setHome] = useState<UserHomeLocation>(emptyHomeLocation());
   const [serviceCities, setServiceCities] = useState<ServiceCity[]>([]);
   const [homeValidating, setHomeValidating] = useState(false);
@@ -80,6 +82,7 @@ function TechnicianEditor() {
           return;
         }
         setWeeklyHours(match.weeklyHours ?? defaultWeeklyHours(true));
+        setPhone(match.phone ?? "");
         setHome(match.homeLocation ?? emptyHomeLocation());
         setServiceCities(match.serviceCities ?? []);
         setSnapshot({ id, technician: match, error: null });
@@ -149,6 +152,10 @@ function TechnicianEditor() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!token || !technician) return;
+    if (phone.trim() && !isValidUsPhone(phone)) {
+      setSaveError("Enter a 10-digit phone number.");
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -156,6 +163,7 @@ function TechnicianEditor() {
         weeklyHours,
         homeLocation: home,
         serviceCities,
+        phone,
       });
       router.push(BACK_HREF);
     } catch (err) {
@@ -195,7 +203,7 @@ function TechnicianEditor() {
         {technician.first_name} {technician.last_name}
       </h1>
       <p className="mt-0.5 text-sm text-neutral-500">
-        Weekly hours, home location, and service territory.
+        Weekly hours, contact, home location, and service territory.
       </p>
 
       <form
@@ -212,6 +220,8 @@ function TechnicianEditor() {
             <StaffWorkHoursForm
               weeklyHours={weeklyHours}
               home={home}
+              phone={phone}
+              email={technician.email}
               onPatchWeekly={(day, patch) =>
                 setWeeklyHours((hours) => ({
                   ...hours,
@@ -221,6 +231,7 @@ function TechnicianEditor() {
               onChangeHome={(patch) =>
                 setHome((current) => ({ ...current, ...patch }))
               }
+              onChangePhone={setPhone}
               onBlurHome={() => void validateHome()}
               homeValidating={homeValidating}
               homeMsg={homeMsg}

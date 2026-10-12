@@ -6,12 +6,14 @@ import {
   useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { ArrowDown, ArrowUp, Lock, LockOpen, X } from "lucide-react";
 import type { RouteObjective, ScheduleRouteLeg, ScheduleRouteStop } from "@/lib/api";
 import { formatLocalClock, formatTimeWindow } from "@/lib/schedule";
 import Segmented from "@/components/schedule/Segmented";
+import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 
 const ROUTE_LIST_HEIGHT_KEY = "schedule-route-list-height";
 const ROUTE_LIST_MIN = 160;
@@ -97,6 +99,7 @@ type MapRouteToolbarProps = {
 
 type TechnicianRoutePaneProps = {
   staff: StaffPerson[];
+  date: string;
   techId: string | null;
   onTech: (id: string) => void;
   filter: MapJobFilter;
@@ -120,26 +123,27 @@ type TechnicianRoutePaneProps = {
   locks: Record<string, string>;
   onToggleLock: (id: string) => void;
   onLockTime: (id: string, time: string) => void;
+  routeControls?: ReactNode;
 };
 
 function TechDropRow({
   person,
   count,
   selected,
+  date,
   onSelect,
 }: {
   person: { _id: string; first_name: string; last_name: string };
   count: number;
   selected: boolean;
+  date: string;
   onSelect: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `tech:${person._id}` });
   return (
-    <button
-      type="button"
+    <div
       ref={setNodeRef}
-      onClick={onSelect}
-      className={`grid w-full grid-cols-[1fr_auto] items-center gap-3 border-b border-neutral-200/70 px-3 py-2 text-left text-sm transition-colors last:border-0 ${
+      className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-neutral-200/70 px-3 py-2 text-sm transition-colors last:border-0 ${
         isOver
           ? "bg-brand-orange/25"
           : selected
@@ -147,11 +151,18 @@ function TechDropRow({
             : "hover:bg-neutral-100"
       }`}
     >
-      <span className="truncate font-medium text-brand-dark">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="min-w-0 truncate text-left font-medium text-brand-dark"
+      >
         {person.first_name} {person.last_name}
+      </button>
+      <span className="flex items-center gap-1">
+        <TextScheduleButton userId={person._id} date={date} variant="icon" />
+        <span className="text-xs tabular-nums text-neutral-500">{count}</span>
       </span>
-      <span className="text-xs tabular-nums text-neutral-500">{count}</span>
-    </button>
+    </div>
   );
 }
 
@@ -219,6 +230,7 @@ export function MapRouteToolbar({
 
 export function TechnicianRoutePane({
   staff,
+  date,
   techId,
   onTech,
   filter,
@@ -242,6 +254,7 @@ export function TechnicianRoutePane({
   locks,
   onToggleLock,
   onLockTime,
+  routeControls,
 }: TechnicianRoutePaneProps) {
   const [routeListHeight, setRouteListHeight] = useRouteListHeight();
   const routeListHeightRef = useRef(routeListHeight);
@@ -321,6 +334,7 @@ export function TechnicianRoutePane({
                 person={person}
                 count={dayCounts[person._id] ?? 0}
                 selected={person._id === techId}
+                date={date}
                 onSelect={() => onTech(person._id)}
               />
             ))
@@ -343,6 +357,8 @@ export function TechnicianRoutePane({
       {planning && (
         <p className="text-xs text-neutral-500">Updating route…</p>
       )}
+
+      {techId ? routeControls : null}
 
       {techId && (
         <div

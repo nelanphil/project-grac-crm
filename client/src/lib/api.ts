@@ -740,6 +740,7 @@ export interface UserListItem {
   weeklyHours: UserWeeklyHours;
   serviceCities: ServiceCity[];
   scheduleExceptions: ScheduleException[];
+  phone: string;
   lastLoginAt?: string | null;
   lastLoginLocation?: UserLoginLocation | null;
   createdAt: string;
@@ -804,6 +805,7 @@ export async function updateUser(
     homeLocation?: UserHomeLocation;
     serviceCities?: ServiceCity[];
     scheduleExceptions?: ScheduleException[];
+    phone?: string;
   },
 ): Promise<{ user: UserListItem }> {
   return authRequest<{ user: UserListItem }>(`/users/${id}`, {
@@ -2434,6 +2436,26 @@ export async function getScheduleStaff(
   }>(`/schedule/staff?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface ScheduleTextResult {
+  sent: boolean;
+  body: string;
+  phoneLast4: string | null;
+  technicianName: string;
+  jobCount: number;
+  sid?: string;
+}
+
+export async function textTechnicianSchedule(
+  token: string,
+  data: { userId: string; date: string; send?: boolean },
+): Promise<ScheduleTextResult> {
+  return authRequest<ScheduleTextResult>("/schedule/text", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
   });
 }
 

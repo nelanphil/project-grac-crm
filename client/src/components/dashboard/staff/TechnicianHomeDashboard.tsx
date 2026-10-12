@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 import {
   ApiError,
   geocodeMissingScheduleAddresses,
@@ -749,7 +750,15 @@ export default function TechnicianHomeDashboard() {
               <ChevronRight className="h-4 w-4" aria-hidden />
             </button>
           </div>
-          <div aria-hidden />
+          <div className="flex justify-end">
+            <TextScheduleButton
+              userId={subjectId}
+              date={focusDate}
+              variant="label"
+              disabled={!subjectId}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)] disabled:cursor-not-allowed disabled:opacity-40"
+            />
+          </div>
         </div>
       </div>
 

@@ -173,17 +173,21 @@ export default function ServiceTicketDocument({
         <p>
           <span className="text-neutral-500">Date:</span> {formatDate(ticket.date)}
         </p>
-        <p>
-          <span className="text-neutral-500">Tech:</span> {ticket.tech || "—"}
-        </p>
-        <p>
-          <span className="text-neutral-500">Exercise day:</span>{" "}
-          {ticket.exerciseDay || "—"}
-        </p>
-        <p>
-          <span className="text-neutral-500">Time set:</span>{" "}
-          {ticket.exerciseTime || "—"}
-        </p>
+        {!isEstimate ? (
+          <>
+            <p>
+              <span className="text-neutral-500">Tech:</span> {ticket.tech || "—"}
+            </p>
+            <p>
+              <span className="text-neutral-500">Exercise day:</span>{" "}
+              {ticket.exerciseDay || "—"}
+            </p>
+            <p>
+              <span className="text-neutral-500">Time set:</span>{" "}
+              {ticket.exerciseTime || "—"}
+            </p>
+          </>
+        ) : null}
       </div>
 
       <div className="mt-4 grid gap-4 text-sm lg:grid-cols-3">
@@ -202,18 +206,18 @@ export default function ServiceTicketDocument({
           <p>{ticket.customerEmail}</p>
           {ticket.workPhone ? <p>Work: {ticket.workPhone}</p> : null}
         </div>
-        <div>
-          <p>Serial: {ticket.serialNumber || "—"}</p>
-          <p>Model: {ticket.generatorModel || "—"}</p>
-          {!isEstimate ? (
-            <>
-              <p>Paid: {ticket.paid ? "Yes" : "No"}</p>
-              <p>Run hours: {ticket.runHours ?? "—"}</p>
-            </>
-          ) : (
+        {!isEstimate ? (
+          <div>
+            <p>Serial: {ticket.serialNumber || "—"}</p>
+            <p>Model: {ticket.generatorModel || "—"}</p>
+            <p>Paid: {ticket.paid ? "Yes" : "No"}</p>
+            <p>Run hours: {ticket.runHours ?? "—"}</p>
+          </div>
+        ) : (
+          <div>
             <p className="capitalize">Status: {ticket.status}</p>
-          )}
-        </div>
+          </div>
+        )}
         <TicketTotals ticket={ticket} invoiceAction={invoiceAction} />
       </div>
 

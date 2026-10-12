@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   useEffect,
   useLayoutEffect,
@@ -29,7 +28,6 @@ import {
   jobAccent,
   minutesToLabel,
   nyDateParts,
-  workOrderViewHref,
 } from "@/lib/schedule";
 
 const NARROW_SCHEDULE_QUERY = "(max-width: 1023px)";
@@ -249,6 +247,8 @@ function UnscheduledCardShell({
   dayLabel = "",
   onAssignTechnician,
   onUnschedule,
+  onView,
+  onMoveDate,
   isDragging,
   setNodeRef,
   style,
@@ -262,6 +262,8 @@ function UnscheduledCardShell({
   dayLabel?: string;
   onAssignTechnician?: (userId: string) => void;
   onUnschedule?: () => void;
+  onView?: (order: WorkOrderListItem) => void;
+  onMoveDate?: (date: string) => void;
   isDragging?: boolean;
   setNodeRef?: (node: HTMLElement | null) => void;
   style?: CSSProperties;
@@ -270,8 +272,9 @@ function UnscheduledCardShell({
     listeners: ReturnType<typeof useDraggable>["listeners"];
   };
 }) {
-  const href = workOrderViewHref(order);
   const windowLabel = formatTimeWindow(order.startTime, order.endTime);
+  const [movingDate, setMovingDate] = useState(false);
+  const moveDateRef = useRef<HTMLInputElement>(null);
   const accent = jobAccent(order);
   const assignedName = personName(order.assignee);
   const recommendedName = recommendation ? personName(recommendation) : "";
@@ -423,16 +426,64 @@ function UnscheduledCardShell({
                 Cancel
               </button>
             ) : null}
+            {!order.scheduledStart && onMoveDate ? (
+              <>
+                <button
+                  type="button"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMovingDate(true);
+                    const input = moveDateRef.current;
+                    if (!input) return;
+                    try {
+                      input.showPicker();
+                    } catch {
+                      input.focus();
+                    }
+                  }}
+                  className="text-[11px] font-medium text-brand-orange hover:underline"
+                >
+                  Move
+                </button>
+                <input
+                  ref={moveDateRef}
+                  type="date"
+                  aria-label={`Move ${order.customerName || "work order"} to a new date`}
+                  defaultValue={order.date?.slice(0, 10) ?? ""}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setMovingDate(false);
+                  }}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    if (!next || !onMoveDate) return;
+                    onMoveDate(next);
+                    setMovingDate(false);
+                  }}
+                  className={
+                    movingDate
+                      ? "w-[7.5rem] rounded-md border border-neutral-200 bg-white px-1 py-0.5 text-[11px] text-brand-dark"
+                      : "sr-only"
+                  }
+                />
+              </>
+            ) : null}
           </div>
         </div>
-        {href ? (
-          <Link
-            href={href}
+        {onView ? (
+          <button
+            type="button"
             onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onView(order);
+            }}
             className="mt-1.5 inline-block text-[11px] font-medium text-brand-orange hover:underline"
           >
             View
-          </Link>
+          </button>
         ) : null}
       </div>
       {menu && onAssignTechnician ? (
@@ -462,6 +513,8 @@ function DraggableUnscheduledCard({
   dayLabel,
   onAssignTechnician,
   onUnschedule,
+  onView,
+  onMoveDate,
   lift = false,
 }: {
   order: WorkOrderListItem;
@@ -472,6 +525,8 @@ function DraggableUnscheduledCard({
   dayLabel?: string;
   onAssignTechnician?: (userId: string) => void;
   onUnschedule?: () => void;
+  onView?: (order: WorkOrderListItem) => void;
+  onMoveDate?: (date: string) => void;
   lift?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
@@ -491,6 +546,8 @@ function DraggableUnscheduledCard({
       dayLabel={dayLabel}
       onAssignTechnician={onAssignTechnician}
       onUnschedule={onUnschedule}
+      onView={onView}
+      onMoveDate={onMoveDate}
       isDragging={isDragging}
       setNodeRef={setNodeRef}
       style={style}
@@ -510,6 +567,8 @@ export function UnscheduledCard({
   dayLabel,
   onAssignTechnician,
   onUnschedule,
+  onView,
+  onMoveDate,
 }: {
   order: WorkOrderListItem;
   selected: boolean;
@@ -521,6 +580,8 @@ export function UnscheduledCard({
   dayLabel?: string;
   onAssignTechnician?: (userId: string) => void;
   onUnschedule?: () => void;
+  onView?: (order: WorkOrderListItem) => void;
+  onMoveDate?: (date: string) => void;
 }) {
   const narrow = useNarrowSchedule();
   if (!draggable || narrow || Boolean(order.scheduledStart)) {
@@ -534,6 +595,8 @@ export function UnscheduledCard({
         dayLabel={dayLabel}
         onAssignTechnician={onAssignTechnician}
         onUnschedule={onUnschedule}
+        onView={onView}
+        onMoveDate={onMoveDate}
       />
     );
   }
@@ -547,6 +610,8 @@ export function UnscheduledCard({
       dayLabel={dayLabel}
       onAssignTechnician={onAssignTechnician}
       onUnschedule={onUnschedule}
+      onView={onView}
+      onMoveDate={onMoveDate}
       lift={lift}
     />
   );

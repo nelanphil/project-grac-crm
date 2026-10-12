@@ -9,7 +9,6 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import Link from "next/link";
 import {
   DndContext,
   DragEndEvent,
@@ -29,6 +28,7 @@ import {
   getScheduleRecommendations,
   getScheduleStaff,
   getScheduleStartOptions,
+  getWorkOrder,
   placeScheduleWorkOrder,
   planScheduleRoute,
   type PlannedRoute,
@@ -61,7 +61,6 @@ import {
   startOfMonth,
   startOfWeekSunday,
   workOrderLocalDate,
-  workOrderViewHref,
 } from "@/lib/schedule";
 import WeekBoard, {
   UnscheduledCard,
@@ -77,6 +76,7 @@ import ScheduleMap, {
   jobHasCoordinates,
 } from "@/components/schedule/ScheduleMap";
 import Segmented from "@/components/schedule/Segmented";
+import { DesktopWorkOrderPanel } from "@/components/dashboard/staff/TechnicianWorkOrderPanel";
 
 type ViewMode = "week" | "month";
 type MonthMode = "calendar" | "table";
@@ -301,6 +301,8 @@ function ScheduleRail({
   onSuggest,
   onAssignTechnician,
   onUnschedule,
+  onView,
+  onMoveDate,
   suggesting,
   canSuggest,
   draggable,
@@ -308,7 +310,6 @@ function ScheduleRail({
   pane,
   onPane,
   technicianPane,
-  routeControls,
 }: {
   dayLabel: string;
   dayJobs: WorkOrderListItem[];
@@ -320,6 +321,8 @@ function ScheduleRail({
   onSuggest: () => void;
   onAssignTechnician?: (job: WorkOrderListItem, userId: string) => void;
   onUnschedule?: (job: WorkOrderListItem) => void;
+  onView?: (job: WorkOrderListItem) => void;
+  onMoveDate?: (job: WorkOrderListItem, date: string) => void;
   suggesting: boolean;
   canSuggest: boolean;
   draggable: boolean;
@@ -327,7 +330,6 @@ function ScheduleRail({
   pane?: MapRailPane;
   onPane?: (pane: MapRailPane) => void;
   technicianPane?: ReactNode;
-  routeControls?: ReactNode;
 }) {
   const empty = dayJobs.length === 0 && undatedJobs.length === 0;
   const showTechnicians = pane === "technicians" && technicianPane;
@@ -359,7 +361,6 @@ function ScheduleRail({
           ]}
         />
       ) : null}
-      {routeControls}
       {showTechnicians ? (
         technicianPane
       ) : loading ? (
@@ -391,6 +392,12 @@ function ScheduleRail({
                   onUnschedule={
                     onUnschedule ? () => onUnschedule(order) : undefined
                   }
+                  onView={onView ? () => onView(order) : undefined}
+                  onMoveDate={
+                    onMoveDate
+                      ? (date) => onMoveDate(order, date)
+                      : undefined
+                  }
                 />
               ))}
             </section>
@@ -420,6 +427,12 @@ function ScheduleRail({
                   }
                   onUnschedule={
                     onUnschedule ? () => onUnschedule(order) : undefined
+                  }
+                  onView={onView ? () => onView(order) : undefined}
+                  onMoveDate={
+                    onMoveDate
+                      ? (date) => onMoveDate(order, date)
+                      : undefined
                   }
                 />
               ))}
@@ -778,6 +791,14 @@ export default function CalendarTab({
   const [routeOptimizing, setRouteOptimizing] = useState(false);
   const [routeMessage, setRouteMessage] = useState<string | null>(null);
   const [draggingJobId, setDraggingJobId] = useState<string | null>(null);
+  const [viewingWorkOrderId, setViewingWorkOrderId] = useState<string | null>(
+    null,
+  );
+  const [viewingOrder, setViewingOrder] = useState<WorkOrderListItem | null>(
+    null,
+  );
+  const [viewingLoading, setViewingLoading] = useState(false);
+  const [viewingError, setViewingError] = useState<string | null>(null);
   const planSeq = useRef(0);
   const optimizeLock = useRef(false);
   const railOrderRef = useRef<{ date: string; ids: string[] }>({
@@ -841,6 +862,35 @@ export default function CalendarTab({
       cancelled = true;
     };
   }, [token, canEditStart, editingId, editingStart]);
+
+  useEffect(() => {
+    if (!token || !viewingWorkOrderId) {
+      setViewingOrder(null);
+      setViewingError(null);
+      setViewingLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setViewingLoading(true);
+    setViewingError(null);
+    getWorkOrder(token, viewingWorkOrderId)
+      .then((next) => {
+        if (!cancelled) setViewingOrder(next);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setViewingOrder(null);
+        setViewingError(
+          err instanceof ApiError ? err.message : "Failed to load work order.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setViewingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, viewingWorkOrderId]);
 
   const laterChoices = useMemo(() => {
     if (!startOptions || startOptions.isFirst || !startOptions.earliestStart) {
@@ -1559,7 +1609,8 @@ export default function CalendarTab({
   );
 
   useEffect(() => {
-    if (surface !== "map" || !effectiveTechId || routeStopIds.length === 0) {
+    const previewRoute = surface === "map" || mapRailPane === "technicians";
+    if (!previewRoute || !effectiveTechId || routeStopIds.length === 0) {
       return;
     }
     const timer = window.setTimeout(() => {
@@ -1567,7 +1618,15 @@ export default function CalendarTab({
       void runPlan(false);
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [surface, effectiveTechId, routeStopKey, roundTrip, runPlan, routeStopIds.length]);
+  }, [
+    surface,
+    mapRailPane,
+    effectiveTechId,
+    routeStopKey,
+    roundTrip,
+    runPlan,
+    routeStopIds.length,
+  ]);
 
   async function saveDuration() {
     if (!token || !editingJob) return;
@@ -1636,6 +1695,67 @@ export default function CalendarTab({
 
   const rangeJobs = uniqueJobs(jobs, calendarUnscheduled);
 
+  function openWorkOrder(job: WorkOrderListItem) {
+    setEditingJob(null);
+    if (job._id !== viewingWorkOrderId) setViewingOrder(null);
+    setViewingWorkOrderId(job._id);
+  }
+
+  function mergeSavedOrder(updated: WorkOrderListItem) {
+    const merge = (list: WorkOrderListItem[]) =>
+      list.map((job) => (job._id === updated._id ? updated : job));
+    setJobs(merge);
+    setCalendarUnscheduled(merge);
+    setRailJobs(merge);
+    setRailScheduled(merge);
+    setSelectedRailJob((prev) => (prev?._id === updated._id ? updated : prev));
+    setViewingOrder(updated);
+  }
+
+  async function handleViewingSaved(updated: WorkOrderListItem) {
+    mergeSavedOrder(updated);
+    await load();
+  }
+
+  async function moveWorkOrderDate(job: WorkOrderListItem, date: string) {
+    if (!token || !canWrite || !date) return;
+    if ((job.date?.slice(0, 10) ?? "") === date) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateWorkOrder(token, job._id, { date });
+      const nextRange =
+        view === "week" || surface === "map"
+          ? {
+              from: startOfWeekSunday(date),
+              to: addDays(startOfWeekSunday(date), 6),
+            }
+          : {
+              from: startOfMonth(date),
+              to: addDays(startOfMonth(date), daysInMonth(startOfMonth(date)) - 1),
+            };
+      const [board, rail] = await Promise.all([
+        fetchBoardData(token, nextRange.from, nextRange.to, dispatcher),
+        fetchRailDay(token, date),
+      ]);
+      setStaff(board.staff);
+      setJobs(board.jobs);
+      setCalendarUnscheduled(board.unscheduled);
+      setRailJobs(rail.unscheduled);
+      setRailScheduled(rail.scheduled);
+      setAnchorDate(date);
+      setSelectedDate(date);
+      setRailLoading(false);
+      setError(null);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to move work order.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function selectRouteTech(id: string) {
     setRouteTechId(id || null);
     setAddedUnscheduledIds([]);
@@ -1664,6 +1784,7 @@ export default function CalendarTab({
   const technicianPane = (
     <TechnicianRoutePane
       staff={staff}
+      date={selectedDate}
       techId={effectiveTechId}
       onTech={selectRouteTech}
       filter="scheduled"
@@ -1691,6 +1812,21 @@ export default function CalendarTab({
       locks={routeLocks}
       onToggleLock={toggleRouteLock}
       onLockTime={setRouteLockTime}
+      routeControls={
+        <MapRouteToolbar
+          roundTrip={roundTrip}
+          onRoundTrip={setRoundTrip}
+          objective={routeObjective}
+          onObjective={setRouteObjective}
+          onOptimize={() => void runPlan(true)}
+          canOptimize={Boolean(effectiveTechId) && routeStopIds.length >= 2}
+          optimizing={routeOptimizing}
+          message={routeMessage}
+          warnings={
+            routeTotalsMatch ? (routePlan?.warnings ?? []) : []
+          }
+        />
+      }
     />
   );
 
@@ -1717,6 +1853,10 @@ export default function CalendarTab({
             }
           : undefined
       }
+      onView={openWorkOrder}
+      onMoveDate={
+        canWrite ? (job, date) => void moveWorkOrderDate(job, date) : undefined
+      }
       suggesting={suggesting}
       canSuggest={Boolean(
         selectedRailJob && !selectedRailJob.scheduledStart,
@@ -1728,27 +1868,26 @@ export default function CalendarTab({
           : view === "week" && surface === "calendar")
       }
       liftDrag={surface === "map"}
-      pane={surface === "map" ? mapRailPane : undefined}
-      onPane={surface === "map" ? setMapRailPane : undefined}
-      technicianPane={surface === "map" ? technicianPane : undefined}
-      routeControls={
-        <MapRouteToolbar
-          roundTrip={roundTrip}
-          onRoundTrip={setRoundTrip}
-          objective={routeObjective}
-          onObjective={setRouteObjective}
-          onOptimize={() => void runPlan(true)}
-          canOptimize={Boolean(effectiveTechId) && routeStopIds.length >= 2}
-          optimizing={routeOptimizing}
-          message={routeMessage}
-          warnings={
-            routeTotalsMatch ? (routePlan?.warnings ?? []) : []
-          }
-        />
-      }
+      pane={mapRailPane}
+      onPane={setMapRailPane}
+      technicianPane={technicianPane}
     />
   ) : null;
-  const editingViewHref = editingJob ? workOrderViewHref(editingJob) : null;
+
+  const workOrderPane = viewingWorkOrderId ? (
+    <div className="h-full min-h-0 overflow-y-auto">
+      <DesktopWorkOrderPanel
+        order={viewingOrder}
+        loading={viewingLoading}
+        error={viewingError}
+        token={token}
+        user={user}
+        canWrite={canWrite}
+        onClose={() => setViewingWorkOrderId(null)}
+        onSaved={(updated) => void handleViewingSaved(updated)}
+      />
+    </div>
+  ) : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -1824,6 +1963,7 @@ export default function CalendarTab({
             </p>
           )}
           <ScheduleSplit sidebar={rail}>
+            {workOrderPane ?? (
             <div className="flex h-full min-h-0 flex-col">
               <ScheduleMap
                 unscheduled={addedJobs}
@@ -1840,6 +1980,7 @@ export default function CalendarTab({
                 surfaceClassName="h-full min-h-[24rem] flex-1"
               />
             </div>
+            )}
           </ScheduleSplit>
         </div>
           <DragOverlay dropAnimation={null}>
@@ -1860,86 +2001,94 @@ export default function CalendarTab({
             ) : null}
           </DragOverlay>
         </DndContext>
-      ) : view === "week" && monthMode === "table" ? (
-        <ScheduleSplit sidebar={rail}>
-          <div className="h-full min-h-0 overflow-auto">
-            <MonthTable
-              jobs={rangeJobs}
-              emptyLabel="No work orders this week."
-              onJobClick={(job) => {
-                setEditingJob(job);
-                setDurationDraft(
-                  job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
-                );
-              }}
-            />
-          </div>
-        </ScheduleSplit>
-      ) : view === "week" ? (
+      ) : (
         <DndContext
-          key="schedule-week"
+          key="schedule-calendar"
           sensors={sensors}
           onDragEnd={(e) => void handleDragEnd(e)}
         >
-          <ScheduleSplit sidebar={rail}>
-            <div className="h-full min-h-0">
-              <WeekBoard
-                staff={orderedStaff}
-                jobs={jobs}
-                selectedDate={selectedDate}
-                dispatcher={dispatcher && canWrite}
-                onJobClick={(job) => {
-                  setEditingJob(job);
-                  setDurationDraft(
-                    job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
-                  );
-                }}
-                onMap={(userId) => {
-                  setRouteTechId(userId);
-                  setSurface("map");
-                  setAddedUnscheduledIds([]);
-                  setManualOrder(null);
-                  setRouteLocks({});
-                  setRoutePlan(null);
-                  setRouteMessage(null);
-                }}
-              />
-            </div>
-          </ScheduleSplit>
-        </DndContext>
-      ) : (
-        <ScheduleSplit sidebar={rail}>
-          {monthMode === "calendar" ? (
-            <div className="h-full min-h-0">
-              <MonthCalendar
-                monthDate={anchorDate}
-                jobs={rangeJobs}
-                selectedDate={selectedDate}
-                onSelectDate={(date) => {
-                  setSelectedDate(date);
-                }}
-                onJobClick={(job) => {
-                  setEditingJob(job);
-                  setDurationDraft(
-                    job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
-                  );
-                }}
-              />
-            </div>
+          {view === "week" && monthMode === "table" ? (
+            <ScheduleSplit sidebar={rail}>
+              {workOrderPane ?? (
+              <div className="h-full min-h-0 overflow-auto">
+                <MonthTable
+                  jobs={rangeJobs}
+                  emptyLabel="No work orders this week."
+                  onJobClick={(job) => {
+                    setEditingJob(job);
+                    setDurationDraft(
+                      job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                    );
+                  }}
+                />
+              </div>
+              )}
+            </ScheduleSplit>
+          ) : view === "week" ? (
+            <ScheduleSplit sidebar={rail}>
+              {workOrderPane ?? (
+              <div className="h-full min-h-0">
+                <WeekBoard
+                  staff={orderedStaff}
+                  jobs={jobs}
+                  selectedDate={selectedDate}
+                  dispatcher={dispatcher && canWrite}
+                  onJobClick={(job) => {
+                    setEditingJob(job);
+                    setDurationDraft(
+                      job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                    );
+                  }}
+                  onMap={(userId) => {
+                    setRouteTechId(userId);
+                    setSurface("map");
+                    setAddedUnscheduledIds([]);
+                    setManualOrder(null);
+                    setRouteLocks({});
+                    setRoutePlan(null);
+                    setRouteMessage(null);
+                  }}
+                />
+              </div>
+              )}
+            </ScheduleSplit>
           ) : (
-            <div className="h-full min-h-0 overflow-auto">
-              <MonthTable
-                jobs={rangeJobs}
-                onJobClick={(job) => {
-                  setEditingJob(job);
-                  setDurationDraft(
-                    job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
-                  );
-                }}
-              />
-            </div>
+            <ScheduleSplit sidebar={rail}>
+              {workOrderPane ?? (
+              monthMode === "calendar" ? (
+                <div className="h-full min-h-0">
+                  <MonthCalendar
+                    monthDate={anchorDate}
+                    jobs={rangeJobs}
+                    selectedDate={selectedDate}
+                    onSelectDate={(date) => {
+                      setSelectedDate(date);
+                    }}
+                    onJobClick={(job) => {
+                      setEditingJob(job);
+                      setDurationDraft(
+                        job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                      );
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="h-full min-h-0 overflow-auto">
+                  <MonthTable
+                    jobs={rangeJobs}
+                    onJobClick={(job) => {
+                      setEditingJob(job);
+                      setDurationDraft(
+                        job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                      );
+                    }}
+                  />
+                </div>
+              )
+              )}
+            </ScheduleSplit>
           )}
-        </ScheduleSplit>
+        </DndContext>
       )}
       </div>
       )}
@@ -1965,14 +2114,13 @@ export default function CalendarTab({
             <p className="mt-1 text-sm text-neutral-500">
               {formatAddressLine(editingJob.address)}
             </p>
-            {editingViewHref ? (
-              <Link
-                href={editingViewHref}
-                className="mt-2 inline-block text-sm font-medium text-brand-orange hover:underline"
-              >
-                View
-              </Link>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => openWorkOrder(editingJob)}
+              className="mt-2 inline-block text-sm font-medium text-brand-orange hover:underline"
+            >
+              View
+            </button>
             {canEditStart && (
               <div className="mt-4">
                 <label className="block text-sm font-medium text-brand-dark">

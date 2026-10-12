@@ -23,6 +23,22 @@ import {
 } from "../services/schedule.service";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { User, activeUserFilter } from "../models/mongo/User";
+import {
+  CustomerContact,
+  activeContactFilter,
+} from "../models/mongo/CustomerContact";
+import { env } from "../config/env";
+import { formatUsPhone } from "../utils/customerSites";
+import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
+import {
+  getTwilioAccountForSend,
+  resolveFromNumber,
+  sendSms,
+  TwilioServiceError,
+} from "../services/twilio.service";
+import { toE164 } from "../utils/messagingContext";
+import { isPubliclyReachableApiHost } from "../utils/publicUrl";
+import { formatScheduleSms } from "../utils/scheduleSms";
 import { isUsStateCode } from "../constants/usStates";
 import { getActiveGoogleApiKey } from "../utils/googleAddressValidator";
 import {
@@ -810,5 +826,226 @@ export async function getCityBoundaries(
     res.status(503).json({
       message: "City boundaries are unavailable. Click the map to add a city.",
     });
+  }
+}
+
+const textScheduleSchema = z.object({
+  userId: z.string().min(1, "userId is required"),
+  date: z.string().regex(localDateRe, "date must be YYYY-MM-DD"),
+  send: z.boolean().optional(),
+});
+
+const MISSING_TECHNICIAN_PHONE =
+  "Add a mobile number for this technician before texting their schedule.";
+
+function phoneLast4(phone: string): string | null {
+  const e164 = toE164(phone);
+  if (!e164) return null;
+  const digits = e164.replace(/\D/g, "");
+  return digits.length >= 4 ? digits.slice(-4) : null;
+}
+
+function textField(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+async function primaryContactsByCustomer(
+  customerIds: string[],
+): Promise<Map<string, { name: string; phone: string }>> {
+  const ids = [
+    ...new Set(customerIds.filter((id) => mongoose.Types.ObjectId.isValid(id))),
+  ];
+  const byCustomer = new Map<string, { name: string; phone: string }>();
+  if (ids.length === 0) return byCustomer;
+
+  const contacts = await CustomerContact.find({
+    customerRef: { $in: ids },
+    ...activeContactFilter,
+  })
+    .select("customerRef first last phone isPrimary createdAt")
+    .sort({ isPrimary: -1, createdAt: 1 })
+    .lean();
+
+  for (const contact of contacts) {
+    const key = String(contact.customerRef);
+    if (byCustomer.has(key)) continue;
+    const name = [contact.first, contact.last]
+      .map((part) => (part ?? "").trim())
+      .filter(Boolean)
+      .join(" ");
+    byCustomer.set(key, { name, phone: (contact.phone ?? "").trim() });
+  }
+  return byCustomer;
+}
+
+function statusCallbackUrl(req: AuthRequest, accountSid: string): string | undefined {
+  const apiBase =
+    process.env.PUBLIC_API_URL?.replace(/\/$/, "") ||
+    `${req.protocol}://${req.get("host")}`;
+  if (!isPubliclyReachableApiHost(apiBase)) return undefined;
+  return `${apiBase}/webhooks/twilio/status?accountSid=${encodeURIComponent(accountSid)}`;
+}
+
+export async function postScheduleText(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!req.user?.permissions.includes("jobs:read")) {
+      res.status(403).json({ message: "Missing permission: jobs:read" });
+      return;
+    }
+
+    const parsed = textScheduleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const viewed = await scheduleUserForViewer(req.user.id, parsed.data.userId);
+    if (viewed.error === "invalid") {
+      res.status(400).json({ message: "Invalid userId" });
+      return;
+    }
+    if (viewed.error === "forbidden" || !viewed.person) {
+      res.status(403).json({
+        message: "You can only view a technician's schedule",
+      });
+      return;
+    }
+
+    const phoneUser = await User.findById(viewed.person._id).select("phone").lean();
+    const phone = typeof phoneUser?.phone === "string" ? phoneUser.phone : "";
+    const last4 = phoneLast4(phone);
+    const { start, end } = rangeUtc(parsed.data.date, parsed.data.date);
+    const jobs = await WorkOrder.find({
+      assignedUserRef: viewed.person._id,
+      scheduledStart: { $gte: start, $lte: end },
+    })
+      .sort({ scheduledStart: 1 })
+      .lean();
+    const enriched = await enrichScheduleWorkOrders(jobs);
+    const contacts = await primaryContactsByCustomer(
+      enriched.map((job) => textField(job.customerRef)),
+    );
+    const appUrl = `${env.clientUrl.replace(/\/+$/, "")}/dashboard`;
+    const technicianName = [viewed.person.first_name, viewed.person.last_name]
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join(" ");
+    const body = formatScheduleSms({
+      date: parsed.data.date,
+      technicianName,
+      appUrl,
+      jobs: enriched.map((job) => {
+        const scheduledStart = job.scheduledStart;
+        const contact = contacts.get(textField(job.customerRef));
+        const rawPhone =
+          contact?.phone ||
+          textField(job.customerPhone) ||
+          textField(job.workPhone);
+        return {
+          scheduledStart:
+            scheduledStart instanceof Date || typeof scheduledStart === "string"
+              ? scheduledStart
+              : "",
+          contactName: contact?.name || job.customerName,
+          phone: rawPhone ? formatUsPhone(rawPhone) : "",
+          street: job.address?.address ?? null,
+          city: job.address?.city ?? null,
+        };
+      }),
+    });
+    const payload = {
+      body,
+      phoneLast4: last4,
+      technicianName,
+      jobCount: enriched.length,
+    };
+
+    if (!parsed.data.send) {
+      res.json({ sent: false, ...payload });
+      return;
+    }
+
+    if (!last4) {
+      res.status(400).json({ message: MISSING_TECHNICIAN_PHONE });
+      return;
+    }
+
+    const to = toE164(phone);
+    if (!to) {
+      res.status(400).json({ message: MISSING_TECHNICIAN_PHONE });
+      return;
+    }
+
+    let account;
+    let fromNumber: string;
+    try {
+      account = await getTwilioAccountForSend();
+      fromNumber = resolveFromNumber(account);
+    } catch (err) {
+      const message =
+        err instanceof TwilioServiceError
+          ? err.message
+          : "Failed to text this schedule";
+      res.status(400).json({ message });
+      return;
+    }
+
+    const callback = statusCallbackUrl(req, account.accountSid);
+    try {
+      const { sid } = await sendSms({
+        account,
+        from: fromNumber,
+        to,
+        body,
+        statusCallbackUrl: callback,
+      });
+      try {
+        await TwilioCommunication.create({
+          twilioAccountRef: account._id,
+          accountSid: account.accountSid,
+          channel: "sms",
+          direction: "outbound",
+          status: "sent",
+          fromNumber,
+          toNumber: to,
+          body,
+          twilioSid: sid,
+          createdByUserRef: req.user.id,
+        });
+      } catch (logErr) {
+        console.error("POST /schedule/text log error:", logErr);
+      }
+      res.json({ sent: true, sid, ...payload });
+    } catch (err) {
+      const message =
+        err instanceof TwilioServiceError
+          ? err.message
+          : "Failed to text this schedule";
+      try {
+        await TwilioCommunication.create({
+          twilioAccountRef: account._id,
+          accountSid: account.accountSid,
+          channel: "sms",
+          direction: "outbound",
+          status: "failed",
+          fromNumber,
+          toNumber: to,
+          body,
+          errorMessage: message,
+          createdByUserRef: req.user.id,
+        });
+      } catch (logErr) {
+        console.error("POST /schedule/text log error:", logErr);
+      }
+      res.status(502).json({ message });
+    }
+  } catch (err) {
+    console.error("POST /schedule/text error:", err);
+    res.status(500).json({ message: "Failed to text this schedule" });
   }
 }

@@ -49,7 +49,12 @@ import {
 import { useWorkOrderAutosave } from "@/lib/useWorkOrderAutosave";
 import AutosaveStatus from "@/components/billing/AutosaveStatus";
 import { useAuthStore } from "@/store/useAuthStore";
-import { timeWindowError } from "@/lib/schedule";
+import {
+  DEFAULT_ESTIMATED_MINUTES,
+  minutesToHhMm,
+  normalizeTimeOfDay,
+  timeWindowError,
+} from "@/lib/schedule";
 import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
 import {
   ExerciseDaySelect,
@@ -130,6 +135,28 @@ function compareTechnicianNames(
   });
 }
 
+/** End time for ranking. A blank end uses a 30-minute window from the start. */
+function slotEndTime(start: string, end: string): string | null {
+  const startTime = normalizeTimeOfDay(start);
+  if (!startTime) return null;
+  const explicitEnd = normalizeTimeOfDay(end);
+  if (explicitEnd) {
+    return timeWindowError(startTime, explicitEnd) ? null : explicitEnd;
+  }
+  const [hour, minute] = startTime.split(":").map(Number);
+  return minutesToHhMm((hour ?? 0) * 60 + (minute ?? 0) + DEFAULT_ESTIMATED_MINUTES);
+}
+
+function hasSavedEquipment(form: {
+  equipmentRef?: string;
+  serialNumber?: string;
+  generatorModel?: string;
+}): boolean {
+  return Boolean(
+    form.equipmentRef || form.serialNumber?.trim() || form.generatorModel?.trim(),
+  );
+}
+
 export default function ServiceTicketForm({
   variant,
   initial,
@@ -163,9 +190,6 @@ export default function ServiceTicketForm({
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerListItem[]>([]);
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
-  const [techQuery, setTechQuery] = useState("");
-  const [techResults, setTechResults] = useState<TechnicianListItem[]>([]);
-  const [techConflict, setTechConflict] = useState(false);
   const [schedulableTechnicians, setSchedulableTechnicians] = useState<
     TechnicianListItem[]
   >([]);
@@ -182,6 +206,9 @@ export default function ServiceTicketForm({
   const initialAppliedFor = useRef<string | undefined>(undefined);
   const techChoiceLocked = useRef(Boolean(initial?.assignedUserRef));
   const autoAppliedTechId = useRef<string | null>(null);
+  const [showEquipment, setShowEquipment] = useState(() =>
+    Boolean(recordId && initial && hasSavedEquipment(initial)),
+  );
   const autoSaving = Boolean(autoSave);
 
   useEffect(() => {
@@ -192,6 +219,9 @@ export default function ServiceTicketForm({
     stateTouched.current = false;
     techChoiceLocked.current = Boolean(initial?.assignedUserRef);
     autoAppliedTechId.current = null;
+    if (recordId) {
+      setShowEquipment(Boolean(initial && hasSavedEquipment(initial)));
+    }
     if (initial) {
       setForm(initial);
       lastAppliedSiteKey.current = ticketSiteKey(initial);
@@ -316,47 +346,6 @@ export default function ServiceTicketForm({
   }
 
   useEffect(() => {
-    if (variant === "work-order" || !token || techQuery.trim().length < 2) {
-      setTechResults([]);
-      return;
-    }
-    const t = setTimeout(() => {
-      getTechnicians(token, {
-        search: techQuery.trim(),
-        date: form.date || undefined,
-        excludeWorkOrderId: recordId,
-      })
-        .then((res) => setTechResults(res.technicians))
-        .catch(() => setTechResults([]));
-    }, 250);
-    return () => clearTimeout(t);
-  }, [variant, token, techQuery, form.date, recordId]);
-
-  useEffect(() => {
-    if (variant === "work-order" || !token || !form.assignedUserRef || !form.date) {
-      if (!form.assignedUserRef) setTechConflict(false);
-      return;
-    }
-    let cancelled = false;
-    getTechnicians(token, {
-      search: form.tech.trim() || undefined,
-      date: form.date,
-      excludeWorkOrderId: recordId,
-    })
-      .then((res) => {
-        if (cancelled) return;
-        const match = res.technicians.find((t) => t._id === form.assignedUserRef);
-        setTechConflict(Boolean(match && match.jobsOnDate > 0));
-      })
-      .catch(() => {
-        if (!cancelled) setTechConflict(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [variant, token, form.assignedUserRef, form.date, form.tech, recordId]);
-
-  useEffect(() => {
     if (!token || variant !== "work-order") return;
     let cancelled = false;
     getTechnicians(token, { all: true })
@@ -375,13 +364,8 @@ export default function ServiceTicketForm({
     if (!token || variant !== "work-order") return;
     const city = form.customerCity.trim();
     const hasSite = Boolean(form.addressRef || city);
-    if (
-      !form.date ||
-      !form.startTime ||
-      !form.endTime ||
-      timeWindowError(form.startTime, form.endTime) ||
-      !hasSite
-    ) {
+    const endTime = slotEndTime(form.startTime, form.endTime);
+    if (!form.date || !endTime || !hasSite) {
       setSlotRank(null);
       return;
     }
@@ -389,8 +373,8 @@ export default function ServiceTicketForm({
     const timer = setTimeout(() => {
       recommendTechnicianForSlot(token, {
         date: form.date,
-        startTime: form.startTime,
-        endTime: form.endTime,
+        startTime: normalizeTimeOfDay(form.startTime),
+        endTime,
         addressRef: form.addressRef || undefined,
         address: form.customerAddress.trim() || undefined,
         city: city || undefined,
@@ -521,7 +505,30 @@ export default function ServiceTicketForm({
   }, [token, form.customerId, form.addressRef, form.equipmentRef]);
 
   const totals = useMemo(() => ticketTotals(form), [form]);
-  const technicianChoices = useMemo(() => {
+  const technicianRows = useMemo(() => {
+    if (slotRank) {
+      const rows = slotRank.technicians.map((tech) => ({
+        userId: tech.userId,
+        name: technicianDisplayName(tech),
+        reason: tech.reason,
+        recommended: tech.userId === slotRank.recommendation?.userId,
+        fits: tech.fits,
+      }));
+      if (
+        form.assignedUserRef &&
+        !rows.some((row) => row.userId === form.assignedUserRef)
+      ) {
+        rows.push({
+          userId: form.assignedUserRef,
+          name: form.tech.trim() || "Assigned technician",
+          reason: "",
+          recommended: false,
+          fits: true,
+        });
+      }
+      return rows;
+    }
+
     const options = [...schedulableTechnicians];
     if (
       form.assignedUserRef &&
@@ -536,14 +543,32 @@ export default function ServiceTicketForm({
       });
     }
     options.sort(compareTechnicianNames);
-    return options;
-  }, [schedulableTechnicians, form.assignedUserRef, form.tech]);
-  const selectedSlot = slotRank?.technicians.find(
-    (tech) => tech.userId === form.assignedUserRef,
-  );
-  const selectedDoesNotFit = Boolean(
-    form.assignedUserRef && selectedSlot && !selectedSlot.fits,
-  );
+    return options.map((tech) => ({
+      userId: tech._id,
+      name: technicianDisplayName(tech),
+      reason: "",
+      recommended: false,
+      fits: true,
+    }));
+  }, [slotRank, schedulableTechnicians, form.assignedUserRef, form.tech]);
+  const technicianRankHint = useMemo(() => {
+    if (variant !== "work-order" || slotRank) return null;
+    const missing: string[] = [];
+    if (!form.date) missing.push("a date");
+    if (!normalizeTimeOfDay(form.startTime)) missing.push("a start time");
+    if (!form.addressRef && !form.customerCity.trim()) missing.push("an address");
+    if (missing.length === 0) return null;
+    if (missing.length === 1) return `Add ${missing[0]} to rank technicians.`;
+    const last = missing[missing.length - 1];
+    return `Add ${missing.slice(0, -1).join(", ")} and ${last} to rank technicians.`;
+  }, [
+    variant,
+    slotRank,
+    form.date,
+    form.startTime,
+    form.addressRef,
+    form.customerCity,
+  ]);
   const discountRules = form.contractDiscount ?? DEFAULT_PRODUCT_DISCOUNTS;
   const discountBanner = form.contractDiscount
     ? formatDiscountSummary(form.contractDiscount, form.contractDiscount.label)
@@ -577,17 +602,6 @@ export default function ServiceTicketForm({
     setCustomerQuery("");
     setCustomerResults([]);
     if ("addresses" in c) setCustomer(c);
-  }
-
-  function applyTechnician(tech: TechnicianListItem) {
-    const name = technicianDisplayName(tech);
-    patch({
-      tech: name,
-      assignedUserRef: variant === "work-order" ? tech._id : null,
-    });
-    setTechQuery("");
-    setTechResults([]);
-    setTechConflict(tech.jobsOnDate > 0);
   }
 
   function selectWorkOrderTechnician(userId: string) {
@@ -706,6 +720,79 @@ export default function ServiceTicketForm({
     blocked: !autoSave || autosaveBlockedReason !== null,
   });
 
+  const equipmentPanel = (
+    <>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+        Equipment
+      </p>
+      {customer ? (
+        <div>
+          <select
+            value={existingEquipmentSelected ? form.equipmentRef : ""}
+            onChange={(e) => applyEquipment(e.target.value)}
+            aria-label="Equipment"
+            className={inputClass}
+          >
+            {equipmentOptions.map((unit) => (
+              <option key={unit._id} value={unit._id}>
+                {[unit.generatorModel || "Generator", unit.serial]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </option>
+            ))}
+            <option value="">
+              {hasExistingEquipment ? "Add another equipment" : "Add new equipment"}
+            </option>
+          </select>
+        </div>
+      ) : null}
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <Field label="Serial number">
+          <input
+            value={form.serialNumber}
+            onChange={(e) => patch({ serialNumber: e.target.value })}
+            readOnly={equipmentFieldsLocked}
+            className={`${inputClass}${equipmentFieldsLocked ? " bg-neutral-50" : ""}`}
+          />
+        </Field>
+        <Field label="Model">
+          <input
+            value={form.generatorModel}
+            onChange={(e) => patch({ generatorModel: e.target.value })}
+            readOnly={equipmentFieldsLocked}
+            className={`${inputClass}${equipmentFieldsLocked ? " bg-neutral-50" : ""}`}
+          />
+        </Field>
+        <Field label="Exercise Day">
+          <ExerciseDaySelect
+            value={form.exerciseDay}
+            onChange={(exerciseDay) => patch({ exerciseDay })}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Time Set">
+          <ExerciseTimeInput
+            value={form.exerciseTime}
+            onChange={(exerciseTime) => patch({ exerciseTime })}
+            className={inputClass}
+          />
+        </Field>
+        {variant === "work-order" ? (
+          <Field label="Run hours">
+            <input
+              type="number"
+              min={0}
+              step="0.1"
+              value={form.runHours}
+              onChange={(e) => patch({ runHours: e.target.value })}
+              className={inputClass}
+            />
+          </Field>
+        ) : null}
+      </div>
+    </>
+  );
+
   return (
     <form
       onSubmit={(e) => void handleSubmit(e)}
@@ -730,7 +817,7 @@ export default function ServiceTicketForm({
 
         <div
           className={`mt-5 grid gap-3 sm:grid-cols-2 ${
-            variant === "work-order" ? "lg:grid-cols-7" : "lg:grid-cols-5"
+            variant === "work-order" ? "lg:grid-cols-5" : "lg:grid-cols-3"
           }`}
         >
           <Field label={variant === "estimate" ? "Estimate No" : "Work Order No"}>
@@ -795,81 +882,6 @@ export default function ServiceTicketForm({
               </select>
             </Field>
           ) : null}
-          {variant === "work-order" ? (
-            <Field label="Technician">
-              <select
-                value={form.assignedUserRef ?? ""}
-                onChange={(e) => selectWorkOrderTechnician(e.target.value)}
-                className={inputClass}
-              >
-                <option value="">Select technician</option>
-                {technicianChoices.map((tech) => (
-                  <option key={tech._id} value={tech._id}>
-                    {technicianDisplayName(tech)}
-                    {tech._id === recommendedTech?.userId ? " (Recommended)" : ""}
-                  </option>
-                ))}
-              </select>
-              {recommendedTech &&
-              !(selectedDoesNotFit && form.assignedUserRef === recommendedTech.userId) ? (
-                <p className="mt-1 text-xs text-neutral-500">
-                  Recommended: {technicianDisplayName(recommendedTech)} —{" "}
-                  {recommendedTech.reason}
-                </p>
-              ) : null}
-              {selectedDoesNotFit && selectedSlot ? (
-                <p className="mt-1 text-xs text-amber-700">{selectedSlot.reason}</p>
-              ) : null}
-            </Field>
-          ) : (
-            <div className="relative">
-              <Field label="Technician">
-                <input
-                  value={techQuery || form.tech}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setTechQuery(value);
-                    patch({
-                      tech: value,
-                      ...(value.trim() !== form.tech.trim()
-                        ? { assignedUserRef: null }
-                        : {}),
-                    });
-                    setTechConflict(false);
-                  }}
-                  placeholder="Search technicians"
-                  className={inputClass}
-                />
-              </Field>
-              {techResults.length > 0 ? (
-                <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg">
-                  {techResults.map((tech) => (
-                    <li key={tech._id}>
-                      <button
-                        type="button"
-                        onClick={() => applyTechnician(tech)}
-                        className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                      >
-                        <span className="font-medium text-brand-dark">
-                          {technicianDisplayName(tech)}
-                        </span>
-                        {tech.jobsOnDate > 0 ? (
-                          <span className="mt-0.5 block text-xs text-amber-700">
-                            Already has a job on this date
-                          </span>
-                        ) : null}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {techConflict ? (
-                <p className="mt-1 text-xs text-amber-700">
-                  This technician already has a job on this date
-                </p>
-              ) : null}
-            </div>
-          )}
           {variant === "estimate" ? (
             <Field label="Status">
               <select
@@ -885,21 +897,14 @@ export default function ServiceTicketForm({
                 <option value="declined">Declined</option>
               </select>
             </Field>
-          ) : (
-            <Field label="Run hours">
-              <input
-                type="number"
-                min={0}
-                step="0.1"
-                value={form.runHours}
-                onChange={(e) => patch({ runHours: e.target.value })}
-                className={inputClass}
-              />
-            </Field>
-          )}
+          ) : null}
         </div>
 
-        <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        <div
+          className={`mt-5 grid gap-5 ${
+            variant === "work-order" ? "lg:grid-cols-2" : ""
+          }`}
+        >
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
               Customer
@@ -1024,66 +1029,98 @@ export default function ServiceTicketForm({
             </div>
           </div>
 
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Equipment
-            </p>
-            {customer ? (
-              <div>
-                <select
-                  value={existingEquipmentSelected ? form.equipmentRef : ""}
-                  onChange={(e) => applyEquipment(e.target.value)}
-                  aria-label="Equipment"
-                  className={inputClass}
-                >
-                  {equipmentOptions.map((unit) => (
-                    <option key={unit._id} value={unit._id}>
-                      {[unit.generatorModel || "Generator", unit.serial]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </option>
-                  ))}
-                  <option value="">
-                    {hasExistingEquipment
-                      ? "Add another equipment"
-                      : "Add new equipment"}
-                  </option>
-                </select>
+          {variant === "work-order" ? (
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Technician
+              </p>
+              {technicianRankHint ? (
+                <p className="mb-2 text-xs text-neutral-500">{technicianRankHint}</p>
+              ) : null}
+              <div className="overflow-hidden rounded-md border border-neutral-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-neutral-50 text-[11px] uppercase tracking-wide text-neutral-500">
+                    <tr>
+                      <th className="w-8 px-2 py-2">
+                        <span className="sr-only">Select</span>
+                      </th>
+                      <th className="px-2 py-2 font-semibold">Technician</th>
+                      <th className="px-2 py-2 font-semibold">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {technicianRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="px-2 py-3 text-xs text-neutral-500">
+                          No technicians are schedulable.
+                        </td>
+                      </tr>
+                    ) : (
+                      technicianRows.map((row) => {
+                        const selected = form.assignedUserRef === row.userId;
+                        const showConflict = selected && !row.fits;
+                        return (
+                          <tr
+                            key={row.userId}
+                            className={`cursor-pointer border-t border-neutral-200 ${
+                              selected ? "bg-neutral-50" : "hover:bg-neutral-50"
+                            }`}
+                            onClick={() => selectWorkOrderTechnician(row.userId)}
+                          >
+                            <td className="px-2 py-2">
+                              <input
+                                type="radio"
+                                name="work-order-technician"
+                                value={row.userId}
+                                checked={selected}
+                                onChange={() => selectWorkOrderTechnician(row.userId)}
+                                aria-label={row.name}
+                              />
+                            </td>
+                            <td className="px-2 py-2 text-brand-dark">
+                              {row.name}
+                              {row.recommended ? (
+                                <span className="ml-2 rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-dark">
+                                  Recommended
+                                </span>
+                              ) : null}
+                            </td>
+                            <td
+                              className={`px-2 py-2 text-xs ${
+                                showConflict ? "text-amber-700" : "text-neutral-500"
+                              }`}
+                            >
+                              {row.reason}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
               </div>
-            ) : null}
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <Field label="Serial number">
-                <input
-                  value={form.serialNumber}
-                  onChange={(e) => patch({ serialNumber: e.target.value })}
-                  readOnly={equipmentFieldsLocked}
-                  className={`${inputClass}${equipmentFieldsLocked ? " bg-neutral-50" : ""}`}
-                />
-              </Field>
-              <Field label="Model">
-                <input
-                  value={form.generatorModel}
-                  onChange={(e) => patch({ generatorModel: e.target.value })}
-                  readOnly={equipmentFieldsLocked}
-                  className={`${inputClass}${equipmentFieldsLocked ? " bg-neutral-50" : ""}`}
-                />
-              </Field>
-              <Field label="Exercise Day">
-                <ExerciseDaySelect
-                  value={form.exerciseDay}
-                  onChange={(exerciseDay) => patch({ exerciseDay })}
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="Time Set">
-                <ExerciseTimeInput
-                  value={form.exerciseTime}
-                  onChange={(exerciseTime) => patch({ exerciseTime })}
-                  className={inputClass}
-                />
-              </Field>
+              {form.assignedUserRef ? (
+                <button
+                  type="button"
+                  onClick={() => selectWorkOrderTechnician("")}
+                  className="mt-2 text-xs font-medium text-neutral-500 hover:text-brand-dark"
+                >
+                  Clear technician
+                </button>
+              ) : null}
+              {showEquipment ? (
+                <div className="mt-5">{equipmentPanel}</div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowEquipment(true)}
+                  className="mt-3 inline-flex items-center rounded border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+                >
+                  Add equipment
+                </button>
+              )}
             </div>
-          </div>
+          ) : null}
         </div>
 
         <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-start">

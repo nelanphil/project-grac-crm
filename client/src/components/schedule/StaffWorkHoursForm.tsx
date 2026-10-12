@@ -1,6 +1,7 @@
 "use client";
 
 import type { UserHomeLocation, UserWeeklyHours } from "@/lib/api";
+import PhoneInput from "@/components/ui/PhoneInput";
 import {
   WEEKDAY_KEYS,
   WEEKDAY_LABELS,
@@ -9,19 +10,25 @@ import {
 export default function StaffWorkHoursForm({
   weeklyHours,
   home,
+  phone,
+  email,
   onPatchWeekly,
   onChangeHome,
+  onChangePhone,
   onBlurHome,
   homeValidating,
   homeMsg,
 }: {
   weeklyHours: UserWeeklyHours;
   home: UserHomeLocation;
+  phone: string;
+  email: string;
   onPatchWeekly: (
     day: keyof UserWeeklyHours,
     patch: Partial<UserWeeklyHours[keyof UserWeeklyHours]>,
   ) => void;
   onChangeHome: (patch: Partial<UserHomeLocation>) => void;
+  onChangePhone: (phone: string) => void;
   onBlurHome: () => void;
   homeValidating: boolean;
   homeMsg: string | null;
@@ -82,6 +89,27 @@ export default function StaffWorkHoursForm({
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-neutral-600">Contact</p>
+        <PhoneInput
+          id="technician-phone"
+          name="phone"
+          value={phone}
+          onChange={(e) => onChangePhone(e.target.value)}
+          aria-label="Phone"
+          placeholder="Phone"
+          className="block w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-brand-orange"
+        />
+        <p className="text-xs text-neutral-500">
+          Mobile number for text messages.
+        </p>
+        {email ? (
+          <p className="truncate text-xs text-neutral-500" title={email}>
+            Email · {email}
+          </p>
+        ) : null}
       </div>
 
       <div className="space-y-2">

@@ -3,13 +3,19 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Pencil } from "lucide-react";
+import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 import { useAuthStore } from "@/store/useAuthStore";
 import { ApiError, getRoles, getUsers, RoleItem, UserListItem } from "@/lib/api";
 import UsernameDisplay from "@/components/ui/UsernameDisplay";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { normalizeRoles, userHasCapability } from "@/lib/dashboard-role";
-import { serviceTerritorySummary, weeklyHoursSummary } from "@/lib/schedule";
+import { formatUsPhoneInput } from "@/lib/formatPhone";
+import { formatLocalDate, serviceTerritorySummary, weeklyHoursSummary } from "@/lib/schedule";
+
+function phoneLabel(phone: string | undefined): string {
+  return formatUsPhoneInput(phone ?? "") || "—";
+}
 
 export default function TechniciansTab() {
   const token = useAuthStore((s) => s.token);
@@ -38,6 +44,7 @@ export default function TechniciansTab() {
       users.filter((user) => userHasCapability(user, "schedulable")),
     [users],
   );
+  const today = formatLocalDate(new Date());
 
   function getRoleLabel(slug: string) {
     return roleList.find((r) => r.slug === slug)?.label ?? slug;
@@ -64,7 +71,7 @@ export default function TechniciansTab() {
         <h2 className="text-lg font-semibold text-brand-dark">Technicians</h2>
         <p className="mt-0.5 text-sm text-neutral-500">
           Staff with the Technician role. Assign that role under Users, then set
-          hours, home location, and territory here.
+          hours, contact, home location, and territory here.
         </p>
       </div>
 
@@ -88,6 +95,7 @@ export default function TechniciansTab() {
               }
               fields={
                 <>
+                  <DataField label="Phone" value={phoneLabel(user.phone)} />
                   <DataField
                     label="Hours"
                     value={weeklyHoursSummary(user.weeklyHours)}
@@ -103,13 +111,20 @@ export default function TechniciansTab() {
                 </>
               }
               actions={
-                <Link
-                  href={`/dashboard/schedule/technician?id=${user._id}`}
-                  className="inline-flex rounded-md p-1.5 text-brand-orange hover:bg-orange-50"
-                  aria-label="Edit technician"
-                >
-                  <Pencil className="h-4 w-4" />
-                </Link>
+                <div className="flex items-center gap-1">
+                  <TextScheduleButton
+                    userId={user._id}
+                    date={today}
+                    variant="label"
+                  />
+                  <Link
+                    href={`/dashboard/schedule/technician?id=${user._id}`}
+                    className="inline-flex rounded-md p-1.5 text-brand-orange hover:bg-orange-50"
+                    aria-label="Edit technician"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Link>
+                </div>
               }
             />
           ))}
@@ -123,6 +138,9 @@ export default function TechniciansTab() {
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Role
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Phone
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Hours
@@ -151,6 +169,9 @@ export default function TechniciansTab() {
                       <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
                         {formatUserRoles(user)}
                       </td>
+                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
+                        {phoneLabel(user.phone)}
+                      </td>
                       <td className="px-6 py-4 text-neutral-600">
                         {weeklyHoursSummary(user.weeklyHours)}
                       </td>
@@ -161,13 +182,20 @@ export default function TechniciansTab() {
                         {serviceTerritorySummary(user.serviceCities)}
                       </td>
                       <td className="px-6 py-4 text-right whitespace-nowrap">
-                        <Link
-                          href={`/dashboard/schedule/technician?id=${user._id}`}
-                          className="inline-flex rounded-md p-1.5 text-brand-orange hover:bg-orange-50"
-                          aria-label="Edit technician"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Link>
+                        <div className="inline-flex items-center gap-1">
+                          <TextScheduleButton
+                            userId={user._id}
+                            date={today}
+                            variant="label"
+                          />
+                          <Link
+                            href={`/dashboard/schedule/technician?id=${user._id}`}
+                            className="inline-flex rounded-md p-1.5 text-brand-orange hover:bg-orange-50"
+                            aria-label="Edit technician"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Link>
+                        </div>
                       </td>
                     </tr>
                   ))}

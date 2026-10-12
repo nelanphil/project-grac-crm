@@ -20,6 +20,13 @@ export function canonicalPhoneDigits(
   return null;
 }
 
+/** `(XXX) XXX-XXXX` when the value is a US number; otherwise the trimmed input. */
+export function formatUsPhone(phone: string | null | undefined): string {
+  const digits = canonicalPhoneDigits(phone);
+  if (!digits) return (phone ?? "").trim();
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
 /** Normalized street+zip key for text-based address duplicate matching (no geocoding). */
 export function normalizeAddressKey(
   street: string | null | undefined,

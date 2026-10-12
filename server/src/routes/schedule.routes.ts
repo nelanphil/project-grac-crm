@@ -18,6 +18,7 @@ import {
   getScheduleRoute,
   postScheduleRoutePlan,
   postScheduleRouteApply,
+  postScheduleText,
   getCitySuggestions,
   getCityDetails,
   getCityAtPoint,
@@ -81,6 +82,10 @@ router.post(
   "/route/apply",
   requirePermission("jobs:write"),
   (req, res: Response) => postScheduleRouteApply(req as AuthRequest, res),
+);
+
+router.post("/text", requirePermission("jobs:read"), (req, res: Response) =>
+  postScheduleText(req as AuthRequest, res),
 );
 
 router.post(
