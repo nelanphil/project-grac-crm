@@ -7,6 +7,12 @@ import {
   resolveSentMailbox,
   snippetFromPartialSource,
 } from "../utils/imapMailbox";
+import { normalizeMessageId } from "../utils/mailboxReply";
+import {
+  belongsToThread,
+  relatedMessageIds,
+  threadIdSet,
+} from "../utils/mailboxThread";
 
 export type MailboxFolder = "inbox" | "sent";
 
@@ -25,6 +31,7 @@ export type MailboxMessageSummary = {
   seen: boolean;
   snippet: string;
   messageId: string;
+  inReplyTo: string;
 };
 
 export type MailboxAttachmentMeta = {
@@ -37,7 +44,6 @@ export type MailboxMessageDetail = MailboxMessageSummary & {
   text: string;
   html: string;
   attachments: MailboxAttachmentMeta[];
-  inReplyTo: string;
   references: string[];
 };
 
@@ -53,6 +59,8 @@ export class MailboxError extends Error {
 
 const MAX_LIST = 50;
 const SOURCE_PREVIEW_BYTES = 2500;
+const MAX_THREAD_MESSAGES = 20;
+const MAX_THREAD_IDS = 12;
 const MAX_TEXT = 200_000;
 const MAX_HTML = 500_000;
 const TEMPORARY_AUTH_EXTRA_ATTEMPTS = 2;
@@ -276,6 +284,7 @@ function toSummary(msg: {
   uid: number;
   flags?: Set<string>;
   envelope?: {
+    inReplyTo?: string;
     subject?: string;
     messageId?: string;
     from?: { name?: string; address?: string }[];
@@ -295,6 +304,7 @@ function toSummary(msg: {
     to: addresses(envelope?.to),
     cc: addresses(envelope?.cc),
     date: messageDate(envelope?.date, msg.internalDate),
+    inReplyTo: envelope?.inReplyTo?.trim() || "",
     seen: msg.flags?.has("\\Seen") ?? false,
     snippet: text,
     messageId: envelope?.messageId?.trim() || "",
@@ -373,6 +383,92 @@ export async function appendToSentFolder(
   });
 }
 
+async function withMailboxLock<T>(
+  client: ImapFlow,
+  path: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const lock = await client.getMailboxLock(path);
+  try {
+    return await fn();
+  } finally {
+    lock.release();
+  }
+}
+
+async function readLockedMessage(
+  client: ImapFlow,
+  uid: number,
+  markSeen: boolean,
+): Promise<MailboxMessageDetail> {
+  const msg = await client.fetchOne(
+    String(uid),
+    {
+      uid: true,
+      flags: true,
+      envelope: true,
+      internalDate: true,
+      source: true,
+    },
+    { uid: true },
+  );
+  if (!msg || !msg.source) {
+    throw new MailboxError("Message not found.", 404);
+  }
+  const parsed = await simpleParser(msg.source);
+  const summary = toSummary(msg);
+  if (markSeen && !summary.seen) {
+    try {
+      await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true });
+      summary.seen = true;
+    } catch (err) {
+      console.error("[mailbox] failed to mark message seen:", err);
+    }
+  }
+  const text = (parsed.text || "").slice(0, MAX_TEXT);
+  const rawHtml = typeof parsed.html === "string" ? parsed.html : "";
+  const parsedCc = parserAddresses(parsed.cc);
+  return {
+    ...summary,
+    cc: parsedCc.length > 0 ? parsedCc : summary.cc,
+    messageId: parsed.messageId?.trim() || summary.messageId,
+    inReplyTo: parsed.inReplyTo?.trim() || msg.envelope?.inReplyTo?.trim() || "",
+    references: referenceList(parsed.references),
+    snippet: text.replace(/\s+/g, " ").trim().slice(0, 160) || summary.snippet,
+    text,
+    html: rawHtml.slice(0, MAX_HTML),
+    attachments: (parsed.attachments ?? []).map((file) => ({
+      filename: file.filename || "attachment",
+      size: file.size || 0,
+      contentType: file.contentType || "application/octet-stream",
+    })),
+  };
+}
+
+async function searchThreadUids(
+  client: ImapFlow,
+  ids: string[],
+): Promise<number[]> {
+  const uids = new Set<number>();
+  for (const id of ids) {
+    const bracketed = normalizeMessageId(id);
+    if (!bracketed) continue;
+    for (const header of ["message-id", "in-reply-to", "references"]) {
+      try {
+        const found = await client.search(
+          { header: { [header]: bracketed } } as never,
+          { uid: true },
+        );
+        if (!Array.isArray(found)) continue;
+        for (const match of found) uids.add(match);
+      } catch (err) {
+        console.error("[mailbox] thread header search failed:", header, err);
+      }
+    }
+  }
+  return [...uids];
+}
+
 export async function getMailboxMessage(
   account: IEmailAccount,
   folder: MailboxFolder,
@@ -380,54 +476,93 @@ export async function getMailboxMessage(
 ): Promise<MailboxMessageDetail> {
   return withMailboxClient(account, async (client) => {
     const path = await resolveFolderPath(client, folder);
-    const lock = await client.getMailboxLock(path);
+    const message = await withMailboxLock(client, path, () =>
+      readLockedMessage(client, uid, folder === "inbox"),
+    );
+    return {
+      ...message,
+      html: message.html ? sanitizeInboundEmailHtml(message.html) : "",
+    };
+  });
+}
+
+export async function listImapThreadMessages(
+  account: IEmailAccount,
+  folder: MailboxFolder,
+  uid: number,
+): Promise<Array<MailboxMessageDetail & { folder: MailboxFolder }>> {
+  return withMailboxClient(account, async (client) => {
+    const folders: { folder: MailboxFolder; path: string }[] = [
+      { folder: "inbox", path: "INBOX" },
+    ];
     try {
-      const msg = await client.fetchOne(
-        String(uid),
-        {
-          uid: true,
-          flags: true,
-          envelope: true,
-          internalDate: true,
-          source: true,
-        },
-        { uid: true },
-      );
-      if (!msg || !msg.source) {
-        throw new MailboxError("Message not found.", 404);
-      }
-      const parsed = await simpleParser(msg.source);
-      const summary = toSummary(msg);
-      if (folder === "inbox" && !summary.seen) {
+      folders.push({
+        folder: "sent",
+        path: await resolveFolderPath(client, "sent"),
+      });
+    } catch (err) {
+      if (folder === "sent") throw err;
+      console.error("[mailbox] sent folder unavailable for thread", err);
+    }
+
+    const selectedPath = folders.find((item) => item.folder === folder);
+    if (!selectedPath) {
+      throw new MailboxError("Mailbox folder was not found.", 404);
+    }
+
+    const byKey = new Map<string, MailboxMessageDetail & { folder: MailboxFolder }>();
+    const selected = await withMailboxLock(client, selectedPath.path, () =>
+      readLockedMessage(client, uid, folder === "inbox"),
+    );
+    byKey.set(`${folder}:${uid}`, { ...selected, folder });
+
+    const searched = new Set<string>();
+    let pending = relatedMessageIds(selected).slice(0, MAX_THREAD_IDS);
+
+    for (
+      let pass = 0;
+      pass < 2 && pending.length > 0 && byKey.size < MAX_THREAD_MESSAGES;
+      pass += 1
+    ) {
+      const ids = pending
+        .filter((id) => !searched.has(id))
+        .slice(0, MAX_THREAD_IDS);
+      for (const id of ids) searched.add(id);
+      if (ids.length === 0) break;
+
+      for (const target of folders) {
+        if (byKey.size >= MAX_THREAD_MESSAGES) break;
         try {
-          await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true });
-          summary.seen = true;
+          await withMailboxLock(client, target.path, async () => {
+            const found = await searchThreadUids(client, ids);
+            if (target.folder === folder) found.push(uid);
+            const unique = [...new Set(found)]
+              .sort((left, right) => right - left)
+              .slice(0, MAX_THREAD_MESSAGES);
+            for (const matchUid of unique) {
+              const key = `${target.folder}:${matchUid}`;
+              if (byKey.has(key) || byKey.size >= MAX_THREAD_MESSAGES) continue;
+              try {
+                const message = await readLockedMessage(client, matchUid, false);
+                const known = threadIdSet([...byKey.values()]);
+                if (!belongsToThread(message, known)) continue;
+                byKey.set(key, { ...message, folder: target.folder });
+              } catch (err) {
+                console.error("[mailbox] thread message fetch failed", err);
+              }
+            }
+          });
         } catch (err) {
-          console.error("[mailbox] failed to mark message seen:", err);
+          if (target.folder === folder) throw err;
+          console.error("[mailbox] thread folder search failed", err);
         }
       }
-      const text = (parsed.text || "").slice(0, MAX_TEXT);
-      const rawHtml = typeof parsed.html === "string" ? parsed.html : "";
-      const parsedCc = parserAddresses(parsed.cc);
-      return {
-        ...summary,
-        cc: parsedCc.length > 0 ? parsedCc : summary.cc,
-        messageId: parsed.messageId?.trim() || summary.messageId,
-        inReplyTo: parsed.inReplyTo?.trim() || msg.envelope?.inReplyTo?.trim() || "",
-        references: referenceList(parsed.references),
-        snippet: text.replace(/\s+/g, " ").trim().slice(0, 160) || summary.snippet,
-        text,
-        html: rawHtml
-          ? sanitizeInboundEmailHtml(rawHtml.slice(0, MAX_HTML))
-          : "",
-        attachments: (parsed.attachments ?? []).map((file) => ({
-          filename: file.filename || "attachment",
-          size: file.size || 0,
-          contentType: file.contentType || "application/octet-stream",
-        })),
-      };
-    } finally {
-      lock.release();
+
+      pending = [...threadIdSet([...byKey.values()])].filter(
+        (id) => !searched.has(id),
+      );
     }
+
+    return [...byKey.values()];
   });
 }

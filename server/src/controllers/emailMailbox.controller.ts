@@ -19,12 +19,22 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
+import { matchCustomersByEmail } from "../services/mailboxCustomers.service";
 import {
   getMailboxMessage,
   listMailboxMessages,
+  MailboxAddress,
   MailboxError,
+  MailboxFolder,
 } from "../services/mailbox.service";
+import { loadMailboxThread } from "../services/mailboxThread.service";
+import {
+  counterpartyAddresses,
+  customerForAddresses,
+  MailboxCustomerLink,
+} from "../utils/mailboxCustomers";
 import { assignmentMessageKey } from "../utils/mailboxReply";
+import { assignThreadKeys } from "../utils/mailboxThread";
 
 function sendMailboxError(res: Response, err: unknown): void {
   if (err instanceof MailboxError) {
@@ -34,6 +44,34 @@ function sendMailboxError(res: Response, err: unknown): void {
   const message = err instanceof Error ? err.message : "Mailbox request failed.";
   console.error("[mailbox] request failed:", message);
   res.status(502).json({ message });
+}
+
+async function customersForMessages<
+  T extends { folder?: MailboxFolder; from: MailboxAddress[]; to: MailboxAddress[] },
+>(
+  folder: MailboxFolder,
+  messages: T[],
+): Promise<Map<number, MailboxCustomerLink | null>> {
+  const addresses = messages.flatMap((message) =>
+    counterpartyAddresses(message.folder ?? folder, message.from, message.to),
+  );
+  let matches = new Map<string, MailboxCustomerLink | null>();
+  try {
+    matches = await matchCustomersByEmail(addresses);
+  } catch (err) {
+    console.error("[mailbox] customer match failed", err);
+  }
+  const byIndex = new Map<number, MailboxCustomerLink | null>();
+  messages.forEach((message, index) => {
+    byIndex.set(
+      index,
+      customerForAddresses(
+        counterpartyAddresses(message.folder ?? folder, message.from, message.to),
+        matches,
+      ),
+    );
+  });
+  return byIndex;
 }
 
 async function loadReadableAccount(id: string, res: Response) {
@@ -89,10 +127,20 @@ export async function listMailboxMessagesHandler(
     } catch (err) {
       console.error("[mailbox] could not refresh assignment locations", err);
     }
+    const threadKeys = assignThreadKeys(
+      keyed.map((message) => ({
+        id: `uid:${folder}:${message.uid}`,
+        messageId: message.messageId,
+        inReplyTo: message.inReplyTo,
+      })),
+    );
+    const customers = await customersForMessages(folder, keyed);
     res.json({
       folder,
-      messages: keyed.map((message) => ({
+      messages: keyed.map((message, index) => ({
         ...message,
+        threadKey: threadKeys[index] ?? `uid:${folder}:${message.uid}`,
+        customer: customers.get(index) ?? null,
         assignees: assigned.get(message.messageKey) ?? [],
       })),
     });
@@ -138,6 +186,57 @@ export async function getMailboxMessageHandler(
         messageKey,
         assignees: assigned.get(messageKey) ?? [],
       },
+    });
+  } catch (err) {
+    sendMailboxError(res, err);
+  }
+}
+export async function getMailboxThreadHandler(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  const parsed = mailboxMessageQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "folder must be inbox or sent",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  const uid = Number(req.params.uid);
+  if (!Number.isInteger(uid) || uid < 1) {
+    res.status(400).json({ message: "Invalid message id" });
+    return;
+  }
+
+  const account = await loadReadableAccount(String(req.params.accountId), res);
+  if (!account) return;
+
+  try {
+    const folder = parsed.data.folder;
+    const messages = await loadMailboxThread(account, folder, uid);
+    const keyed = messages.map((message) => ({
+      ...message,
+      messageKey: assignmentMessageKey(
+        message.messageId,
+        message.folder,
+        message.uid ?? uid,
+      ),
+    }));
+    const assigned = await assigneesByMessageKey(
+      account._id,
+      keyed.map((message) => message.messageKey),
+    );
+    const customers = await customersForMessages(folder, keyed);
+    res.json({
+      folder,
+      uid,
+      messages: keyed.map((message, index) => ({
+        ...message,
+        customer: customers.get(index) ?? null,
+        assignees: assigned.get(message.messageKey) ?? [],
+      })),
     });
   } catch (err) {
     sendMailboxError(res, err);

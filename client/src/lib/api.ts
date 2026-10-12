@@ -4501,6 +4501,11 @@ export interface MailboxAddress {
   address: string;
 }
 
+export interface MailboxCustomerLink {
+  id: string;
+  name: string;
+}
+
 export interface MailboxMessageSummary {
   uid: number;
   subject: string;
@@ -4511,8 +4516,11 @@ export interface MailboxMessageSummary {
   seen: boolean;
   snippet: string;
   messageId: string;
+  inReplyTo: string;
+  threadKey: string;
   messageKey: string;
   assignees: string[];
+  customer: MailboxCustomerLink | null;
 }
 
 export interface MailboxAttachmentMeta {
@@ -4527,8 +4535,31 @@ export interface MailboxMessageDetail extends MailboxMessageSummary {
   text: string;
   html: string;
   attachments: MailboxAttachmentMeta[];
+  references: string[];
+}
+
+export interface MailboxThreadMessage {
+  source: "imap" | "crm";
+  folder: MailboxFolder;
+  uid: number | null;
+  subject: string;
+  from: MailboxAddress[];
+  to: MailboxAddress[];
+  cc: MailboxAddress[];
+  date: string | null;
+  seen: boolean;
+  snippet: string;
+  messageId: string;
   inReplyTo: string;
   references: string[];
+  text: string;
+  html: string;
+  displayText: string;
+  displayHtml: string;
+  attachments: MailboxAttachmentMeta[];
+  messageKey: string;
+  assignees: string[];
+  customer: MailboxCustomerLink | null;
 }
 
 export async function getMailboxMessages(
@@ -4548,6 +4579,23 @@ export async function getMailboxMessages(
       headers: { Authorization: `Bearer ${token}` },
     },
   );
+}
+
+export async function getMailboxThread(
+  token: string,
+  accountId: string,
+  uid: number,
+  folder: MailboxFolder,
+): Promise<{ folder: MailboxFolder; uid: number; messages: MailboxThreadMessage[] }> {
+  const params = new URLSearchParams({ folder });
+  return authRequest<{
+    folder: MailboxFolder;
+    uid: number;
+    messages: MailboxThreadMessage[];
+  }>(`/email-mailbox/${accountId}/messages/${uid}/thread?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 export async function getMailboxMessage(

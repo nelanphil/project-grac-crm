@@ -6,6 +6,7 @@ import {
 } from "../middleware/auth.middleware";
 import {
   getMailboxMessageHandler,
+  getMailboxThreadHandler,
   listMailboxMessagesHandler,
   replyMailboxMessageHandler,
   setMailboxAssigneesHandler,
@@ -20,6 +21,11 @@ router.get(
   "/:accountId/messages",
   requirePermission("messages:read"),
   listMailboxMessagesHandler,
+);
+router.get(
+  "/:accountId/messages/:uid/thread",
+  requirePermission("messages:read"),
+  getMailboxThreadHandler,
 );
 router.get(
   "/:accountId/messages/:uid",
