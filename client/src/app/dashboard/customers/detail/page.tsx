@@ -536,7 +536,6 @@ function CustomerDetailContent() {
         userId={user.id}
         canWrite={canWrite}
         onCustomerChange={(next) => setCustomer(next)}
-        contracts={contracts}
         filteredContracts={filteredContracts}
         addressFilter={addressFilter}
         onAddressFilterChange={setAddressFilter}

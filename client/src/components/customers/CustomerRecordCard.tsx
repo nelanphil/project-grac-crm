@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ScrollText } from "lucide-react";
 import ContactCard from "@/components/customers/ContactCard";
@@ -14,7 +14,9 @@ import {
   ContractListItem,
   CustomerAddress,
   CustomerDetail,
+  getCustomerAttention,
 } from "@/lib/api";
+import { useAuthStore } from "@/store/useAuthStore";
 
 export type RecordTab =
   | "contacts"
@@ -77,7 +79,6 @@ type CustomerRecordCardProps = {
   userId: string;
   canWrite: boolean;
   onCustomerChange: (customer: CustomerDetail) => void;
-  contracts: ContractListItem[];
   filteredContracts: ContractListItem[];
   addressFilter: string;
   onAddressFilterChange: (value: string) => void;
@@ -90,7 +91,6 @@ export default function CustomerRecordCard({
   userId,
   canWrite,
   onCustomerChange,
-  contracts,
   filteredContracts,
   addressFilter,
   onAddressFilterChange,
@@ -98,42 +98,82 @@ export default function CustomerRecordCard({
 }: CustomerRecordCardProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isAdmin = useAuthStore((s) => s.hasRole("admin", "super-admin"));
   const activeTab = parseTab(searchParams.get("tab"));
   const [visited, setVisited] = useState<Set<RecordTab>>(
     () => new Set<RecordTab>([activeTab]),
   );
+  if (!visited.has(activeTab)) {
+    const next = new Set(visited);
+    next.add(activeTab);
+    setVisited(next);
+  }
+  const [notesAlert, setNotesAlert] = useState(false);
+  const [commsAlert, setCommsAlert] = useState(false);
+  const notesHold = useRef(false);
+  const notesRequest = useRef(0);
 
   const contacts = customer.contacts ?? [];
   const addresses = customer.addresses ?? [];
+  const showNotesAlert = activeTab !== "notes" && notesAlert;
+  const showCommsAlert = isAdmin && commsAlert;
+
+  const loadAttention = useCallback(async () => {
+    const request = notesRequest.current;
+    try {
+      const attention = await getCustomerAttention(token, customer._id);
+      setCommsAlert(attention.unreadCommunications);
+      if (request !== notesRequest.current) return;
+      setNotesAlert(attention.unviewedNotes || notesHold.current);
+    } catch {
+      // A failed check leaves the dots as they were.
+    }
+  }, [token, customer._id]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadAttention();
+  }, [loadAttention]);
+
+  useEffect(() => {
+    function refresh() {
+      if (document.visibilityState === "hidden") return;
+      void loadAttention();
+    }
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [loadAttention]);
+
+  const handleUnviewedChange = useCallback((hasUnviewed: boolean) => {
+    notesHold.current = hasUnviewed;
+    notesRequest.current += 1;
+    setNotesAlert(hasUnviewed);
+  }, []);
 
   const tabs = useMemo(
     () => [
+      { id: "contacts" as const, label: "Contacts", alert: false },
+      { id: "address" as const, label: "Address", alert: false },
       {
-        id: "contacts" as const,
-        label: `Contacts${contacts.length > 0 ? ` (${contacts.length})` : ""}`,
+        id: "notes" as const,
+        label: "Notes",
+        alert: showNotesAlert,
+        alertLabel: "Notes, unviewed note",
       },
+      { id: "contracts" as const, label: "Contracts", alert: false },
       {
-        id: "address" as const,
-        label: `Address${addresses.length > 0 ? ` (${addresses.length})` : ""}`,
+        id: "communications" as const,
+        label: "Communications",
+        alert: showCommsAlert,
+        alertLabel: "Communications, unread message",
       },
-      { id: "notes" as const, label: "Notes" },
-      {
-        id: "contracts" as const,
-        label: `Contracts${contracts.length > 0 ? ` (${contracts.length})` : ""}`,
-      },
-      { id: "communications" as const, label: "Communications" },
     ],
-    [contacts.length, addresses.length, contracts.length],
+    [showNotesAlert, showCommsAlert],
   );
-
-  useEffect(() => {
-    setVisited((prev) => {
-      if (prev.has(activeTab)) return prev;
-      const next = new Set(prev);
-      next.add(activeTab);
-      return next;
-    });
-  }, [activeTab]);
 
   function setTab(id: RecordTab) {
     const params = new URLSearchParams(searchParams.toString());
@@ -161,6 +201,7 @@ export default function CustomerRecordCard({
             key={tab.id}
             type="button"
             onClick={() => setTab(tab.id)}
+            aria-label={tab.alert ? tab.alertLabel : tab.label}
             className={`inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${
               activeTab === tab.id
                 ? "bg-brand-orange text-white"
@@ -168,6 +209,14 @@ export default function CustomerRecordCard({
             }`}
           >
             {tab.label}
+            {tab.alert ? (
+              <span
+                className={`ml-1.5 inline-block h-2 w-2 rounded-full ${
+                  activeTab === tab.id ? "bg-white" : "bg-brand-orange"
+                }`}
+                aria-hidden
+              />
+            ) : null}
           </button>
         ))}
       </div>
@@ -204,6 +253,8 @@ export default function CustomerRecordCard({
             customerId={customer._id}
             userId={userId}
             enabled
+            active={activeTab === "notes"}
+            onUnviewedChange={handleUnviewedChange}
             newNoteInputId="customerRecordNewNote"
           />
         </div>

@@ -20,6 +20,7 @@ import {
   getMailboxMessages,
   getMailboxThread,
   getUsers,
+  locateMailboxMessage,
   replyToMailboxMessage,
   setMailboxAssignees,
   updateEmailAccount,
@@ -31,7 +32,42 @@ type EmailInboxPanelProps = {
   initialAccountId?: string;
   initialFolder?: MailboxFolder;
   initialUid?: number | null;
+  initialMessageId?: string;
 };
+
+type DeepLink = {
+  accountId: string;
+  folder: MailboxFolder;
+  uid: number | null;
+  messageId: string;
+  applied: boolean;
+};
+
+function positiveUid(uid: number | null | undefined): number | null {
+  return uid && uid > 0 ? uid : null;
+}
+
+function deepLinkFromProps(
+  accountId: string,
+  folder: MailboxFolder,
+  uid: number | null | undefined,
+  messageId: string | undefined,
+): DeepLink {
+  const resolvedUid = positiveUid(uid);
+  const resolvedMessageId = resolvedUid ? "" : (messageId ?? "").trim();
+  return {
+    accountId,
+    folder,
+    uid: resolvedUid,
+    messageId: resolvedMessageId,
+    applied: !(accountId && (resolvedUid || resolvedMessageId)),
+  };
+}
+
+function deepLinkKey(link: DeepLink): string {
+  if (!link.accountId || (!link.uid && !link.messageId)) return "";
+  return `${link.accountId}:${link.folder}:${link.uid ?? ""}:${link.messageId}`;
+}
 
 function formatWhen(value: string | null, style: "short" | "full" = "short"): string {
   if (!value) return "";
@@ -179,7 +215,11 @@ export default function EmailInboxPanel({
   initialAccountId = "",
   initialFolder = "inbox",
   initialUid = null,
+  initialMessageId = "",
 }: EmailInboxPanelProps) {
+  const openingFromMessageId = Boolean(
+    initialAccountId && initialMessageId.trim() && !positiveUid(initialUid),
+  );
   const [accounts, setAccounts] = useState<EmailAccountItem[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [accountId, setAccountId] = useState("");
@@ -187,12 +227,17 @@ export default function EmailInboxPanel({
   const [messages, setMessages] = useState<MailboxMessageSummary[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
+  const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(
+    openingFromMessageId ? "opening" : null,
+  );
   const [focusedUid, setFocusedUid] = useState<number | null>(null);
   const [thread, setThread] = useState<MailboxThreadMessage[] | null>(null);
   const [loadingThread, setLoadingThread] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [openingLink, setOpeningLink] = useState(openingFromMessageId);
   const [listAttempt, setListAttempt] = useState(0);
+  const [locateAttempt, setLocateAttempt] = useState(0);
   const [threadAttempt, setThreadAttempt] = useState(0);
   const [staff, setStaff] = useState<UserListItem[]>([]);
   const [taggingOpen, setTaggingOpen] = useState(false);
@@ -204,27 +249,27 @@ export default function EmailInboxPanel({
   const [replyNotice, setReplyNotice] = useState<string | null>(null);
   const [savingAutoReply, setSavingAutoReply] = useState(false);
   const [autoReplyError, setAutoReplyError] = useState<string | null>(null);
-  const deepLinkRef = useRef({
-    accountId: initialAccountId,
-    folder: initialFolder,
-    uid: initialUid && initialUid > 0 ? initialUid : null,
-    done: !(initialUid && initialUid > 0 && initialAccountId),
-  });
-  const incomingLink =
-    initialAccountId && initialUid && initialUid > 0
-      ? `${initialAccountId}:${initialFolder}:${initialUid}`
-      : "";
+  const deepLinkRef = useRef<DeepLink>(
+    deepLinkFromProps(initialAccountId, initialFolder, initialUid, initialMessageId),
+  );
+  const incomingLink = deepLinkKey(
+    deepLinkFromProps(initialAccountId, initialFolder, initialUid, initialMessageId),
+  );
   const [appliedLink, setAppliedLink] = useState(incomingLink);
   if (incomingLink && incomingLink !== appliedLink) {
+    const next = deepLinkFromProps(
+      initialAccountId,
+      initialFolder,
+      initialUid,
+      initialMessageId,
+    );
     setAppliedLink(incomingLink);
     setAccountId(initialAccountId);
     setFolder(initialFolder);
-    deepLinkRef.current = {
-      accountId: initialAccountId,
-      folder: initialFolder,
-      uid: initialUid,
-      done: false,
-    };
+    setLinkError(null);
+    setOpeningLink(Boolean(next.messageId));
+    setSelectedThreadKey(next.messageId ? "opening" : null);
+    deepLinkRef.current = next;
   }
 
   useEffect(() => {
@@ -276,42 +321,49 @@ export default function EmailInboxPanel({
   const threads = useMemo(() => groupThreads(messages), [messages]);
 
   useEffect(() => {
+    const link = deepLinkRef.current;
+    const locating = Boolean(link.messageId && !link.uid && !link.applied);
     if (!mailboxReady || !accountId) {
       setMessages([]);
       setListError(null);
-      setSelectedThreadKey(null);
-      setFocusedUid(null);
-      setThread(null);
+      if (!locating) {
+        setSelectedThreadKey(null);
+        setFocusedUid(null);
+        setThread(null);
+      }
       return;
     }
 
     let cancelled = false;
     setLoadingMessages(true);
     setListError(null);
-    setSelectedThreadKey(null);
-    setFocusedUid(null);
-    setThread(null);
-    setThreadError(null);
-    setComposeMode(null);
-    setReplyNotice(null);
-    setTaggingOpen(false);
+    if (!locating) {
+      setSelectedThreadKey(null);
+      setFocusedUid(null);
+      setThread(null);
+      setThreadError(null);
+      setComposeMode(null);
+      setReplyNotice(null);
+      setTaggingOpen(false);
+    }
     getMailboxMessages(token, accountId, folder)
       .then(({ messages: list }) => {
         if (cancelled) return;
         setMessages(list);
-        const link = deepLinkRef.current;
+        const pending = deepLinkRef.current;
         if (
-          !link.done &&
-          link.uid &&
-          accountId === link.accountId &&
-          folder === link.folder
+          !pending.applied &&
+          pending.uid &&
+          accountId === pending.accountId &&
+          folder === pending.folder
         ) {
-          const match = list.find((message) => message.uid === link.uid);
-          if (match) {
-            setSelectedThreadKey(threadKeyOf(match));
-            setFocusedUid(match.uid);
-          }
-          link.done = true;
+          const match = list.find((message) => message.uid === pending.uid);
+          setSelectedThreadKey(
+            match ? threadKeyOf(match) : `uid:${folder}:${pending.uid}`,
+          );
+          setFocusedUid(pending.uid);
+          pending.applied = true;
+          setOpeningLink(false);
         }
       })
       .catch((err) => {
@@ -327,7 +379,69 @@ export default function EmailInboxPanel({
     return () => {
       cancelled = true;
     };
-  }, [token, accountId, folder, mailboxReady, listAttempt]);
+  }, [token, accountId, folder, mailboxReady, listAttempt, locateAttempt]);
+
+  useEffect(() => {
+    const link = deepLinkRef.current;
+    if (link.applied || !link.messageId || link.uid) return;
+    if (loadingAccounts) return;
+    const connected = accounts.some(
+      (account) => account._id === link.accountId && account.imapHost?.trim(),
+    );
+    if (!connected || accountId !== link.accountId) {
+      if (!connected) {
+        link.applied = true;
+        link.messageId = "";
+        setOpeningLink(false);
+        setLinkError("This email is not in the connected mailbox.");
+        setSelectedThreadKey("missing");
+      }
+      return;
+    }
+    if (!mailboxReady) return;
+
+    let cancelled = false;
+    setOpeningLink(true);
+    setLinkError(null);
+    setSelectedThreadKey("opening");
+    locateMailboxMessage(token, link.accountId, link.messageId)
+      .then((found) => {
+        if (cancelled || deepLinkRef.current.applied) return;
+        link.uid = found.uid;
+        link.folder = found.folder;
+        link.messageId = "";
+        if (found.folder !== folder) {
+          setFolder(found.folder);
+          return;
+        }
+        setLocateAttempt((attempt) => attempt + 1);
+      })
+      .catch((err) => {
+        if (cancelled || deepLinkRef.current.applied) return;
+        link.applied = true;
+        link.messageId = "";
+        setOpeningLink(false);
+        setLinkError(
+          err instanceof ApiError
+            ? err.status === 404
+              ? "This email is not in the connected mailbox."
+              : err.message
+            : "Could not open this email.",
+        );
+        setSelectedThreadKey("missing");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    token,
+    mailboxReady,
+    accountId,
+    folder,
+    appliedLink,
+    loadingAccounts,
+    accounts,
+  ]);
 
   useEffect(() => {
     if (!mailboxReady || !accountId || focusedUid == null) {
@@ -504,9 +618,17 @@ export default function EmailInboxPanel({
     }
   }
 
+  function abandonDeepLink() {
+    deepLinkRef.current.applied = true;
+    deepLinkRef.current.messageId = "";
+    setOpeningLink(false);
+    setLinkError(null);
+  }
+
   function selectThread(group: MailboxMessageSummary[]) {
     const latest = group[0];
     if (!latest) return;
+    abandonDeepLink();
     setSelectedThreadKey(threadKeyOf(latest));
     setFocusedUid(latest.uid);
     setTaggingOpen(false);
@@ -527,7 +649,10 @@ export default function EmailInboxPanel({
               <button
                 key={value}
                 type="button"
-                onClick={() => setFolder(value)}
+                onClick={() => {
+                  abandonDeepLink();
+                  setFolder(value);
+                }}
                 className={`rounded-md px-2.5 py-1 text-xs font-medium ${
                   active
                     ? "bg-brand-dark text-white"
@@ -557,7 +682,10 @@ export default function EmailInboxPanel({
         {accounts.length > 0 ? (
           <select
             value={accountId}
-            onChange={(event) => setAccountId(event.target.value)}
+            onChange={(event) => {
+              abandonDeepLink();
+              setAccountId(event.target.value);
+            }}
             className="max-w-full rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2 py-1 text-[11px] text-neutral-600 outline-none focus:border-brand-orange"
           >
             {accounts.map((account) => (
@@ -720,7 +848,14 @@ export default function EmailInboxPanel({
                 selectedThreadKey == null ? "hidden md:flex" : "flex"
               }`}
             >
-              {focusedUid == null ? (
+              {linkError ? (
+                <p className="p-4 text-xs text-neutral-500">{linkError}</p>
+              ) : openingLink && focusedUid == null ? (
+                <div className="flex items-center gap-2 p-4 text-xs text-neutral-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Opening thread…
+                </div>
+              ) : focusedUid == null ? (
                 <p className="p-4 text-xs text-neutral-500">
                   Select a message to read the thread.
                 </p>

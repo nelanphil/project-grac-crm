@@ -8,6 +8,7 @@ import {
   getMailboxMessageHandler,
   getMailboxThreadHandler,
   listMailboxMessagesHandler,
+  locateMailboxMessageHandler,
   replyMailboxMessageHandler,
   setMailboxAssigneesHandler,
 } from "../controllers/emailMailbox.controller";
@@ -17,6 +18,11 @@ const router = Router();
 router.use(authenticate);
 router.use(requireRole("admin", "super-admin"));
 
+router.get(
+  "/:accountId/locate",
+  requirePermission("messages:read"),
+  locateMailboxMessageHandler,
+);
 router.get(
   "/:accountId/messages",
   requirePermission("messages:read"),

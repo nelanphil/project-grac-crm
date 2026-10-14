@@ -10,6 +10,7 @@ import {
 import { normalizeMessageId } from "../utils/mailboxReply";
 import {
   belongsToThread,
+  messageIdLookupValues,
   relatedMessageIds,
   threadIdSet,
 } from "../utils/mailboxThread";
@@ -206,6 +207,7 @@ function openMailboxClient(
   account: IEmailAccount,
   host: string,
   password: string,
+  connectionTimeout = 15_000,
 ): ImapFlow {
   return new ImapFlow({
     host,
@@ -213,7 +215,9 @@ function openMailboxClient(
     secure: account.imapSecure !== false,
     auth: { user: account.username, pass: password },
     logger: false,
-    connectionTimeout: 15_000,
+    connectionTimeout,
+    greetingTimeout: connectionTimeout,
+    socketTimeout: connectionTimeout,
   });
 }
 
@@ -370,6 +374,76 @@ export async function listMailboxMessages(
   });
 }
 
+const UNSEEN_SEARCH_LIMIT = 15;
+const UNSEEN_SEARCH_TIMEOUT_MS = 4_000;
+
+export type UnseenFromQuery =
+  | { seen: false; from: string }
+  | { seen: false; or: { from: string }[] };
+
+/** IMAP search for unseen inbox mail from these addresses. Empty input searches nothing. */
+export function unseenFromQuery(addresses: string[]): UnseenFromQuery | null {
+  const from = [
+    ...new Set(
+      addresses
+        .map((address) => address.trim().toLowerCase())
+        .filter((address) => address.length > 0),
+    ),
+  ].slice(0, UNSEEN_SEARCH_LIMIT);
+  if (from.length === 0) return null;
+  if (from.length === 1) return { seen: false, from: from[0] };
+  return { seen: false, or: from.map((address) => ({ from: address })) };
+}
+
+/**
+ * True when INBOX has an unseen message from one of the addresses.
+ * Does not mark mail seen. Closes the connection if the server is slow.
+ */
+export async function hasUnseenInboxFrom(
+  account: IEmailAccount,
+  addresses: string[],
+): Promise<boolean> {
+  const query = unseenFromQuery(addresses);
+  if (!query) return false;
+
+  const { host, password } = assertImapReady(account);
+  const client = openMailboxClient(
+    account,
+    host,
+    password,
+    UNSEEN_SEARCH_TIMEOUT_MS,
+  );
+  let connected = false;
+  let settled = false;
+  const killer = setTimeout(() => {
+    if (!settled) client.close();
+  }, UNSEEN_SEARCH_TIMEOUT_MS);
+
+  try {
+    await client.connect();
+    connected = true;
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      const found = await client.search(query as never, { uid: true });
+      return Array.isArray(found) && found.length > 0;
+    } finally {
+      lock.release();
+    }
+  } finally {
+    settled = true;
+    clearTimeout(killer);
+    if (connected) {
+      try {
+        await client.logout();
+      } catch {
+        client.close();
+      }
+    } else {
+      client.close();
+    }
+  }
+}
+
 export async function appendToSentFolder(
   account: IEmailAccount,
   raw: Buffer,
@@ -445,6 +519,91 @@ async function readLockedMessage(
   };
 }
 
+const THREAD_HEADERS = ["message-id", "in-reply-to", "references"] as const;
+const LOCATE_UID_CAP = 40;
+
+export type MailboxLocationCandidate = {
+  folder: MailboxFolder;
+  uid: number;
+  dateMs: number;
+  messageId: string;
+};
+
+/** Prefer the Sent copy whose Message-ID matches. Otherwise the newest related message. */
+export function chooseMailboxLocation(
+  messageId: string,
+  candidates: MailboxLocationCandidate[],
+): { folder: MailboxFolder; uid: number } | null {
+  if (candidates.length === 0) return null;
+  const target = normalizeMessageId(messageId);
+  const sentExact = target
+    ? candidates.filter(
+        (item) =>
+          item.folder === "sent" &&
+          normalizeMessageId(item.messageId) === target,
+      )
+    : [];
+  const pool = sentExact.length > 0 ? sentExact : candidates;
+  const newest = pool.reduce((best, item) => {
+    if (item.dateMs !== best.dateMs) {
+      return item.dateMs > best.dateMs ? item : best;
+    }
+    return item.uid > best.uid ? item : best;
+  });
+  return { folder: newest.folder, uid: newest.uid };
+}
+
+async function searchHeaderUids(
+  client: ImapFlow,
+  header: string,
+  values: string[],
+): Promise<number[]> {
+  const uids = new Set<number>();
+  for (const value of values) {
+    const needle = value.trim();
+    if (!needle) continue;
+    try {
+      const found = await client.search(
+        { header: { [header]: needle } } as never,
+        { uid: true },
+      );
+      if (!Array.isArray(found)) continue;
+      for (const match of found) uids.add(match);
+    } catch (err) {
+      console.error("[mailbox] header search failed:", header, err);
+    }
+  }
+  return [...uids];
+}
+
+function cappedUids(uids: Iterable<number>): number[] {
+  return [...new Set(uids)].sort((left, right) => right - left).slice(0, LOCATE_UID_CAP);
+}
+
+async function describeLocated(
+  client: ImapFlow,
+  folder: MailboxFolder,
+  uids: Iterable<number>,
+): Promise<MailboxLocationCandidate[]> {
+  const rows: MailboxLocationCandidate[] = [];
+  for (const uid of cappedUids(uids)) {
+    const msg = await client.fetchOne(
+      String(uid),
+      { uid: true, envelope: true, internalDate: true },
+      { uid: true },
+    );
+    if (!msg) continue;
+    const date = messageDate(msg.envelope?.date, msg.internalDate);
+    rows.push({
+      folder,
+      uid: msg.uid,
+      dateMs: date ? new Date(date).getTime() : 0,
+      messageId: msg.envelope?.messageId?.trim() || "",
+    });
+  }
+  return rows;
+}
+
 async function searchThreadUids(
   client: ImapFlow,
   ids: string[],
@@ -453,20 +612,68 @@ async function searchThreadUids(
   for (const id of ids) {
     const bracketed = normalizeMessageId(id);
     if (!bracketed) continue;
-    for (const header of ["message-id", "in-reply-to", "references"]) {
-      try {
-        const found = await client.search(
-          { header: { [header]: bracketed } } as never,
-          { uid: true },
-        );
-        if (!Array.isArray(found)) continue;
-        for (const match of found) uids.add(match);
-      } catch (err) {
-        console.error("[mailbox] thread header search failed:", header, err);
-      }
+    for (const header of THREAD_HEADERS) {
+      const found = await searchHeaderUids(client, header, [bracketed]);
+      for (const match of found) uids.add(match);
     }
   }
   return [...uids];
+}
+
+async function sentFolderPath(client: ImapFlow): Promise<string | null> {
+  try {
+    return await resolveFolderPath(client, "sent");
+  } catch (err) {
+    if (err instanceof MailboxError) return null;
+    throw err;
+  }
+}
+
+export async function locateMailboxMessage(
+  account: IEmailAccount,
+  rawMessageId: string,
+): Promise<{ folder: MailboxFolder; uid: number } | null> {
+  const target = normalizeMessageId(rawMessageId);
+  if (!target) {
+    throw new MailboxError("Message id is required.", 400);
+  }
+  const lookup = messageIdLookupValues([rawMessageId]);
+
+  return withMailboxClient(account, async (client) => {
+    const sentPath = await sentFolderPath(client);
+    if (sentPath) {
+      const exact = await withMailboxLock(client, sentPath, async () => {
+        const uids = await searchHeaderUids(client, "message-id", lookup);
+        const described = await describeLocated(client, "sent", uids);
+        return chooseMailboxLocation(
+          target,
+          described.filter(
+            (item) => normalizeMessageId(item.messageId) === target,
+          ),
+        );
+      });
+      if (exact) return exact;
+    }
+
+    const folders: { folder: MailboxFolder; path: string }[] = [
+      { folder: "inbox", path: "INBOX" },
+    ];
+    if (sentPath) folders.push({ folder: "sent", path: sentPath });
+
+    const candidates: MailboxLocationCandidate[] = [];
+    for (const item of folders) {
+      const found = await withMailboxLock(client, item.path, async () => {
+        const uids = new Set<number>();
+        for (const header of THREAD_HEADERS) {
+          const matches = await searchHeaderUids(client, header, lookup);
+          for (const uid of matches) uids.add(uid);
+        }
+        return describeLocated(client, item.folder, uids);
+      });
+      candidates.push(...found);
+    }
+    return chooseMailboxLocation(target, candidates);
+  });
 }
 
 export async function getMailboxMessage(

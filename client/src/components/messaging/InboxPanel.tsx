@@ -14,6 +14,7 @@ type InboxPanelProps = {
   initialEmailAccountId?: string;
   initialEmailFolder?: MailboxFolder;
   initialEmailUid?: number | null;
+  initialEmailMessageId?: string;
 };
 
 const VIEWS: { id: InboxView; label: string }[] = [
@@ -28,11 +29,13 @@ export default function InboxPanel({
   initialEmailAccountId,
   initialEmailFolder,
   initialEmailUid,
+  initialEmailMessageId = "",
 }: InboxPanelProps) {
   const [view, setView] = useState<InboxView>(initialView);
+  const messageId = initialEmailMessageId.trim();
   const incomingEmailLink =
-    initialEmailAccountId && initialEmailUid
-      ? `${initialEmailAccountId}:${initialEmailFolder ?? "inbox"}:${initialEmailUid}`
+    initialEmailAccountId && (initialEmailUid || messageId)
+      ? `${initialEmailAccountId}:${initialEmailFolder ?? "inbox"}:${initialEmailUid ?? ""}:${messageId}`
       : "";
   const [appliedEmailLink, setAppliedEmailLink] = useState(incomingEmailLink);
   if (incomingEmailLink && incomingEmailLink !== appliedEmailLink) {
@@ -68,6 +71,7 @@ export default function InboxPanel({
           initialAccountId={initialEmailAccountId}
           initialFolder={initialEmailFolder}
           initialUid={initialEmailUid}
+          initialMessageId={messageId}
         />
       ) : (
         <ThreadsPanel token={token} accounts={accounts} />

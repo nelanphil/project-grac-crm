@@ -129,7 +129,7 @@ export default function MessagingHub() {
   const mailboxLink =
     searchParams.get("view") === "email" &&
     searchParams.get("accountId") &&
-    searchParams.get("uid")
+    (searchParams.get("uid") || searchParams.get("messageId"))
       ? searchParams.toString()
       : "";
   const [appliedMailboxLink, setAppliedMailboxLink] = useState(mailboxLink);
@@ -1714,6 +1714,7 @@ export default function MessagingHub() {
             searchParams.get("folder") === "sent" ? "sent" : "inbox"
           }
           initialEmailUid={Number(searchParams.get("uid")) || null}
+          initialEmailMessageId={searchParams.get("messageId") ?? ""}
         />
       )}
     </div>

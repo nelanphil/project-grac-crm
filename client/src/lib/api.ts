@@ -1631,8 +1631,15 @@ export interface CustomerNote {
   authorId: string;
   author: CustomerNoteAuthor;
   content: string;
+  /** True only for notes nobody has opened yet. Older notes stay false. */
+  unviewed: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CustomerAttention {
+  unviewedNotes: boolean;
+  unreadCommunications: boolean;
 }
 
 export async function getCustomerNotes(
@@ -1688,6 +1695,31 @@ export async function deleteCustomerNote(
       headers: { Authorization: `Bearer ${token}` },
     },
   );
+}
+
+export async function markCustomerNotesViewed(
+  token: string,
+  customerId: string,
+  noteIds: string[],
+): Promise<{ viewed: number }> {
+  return authRequest<{ viewed: number }>(
+    `/customers/${customerId}/notes/viewed`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ noteIds }),
+    },
+  );
+}
+
+export async function getCustomerAttention(
+  token: string,
+  customerId: string,
+): Promise<CustomerAttention> {
+  return authRequest<CustomerAttention>(`/customers/${customerId}/attention`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 export interface WorkOrderNoteAuthor {
@@ -4562,6 +4594,21 @@ export interface MailboxThreadMessage {
   customer: MailboxCustomerLink | null;
 }
 
+export async function locateMailboxMessage(
+  token: string,
+  accountId: string,
+  messageId: string,
+): Promise<{ folder: MailboxFolder; uid: number }> {
+  const params = new URLSearchParams({ messageId });
+  return authRequest<{ folder: MailboxFolder; uid: number }>(
+    `/email-mailbox/${accountId}/locate?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export async function getMailboxMessages(
   token: string,
   accountId: string,
@@ -5098,6 +5145,60 @@ export async function deleteCloudinaryCredentials(
   token: string,
 ): Promise<{ message: string }> {
   return authRequest<{ message: string }>("/cloudinary-credentials", {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Quo credentials
+// ---------------------------------------------------------------------------
+
+export interface QuoCredentialsItem {
+  _id: string;
+  label?: string;
+  isActive: boolean;
+  hasApiKey: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuoCredentialsInput {
+  apiKey?: string;
+  label?: string;
+  isActive?: boolean;
+}
+
+export async function getQuoCredentials(
+  token: string,
+): Promise<{ credentials: QuoCredentialsItem | null }> {
+  return authRequest<{ credentials: QuoCredentialsItem | null }>(
+    "/quo-credentials",
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function saveQuoCredentials(
+  token: string,
+  data: QuoCredentialsInput,
+): Promise<{ credentials: QuoCredentialsItem }> {
+  return authRequest<{ credentials: QuoCredentialsItem }>(
+    "/quo-credentials",
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function deleteQuoCredentials(
+  token: string,
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>("/quo-credentials", {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });

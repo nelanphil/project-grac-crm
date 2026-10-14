@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import PaymentPlatformAppsCard from "@/components/admin/PaymentPlatformAppsCard";
 import CloudinaryCredentialsCard from "@/components/admin/CloudinaryCredentialsCard";
+import QuoCredentialsCard from "@/components/admin/QuoCredentialsCard";
 import PublicAssetManagerCard from "@/components/admin/PublicAssetManagerCard";
 import ContactFormEmailsCard from "@/components/admin/ContactFormEmailsCard";
 import DatabaseSection from "@/components/admin/DatabaseSection";
@@ -119,7 +120,10 @@ function AdminContent() {
         <PaymentPlatformAppsCard token={token} />
       )}
       {activeTab === "api-credentials" && (
-        <CloudinaryCredentialsCard token={token} />
+        <div className="space-y-6">
+          <CloudinaryCredentialsCard token={token} />
+          <QuoCredentialsCard token={token} />
+        </div>
       )}
       {activeTab === "public-images" && (
         <PublicAssetManagerCard token={token} />

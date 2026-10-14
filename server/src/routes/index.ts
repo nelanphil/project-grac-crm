@@ -39,6 +39,7 @@ import payLinkRoutes from "./payLink.routes";
 import checkoutRoutes from "./checkout.routes";
 import portalRoutes from "./portal.routes";
 import cloudinaryCredentialsRoutes from "./cloudinaryCredentials.routes";
+import quoCredentialsRoutes from "./quoCredentials.routes";
 import paymentPlatformAppRoutes from "./paymentPlatformApp.routes";
 import publicAssetRoutes from "./publicAsset.routes";
 import contactRouter, {
@@ -100,6 +101,7 @@ router.use("/pay", payLinkRoutes);
 router.use("/checkout", checkoutRoutes);
 router.use("/portal", portalRoutes);
 router.use("/cloudinary-credentials", cloudinaryCredentialsRoutes);
+router.use("/quo-credentials", quoCredentialsRoutes);
 router.use("/payment-platform-apps", paymentPlatformAppRoutes);
 router.get("/public-assets/:slug/health", publicAssetHealth);
 router.get("/public-assets/:slug", getPublicAssetBySlug);

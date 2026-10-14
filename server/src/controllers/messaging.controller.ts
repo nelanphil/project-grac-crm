@@ -26,6 +26,7 @@ import {
   parseFutureScheduledAt,
   ScheduledAtError,
 } from "../utils/scheduledEmail";
+import { unreadTextQuery } from "../utils/unreadMessageThread";
 import {
   MERGE_FIELDS,
   templateUsesPaymentLink,
@@ -1146,17 +1147,6 @@ function isoOrNull(value: unknown): string | null {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "string" && value) return value;
   return null;
-}
-
-function unreadTextQuery(): Record<string, unknown> {
-  return {
-    lastMessageDirection: "inbound",
-    lastMessageChannel: { $in: ["sms", "mms"] },
-    $or: [
-      { readAt: null },
-      { $expr: { $gt: ["$lastMessageAt", "$readAt"] } },
-    ],
-  };
 }
 
 async function buildThreadLookups(

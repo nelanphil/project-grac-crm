@@ -4,8 +4,10 @@ import {
   MAILBOX_CREDENTIAL_MESSAGE,
   MAILBOX_TEMPORARY_LOGIN_MESSAGE,
   MailboxError,
+  chooseMailboxLocation,
   isTemporaryImapAuthFailure,
   toMailboxError,
+  unseenFromQuery,
 } from "./mailbox.service";
 
 describe("isTemporaryImapAuthFailure", () => {
@@ -80,5 +82,69 @@ describe("toMailboxError", () => {
   it("passes through an existing MailboxError", () => {
     const original = new MailboxError("IMAP is not configured for this account.", 400);
     assert.equal(toMailboxError(original), original);
+  });
+});
+
+describe("chooseMailboxLocation", () => {
+  const sentOriginal = {
+    folder: "sent" as const,
+    uid: 4,
+    dateMs: 100,
+    messageId: "<parent@example.com>",
+  };
+  const inboxReply = {
+    folder: "inbox" as const,
+    uid: 9,
+    dateMs: 300,
+    messageId: "<reply@example.com>",
+  };
+
+  it("prefers the Sent message whose Message-ID matches", () => {
+    assert.deepEqual(
+      chooseMailboxLocation("<parent@example.com>", [inboxReply, sentOriginal]),
+      { folder: "sent", uid: 4 },
+    );
+  });
+
+  it("uses the newest related message when Sent has no exact copy", () => {
+    assert.deepEqual(
+      chooseMailboxLocation("parent@example.com", [
+        { ...inboxReply, dateMs: 200 },
+        {
+          folder: "inbox",
+          uid: 2,
+          dateMs: 50,
+          messageId: "<older@example.com>",
+        },
+      ]),
+      { folder: "inbox", uid: 9 },
+    );
+  });
+
+  it("returns null when nothing matched", () => {
+    assert.equal(chooseMailboxLocation("<parent@example.com>", []), null);
+  });
+});
+
+describe("unseenFromQuery", () => {
+  it("searches nothing when there are no addresses", () => {
+    assert.equal(unseenFromQuery(["", "  "]), null);
+  });
+
+  it("requires the message to be unseen and from that address", () => {
+    assert.deepEqual(unseenFromQuery([" Laura@Example.com "]), {
+      seen: false,
+      from: "laura@example.com",
+    });
+  });
+
+  it("ORs distinct addresses and ignores duplicates", () => {
+    assert.deepEqual(
+      unseenFromQuery(["a@example.com", "A@example.com", "b@example.com"]),
+      {
+        seen: false,
+        or: [{ from: "a@example.com" }, { from: "b@example.com" }],
+      },
+    );
   });
 });

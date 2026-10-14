@@ -36,6 +36,36 @@ function formatTime(iso: string): string {
   return d.toLocaleString();
 }
 
+function emailSnippet(body: string, html: string): string {
+  const source = body.trim() || html;
+  return source
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/p>/gi, " ")
+    .replace(/<\/div>/gi, " ")
+    .replace(/<\/li>/gi, " ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function emailThreadHref(row: EmailCommunicationItem): string | null {
+  if (!row.emailAccountRef || !row.providerMessageId) return null;
+  const params = new URLSearchParams({
+    tab: "inbox",
+    view: "email",
+    accountId: row.emailAccountRef,
+    messageId: row.providerMessageId,
+  });
+  return `/dashboard/messaging?${params.toString()}`;
+}
+
 type CommunicationHistoryPanelProps = {
   customerId: string;
   contacts: CustomerContact[];
@@ -296,44 +326,48 @@ export default function CommunicationHistoryPanel({
         </p>
       ) : channel === "email" ? (
         <ul className="divide-y divide-neutral-100">
-          {emailRows.map((row) => (
-            <li key={row._id} className="py-3">
-              <div className="flex flex-wrap items-start justify-between gap-2">
+          {emailRows.map((row) => {
+            const snippet = emailSnippet(row.body, row.html);
+            const href = emailThreadHref(row);
+            const preview = (
+              <div className="flex items-start justify-between gap-3 py-3">
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
-                    <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-medium uppercase text-neutral-700">
-                      email
-                    </span>
-                    <span className="capitalize">{row.status}</span>
-                    <span className="rounded bg-neutral-50 px-1.5 py-0.5">
-                      {row.accountFriendlyName ||
-                        `${row.fromName} <${row.fromEmail}>`}
-                    </span>
-                    <span>{row.toEmail}</span>
-                    {row.contactRef ? (
-                      <span>
-                        {contactNameById.get(row.contactRef) || "Contact"}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 text-sm font-medium text-brand-dark">
+                  <p className="truncate text-sm font-medium text-brand-dark">
                     {row.subject || "(no subject)"}
                   </p>
-                  <p className="mt-1 text-sm text-neutral-600 whitespace-pre-wrap">
-                    {row.body || "(no text)"}
+                  <p className="mt-0.5 truncate text-xs text-neutral-500">
+                    {snippet || "(no text)"}
                   </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-neutral-400">
+                    <span className="capitalize">{row.status}</span>
+                    <span className="truncate">{row.toEmail}</span>
+                  </div>
                   {row.errorMessage ? (
                     <p className="mt-1 text-xs text-red-600">
                       {row.errorMessage}
                     </p>
                   ) : null}
                 </div>
-                <div className="text-right text-[11px] text-neutral-400">
-                  <div>{formatTime(row.createdAt)}</div>
+                <div className="shrink-0 text-[11px] text-neutral-400">
+                  {formatTime(row.createdAt)}
                 </div>
               </div>
-            </li>
-          ))}
+            );
+            return (
+              <li key={row._id}>
+                {href ? (
+                  <Link
+                    href={href}
+                    className="block rounded-md hover:bg-neutral-50"
+                  >
+                    {preview}
+                  </Link>
+                ) : (
+                  preview
+                )}
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <ul className="divide-y divide-neutral-100">

@@ -13,6 +13,10 @@ export const mailboxMessageQuerySchema = z.object({
   folder: mailboxFolderSchema,
 });
 
+export const mailboxLocateQuerySchema = z.object({
+  messageId: z.string().trim().min(1).max(998),
+});
+
 export const mailboxReplySchema = z.object({
   folder: mailboxFolderSchema,
   mode: z.enum(["reply", "replyAll", "forward"]),

@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   createCustomerNote,
   CustomerNote,
   deleteCustomerNote,
   getCustomerNotes,
+  markCustomerNotesViewed,
   updateCustomerNote,
 } from "@/lib/api";
 import CustomerNoteItem from "./CustomerNoteItem";
@@ -22,6 +23,10 @@ interface CustomerNotesPanelProps {
   viewAllHref?: string;
   /** When true, fetches notes (e.g. when the notes view is active). */
   enabled?: boolean;
+  /** When true, notes on screen are marked viewed for the whole team. */
+  active?: boolean;
+  /** A note was added during this visit and is still unviewed. */
+  onUnviewedChange?: (hasUnviewed: boolean) => void;
   newNoteInputId?: string;
 }
 
@@ -32,6 +37,8 @@ export default function CustomerNotesPanel({
   limit,
   viewAllHref,
   enabled = true,
+  active = true,
+  onUnviewedChange,
   newNoteInputId = "newCustomerNote",
 }: CustomerNotesPanelProps) {
   const [notes, setNotes] = useState<CustomerNote[]>([]);
@@ -47,6 +54,8 @@ export default function CustomerNotesPanel({
   const [savingEdit, setSavingEdit] = useState(false);
 
   const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
+  const createdThisVisit = useRef(new Set<string>());
+  const markGeneration = useRef(0);
 
   const loadNotes = useCallback(async () => {
     setLoadingNotes(true);
@@ -71,6 +80,44 @@ export default function CustomerNotesPanel({
     }
   }, [enabled, notesLoaded, loadingNotes, loadNotes]);
 
+  useEffect(() => {
+    if (!active) {
+      createdThisVisit.current.clear();
+      return;
+    }
+    if (!notesLoaded) return;
+
+    const onScreen = limit != null ? notes.slice(0, limit) : notes;
+    const ids = onScreen
+      .filter(
+        (note) => note.unviewed && !createdThisVisit.current.has(note._id),
+      )
+      .map((note) => note._id);
+
+    if (ids.length === 0) {
+      markGeneration.current += 1;
+      onUnviewedChange?.(notes.some((note) => note.unviewed));
+      return;
+    }
+
+    const generation = markGeneration.current + 1;
+    markGeneration.current = generation;
+    markCustomerNotesViewed(token, customerId, ids)
+      .then(() => {
+        if (generation !== markGeneration.current) return;
+        setNotes((prev) =>
+          prev.map((note) =>
+            ids.includes(note._id) ? { ...note, unviewed: false } : note,
+          ),
+        );
+        const stillUnviewed =
+          createdThisVisit.current.size > 0 ||
+          notes.some((note) => note.unviewed && !ids.includes(note._id));
+        onUnviewedChange?.(stillUnviewed);
+      })
+      .catch(() => undefined);
+  }, [active, notes, notesLoaded, token, customerId, limit, onUnviewedChange]);
+
   async function handleAddNote(e: React.FormEvent) {
     e.preventDefault();
     const content = newNoteContent.trim();
@@ -80,7 +127,9 @@ export default function CustomerNotesPanel({
     setNotesError(null);
     try {
       const { note } = await createCustomerNote(token, customerId, content);
+      createdThisVisit.current.add(note._id);
       setNotes((prev) => [note, ...prev]);
+      onUnviewedChange?.(true);
       setNewNoteContent("");
     } catch (err) {
       setNotesError(
@@ -132,7 +181,12 @@ export default function CustomerNotesPanel({
     setNotesError(null);
     try {
       await deleteCustomerNote(token, customerId, noteId);
-      setNotes((prev) => prev.filter((n) => n._id !== noteId));
+      createdThisVisit.current.delete(noteId);
+      setNotes((prev) => {
+        const next = prev.filter((n) => n._id !== noteId);
+        onUnviewedChange?.(next.some((n) => n.unviewed));
+        return next;
+      });
       if (editingNoteId === noteId) cancelEdit();
     } catch (err) {
       setNotesError(

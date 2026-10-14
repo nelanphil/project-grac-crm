@@ -36,6 +36,8 @@ import {
   createCustomerNote,
   updateCustomerNote,
   deleteCustomerNote,
+  markCustomerNotesViewed,
+  getCustomerAttention,
 } from "../controllers/customerNote.controller";
 import { getCustomerCheckoutLink } from "../controllers/checkout.controller";
 
@@ -67,6 +69,16 @@ router.post(
   "/:id/notes",
   requirePermission("customers:read"),
   createCustomerNote,
+);
+router.post(
+  "/:id/notes/viewed",
+  requirePermission("customers:read"),
+  markCustomerNotesViewed,
+);
+router.get(
+  "/:id/attention",
+  requirePermission("customers:read"),
+  getCustomerAttention,
 );
 router.patch(
   "/:id/notes/:noteId",

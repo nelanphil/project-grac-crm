@@ -6,6 +6,7 @@ import { User } from "../models/mongo/User";
 import {
   mailboxAssigneesSchema,
   mailboxListQuerySchema,
+  mailboxLocateQuerySchema,
   mailboxMessageQuerySchema,
   mailboxReplySchema,
 } from "../schemas/mailbox.schema";
@@ -23,6 +24,7 @@ import { matchCustomersByEmail } from "../services/mailboxCustomers.service";
 import {
   getMailboxMessage,
   listMailboxMessages,
+  locateMailboxMessage,
   MailboxAddress,
   MailboxError,
   MailboxFolder,
@@ -144,6 +146,33 @@ export async function listMailboxMessagesHandler(
         assignees: assigned.get(message.messageKey) ?? [],
       })),
     });
+  } catch (err) {
+    sendMailboxError(res, err);
+  }
+}
+
+export async function locateMailboxMessageHandler(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  const parsed = mailboxLocateQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ message: "Message id is required." });
+    return;
+  }
+
+  const account = await loadReadableAccount(String(req.params.accountId), res);
+  if (!account) return;
+
+  try {
+    const located = await locateMailboxMessage(account, parsed.data.messageId);
+    if (!located) {
+      res.status(404).json({
+        message: "This email is not in the connected mailbox.",
+      });
+      return;
+    }
+    res.json(located);
   } catch (err) {
     sendMailboxError(res, err);
   }

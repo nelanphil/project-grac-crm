@@ -5,13 +5,16 @@ import { Customer } from "../models/mongo/Customer";
 import { CustomerNote } from "../models/mongo/CustomerNote";
 import {
   createCustomerNoteSchema,
+  markCustomerNotesViewedSchema,
   updateCustomerNoteSchema,
 } from "../schemas/customerNote.schema";
+import { loadCustomerAttention } from "../services/customerAttention.service";
 import {
   actorFromRequest,
   customerDisplayName,
   logNotificationAsync,
 } from "../services/notification.service";
+import { hasRole } from "../utils/roles";
 
 type PopulatedAuthor = {
   _id: mongoose.Types.ObjectId;
@@ -24,6 +27,7 @@ function formatNote(note: {
   customerRef: mongoose.Types.ObjectId;
   authorId: mongoose.Types.ObjectId | PopulatedAuthor;
   content: string;
+  viewedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -40,6 +44,7 @@ function formatNote(note: {
       ? { first_name: author.first_name, last_name: author.last_name }
       : { first_name: "", last_name: "" },
     content: note.content,
+    unviewed: note.viewedAt === null,
     createdAt: note.createdAt.toISOString(),
     updatedAt: note.updatedAt.toISOString(),
   };
@@ -119,6 +124,7 @@ export async function createCustomerNote(req: AuthRequest, res: Response): Promi
       customerRef: customer._id,
       authorId: req.user.id,
       content: parsed.data.content,
+      viewedAt: null,
     });
 
     const populated = await CustomerNote.findById(note._id)
@@ -287,6 +293,80 @@ export async function deleteCustomerNote(req: AuthRequest, res: Response): Promi
     res.status(204).send();
   } catch (err) {
     console.error("DELETE /customers/:id/notes/:noteId error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function markCustomerNotesViewed(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  const parsed = markCustomerNotesViewedSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "Validation error",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  try {
+    const customerId = String(req.params.id);
+    const customer = await findCustomerOr404(customerId, res);
+    if (!customer) return;
+
+    const noteIds = parsed.data.noteIds.filter((id) =>
+      mongoose.Types.ObjectId.isValid(id),
+    );
+    if (noteIds.length === 0) {
+      res.status(400).json({ message: "Invalid note id" });
+      return;
+    }
+
+    const result = await CustomerNote.updateMany(
+      {
+        _id: { $in: noteIds },
+        customerRef: customer._id,
+        viewedAt: { $type: "null" },
+      },
+      {
+        $set: {
+          viewedAt: new Date(),
+          viewedByUserRef: req.user.id,
+        },
+      },
+    );
+
+    res.status(200).json({ viewed: result.modifiedCount });
+  } catch (err) {
+    console.error("POST /customers/:id/notes/viewed error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function getCustomerAttention(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const customerId = String(req.params.id);
+    const customer = await findCustomerOr404(customerId, res);
+    if (!customer) return;
+
+    const includeCommunications = Boolean(
+      req.user && hasRole(req.user, "admin", "super-admin"),
+    );
+    const attention = await loadCustomerAttention(customer._id, {
+      includeCommunications,
+    });
+    res.status(200).json(attention);
+  } catch (err) {
+    console.error("GET /customers/:id/attention error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }

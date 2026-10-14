@@ -14,5 +14,9 @@ export const updateCustomerNoteSchema = z.object({
   content: noteContentSchema,
 });
 
+export const markCustomerNotesViewedSchema = z.object({
+  noteIds: z.array(z.string().trim().min(1)).min(1).max(500),
+});
+
 export type CreateCustomerNoteInput = z.infer<typeof createCustomerNoteSchema>;
 export type UpdateCustomerNoteInput = z.infer<typeof updateCustomerNoteSchema>;
