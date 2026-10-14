@@ -91,8 +91,8 @@ const hhmmRe = /^([01]\d|2[0-3]):[0-5]\d$/;
 const technicianRecommendationSchema = z
   .object({
     date: z.string().regex(localDateRe, "date must be YYYY-MM-DD"),
-    startTime: z.string().regex(hhmmRe, "startTime must be HH:mm"),
-    endTime: z.string().regex(hhmmRe, "endTime must be HH:mm"),
+    startTime: z.string().regex(hhmmRe, "startTime must be HH:mm").optional(),
+    endTime: z.string().regex(hhmmRe, "endTime must be HH:mm").optional(),
     addressRef: z.string().optional(),
     address: z.string().optional(),
     city: z.string().optional(),
@@ -102,7 +102,16 @@ const technicianRecommendationSchema = z
     excludeWorkOrderId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
-    if (data.endTime <= data.startTime) {
+    const hasStart = Boolean(data.startTime);
+    const hasEnd = Boolean(data.endTime);
+    if (hasStart !== hasEnd) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Start and end time are set together",
+        path: [hasStart ? "endTime" : "startTime"],
+      });
+    }
+    if (hasStart && hasEnd && data.endTime! <= data.startTime!) {
       ctx.addIssue({
         code: "custom",
         message: "End time must be after start time",

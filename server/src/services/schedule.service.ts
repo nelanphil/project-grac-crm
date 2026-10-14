@@ -1412,16 +1412,40 @@ type SlotPick = {
   available: boolean;
   insideHours: boolean;
   overlaps: boolean;
+  /** True when ranking the day instead of a requested clock time. */
+  untimed: boolean;
   fits: boolean;
   qualified: boolean;
   miles: number;
   kind: "job" | "home" | null;
 };
 
+function dayHasRoom(
+  range: { start: Date; end: Date },
+  jobs: Array<{ scheduledStart: Date | null; scheduledEnd: Date | null }>,
+  minutes: number,
+): boolean {
+  const need = minutes * 60_000;
+  const blocks = jobs
+    .filter((job) => job.scheduledStart && job.scheduledEnd)
+    .map((job) => ({
+      start: Math.max(job.scheduledStart!.getTime(), range.start.getTime()),
+      end: Math.min(job.scheduledEnd!.getTime(), range.end.getTime()),
+    }))
+    .filter((block) => block.end > block.start)
+    .sort((a, b) => a.start - b.start);
+  let cursor = range.start.getTime();
+  for (const block of blocks) {
+    if (block.start - cursor >= need) return true;
+    cursor = Math.max(cursor, block.end);
+  }
+  return range.end.getTime() - cursor >= need;
+}
+
 function slotRecommendationReason(pick: SlotPick): string {
   if (!pick.available) return "Not working this day";
   if (!pick.insideHours) return "Outside working hours";
-  if (pick.overlaps) return "Overlaps another job";
+  if (pick.overlaps) return pick.untimed ? "Day is full" : "Overlaps another job";
   const parts: string[] = [];
   if (pick.tier === 0) parts.push("In territory");
   else if (pick.tier === 1) parts.push("Near territory");
@@ -1508,14 +1532,15 @@ async function resolveSlotSite(opts: {
 }
 
 /**
- * Rank schedulable technicians for a time window and site that may not be
- * saved as a work order yet. Uses territory, straight-line distance, working
- * hours, and overlap. Does not call Google for drive times.
+ * Rank schedulable technicians for a site that may not be saved as a work
+ * order yet. A start and end rank that window. Without them, rank who is
+ * working that day and still has room. Uses territory, straight-line
+ * distance, working hours, and overlap. Does not call Google for drive times.
  */
 export async function recommendTechnicianForSlot(opts: {
   date: string;
-  startTime: string;
-  endTime: string;
+  startTime?: string;
+  endTime?: string;
   addressRef?: string;
   address?: string;
   city?: string;
@@ -1532,8 +1557,9 @@ export async function recommendTechnicianForSlot(opts: {
     return { technicians: [], recommendation: null };
   }
 
-  const slotStart = localDateToUtc(opts.date, opts.startTime);
-  const slotEnd = localDateToUtc(opts.date, opts.endTime);
+  const timed = Boolean(opts.startTime && opts.endTime);
+  const slotStart = timed ? localDateToUtc(opts.date, opts.startTime!) : null;
+  const slotEnd = timed ? localDateToUtc(opts.date, opts.endTime!) : null;
   const excludeId =
     opts.excludeWorkOrderId &&
     mongoose.Types.ObjectId.isValid(opts.excludeWorkOrderId)
@@ -1620,22 +1646,31 @@ export async function recommendTechnicianForSlot(opts: {
     );
     const range = windowToUtcRange(opts.date, window);
     const available = range != null;
-    const insideHours =
-      range != null &&
-      slotStart.getTime() >= range.start.getTime() &&
-      slotEnd.getTime() <= range.end.getTime();
     const existing = dayJobsByUser.get(String(tech._id)) ?? [];
-    const overlaps = existing.some(
-      (job) =>
-        job.scheduledStart &&
-        job.scheduledEnd &&
-        rangesOverlap(
-          slotStart,
-          slotEnd,
-          job.scheduledStart,
-          job.scheduledEnd,
-        ),
-    );
+    const insideHours = timed
+      ? range != null &&
+        slotStart != null &&
+        slotEnd != null &&
+        slotStart.getTime() >= range.start.getTime() &&
+        slotEnd.getTime() <= range.end.getTime()
+      : available;
+    const overlaps = timed
+      ? existing.some(
+          (job) =>
+            job.scheduledStart &&
+            job.scheduledEnd &&
+            slotStart != null &&
+            slotEnd != null &&
+            rangesOverlap(
+              slotStart,
+              slotEnd,
+              job.scheduledStart,
+              job.scheduledEnd,
+            ),
+        )
+      : available && range != null
+        ? !dayHasRoom(range, existing, DEFAULT_ESTIMATED_MINUTES)
+        : false;
     const distance = nearestSiteMiles(
       site.coords,
       homeCoords(tech.homeLocation),
@@ -1652,6 +1687,7 @@ export async function recommendTechnicianForSlot(opts: {
       available,
       insideHours,
       overlaps,
+      untimed: !timed,
       fits: insideHours && !overlaps,
       qualified: hasQualified && qualifiedIds.has(String(tech._id)),
       miles: distance.miles,

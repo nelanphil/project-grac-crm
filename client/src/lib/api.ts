@@ -2537,8 +2537,8 @@ export async function recommendTechnicianForSlot(
   token: string,
   data: {
     date: string;
-    startTime: string;
-    endTime: string;
+    startTime?: string;
+    endTime?: string;
     addressRef?: string;
     address?: string;
     city?: string;

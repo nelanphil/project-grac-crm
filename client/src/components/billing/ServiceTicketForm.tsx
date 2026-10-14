@@ -413,8 +413,9 @@ export default function ServiceTicketForm({
     if (!token || variant !== "work-order") return;
     const city = form.customerCity.trim();
     const hasSite = Boolean(form.addressRef || city);
-    const endTime = slotEndTime(form.startTime, form.endTime);
-    if (!form.date || !endTime || !hasSite) {
+    const startTime = normalizeTimeOfDay(form.startTime);
+    const endTime = startTime ? slotEndTime(form.startTime, form.endTime) : null;
+    if (!form.date || !hasSite || (startTime && !endTime)) {
       setSlotRank(null);
       return;
     }
@@ -422,8 +423,7 @@ export default function ServiceTicketForm({
     const timer = setTimeout(() => {
       recommendTechnicianForSlot(token, {
         date: form.date,
-        startTime: normalizeTimeOfDay(form.startTime),
-        endTime,
+        ...(startTime && endTime ? { startTime, endTime } : {}),
         addressRef: form.addressRef || undefined,
         address: form.customerAddress.trim() || undefined,
         city: city || undefined,
@@ -604,7 +604,6 @@ export default function ServiceTicketForm({
     if (variant !== "work-order" || slotRank) return null;
     const missing: string[] = [];
     if (!form.date) missing.push("a date");
-    if (!normalizeTimeOfDay(form.startTime)) missing.push("a start time");
     if (!form.addressRef && !form.customerCity.trim()) missing.push("an address");
     if (missing.length === 0) return null;
     if (missing.length === 1) return `Add ${missing[0]} to rank technicians.`;
@@ -614,7 +613,6 @@ export default function ServiceTicketForm({
     variant,
     slotRank,
     form.date,
-    form.startTime,
     form.addressRef,
     form.customerCity,
   ]);
