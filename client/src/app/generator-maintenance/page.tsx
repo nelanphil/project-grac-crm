@@ -5,6 +5,8 @@ import { pageMetadata } from "@/lib/seo/site";
 
 const service = requireService("generator-maintenance");
 
+export const revalidate = 60;
+
 export const metadata: Metadata = pageMetadata({
   title: service.title,
   description: service.description,

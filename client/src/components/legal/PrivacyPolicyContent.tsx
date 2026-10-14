@@ -15,7 +15,7 @@ export default function PrivacyPolicyContent() {
           <h2 className="text-xl font-semibold text-brand-dark">1. Who we are</h2>
           <p className="mt-3">
             {COMPANY.name} (“we,” “us,” or “our”) provides generator installation,
-            maintenance, and related services in Central and South Florida. You can
+            maintenance, and related services in Central Florida. You can
             contact us at{" "}
             <a
               href={`mailto:${COMPANY.email}`}

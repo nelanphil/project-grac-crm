@@ -1,20 +1,118 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Pencil } from "lucide-react";
 import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 import { useAuthStore } from "@/store/useAuthStore";
-import { ApiError, getRoles, getUsers, RoleItem, UserListItem } from "@/lib/api";
+import {
+  ApiError,
+  getRoles,
+  getUsers,
+  RoleItem,
+  updateUser,
+  UserListItem,
+} from "@/lib/api";
 import UsernameDisplay from "@/components/ui/UsernameDisplay";
+import PhoneInput from "@/components/ui/PhoneInput";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { normalizeRoles, userHasCapability } from "@/lib/dashboard-role";
-import { formatUsPhoneInput } from "@/lib/formatPhone";
+import { isValidUsPhone } from "@/lib/formatPhone";
 import { formatLocalDate, serviceTerritorySummary, weeklyHoursSummary } from "@/lib/schedule";
 
-function phoneLabel(phone: string | undefined): string {
-  return formatUsPhoneInput(phone ?? "") || "—";
+function phoneDigits(phone: string): string {
+  return phone.replace(/\D/g, "");
+}
+
+function phoneSaveError(err: unknown): string {
+  if (err instanceof ApiError) {
+    return err.errors?.phone?.[0] || err.message;
+  }
+  return "Failed to save phone.";
+}
+
+function InlinePhoneEditor({
+  userId,
+  savedPhone,
+  token,
+  onSaved,
+}: {
+  userId: string;
+  savedPhone: string;
+  token: string | null;
+  onSaved: (user: UserListItem) => void;
+}) {
+  const [value, setValue] = useState(savedPhone);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const skipBlurSave = useRef(false);
+
+  useEffect(() => {
+    setValue(savedPhone);
+  }, [savedPhone]);
+
+  async function save(next: string) {
+    if (!token || saving) return;
+    const trimmed = next.trim();
+    if (phoneDigits(trimmed) === phoneDigits(savedPhone)) {
+      setValue(savedPhone);
+      setError(null);
+      return;
+    }
+    if (trimmed && !isValidUsPhone(trimmed)) {
+      setError("Enter a 10-digit phone number.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const { user } = await updateUser(token, userId, { phone: trimmed });
+      onSaved(user);
+      setValue(user.phone ?? "");
+    } catch (err) {
+      setValue(savedPhone);
+      setError(phoneSaveError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="min-w-[9.5rem]">
+      <PhoneInput
+        value={value}
+        disabled={saving}
+        aria-label="Phone"
+        placeholder="Add phone"
+        onChange={(e) => {
+          setValue(e.target.value);
+          if (error) setError(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            skipBlurSave.current = true;
+            setValue(savedPhone);
+            setError(null);
+            e.currentTarget.blur();
+          }
+        }}
+        onBlur={(e) => {
+          if (skipBlurSave.current) {
+            skipBlurSave.current = false;
+            return;
+          }
+          void save(e.currentTarget.value);
+        }}
+        className="w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-sm text-neutral-700 outline-none placeholder:text-neutral-400 hover:border-neutral-200 focus:border-brand-orange focus:bg-[var(--staff-cream)] disabled:opacity-60"
+      />
+      {error ? <p className="mt-1 text-xs text-red-600">{error}</p> : null}
+    </div>
+  );
 }
 
 export default function TechniciansTab() {
@@ -52,6 +150,10 @@ export default function TechniciansTab() {
 
   function formatUserRoles(user: UserListItem): string {
     return normalizeRoles(user).map(getRoleLabel).join(", ");
+  }
+
+  function replaceUser(next: UserListItem) {
+    setUsers((prev) => prev.map((user) => (user._id === next._id ? next : user)));
   }
 
   if (loading) {
@@ -95,7 +197,17 @@ export default function TechniciansTab() {
               }
               fields={
                 <>
-                  <DataField label="Phone" value={phoneLabel(user.phone)} />
+                  <DataField
+                    label="Phone"
+                    value={
+                      <InlinePhoneEditor
+                        userId={user._id}
+                        savedPhone={user.phone ?? ""}
+                        token={token}
+                        onSaved={replaceUser}
+                      />
+                    }
+                  />
                   <DataField
                     label="Hours"
                     value={weeklyHoursSummary(user.weeklyHours)}
@@ -169,8 +281,13 @@ export default function TechniciansTab() {
                       <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
                         {formatUserRoles(user)}
                       </td>
-                      <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
-                        {phoneLabel(user.phone)}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <InlinePhoneEditor
+                          userId={user._id}
+                          savedPhone={user.phone ?? ""}
+                          token={token}
+                          onSaved={replaceUser}
+                        />
                       </td>
                       <td className="px-6 py-4 text-neutral-600">
                         {weeklyHoursSummary(user.weeklyHours)}

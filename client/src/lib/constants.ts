@@ -3,7 +3,7 @@ export const ESTIMATE_ROUTE = "/estimate";
 export const COMPANY = {
   name: "Generator Maintenance of Florida",
   shortName: "GMF",
-  tagline: "Expert Backup Power for Central & South Florida",
+  tagline: "Expert Backup Power for Central Florida",
   phone: "(386) 631-8982",
   phoneHref: "tel:+13866318982",
   email: "contact@genmaintoffl.com",
@@ -45,7 +45,7 @@ export const SERVICES = [
 
 export const GENERAC_HOME_STANDBY = {
   overview:
-    "A permanently installed Generac home standby generator does more than keep the lights on when the power fails — it delivers peace of mind. Units are installed outside your home like a central A/C system and run on natural gas or liquid propane, keeping you safe, secure, and comfortable during outages across Central and South Florida.",
+    "A permanently installed Generac home standby generator does more than keep the lights on when the power fails — it delivers peace of mind. Units are installed outside your home like a central A/C system and run on natural gas or liquid propane, keeping you safe, secure, and comfortable during outages across Central Florida.",
   learnMoreUrl: "https://www.generac.com/home-standby-generators/",
   howItWorksIntro:
     "Your home standby generator is installed outside your home like a central A/C unit and runs on natural gas or liquid propane (LP), depending on what fuel source is available. All home standby solutions are designed to keep you safe, secure and comfortable in an outage.",
@@ -123,7 +123,7 @@ export const FAQS = [
   {
     question: "What areas does Generator Maintenance of Florida serve?",
     answer:
-      "We provide home and commercial standby generator installation, maintenance, and repair throughout Central and South Florida — from Orlando and Tampa to Miami, Fort Lauderdale, and Naples.",
+      "We provide home and commercial standby generator installation, maintenance, and repair throughout Central Florida — from Orlando and Tampa to Daytona Beach and Ocala.",
   },
   {
     question: "What types of generators do you install and service?",
@@ -153,7 +153,7 @@ export const FAQS = [
   {
     question: "Why should I choose Generator Maintenance of Florida?",
     answer:
-      "We are a licensed and insured, Generac authorized dealer with experienced technicians who handle the full process — permits, electrical work, plumbing, installation, and final startup — plus preventative maintenance and wireless monitoring across Central and South Florida.",
+      "We are a licensed and insured, Generac authorized dealer with experienced technicians who handle the full process — permits, electrical work, plumbing, installation, and final startup — plus preventative maintenance and wireless monitoring across Central Florida.",
   },
 ] as const;
 
@@ -172,20 +172,6 @@ export const SERVICE_AREAS = {
     "The Villages",
     "Lake Mary",
     "Deltona",
-  ],
-  south: [
-    "Miami",
-    "Fort Lauderdale",
-    "West Palm Beach",
-    "Boca Raton",
-    "Naples",
-    "Fort Myers",
-    "Sarasota",
-    "Hollywood",
-    "Coral Gables",
-    "Pompano Beach",
-    "Jupiter",
-    "Port St. Lucie",
   ],
 } as const;
 

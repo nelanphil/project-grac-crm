@@ -24,10 +24,10 @@ export const SERVICE_PAGES: readonly ServicePage[] = [
     title: "Generator Service",
     description:
       "On-site generator service for Florida homes and businesses: Generac install, scheduled maintenance, and 24/7 repair. Call (386) 631-8982.",
-    eyebrow: "Central & South Florida",
-    h1: "Generator Service in Central & South Florida",
+    eyebrow: "Central Florida",
+    h1: "Generator Service in Central Florida",
     lede:
-      "Generator service here means a technician at your property — not a national ranking and not a parts counter. We install, maintain, and repair Generac home standby generators from the Orlando area through the southeast coast.",
+      "Generator service here means a technician at your property — not a national ranking and not a parts counter. We install, maintain, and repair Generac home standby generators across Central Florida.",
     paragraphs: [
       "A service visit starts with how the unit is behaving. Some calls are a missed exercise cycle or a battery that gave up after a humid summer. Others are a transfer switch that never handed the house back to the utility, or a first conversation about putting a generator where there isn’t one yet. We say which of those you are in before anyone sells a part.",
       "Storm weeks fill the schedule, so maintenance in the quiet months is what keeps a repair from becoming an outage. If you already know you need an oil service, a breakdown diagnosis, or a new installation, use those pages. If you are not sure, call (386) 631-8982 or send the property details through the estimate form and we will point you to the right visit.",
@@ -47,7 +47,7 @@ export const SERVICE_PAGES: readonly ServicePage[] = [
     description:
       "Generator maintenance every six months: oil, filters, battery, and exercise checks for Generac standby units in Florida. Call (386) 631-8982.",
     eyebrow: "Prevent the outage",
-    h1: "Generator Maintenance in Central & South Florida",
+    h1: "Generator Maintenance in Central Florida",
     lede:
       "Home standby generators sit outside in salt, sun, and afternoon rain. Maintenance is the oil, filters, battery, and exercise test that keep that machine ready before a hurricane or a random feeder fault.",
     paragraphs: [
@@ -69,7 +69,7 @@ export const SERVICE_PAGES: readonly ServicePage[] = [
     description:
       "24/7 generator repair for Generac standby units that will not start, transfer, or stay running in Florida. Call (386) 631-8982.",
     eyebrow: "24/7 emergency repair",
-    h1: "Generator Repair in Central & South Florida",
+    h1: "Generator Repair in Central Florida",
     lede:
       "When a standby generator will not start, starts and shuts down, or never switches the house, that is a repair — and outages do not wait for business hours. Certified technicians are available 24/7.",
     paragraphs: [
@@ -91,7 +91,7 @@ export const SERVICE_PAGES: readonly ServicePage[] = [
     description:
       "Generac generator installation in Florida: sizing, permits, gas or propane, transfer switch, and startup. Call (386) 631-8982.",
     eyebrow: "New standby systems",
-    h1: "Generator Installation in Central & South Florida",
+    h1: "Generator Installation in Central Florida",
     lede:
       "A new Generac home standby generator is a construction project on the side of the house: pad, fuel, automatic transfer switch, permits, and a startup. We run that project so it does not land on you as a stack of contractors.",
     paragraphs: [
@@ -113,12 +113,12 @@ export const SERVICE_PAGES: readonly ServicePage[] = [
     description:
       "Generac generator service from an authorized Florida dealer: install, Mobile Link, maintenance, and 24/7 repair. Call (386) 631-8982.",
     eyebrow: "Authorized Generac dealer",
-    h1: "Generac Generator Service in Central & South Florida",
+    h1: "Generac Generator Service in Central Florida",
     lede:
       "Generac generator service is the dealer work around a Generac home standby unit: sizing and installation, six-month maintenance, Mobile Link alerts, and 24/7 repair when the controller throws a code.",
     paragraphs: [
       "Generac built the home standby category and remains the brand we install and maintain. Air-cooled units cover most houses; larger homes sometimes need a liquid-cooled set. Either way, the dealer side is the same: permits, a transfer switch, an exercise schedule, and someone who can read the fault instead of clearing it and hoping.",
-      "Mobile Link lets you see status on a phone, and as your local dealer we can be alerted when the unit reports a problem. That is Generac-specific service, separate from a generic handyman call. We do this work across Central and South Florida. Call (386) 631-8982.",
+      "Mobile Link lets you see status on a phone, and as your local dealer we can be alerted when the unit reports a problem. That is Generac-specific service, separate from a generic handyman call. We do this work across Central Florida. Call (386) 631-8982.",
     ],
     includesTitle: "Generac work we handle",
     includes: [

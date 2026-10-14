@@ -24,6 +24,7 @@ import {
 import { seedDefaultManufacturers } from "./models/mongo/Manufacturer";
 import { seedContractTemplates } from "./models/mongo/ContractTemplate";
 import { seedInvoiceTemplates } from "./models/mongo/InvoiceTemplate";
+import { seedServiceAreas } from "./models/mongo/ServiceArea";
 import { ensureTwilioPhoneLineShape } from "./models/mongo/TwilioAccount";
 import { startRenewalInvoiceScheduler } from "./jobs/scheduler";
 
@@ -47,6 +48,7 @@ async function bootstrap(): Promise<void> {
   await seedDefaultManufacturers();
   await seedContractTemplates();
   await seedInvoiceTemplates();
+  await seedServiceAreas();
   await ensureTwilioPhoneLineShape();
 
   startRenewalInvoiceScheduler();

@@ -45,6 +45,7 @@ const PATH_LABELS: { prefix: string; label: string }[] = [
   { prefix: "/dashboard/services", label: "Back to services" },
   { prefix: "/dashboard/discount-codes", label: "Back to discount codes" },
   { prefix: "/dashboard/territory", label: "Back to territory" },
+  { prefix: "/dashboard/service-areas", label: "Back to service areas" },
   { prefix: "/dashboard/notifications", label: "Back to notifications" },
   { prefix: "/dashboard/checkout", label: "Back to checkout" },
   { prefix: "/dashboard", label: "Back to dashboard" },

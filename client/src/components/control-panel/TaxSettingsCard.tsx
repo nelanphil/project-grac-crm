@@ -14,6 +14,7 @@ export default function TaxSettingsCard() {
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [updatedCount, setUpdatedCount] = useState(0);
 
   useEffect(() => {
     if (!token) return;
@@ -49,9 +50,12 @@ export default function TaxSettingsCard() {
     setSaveError(null);
     setSaved(false);
     try {
-      const { settings } = await saveTaxSettings(token, { ratePercent });
+      const { settings, updatedCount: count } = await saveTaxSettings(token, {
+        ratePercent,
+      });
       setSavedRate(settings.ratePercent);
       setRate(String(settings.ratePercent));
+      setUpdatedCount(count ?? 0);
       setSaved(true);
     } catch (err) {
       setSaveError(
@@ -68,9 +72,9 @@ export default function TaxSettingsCard() {
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">Sales tax</h2>
           <p className="mt-1 text-sm text-neutral-500">
-            Default rate for new estimates, work orders, and invoices. Changing
-            this rate does not rewrite invoices that have already been
-            processed.
+            Default rate for new estimates, work orders, and invoices. Saving a
+            new rate updates unpaid invoices that use this rate. Paid invoices
+            and invoices with a manual tax amount stay unchanged.
           </p>
         </div>
       </div>
@@ -100,6 +104,9 @@ export default function TaxSettingsCard() {
           ) : saved ? (
             <p className="text-sm text-emerald-700">
               Saved {savedRate}% as the default rate.
+              {updatedCount > 0
+                ? ` Updated ${updatedCount} unpaid ${updatedCount === 1 ? "invoice" : "invoices"}.`
+                : ""}
             </p>
           ) : null}
           <button

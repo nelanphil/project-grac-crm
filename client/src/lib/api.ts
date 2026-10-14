@@ -5084,11 +5084,49 @@ export async function getTaxSettings(
 export async function saveTaxSettings(
   token: string,
   data: { ratePercent: number },
-): Promise<{ settings: TaxSettingsItem }> {
-  return authRequest<{ settings: TaxSettingsItem }>("/tax-settings", {
+): Promise<{ settings: TaxSettingsItem; updatedCount: number }> {
+  return authRequest<{ settings: TaxSettingsItem; updatedCount: number }>(
+    "/tax-settings",
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export interface ServiceAreaCityItem {
+  name: string;
+}
+
+export interface ServiceAreaItem {
+  id: string;
+  name: string;
+  cities: ServiceAreaCityItem[];
+}
+
+export interface ServiceAreaInput {
+  name: string;
+  cities: ServiceAreaCityItem[];
+}
+
+export async function getServiceAreas(
+  token: string,
+): Promise<{ areas: ServiceAreaItem[] }> {
+  return authRequest<{ areas: ServiceAreaItem[] }>("/service-areas", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function saveServiceAreas(
+  token: string,
+  areas: ServiceAreaInput[],
+): Promise<{ areas: ServiceAreaItem[] }> {
+  return authRequest<{ areas: ServiceAreaItem[] }>("/service-areas", {
     method: "PUT",
     headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(data),
+    body: JSON.stringify({ areas }),
   });
 }
 

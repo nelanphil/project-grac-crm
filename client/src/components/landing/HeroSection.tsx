@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { COMPANY, ESTIMATE_ROUTE } from "@/lib/constants";
 
-export default function HeroSection() {
+export default function HeroSection({
+  regionPhrase,
+}: {
+  regionPhrase: string;
+}) {
   return (
     <section className="relative overflow-hidden bg-brand-midnight text-white">
       <div className="absolute inset-0 bg-gradient-to-br from-brand-midnight via-brand-dark to-black opacity-90" />
@@ -19,13 +23,13 @@ export default function HeroSection() {
             {COMPANY.name}
           </p>
           <h1 className="mt-4 text-[1.75rem] font-bold leading-tight tracking-tight break-words sm:text-4xl lg:text-5xl">
-            Generator Service in Central & South Florida
+            Generator Service in {regionPhrase}
           </h1>
           <p className="mt-6 text-lg leading-relaxed text-white/80 sm:text-xl">
             Florida homeowners and businesses count on us for safe, reliable
             standby generator service. Our certified technicians install
-            dependable backup generators and provide 24/7 support across Central
-            and South Florida.
+            dependable backup generators and provide 24/7 support across{" "}
+            {regionPhrase}.
           </p>
 
           <div className="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-sm font-medium text-white/90">

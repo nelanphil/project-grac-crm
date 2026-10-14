@@ -32,7 +32,7 @@ export default function TermsOfServiceContent() {
           <h2 className="text-xl font-semibold text-brand-dark">2. Who we are</h2>
           <p className="mt-3">
             {COMPANY.name} provides generator installation, maintenance, repair, and
-            related services in Central and South Florida. You can contact us at{" "}
+            related services in Central Florida. You can contact us at{" "}
             <a
               href={`mailto:${COMPANY.email}`}
               className="text-brand-orange underline-offset-2 hover:underline"

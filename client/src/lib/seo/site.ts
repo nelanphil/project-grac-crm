@@ -4,12 +4,12 @@ import { COMPANY } from "@/lib/constants";
 /** Public canonical origin. Crawl files and metadata always use this host. */
 export const PUBLIC_SITE_URL = "https://www.genmaintoffl.com";
 
-export const ROOT_TITLE = "Generator Service in Central & South Florida";
+export const ROOT_TITLE = "Generator Service in Central Florida";
 
 export const TITLE_TEMPLATE = "%s | Generator Maintenance of Florida";
 
 export const ROOT_DESCRIPTION =
-  "Generac installation, maintenance, and 24/7 repair across Central and South Florida. Call (386) 631-8982.";
+  "Generac installation, maintenance, and 24/7 repair across Central Florida. Call (386) 631-8982.";
 
 export const OG_IMAGE = {
   url: "/images/generac-product-lineup.jpg",

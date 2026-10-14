@@ -6,7 +6,9 @@ import {
 } from "../models/mongo/TaxSettings";
 import { saveTaxSettingsSchema } from "../schemas/taxSettings.schema";
 import {
+  applyCompanyTaxRateToUnpaidInvoices,
   DEFAULT_TAX_RATE_PERCENT,
+  getTaxRatePercent,
   normalizeTaxRatePercent,
 } from "../services/taxSettings";
 
@@ -43,13 +45,18 @@ export async function saveTaxSettings(
   }
 
   try {
+    const previous = await getTaxRatePercent();
     const ratePercent = normalizeTaxRatePercent(parsed.data.ratePercent);
     const doc = await TaxSettings.findOneAndUpdate(
       { slug: TAX_SETTINGS_SLUG },
       { $set: { slug: TAX_SETTINGS_SLUG, ratePercent } },
       { new: true, upsert: true },
     );
-    res.json({ settings: toPublic(doc.ratePercent) });
+    const updatedCount =
+      ratePercent === previous
+        ? 0
+        : await applyCompanyTaxRateToUnpaidInvoices(ratePercent);
+    res.json({ settings: toPublic(doc.ratePercent), updatedCount });
   } catch (err) {
     console.error("PUT /tax-settings error:", err);
     res.status(500).json({ message: "Internal server error" });

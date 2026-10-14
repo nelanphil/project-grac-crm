@@ -19,7 +19,11 @@ const icons: Record<string, React.ReactNode> = {
   ),
 };
 
-export default function FeaturesSection() {
+export default function FeaturesSection({
+  regionPhrase,
+}: {
+  regionPhrase: string;
+}) {
   return (
     <section id="services" className="bg-neutral-100 py-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -27,7 +31,7 @@ export default function FeaturesSection() {
           <p className="text-sm font-semibold uppercase tracking-widest text-brand-orange">
             #1 Most Trusted by Homeowners
           </p>
-          <h2 className="section-heading mt-2">In Central & South Florida</h2>
+          <h2 className="section-heading mt-2">In {regionPhrase}</h2>
         </div>
 
         <div className="mt-16 grid grid-cols-1 gap-8 md:grid-cols-3">

@@ -25,7 +25,7 @@ export default function Footer() {
             </Link>
             <p className="mt-4 text-sm text-white/70">
               Safe, reliable standby generator installation, maintenance, and
-              24/7 emergency repair across Central and South Florida.
+              24/7 emergency repair across Central Florida.
             </p>
           </div>
 

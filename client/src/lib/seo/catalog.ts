@@ -3,7 +3,7 @@ import { CITY_COPY, type CityCopy } from "@/lib/seo/cities";
 import { SERVICE_PAGES, type ServicePage } from "@/lib/seo/services";
 import { brandedTitle, cityPath, citySlug } from "@/lib/seo/site";
 
-export type RegionName = "Central Florida" | "South Florida";
+export type RegionName = "Central Florida";
 
 export type CityPage = CityCopy & {
   slug: string;
@@ -22,14 +22,8 @@ const REQUIRED_SLUGS = [
   "new-smyrna-beach",
 ] as const;
 
-function regionFor(group: "central" | "south"): RegionName {
-  return group === "central" ? "Central Florida" : "South Florida";
-}
-
-export const CITY_PAGES: readonly CityPage[] = (
-  Object.entries(SERVICE_AREAS) as ["central" | "south", readonly string[]][]
-).flatMap(([group, names]) =>
-  names.map((name) => {
+export const CITY_PAGES: readonly CityPage[] = SERVICE_AREAS.central.map(
+  (name) => {
     const slug = citySlug(name);
     const copy = CITY_COPY[slug];
     if (!copy) {
@@ -39,12 +33,12 @@ export const CITY_PAGES: readonly CityPage[] = (
       ...copy,
       slug,
       name,
-      region: regionFor(group),
+      region: "Central Florida" as const,
       path: cityPath(slug),
       title: `${name} Generator Service`,
       h1: `Generac Generator Service in ${name}`,
     };
-  }),
+  },
 );
 
 export function getCity(slug: string): CityPage | undefined {

@@ -1,6 +1,10 @@
 import { FAQS, COMPANY } from "@/lib/constants";
 
-export default function FaqSection() {
+export default function FaqSection({
+  faqs = FAQS,
+}: {
+  faqs?: readonly { question: string; answer: string }[];
+}) {
   return (
     <section id="faq" className="bg-neutral-100 py-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -12,7 +16,7 @@ export default function FaqSection() {
         </div>
 
         <div className="mx-auto mt-16 max-w-3xl divide-y divide-neutral-200">
-          {FAQS.map((faq) => (
+          {faqs.map((faq) => (
             <details key={faq.question} className="group py-6">
               <summary className="flex cursor-pointer list-none items-center justify-between text-lg font-semibold text-brand-dark">
                 {faq.question}

@@ -25,7 +25,7 @@ const BRAND = {
 const COMPANY = {
   name: "Generator Maintenance of Florida",
   shortName: "GMF",
-  tagline: "Expert Backup Power for Central & South Florida",
+  tagline: "Expert Backup Power for Central Florida",
   phone: "(386) 631-8982",
   email: "contact@genmaintoffl.com",
 } as const;

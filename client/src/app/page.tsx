@@ -9,25 +9,41 @@ import FaqSection from "@/components/landing/FaqSection";
 import ServiceAreasSection from "@/components/landing/ServiceAreasSection";
 import CtaBanner from "@/components/landing/CtaBanner";
 import JsonLd from "@/components/seo/JsonLd";
-import { FAQS } from "@/lib/constants";
 import { faqPageJsonLd, localBusinessJsonLd } from "@/lib/seo/site";
+import {
+  formatRegionPhrase,
+  getPublicServiceAreas,
+  landingFaqs,
+} from "@/lib/serviceAreas";
 
-export const metadata: Metadata = {
-  alternates: { canonical: "/" },
-};
+export const revalidate = 60;
 
-export default function Home() {
+export async function generateMetadata(): Promise<Metadata> {
+  const areas = await getPublicServiceAreas();
+  const phrase = formatRegionPhrase(areas.map((area) => area.name));
+  return {
+    title: `Generator Service in ${phrase}`,
+    description: `Generac installation, maintenance, and 24/7 repair across ${phrase}. Call (386) 631-8982.`,
+    alternates: { canonical: "/" },
+  };
+}
+
+export default async function Home() {
+  const areas = await getPublicServiceAreas();
+  const phrase = formatRegionPhrase(areas.map((area) => area.name));
+  const faqs = landingFaqs(phrase);
+
   return (
     <>
       <JsonLd data={localBusinessJsonLd({ name: "Florida", type: "State" })} />
-      <JsonLd data={faqPageJsonLd(FAQS)} />
+      <JsonLd data={faqPageJsonLd(faqs)} />
       <HomeAuthRedirect />
-      <HeroSection />
-      <FeaturesSection />
+      <HeroSection regionPhrase={phrase} />
+      <FeaturesSection regionPhrase={phrase} />
       <SolutionsSection />
       <BrandsSection />
       <SystemIncludesSection />
-      <FaqSection />
+      <FaqSection faqs={faqs} />
       <ServiceAreasSection />
       <CtaBanner />
     </>

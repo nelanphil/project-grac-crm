@@ -48,6 +48,7 @@ import contactRouter, {
 import smsOptInRoutes from "./smsOptIn.routes";
 import recaptchaCredentialsRoutes from "./recaptchaCredentials.routes";
 import taxSettingsRoutes from "./taxSettings.routes";
+import serviceAreaRoutes from "./serviceArea.routes";
 import emailPreferenceRoutes from "./emailPreference.routes";
 import legacyDumpRoutes from "./legacyDump.routes";
 import databaseInspectRoutes from "./databaseInspect.routes";
@@ -83,6 +84,7 @@ router.use("/email-mailbox", emailMailboxRoutes);
 router.use("/google-credentials", googleCredentialsRoutes);
 router.use("/recaptcha-credentials", recaptchaCredentialsRoutes);
 router.use("/tax-settings", taxSettingsRoutes);
+router.use("/service-areas", serviceAreaRoutes);
 router.use("/message-templates", messageTemplateRoutes);
 router.use("/messaging", messagingRoutes);
 router.use("/email-messages", emailMessageRoutes);

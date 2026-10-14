@@ -4,8 +4,10 @@ import { computeTicketTotals } from "./serviceTicket";
 import {
   applyTaxToPreTaxCents,
   computeTaxAmount,
+  invoiceEligibleForCompanyTaxRate,
   normalizeTaxRatePercent,
   preTaxCents,
+  recomputeUnpaidInvoiceTax,
   snapshotDocumentTax,
 } from "./taxSettings";
 
@@ -64,5 +66,136 @@ describe("taxSettings", () => {
     });
     assert.equal(overridden.tax, 4);
     assert.equal(overridden.total, 114);
+  });
+
+  it("recalculates a contract invoice from the pre-tax total", () => {
+    assert.deepEqual(
+      recomputeUnpaidInvoiceTax(
+        {
+          status: "open",
+          amountCents: 10750,
+          taxCents: 750,
+          taxRatePercent: 7.5,
+        },
+        8,
+      ),
+      { taxRatePercent: 8, taxCents: 800, amountCents: 10800 },
+    );
+  });
+
+  it("keeps a discount fixed while the tax-inclusive total changes", () => {
+    assert.deepEqual(
+      recomputeUnpaidInvoiceTax(
+        {
+          status: "open",
+          originalAmountCents: 10750,
+          amountCents: 9750,
+          discountCents: 1000,
+          taxCents: 750,
+          taxRatePercent: 7.5,
+        },
+        8,
+      ),
+      {
+        taxRatePercent: 8,
+        taxCents: 800,
+        originalAmountCents: 10800,
+        amountCents: 9800,
+      },
+    );
+  });
+
+  it("taxes a work order on subtotal and leaves shipping untaxed", () => {
+    const next = recomputeUnpaidInvoiceTax(
+      {
+        status: "open",
+        amountCents: 11750,
+        taxCents: 750,
+        taxRatePercent: 7.5,
+        workOrder: {
+          paid: false,
+          subtotal: 100,
+          shipping: 10,
+          taxRate: 7.5,
+          tax: 7.5,
+          total: 117.5,
+        },
+      },
+      8,
+    );
+    assert.deepEqual(next, {
+      taxRatePercent: 8,
+      taxCents: 800,
+      amountCents: 11800,
+      workOrder: { taxRate: 8, tax: 8, total: 118 },
+    });
+  });
+
+  it("leaves paid, void, and manually overridden invoices unchanged", () => {
+    const priced = {
+      amountCents: 10750,
+      taxCents: 750,
+      taxRatePercent: 7.5,
+    };
+    assert.equal(invoiceEligibleForCompanyTaxRate({ status: "paid" }), false);
+    assert.equal(invoiceEligibleForCompanyTaxRate({ status: "void" }), false);
+    assert.equal(
+      invoiceEligibleForCompanyTaxRate({
+        status: "open",
+        taxOverridden: true,
+      }),
+      false,
+    );
+    assert.equal(
+      invoiceEligibleForCompanyTaxRate({
+        status: "open",
+        workOrder: { taxOverridden: true },
+      }),
+      false,
+    );
+    assert.equal(
+      invoiceEligibleForCompanyTaxRate({
+        status: "open",
+        workOrder: { paid: true },
+      }),
+      false,
+    );
+    assert.equal(invoiceEligibleForCompanyTaxRate({ status: "draft" }), true);
+    assert.equal(invoiceEligibleForCompanyTaxRate({ status: "failed" }), true);
+    assert.equal(recomputeUnpaidInvoiceTax({ status: "paid", ...priced }, 8), null);
+    assert.equal(recomputeUnpaidInvoiceTax({ status: "void", ...priced }, 8), null);
+    assert.equal(
+      recomputeUnpaidInvoiceTax(
+        { status: "open", taxOverridden: true, ...priced },
+        8,
+      ),
+      null,
+    );
+    assert.equal(
+      recomputeUnpaidInvoiceTax(
+        {
+          status: "open",
+          ...priced,
+          workOrder: { taxOverridden: true, subtotal: 100, shipping: 0 },
+        },
+        8,
+      ),
+      null,
+    );
+  });
+
+  it("skips an invoice that already matches the new rate", () => {
+    assert.equal(
+      recomputeUnpaidInvoiceTax(
+        {
+          status: "failed",
+          amountCents: 10800,
+          taxCents: 800,
+          taxRatePercent: 8,
+        },
+        8,
+      ),
+      null,
+    );
   });
 });
