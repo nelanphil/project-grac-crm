@@ -13,10 +13,14 @@ import {
   createWorkOrder,
   getCustomer,
   getEstimate,
+  placeScheduleWorkOrder,
 } from "@/lib/api";
 import { toUsStateCode } from "@/lib/constants";
+import { isDispatcherRole } from "@/lib/dashboard-role";
+import { formatLocalDate } from "@/lib/schedule";
 import {
   emptyTicketForm,
+  ticketDateFromRecord,
   ticketFromRecord,
   TicketFormState,
 } from "@/lib/service-ticket";
@@ -35,6 +39,7 @@ function CreateWorkOrderContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
   const customerId = searchParams.get("customerId");
   const estimateId = searchParams.get("estimateId");
   const [initial, setInitial] = useState<TicketFormState>(emptyTicketForm());
@@ -115,11 +120,35 @@ function CreateWorkOrderContent() {
           if (!token) return;
           setSubmitting(true);
           setError(null);
+          const { scheduleInsertIndex, ...ticket } = payload;
           try {
             const created = await createWorkOrder(token, {
-              ...payload,
+              ...ticket,
               estimateRef: estimateId,
             });
+            if (
+              typeof scheduleInsertIndex === "number" &&
+              isDispatcherRole(user) &&
+              created.assignedUserRef
+            ) {
+              const date =
+                ticketDateFromRecord(created) ||
+                (created.scheduledStart
+                  ? formatLocalDate(new Date(created.scheduledStart))
+                  : "");
+              if (date) {
+                try {
+                  await placeScheduleWorkOrder(token, {
+                    workOrderId: created._id,
+                    assignedUserRef: created.assignedUserRef,
+                    date,
+                    insertIndex: scheduleInsertIndex,
+                  });
+                } catch {
+                  // The work order is saved. The detail page can place it again.
+                }
+              }
+            }
             router.replace(`/dashboard/work-orders/detail?id=${created._id}`);
           } catch (err) {
             setError(

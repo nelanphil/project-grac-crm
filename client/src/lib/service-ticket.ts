@@ -1,4 +1,5 @@
 import { toUsStateCode } from "./constants";
+import { formatLocalDate, formatLocalTime } from "./schedule";
 import {
   DEFAULT_PRODUCT_DISCOUNTS,
   discountedLaborTotal,
@@ -493,15 +494,40 @@ export function mergeSavedTicket(
     current.parts,
     enrolledRefsFromSave(sent.parts, saved.parts),
   );
+  const date = current.date === sent.date ? saved.date : current.date;
+  const startTime =
+    current.startTime === sent.startTime ? saved.startTime : current.startTime;
+  const endTime = current.endTime === sent.endTime ? saved.endTime : current.endTime;
+  const tech = current.tech === sent.tech ? saved.tech : current.tech;
+  const assignedUserRef =
+    current.assignedUserRef === sent.assignedUserRef
+      ? saved.assignedUserRef
+      : current.assignedUserRef;
   if (
     number === current.number &&
     customerRef === current.customerRef &&
     equipmentRef === current.equipmentRef &&
-    parts === current.parts
+    parts === current.parts &&
+    date === current.date &&
+    startTime === current.startTime &&
+    endTime === current.endTime &&
+    tech === current.tech &&
+    assignedUserRef === current.assignedUserRef
   ) {
     return current;
   }
-  return { ...current, number, customerRef, equipmentRef, parts };
+  return {
+    ...current,
+    number,
+    customerRef,
+    equipmentRef,
+    parts,
+    date,
+    startTime,
+    endTime,
+    tech,
+    assignedUserRef,
+  };
 }
 
 export function ticketToPayload(form: TicketFormState) {
@@ -596,6 +622,26 @@ export function ticketToPayload(form: TicketFormState) {
   };
 }
 
+export function ticketDateFromRecord(record: {
+  date?: string | null;
+  scheduledStart?: string | null;
+}): string {
+  if (record.scheduledStart) {
+    const start = new Date(record.scheduledStart);
+    if (!Number.isNaN(start.getTime())) return formatLocalDate(start);
+  }
+  if (!record.date) return "";
+  const parsed = new Date(record.date);
+  if (Number.isNaN(parsed.getTime())) return String(record.date).slice(0, 10);
+  const utcMidnight =
+    parsed.getUTCHours() === 0 &&
+    parsed.getUTCMinutes() === 0 &&
+    parsed.getUTCSeconds() === 0 &&
+    parsed.getUTCMilliseconds() === 0;
+  if (utcMidnight) return parsed.toISOString().slice(0, 10);
+  return formatLocalDate(parsed);
+}
+
 export function ticketFromRecord(record: {
   number?: string | null;
   date?: string | null;
@@ -652,6 +698,8 @@ export function ticketFromRecord(record: {
   status?: TicketFormState["status"];
   contractRef?: string | null;
   contractDiscount?: TicketContractDiscount | null;
+  scheduledStart?: string | null;
+  scheduledEnd?: string | null;
 }): TicketFormState {
   const base = emptyTicketForm();
   const parts = (record.parts ?? []).map((part) => ({
@@ -681,9 +729,15 @@ export function ticketFromRecord(record: {
   return {
     ...base,
     number: record.number ?? "",
-    date: record.date ? String(record.date).slice(0, 10) : base.date,
-    startTime: record.startTime ?? "",
-    endTime: record.endTime ?? "",
+    date: ticketDateFromRecord(record) || base.date,
+    startTime:
+      record.startTime?.trim() ||
+      (record.scheduledStart
+        ? formatLocalTime(new Date(record.scheduledStart))
+        : ""),
+    endTime:
+      record.endTime?.trim() ||
+      (record.scheduledEnd ? formatLocalTime(new Date(record.scheduledEnd)) : ""),
     tech: record.tech ?? "",
     assignedUserRef: record.assignedUserRef ?? null,
     workOrderTypeRef:

@@ -128,13 +128,24 @@ const technicianRecommendationSchema = z
     }
   });
 
-const placeSchema = z.object({
-  workOrderId: z.string().min(1),
-  assignedUserRef: z.string().min(1),
-  date: z.string().regex(localDateRe),
-  scheduledStart: z.string().min(1),
-  estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
-});
+const placeSchema = z
+  .object({
+    workOrderId: z.string().min(1),
+    assignedUserRef: z.string().min(1),
+    date: z.string().regex(localDateRe),
+    scheduledStart: z.string().min(1).optional(),
+    estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
+    insertIndex: z.number().int().min(0).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (!data.scheduledStart && data.insertIndex === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "scheduledStart or insertIndex is required",
+        path: ["scheduledStart"],
+      });
+    }
+  });
 
 export async function getScheduleQueue(
   req: AuthRequest,
@@ -430,10 +441,13 @@ export async function postSchedulePlace(
       return;
     }
 
-    const scheduledStart = new Date(parsed.data.scheduledStart);
-    if (Number.isNaN(scheduledStart.getTime())) {
-      res.status(400).json({ message: "scheduledStart must be a date" });
-      return;
+    let scheduledStart: Date | undefined;
+    if (parsed.data.scheduledStart) {
+      scheduledStart = new Date(parsed.data.scheduledStart);
+      if (Number.isNaN(scheduledStart.getTime())) {
+        res.status(400).json({ message: "scheduledStart must be a date" });
+        return;
+      }
     }
 
     const result = await placeWorkOrder({
@@ -442,6 +456,7 @@ export async function postSchedulePlace(
       date: parsed.data.date,
       scheduledStart,
       estimatedMinutes: parsed.data.estimatedMinutes,
+      insertIndex: parsed.data.insertIndex,
     });
     res.json(result);
   } catch (err) {

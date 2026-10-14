@@ -135,6 +135,21 @@ export function formatLocalTime(date: Date): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+/**
+ * Calendar day stored on a ticket. Legacy rows used UTC midnight (`new Date("YYYY-MM-DD")`);
+ * current rows use New York midnight, which is not UTC midnight.
+ */
+export function storedTicketDateKey(date: Date | null | undefined): string | null {
+  if (!date || Number.isNaN(date.getTime())) return null;
+  const utcMidnight =
+    date.getUTCHours() === 0 &&
+    date.getUTCMinutes() === 0 &&
+    date.getUTCSeconds() === 0 &&
+    date.getUTCMilliseconds() === 0;
+  if (utcMidnight) return date.toISOString().slice(0, 10);
+  return formatLocalDate(date);
+}
+
 export function weekdayKeyForDate(date: Date): WeekdayKey {
   return nyParts(date).weekday;
 }

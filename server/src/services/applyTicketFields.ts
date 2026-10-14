@@ -12,6 +12,7 @@ import {
   TicketPartInput,
 } from "./serviceTicket";
 import { normalizeTaxRatePercent } from "./taxSettings";
+import { localDateToUtc } from "../utils/scheduleTime";
 import {
   hasAnyDiscount,
   normalizeProductDiscounts,
@@ -378,7 +379,14 @@ export async function applyTicketFields(
   if (body.completed !== undefined) target.completed = body.completed;
   if (body.certify !== undefined) target.certify = body.certify;
   if (body.date !== undefined) {
-    target.date = body.date ? new Date(body.date) : null;
+    if (!body.date) {
+      target.date = null;
+    } else {
+      const day = String(body.date).slice(0, 10);
+      target.date = /^\d{4}-\d{2}-\d{2}$/.test(day)
+        ? localDateToUtc(day, "00:00")
+        : null;
+    }
   }
   if (body.startTime !== undefined) {
     target.startTime = body.startTime?.trim() || "";

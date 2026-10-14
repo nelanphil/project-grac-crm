@@ -13,6 +13,7 @@ import {
   DEFAULT_ESTIMATED_MINUTES,
   defaultWeeklyHours,
   formatLocalDate,
+  formatLocalTime,
   isHhMm,
   localDateToUtc,
   localDayBounds,
@@ -2460,20 +2461,58 @@ export async function startOptionsForWorkOrder(
   };
 }
 
+function writeTicketClock(job: InstanceType<typeof WorkOrder>): void {
+  if (job.scheduledStart) job.startTime = formatLocalTime(job.scheduledStart);
+  if (job.scheduledEnd) job.endTime = formatLocalTime(job.scheduledEnd);
+}
+
+/** Clock for a form save: typed start time, otherwise the existing appointment, otherwise the day window. */
+export async function placementStartForAssignee(opts: {
+  assignedUserRef: string;
+  date: string;
+  startTime?: string | null;
+  previousStart?: Date | null;
+}): Promise<Date> {
+  const assignee = await User.findById(opts.assignedUserRef)
+    .select("weeklyHours scheduleExceptions")
+    .lean();
+  const dayWindow = resolveDayWindow(
+    assignee?.weeklyHours,
+    assignee?.scheduleExceptions,
+    opts.date,
+  );
+  const typed = opts.startTime?.trim() ?? "";
+  const clock = isHhMm(typed)
+    ? typed
+    : opts.previousStart
+      ? formatLocalTime(opts.previousStart)
+      : isHhMm(dayWindow.start)
+        ? dayWindow.start
+        : DEFAULT_DAY_START;
+  return localDateToUtc(opts.date, clock);
+}
+
 export async function placeWorkOrder(opts: {
   workOrderId: string;
   assignedUserRef: string;
   date: string;
-  scheduledStart: Date;
+  scheduledStart?: Date;
   estimatedMinutes?: number;
+  /** 0 places the job first. Omit to insert by scheduledStart. */
+  insertIndex?: number;
 }): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
+  const useIndex =
+    typeof opts.insertIndex === "number" && Number.isFinite(opts.insertIndex);
   if (!mongoose.Types.ObjectId.isValid(opts.workOrderId)) {
     throw Object.assign(new Error("Invalid workOrderId"), { status: 400 });
   }
   if (!mongoose.Types.ObjectId.isValid(opts.assignedUserRef)) {
     throw Object.assign(new Error("Invalid assignedUserRef"), { status: 400 });
   }
-  if (Number.isNaN(opts.scheduledStart.getTime())) {
+  if (!useIndex && (!opts.scheduledStart || Number.isNaN(opts.scheduledStart.getTime()))) {
+    throw Object.assign(new Error("Invalid scheduledStart"), { status: 400 });
+  }
+  if (opts.scheduledStart && Number.isNaN(opts.scheduledStart.getTime())) {
     throw Object.assign(new Error("Invalid scheduledStart"), { status: 400 });
   }
 
@@ -2511,11 +2550,19 @@ export async function placeWorkOrder(opts: {
     _id: { $ne: dropped._id },
   }).sort({ scheduledStart: 1 });
 
+  const requestedStart =
+    opts.scheduledStart && !Number.isNaN(opts.scheduledStart.getTime())
+      ? opts.scheduledStart
+      : localDateToUtc(opts.date, DEFAULT_DAY_START);
   const insertAt = existing.findIndex((job) => {
     const start = job.scheduledStart?.getTime() ?? Number.POSITIVE_INFINITY;
-    return start >= opts.scheduledStart.getTime();
+    return start >= requestedStart.getTime();
   });
-  const index = insertAt === -1 ? existing.length : insertAt;
+  const index = useIndex
+    ? Math.min(Math.max(0, Math.floor(opts.insertIndex ?? 0)), existing.length)
+    : insertAt === -1
+      ? existing.length
+      : insertAt;
   const sequence = [...existing];
   sequence.splice(index, 0, dropped);
 
@@ -2611,10 +2658,13 @@ export async function placeWorkOrder(opts: {
   const earliestInserted =
     !isFirstStop && previousEnd
       ? addMinutes(previousEnd, inboundDrive)
-      : opts.scheduledStart;
-  const insertedStart = new Date(
-    Math.max(opts.scheduledStart.getTime(), earliestInserted.getTime()),
-  );
+      : requestedStart;
+  const windowStart = workRange?.start ?? localDateToUtc(opts.date, DEFAULT_DAY_START);
+  const insertedStart = useIndex
+    ? isFirstStop
+      ? windowStart
+      : earliestInserted
+    : new Date(Math.max(requestedStart.getTime(), earliestInserted.getTime()));
   const insertedEnd = addMinutes(insertedStart, insertedDuration);
   inserted.scheduledStart = insertedStart;
   inserted.scheduledEnd = insertedEnd;
@@ -2623,6 +2673,7 @@ export async function placeWorkOrder(opts: {
   inserted.appointmentCanceledAt = null;
   inserted.appointmentCanceledBy = null;
   await applyAssignmentSideEffects(inserted, assignee);
+  writeTicketClock(inserted);
 
   const hoursWarn = availabilityWarning({
     weeklyHours: assignee.weeklyHours,
@@ -2658,6 +2709,7 @@ export async function placeWorkOrder(opts: {
     job.scheduledEnd = end;
     job.estimatedMinutes = duration;
     await applyAssignmentSideEffects(job, assignee);
+    writeTicketClock(job);
     changed.push(job);
     const jobWarn = availabilityWarning({
       weeklyHours: assignee.weeklyHours,

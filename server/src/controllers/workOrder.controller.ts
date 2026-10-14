@@ -24,19 +24,31 @@ import {
   estimatedMinutesForWorkOrder,
   findOverlappingJob,
   isDispatcherRole,
+  placementStartForAssignee,
+  placeWorkOrder,
   rangeUtc,
 } from "../services/schedule.service";
 import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
 import { resolveTicketWorkOrderType } from "../services/ticketWorkOrderType";
 import { syncWorkOrderInvoice } from "../services/invoice.service";
-import { addMinutes, formatLocalDate } from "../utils/scheduleTime";
+import {
+  addMinutes,
+  formatLocalDate,
+  storedTicketDateKey,
+} from "../utils/scheduleTime";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { findWorkOrderIdsMatchingNoteSearch } from "./workOrderNote.controller";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 /** Autosave patches often; one "updated" event per editor per window is enough. */
 const WORK_ORDER_UPDATE_NOTIFY_WINDOW_MS = 10 * 60 * 1000;
+
+function localDateFromBody(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const day = value.slice(0, 10);
+  return localDateRe.test(day) ? day : null;
+}
 
 function timeWindowIsInvalid(start: unknown, end: unknown): boolean {
   const startTime = typeof start === "string" ? start : "";
@@ -420,6 +432,47 @@ export async function createWorkOrder(
     }
 
     await workOrder.save();
+
+    const placementWarnings: string[] = [];
+    const createdDate = storedTicketDateKey(workOrder.date);
+    if (
+      !workOrder.completed &&
+      workOrder.assignedUserRef &&
+      createdDate
+    ) {
+      try {
+        const scheduledStart = await placementStartForAssignee({
+          assignedUserRef: String(workOrder.assignedUserRef),
+          date: createdDate,
+          startTime: workOrder.startTime,
+        });
+        const placed = await placeWorkOrder({
+          workOrderId: String(workOrder._id),
+          assignedUserRef: String(workOrder.assignedUserRef),
+          date: createdDate,
+          scheduledStart,
+          estimatedMinutes: workOrder.estimatedMinutes,
+        });
+        placementWarnings.push(...placed.warnings);
+        const fresh = await WorkOrder.findById(workOrder._id);
+        if (fresh) {
+          workOrder.scheduledStart = fresh.scheduledStart;
+          workOrder.scheduledEnd = fresh.scheduledEnd;
+          workOrder.date = fresh.date;
+          workOrder.startTime = fresh.startTime;
+          workOrder.endTime = fresh.endTime;
+          workOrder.tech = fresh.tech;
+          workOrder.estimatedMinutes = fresh.estimatedMinutes;
+        }
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        const message =
+          err instanceof Error ? err.message : "Could not schedule this work order";
+        if (!status || status >= 500) throw err;
+        placementWarnings.push(message);
+      }
+    }
+
     await saveWorkOrderAgreements(workOrder);
     await syncWorkOrderInvoice(workOrder);
 
@@ -443,7 +496,11 @@ export async function createWorkOrder(
 
     const lean = workOrder.toObject() as unknown as Record<string, unknown>;
     const [enriched] = await enrichWithAddress([lean]);
-    res.status(201).json(enriched);
+    res.status(201).json(
+      placementWarnings.length > 0
+        ? { ...enriched, warnings: placementWarnings }
+        : enriched,
+    );
   } catch {
     res.status(500).json({ message: "Failed to create work order" });
   }
@@ -467,7 +524,7 @@ export async function updateWorkOrder(
       return;
     }
 
-    const workOrder = await WorkOrder.findById(req.params.id);
+    let workOrder = await WorkOrder.findById(req.params.id);
     if (!workOrder) {
       res.status(404).json({ message: "Work order not found" });
       return;
@@ -496,6 +553,18 @@ export async function updateWorkOrder(
         return;
       }
     }
+
+    const prevAssignee = workOrder.assignedUserRef
+      ? String(workOrder.assignedUserRef)
+      : null;
+    const prevStartTime = workOrder.startTime ?? "";
+    const prevScheduledStart = workOrder.scheduledStart
+      ? new Date(workOrder.scheduledStart)
+      : null;
+    const prevAppointmentDate = prevScheduledStart
+      ? formatLocalDate(prevScheduledStart)
+      : null;
+    const prevTicketDate = storedTicketDateKey(workOrder.date);
 
     const rest = { ...parsed.data };
     delete rest.assignedUserRef;
@@ -594,6 +663,8 @@ export async function updateWorkOrder(
     }
 
     let assignee: { first_name: string; last_name: string } | null = null;
+    let placedAppointment = false;
+    const placementWarnings: string[] = [];
     if (workOrder.assignedUserRef) {
       const assigning =
         typeof parsed.data.assignedUserRef === "string" &&
@@ -621,7 +692,49 @@ export async function updateWorkOrder(
         assignee = user;
       }
 
-      if (workOrder.scheduledStart && workOrder.scheduledEnd) {
+      const nextAssignee = workOrder.assignedUserRef
+        ? String(workOrder.assignedUserRef)
+        : null;
+      const nextStartTime = workOrder.startTime ?? "";
+      const requestedDate =
+        parsed.data.date !== undefined
+          ? localDateFromBody(
+              typeof parsed.data.date === "string" ? parsed.data.date : null,
+            )
+          : undefined;
+      const dateChanged =
+        parsed.data.date !== undefined &&
+        (requestedDate ?? null) !== (prevAppointmentDate ?? prevTicketDate);
+      const startChanged =
+        parsed.data.startTime !== undefined && nextStartTime !== prevStartTime;
+      const assigneeChanged =
+        parsed.data.assignedUserRef !== undefined &&
+        nextAssignee !== prevAssignee;
+      const clearedAssignee = assigneeChanged && !nextAssignee;
+      const nextDate =
+        requestedDate !== undefined
+          ? requestedDate
+          : (prevAppointmentDate ?? prevTicketDate);
+      if (clearedAssignee || (dateChanged && !nextDate)) {
+        workOrder.scheduledStart = null;
+        workOrder.scheduledEnd = null;
+      }
+      const missingSlot = !prevScheduledStart;
+      const shouldPlace =
+        dispatcher &&
+        !workOrder.completed &&
+        !clearedAssignee &&
+        Boolean(nextAssignee) &&
+        Boolean(nextDate) &&
+        parsed.data.scheduledStart === undefined &&
+        (dateChanged || startChanged || assigneeChanged || missingSlot);
+
+      if (shouldPlace && timeWindowIsInvalid(workOrder.startTime, workOrder.endTime)) {
+        res.status(400).json({ message: "End time must be after start time" });
+        return;
+      }
+
+      if (!shouldPlace && workOrder.scheduledStart && workOrder.scheduledEnd) {
         const overlap = await findOverlappingJob({
           userId: String(workOrder.assignedUserRef),
           start: workOrder.scheduledStart,
@@ -635,6 +748,52 @@ export async function updateWorkOrder(
           return;
         }
       }
+
+      if (shouldPlace && nextDate && nextAssignee) {
+        await workOrder.save();
+        try {
+          const scheduledStart = await placementStartForAssignee({
+            assignedUserRef: nextAssignee,
+            date: nextDate,
+            startTime: workOrder.startTime,
+            previousStart: prevScheduledStart,
+          });
+          const placed = await placeWorkOrder({
+            workOrderId: String(workOrder._id),
+            assignedUserRef: nextAssignee,
+            date: nextDate,
+            scheduledStart,
+            estimatedMinutes: workOrder.estimatedMinutes,
+          });
+          placementWarnings.push(...placed.warnings);
+        } catch (err) {
+          const status = (err as { status?: number }).status;
+          if (status && status < 500) {
+            res.status(status).json({ message: (err as Error).message });
+            return;
+          }
+          throw err;
+        }
+        const fresh = await WorkOrder.findById(workOrder._id);
+        if (fresh) workOrder = fresh;
+        placedAppointment = true;
+      }
+    }
+
+    if (!workOrder.assignedUserRef) {
+      const requestedDate =
+        parsed.data.date !== undefined
+          ? localDateFromBody(
+              typeof parsed.data.date === "string" ? parsed.data.date : null,
+            )
+          : undefined;
+      const dateChanged =
+        parsed.data.date !== undefined &&
+        (requestedDate ?? null) !== (prevAppointmentDate ?? prevTicketDate);
+      if (dateChanged || parsed.data.assignedUserRef === null || parsed.data.assignedUserRef === "") {
+        workOrder.scheduledStart = null;
+        workOrder.scheduledEnd = null;
+      }
     }
 
     if (timeWindowIsInvalid(workOrder.startTime, workOrder.endTime)) {
@@ -642,10 +801,12 @@ export async function updateWorkOrder(
       return;
     }
 
-    await applyAssignmentSideEffects(workOrder, assignee);
-    await workOrder.save();
+    const warnings: string[] = [...placementWarnings];
+    if (!placedAppointment) {
+      await applyAssignmentSideEffects(workOrder, assignee);
+      await workOrder.save();
+    }
     await saveWorkOrderAgreements(workOrder);
-    const warnings: string[] = [];
     try {
       await syncWorkOrderInvoice(workOrder);
     } catch (syncErr) {

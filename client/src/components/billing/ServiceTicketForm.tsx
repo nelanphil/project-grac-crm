@@ -2,6 +2,7 @@
 
 import {
   FormEvent,
+  Fragment,
   type ReactNode,
   useCallback,
   useEffect,
@@ -14,13 +15,17 @@ import {
   CustomerListItem,
   SlotTechnicianRecommendation,
   TechnicianListItem,
+  ApiError,
   getContractsForCustomer,
   getCustomer,
   getCustomers,
+  getScheduleStaff,
   getTaxSettings,
   getTechnicians,
   getWorkOrderTypes,
+  placeScheduleWorkOrder,
   recommendTechnicianForSlot,
+  WorkOrderListItem,
   WorkOrderTypeItem,
 } from "@/lib/api";
 import { COMPANY, US_STATE_CODES, US_STATES, toUsStateCode } from "@/lib/constants";
@@ -44,6 +49,7 @@ import {
   nextTicketWorkOrderType,
   ticketToPayload,
   ticketTotals,
+  ticketDateFromRecord,
   workOrderTypeSaveIssue,
 } from "@/lib/service-ticket";
 import { useWorkOrderAutosave } from "@/lib/useWorkOrderAutosave";
@@ -51,10 +57,13 @@ import AutosaveStatus from "@/components/billing/AutosaveStatus";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   DEFAULT_ESTIMATED_MINUTES,
+  formatLocalClock,
+  formatWeekdayDate,
   minutesToHhMm,
   normalizeTimeOfDay,
   timeWindowError,
 } from "@/lib/schedule";
+import { isDispatcherRole } from "@/lib/dashboard-role";
 import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
 import {
   ExerciseDaySelect,
@@ -104,6 +113,36 @@ function taxInputValue(amount: number): string {
 
 function serializeTicket(form: TicketFormState): string {
   return JSON.stringify(ticketToPayload(form));
+}
+
+function stopSummary(stop: WorkOrderListItem): string {
+  const place = [stop.customerAddress, stop.customerCity].filter(Boolean).join(", ");
+  const when = stop.scheduledStart
+    ? formatLocalClock(new Date(stop.scheduledStart))
+    : stop.startTime || "";
+  return [when, stop.customerName || "Work order", place].filter(Boolean).join(" · ");
+}
+
+function technicianDayRows(stops: WorkOrderListItem[], selfId?: string) {
+  const currentIndex = selfId ? stops.findIndex((stop) => stop._id === selfId) : -1;
+  const currentInsert =
+    currentIndex >= 0
+      ? stops.slice(0, currentIndex).filter((stop) => stop._id !== selfId).length
+      : null;
+  const items: Array<
+    { kind: "slot"; insertIndex: number } | { kind: "stop"; stop: WorkOrderListItem }
+  > = [];
+  let otherIndex = 0;
+  if (currentInsert !== 0) items.push({ kind: "slot", insertIndex: 0 });
+  for (const stop of stops) {
+    items.push({ kind: "stop", stop });
+    if (selfId && stop._id === selfId) continue;
+    otherIndex += 1;
+    if (otherIndex !== currentInsert) {
+      items.push({ kind: "slot", insertIndex: otherIndex });
+    }
+  }
+  return items;
 }
 
 function technicianDisplayName(tech: {
@@ -173,7 +212,9 @@ export default function ServiceTicketForm({
   recordId?: string;
   submitting?: boolean;
   submitLabel: string;
-  onSubmit: (payload: ReturnType<typeof ticketToPayload>) => void | Promise<void>;
+  onSubmit: (
+    payload: ReturnType<typeof ticketToPayload> & { scheduleInsertIndex?: number },
+  ) => void | Promise<void>;
   extraActions?: ReactNode;
   invoiceAction?: ReactNode;
   /**
@@ -209,7 +250,15 @@ export default function ServiceTicketForm({
   const [showEquipment, setShowEquipment] = useState(() =>
     Boolean(recordId && initial && hasSavedEquipment(initial)),
   );
+  const [dayStops, setDayStops] = useState<WorkOrderListItem[]>([]);
+  const [dayStopsLoading, setDayStopsLoading] = useState(false);
+  const [dayStopsNonce, setDayStopsNonce] = useState(0);
+  const [collapsedTechId, setCollapsedTechId] = useState<string | null>(null);
+  const [pendingInsertIndex, setPendingInsertIndex] = useState<number | null>(null);
+  const [placingIndex, setPlacingIndex] = useState<number | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const autoSaving = Boolean(autoSave);
+  const dispatcher = isDispatcherRole(user);
 
   useEffect(() => {
     // Autosaved records feed each save back as `initial`; resetting to it
@@ -605,6 +654,7 @@ export default function ServiceTicketForm({
   }
 
   function selectWorkOrderTechnician(userId: string) {
+    setPendingInsertIndex(null);
     if (!userId) {
       techChoiceLocked.current = false;
       autoAppliedTechId.current = null;
@@ -673,7 +723,10 @@ export default function ServiceTicketForm({
     ) {
       return;
     }
-    await onSubmit(ticketToPayload(form));
+    await onSubmit({
+      ...ticketToPayload(form),
+      ...(pendingInsertIndex != null ? { scheduleInsertIndex: pendingInsertIndex } : {}),
+    });
   }
 
   const selectedAddress =
@@ -719,6 +772,84 @@ export default function ServiceTicketForm({
     save: saveDraft,
     blocked: !autoSave || autosaveBlockedReason !== null,
   });
+
+  useEffect(() => {
+    if (autosave.status !== "saved") return;
+    setDayStopsNonce((nonce) => nonce + 1);
+  }, [autosave.status]);
+
+  useEffect(() => {
+    if (variant !== "work-order" || !token || !form.assignedUserRef || !form.date) {
+      setDayStops([]);
+      setDayStopsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDayStopsLoading(true);
+    getScheduleStaff(token, form.date, form.date, form.assignedUserRef)
+      .then((board) => {
+        if (cancelled) return;
+        const stops = [...board.workOrders].sort((a, b) => {
+          const aStart = a.scheduledStart ? new Date(a.scheduledStart).getTime() : 0;
+          const bStart = b.scheduledStart ? new Date(b.scheduledStart).getTime() : 0;
+          return aStart - bStart;
+        });
+        setDayStops(stops);
+      })
+      .catch(() => {
+        if (!cancelled) setDayStops([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDayStopsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [variant, token, form.assignedUserRef, form.date, dayStopsNonce]);
+
+  const placeOnTechnicianDay = useCallback(
+    async (insertIndex: number) => {
+      if (!form.assignedUserRef || !form.date) return;
+      if (!recordId) {
+        setPendingInsertIndex(insertIndex);
+        setScheduleError(null);
+        return;
+      }
+      if (!token || !dispatcher) return;
+      setPlacingIndex(insertIndex);
+      setScheduleError(null);
+      try {
+        const result = await placeScheduleWorkOrder(token, {
+          workOrderId: recordId,
+          assignedUserRef: form.assignedUserRef,
+          date: form.date,
+          insertIndex,
+        });
+        const mine = result.workOrders.find((job) => job._id === recordId);
+        if (mine) {
+          setForm((prev) => ({
+            ...prev,
+            date: ticketDateFromRecord(mine) || prev.date,
+            startTime: mine.startTime?.trim() || prev.startTime,
+            endTime: mine.endTime?.trim() || prev.endTime,
+            tech: mine.tech || prev.tech,
+            assignedUserRef: mine.assignedUserRef ?? prev.assignedUserRef,
+          }));
+        }
+        if (result.warnings.length > 0) {
+          setScheduleError(result.warnings.join(" "));
+        }
+        setDayStopsNonce((nonce) => nonce + 1);
+      } catch (err) {
+        setScheduleError(
+          err instanceof ApiError ? err.message : "Couldn't place this work order.",
+        );
+      } finally {
+        setPlacingIndex(null);
+      }
+    },
+    [dispatcher, form.assignedUserRef, form.date, recordId, token],
+  );
 
   const equipmentPanel = (
     <>
@@ -1059,40 +1190,136 @@ export default function ServiceTicketForm({
                       technicianRows.map((row) => {
                         const selected = form.assignedUserRef === row.userId;
                         const showConflict = selected && !row.fits;
+                        const dayOpen = selected && collapsedTechId !== row.userId;
+                        const dayItems = technicianDayRows(dayStops, recordId);
                         return (
-                          <tr
-                            key={row.userId}
-                            className={`cursor-pointer border-t border-neutral-200 ${
-                              selected ? "bg-neutral-50" : "hover:bg-neutral-50"
-                            }`}
-                            onClick={() => selectWorkOrderTechnician(row.userId)}
-                          >
-                            <td className="px-2 py-2">
-                              <input
-                                type="radio"
-                                name="work-order-technician"
-                                value={row.userId}
-                                checked={selected}
-                                onChange={() => selectWorkOrderTechnician(row.userId)}
-                                aria-label={row.name}
-                              />
-                            </td>
-                            <td className="px-2 py-2 text-brand-dark">
-                              {row.name}
-                              {row.recommended ? (
-                                <span className="ml-2 rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-dark">
-                                  Recommended
-                                </span>
-                              ) : null}
-                            </td>
-                            <td
-                              className={`px-2 py-2 text-xs ${
-                                showConflict ? "text-amber-700" : "text-neutral-500"
+                          <Fragment key={row.userId}>
+                            <tr
+                              className={`cursor-pointer border-t border-neutral-200 ${
+                                selected ? "bg-neutral-50" : "hover:bg-neutral-50"
                               }`}
+                              onClick={() => selectWorkOrderTechnician(row.userId)}
                             >
-                              {row.reason}
-                            </td>
-                          </tr>
+                              <td className="px-2 py-2">
+                                <input
+                                  type="radio"
+                                  name="work-order-technician"
+                                  value={row.userId}
+                                  checked={selected}
+                                  onChange={() => selectWorkOrderTechnician(row.userId)}
+                                  aria-label={row.name}
+                                />
+                              </td>
+                              <td className="px-2 py-2 text-brand-dark">
+                                {row.name}
+                                {row.recommended ? (
+                                  <span className="ml-2 rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-dark">
+                                    Recommended
+                                  </span>
+                                ) : null}
+                              </td>
+                              <td
+                                className={`px-2 py-2 text-xs ${
+                                  showConflict ? "text-amber-700" : "text-neutral-500"
+                                }`}
+                              >
+                                {row.reason}
+                              </td>
+                            </tr>
+                            {selected ? (
+                              <tr className="border-t border-neutral-200 bg-neutral-50">
+                                <td colSpan={3} className="px-3 py-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setCollapsedTechId(dayOpen ? row.userId : null)
+                                    }
+                                    className="flex items-center gap-2 text-xs font-semibold text-brand-dark"
+                                    aria-expanded={dayOpen}
+                                  >
+                                    <span aria-hidden="true">{dayOpen ? "▾" : "▸"}</span>
+                                    {form.date
+                                      ? `${formatWeekdayDate(form.date)} schedule`
+                                      : "Schedule"}
+                                    {dayStopsLoading ? (
+                                      <span className="font-normal text-neutral-500">
+                                        Loading…
+                                      </span>
+                                    ) : form.date ? (
+                                      <span className="font-normal text-neutral-500">
+                                        {dayStops.length}{" "}
+                                        {dayStops.length === 1 ? "stop" : "stops"}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                  {dayOpen ? (
+                                    <div className="mt-2 space-y-1">
+                                      {!form.date ? (
+                                        <p className="text-xs text-neutral-500">
+                                          Set a date to see this technician&apos;s appointments.
+                                        </p>
+                                      ) : dayStops.length === 0 && !dayStopsLoading ? (
+                                        <p className="text-xs text-neutral-500">
+                                          No appointments on this day yet.
+                                        </p>
+                                      ) : null}
+                                      {form.date
+                                        ? dayItems.map((item) =>
+                                            item.kind === "stop" ? (
+                                              <p
+                                                key={item.stop._id}
+                                                className={`rounded px-2 py-1 text-xs ${
+                                                  item.stop._id === recordId
+                                                    ? "bg-white font-medium text-brand-dark"
+                                                    : "text-neutral-600"
+                                                }`}
+                                              >
+                                                {stopSummary(item.stop)}
+                                                {item.stop._id === recordId
+                                                  ? " · This work order"
+                                                  : ""}
+                                              </p>
+                                            ) : dispatcher ? (
+                                              <button
+                                                key={`slot-${item.insertIndex}`}
+                                                type="button"
+                                                disabled={placingIndex !== null}
+                                                onClick={() =>
+                                                  void placeOnTechnicianDay(item.insertIndex)
+                                                }
+                                                className={`block w-full rounded border border-dashed px-2 py-1 text-left text-xs ${
+                                                  pendingInsertIndex === item.insertIndex &&
+                                                  !recordId
+                                                    ? "border-brand-blue bg-white font-medium text-brand-dark"
+                                                    : "border-neutral-300 text-neutral-500 hover:border-neutral-400 hover:text-brand-dark"
+                                                }`}
+                                              >
+                                                {placingIndex === item.insertIndex
+                                                  ? "Placing…"
+                                                  : pendingInsertIndex === item.insertIndex &&
+                                                      !recordId
+                                                    ? "This work order will be placed here"
+                                                    : item.insertIndex === 0
+                                                      ? "Place first"
+                                                      : item.insertIndex ===
+                                                          dayStops.filter(
+                                                            (stop) => stop._id !== recordId,
+                                                          ).length
+                                                        ? "Place last"
+                                                        : "Place here"}
+                                              </button>
+                                            ) : null,
+                                          )
+                                        : null}
+                                      {scheduleError ? (
+                                        <p className="text-xs text-amber-700">{scheduleError}</p>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
+                                </td>
+                              </tr>
+                            ) : null}
+                          </Fragment>
                         );
                       })
                     )}

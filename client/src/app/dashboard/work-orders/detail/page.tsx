@@ -164,9 +164,11 @@ function WorkOrderDetailContent() {
       />
     ) : null;
 
-  async function saveOrder(payload: ReturnType<typeof ticketToPayload>) {
+  async function saveOrder(
+    payload: ReturnType<typeof ticketToPayload> & { scheduleInsertIndex?: number },
+  ) {
     if (!token || !order) throw new Error("Work order is not loaded.");
-    const { assignedUserRef, ...rest } = payload;
+    const { assignedUserRef, scheduleInsertIndex: _insert, ...rest } = payload;
     const nextAssigned = assignedUserRef ?? null;
     const prevAssigned = order.assignedUserRef ?? null;
     return updateWorkOrder(token, order._id, {

@@ -2621,8 +2621,9 @@ export async function placeScheduleWorkOrder(
     workOrderId: string;
     assignedUserRef: string;
     date: string;
-    scheduledStart: string;
+    scheduledStart?: string;
     estimatedMinutes?: number;
+    insertIndex?: number;
   },
 ): Promise<{ workOrders: WorkOrderListItem[]; warnings: string[] }> {
   return authRequest(`/schedule/place`, {

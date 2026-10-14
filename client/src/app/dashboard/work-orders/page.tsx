@@ -17,7 +17,7 @@ import {
   updateWorkOrder,
   WorkOrderListItem,
 } from "@/lib/api";
-import { timeWindowError } from "@/lib/schedule";
+import { timeWindowError, workOrderLocalDate, formatMonthDayYear } from "@/lib/schedule";
 import {
   DEFAULT_PAGE_SIZE,
   paginationRange,
@@ -31,6 +31,11 @@ function formatMoney(amount: number): string {
     style: "currency",
     currency: "USD",
   }).format(amount || 0);
+}
+
+function displayOrderDate(order: WorkOrderListItem): string {
+  const local = workOrderLocalDate(order);
+  return local ? formatMonthDayYear(local) : "—";
 }
 
 function displayNumber(order: WorkOrderListItem): string {
@@ -278,11 +283,7 @@ function WorkOrdersContent() {
                     <>
                       <DataField
                         label="Date"
-                        value={
-                          order.date
-                            ? new Date(order.date).toLocaleDateString()
-                            : "—"
-                        }
+                        value={displayOrderDate(order)}
                       />
                       <DataField
                         label="Start"
@@ -359,9 +360,7 @@ function WorkOrdersContent() {
                       <td className="px-6 py-4 font-medium text-brand-dark">
                         {displayNumber(order)}
                         <div className="text-xs font-normal text-neutral-400">
-                          {order.date
-                            ? new Date(order.date).toLocaleDateString()
-                            : "—"}
+                          {displayOrderDate(order)}
                         </div>
                       </td>
                       <td className="px-6 py-4 text-neutral-600">
