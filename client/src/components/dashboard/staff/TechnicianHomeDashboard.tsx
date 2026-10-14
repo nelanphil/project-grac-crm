@@ -26,8 +26,8 @@ import {
   formatLocalClock,
   formatLocalDate,
   formatWeekdayDate,
+  isScheduledOnDate,
   startOfWeekSunday,
-  workOrderLocalDate,
 } from "@/lib/schedule";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -486,11 +486,8 @@ export default function TechnicianHomeDashboard() {
     };
   }, [token, selectedId]);
 
-  const dayJobs = jobs.filter((job) => workOrderLocalDate(job) === focusDate);
-
-  const mapDay = focusDate;
-  const mapJobs = jobs.filter((job) => workOrderLocalDate(job) === mapDay);
-  const mapCoordKey = mapJobs
+  const dayJobs = jobs.filter((job) => isScheduledOnDate(job, focusDate));
+  const mapCoordKey = dayJobs
     .map(
       (job) =>
         `${job._id}:${job.address?.lat ?? ""},${job.address?.lng ?? ""}`,
@@ -503,7 +500,7 @@ export default function TechnicianHomeDashboard() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRouteStops([]);
     setRoutePolyline(undefined);
-    getScheduleRoute(token, subjectId, mapDay)
+    getScheduleRoute(token, subjectId, focusDate)
       .then((result) => {
         if (cancelled) return;
         setRouteStops(result.stops);
@@ -517,7 +514,7 @@ export default function TechnicianHomeDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [token, subjectId, mapDay, mapCoordKey]);
+  }, [token, subjectId, focusDate, mapCoordKey]);
 
   const periodLabel = formatWeekdayDate(focusDate);
   const pageError = techsError ?? error;
@@ -786,7 +783,7 @@ export default function TechnicianHomeDashboard() {
       {showMap && layout === "mobile" ? (
         <ScheduleMap
           unscheduled={[]}
-          scheduled={mapJobs}
+          scheduled={dayJobs}
           pinMode="scheduled"
           selectedId={null}
           droppable={false}
@@ -815,7 +812,7 @@ export default function TechnicianHomeDashboard() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <ScheduleMap
           unscheduled={[]}
-          scheduled={mapJobs}
+          scheduled={dayJobs}
           pinMode="scheduled"
           selectedId={null}
           droppable={false}

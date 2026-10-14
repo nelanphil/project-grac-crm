@@ -15,6 +15,7 @@ import {
 import { US_STATE_BOUNDS } from "@/lib/usStateBounds";
 import { useAuthStore } from "@/store/useAuthStore";
 import { mapStylesForTheme } from "@/components/schedule/ScheduleMap";
+import { cityMatchesZone } from "@/lib/serviceTerritory";
 
 const FL_CENTER = { lat: 27.8, lng: -81.7 };
 const PIN_COLOR = "#E87722";
@@ -34,14 +35,6 @@ export type ServiceTerritoryMapProps = {
 
 function stateLabel(code: string): string {
   return US_STATE_BOUNDS[code]?.name ?? code;
-}
-
-function cityInZone(city: ServiceCity, zone: Pick<CityZone, "name" | "state" | "geoid">): boolean {
-  if (zone.geoid && city.placeId === `census:${zone.geoid}`) return true;
-  return (
-    city.state === zone.state &&
-    city.city.trim().toLowerCase() === zone.name.trim().toLowerCase()
-  );
 }
 
 function optionalNumber(value: unknown): number | null {
@@ -162,7 +155,7 @@ export default function ServiceTerritoryMap({
   const styleCityFeature = useCallback(
     (feature: google.maps.Data.Feature): google.maps.Data.StyleOptions => {
       const zone = zoneFromFeature(feature, null);
-      const selected = citiesRef.current.some((city) => cityInZone(city, zone));
+      const selected = citiesRef.current.some((city) => cityMatchesZone(city, zone));
       if (selected) {
         return {
           fillColor: PIN_COLOR,
@@ -330,7 +323,7 @@ export default function ServiceTerritoryMap({
       featureClickAtRef.current = Date.now();
       const zone = zoneFromFeature(event.feature, activeStateRef.current);
       if (!zone.name || !zone.state) return;
-      const existingCity = citiesRef.current.find((city) => cityInZone(city, zone));
+      const existingCity = citiesRef.current.find((city) => cityMatchesZone(city, zone));
       if (existingCity) {
         handlersRef.current.onRemoveCity(existingCity.placeId);
         setMessage(null);
@@ -387,7 +380,7 @@ export default function ServiceTerritoryMap({
           const box = new google.maps.LatLngBounds();
           let matched = false;
           for (const feature of geojson.features) {
-            if (!selected.some((city) => cityInZone(city, feature.properties))) {
+            if (!selected.some((city) => cityMatchesZone(city, feature.properties))) {
               continue;
             }
             extendBounds(box, feature.geometry.coordinates);

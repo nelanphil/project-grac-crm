@@ -23,7 +23,9 @@ import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
   cancelWorkOrderAppointment,
+  type CityBoundaryCollection,
   geocodeMissingScheduleAddresses,
+  getCityBoundaries,
   getScheduleQueue,
   getScheduleRecommendations,
   getScheduleStaff,
@@ -39,6 +41,7 @@ import {
   ScheduleSuggestion,
   suggestScheduleAssignee,
   updateWorkOrder,
+  type ServiceCity,
   WorkOrderListItem,
 } from "@/lib/api";
 import {
@@ -54,6 +57,7 @@ import {
   formatPrettyDate,
   formatWeekdayDate,
   isDispatcherRole,
+  isScheduledOnDate,
   localDateTimeToIso,
   minutesToHhMm,
   normalizeTimeOfDay,
@@ -77,6 +81,11 @@ import ScheduleMap, {
 } from "@/components/schedule/ScheduleMap";
 import Segmented from "@/components/schedule/Segmented";
 import { DesktopWorkOrderPanel } from "@/components/dashboard/staff/TechnicianWorkOrderPanel";
+import {
+  cityMatchesZone,
+  jobOutsideServiceCities,
+  territoryPlaceLabel,
+} from "@/lib/serviceTerritory";
 
 type ViewMode = "week" | "month";
 type MonthMode = "calendar" | "table";
@@ -806,6 +815,55 @@ export default function CalendarTab({
     ids: [],
   });
   const effectiveTechId = !dispatcher && user?.id ? user.id : routeTechId;
+  const [territoryFeatures, setTerritoryFeatures] = useState<
+    CityBoundaryCollection["features"]
+  >([]);
+  const [territoryPrompt, setTerritoryPrompt] = useState<{
+    technicianName: string;
+    place: string;
+    resolve: (proceed: boolean) => void;
+  } | null>(null);
+  const territoryCities = useMemo(() => {
+    if (!effectiveTechId) return [] as ServiceCity[];
+    return (
+      staff.find((person) => person._id === effectiveTechId)?.serviceCities ??
+      []
+    );
+  }, [staff, effectiveTechId]);
+
+  useEffect(() => {
+    if (!token || territoryCities.length === 0) {
+      setTerritoryFeatures([]);
+      return;
+    }
+    const states = [
+      ...new Set(
+        territoryCities
+          .map((city) => city.state.trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    ];
+    let cancelled = false;
+    void Promise.all(states.map((state) => getCityBoundaries(token, state)))
+      .then((collections) => {
+        if (cancelled) return;
+        setTerritoryFeatures(
+          collections
+            .flatMap((collection) => collection.features)
+            .filter((feature) =>
+              territoryCities.some((city) =>
+                cityMatchesZone(city, feature.properties),
+              ),
+            ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setTerritoryFeatures([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, territoryCities]);
 
   const editingId = editingJob?._id ?? null;
   const editingStart = editingJob?.scheduledStart ?? null;
@@ -1013,23 +1071,28 @@ export default function CalendarTab({
   const draggingJob = draggingJobId
     ? (jobById.get(draggingJobId) ?? null)
     : null;
-  const dayJobs = useMemo(() => {
-    if (!effectiveTechId) return [];
+  const dayAppointments = useMemo(() => {
     return jobs
       .filter((job) => {
-        if (job.completed || !job.scheduledStart || job.appointmentCanceledAt) {
-          return false;
-        }
         const assignee = job.assignedUserRef ?? job.assignee?._id ?? "";
-        if (assignee !== effectiveTechId) return false;
-        return workOrderLocalDate(job) === selectedDate;
+        return Boolean(assignee) && isScheduledOnDate(job, selectedDate);
       })
       .sort((a, b) => {
         const aTime = a.scheduledStart ? new Date(a.scheduledStart).getTime() : 0;
         const bTime = b.scheduledStart ? new Date(b.scheduledStart).getTime() : 0;
         return aTime - bTime;
       });
-  }, [jobs, effectiveTechId, selectedDate]);
+  }, [jobs, selectedDate]);
+  const selectedTechAppointments = useMemo(() => {
+    if (!effectiveTechId) return [];
+    return dayAppointments.filter((job) => {
+      const assignee = job.assignedUserRef ?? job.assignee?._id ?? "";
+      return assignee === effectiveTechId;
+    });
+  }, [dayAppointments, effectiveTechId]);
+  const mapAppointments = effectiveTechId
+    ? selectedTechAppointments
+    : dayAppointments;
   const addedJobs = useMemo(
     () =>
       addedUnscheduledIds
@@ -1038,22 +1101,21 @@ export default function CalendarTab({
     [addedUnscheduledIds, jobById],
   );
   const routeJobs = useMemo(() => {
-    const seen = new Set(dayJobs.map((job) => job._id));
-    return [...dayJobs, ...addedJobs.filter((job) => !seen.has(job._id))];
-  }, [dayJobs, addedJobs]);
+    const seen = new Set(selectedTechAppointments.map((job) => job._id));
+    return [
+      ...selectedTechAppointments,
+      ...addedJobs.filter((job) => !seen.has(job._id)),
+    ];
+  }, [selectedTechAppointments, addedJobs]);
   const jobsTodayByTech = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const job of jobs) {
-      if (!job.scheduledStart || job.completed || job.appointmentCanceledAt) {
-        continue;
-      }
-      if (workOrderLocalDate(job) !== selectedDate) continue;
+    for (const job of dayAppointments) {
       const id = job.assignedUserRef ?? job.assignee?._id ?? "";
       if (!id) continue;
       counts[id] = (counts[id] ?? 0) + 1;
     }
     return counts;
-  }, [jobs, selectedDate]);
+  }, [dayAppointments]);
   const routeStopIds = useMemo(() => {
     const available = routeJobs.map((job) => job._id);
     if (!manualOrder) return available;
@@ -1084,12 +1146,16 @@ export default function CalendarTab({
       ),
     [calendarUnscheduled, railJobs],
   );
+  const routableStopIds = useMemo(
+    () => routeStopIds.filter((id) => !jobById.get(id)?.completed),
+    [routeStopIds, jobById],
+  );
   const routeTotalsMatch = useMemo(() => {
-    if (!routePlan || routeStopIds.length === 0) return false;
+    if (!routePlan || routableStopIds.length === 0) return false;
     const routed = new Set(routePlan.orderedWorkOrderIds);
-    const clientRouted = routeStopIds.filter((id) => routed.has(id));
+    const clientRouted = routableStopIds.filter((id) => routed.has(id));
     return clientRouted.join(",") === routePlan.orderedWorkOrderIds.join(",");
-  }, [routePlan, routeStopIds]);
+  }, [routePlan, routableStopIds]);
   const requestedGeocodeRef = useRef(new Set<string>());
   const [geocodingPins, setGeocodingPins] = useState(false);
 
@@ -1242,6 +1308,30 @@ export default function CalendarTab({
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
+  function confirmTerritory(
+    job: WorkOrderListItem,
+    userId: string,
+  ): Promise<boolean> {
+    const person = staff.find((member) => member._id === userId);
+    const cities = person?.serviceCities ?? [];
+    if (!jobOutsideServiceCities(job, cities, territoryFeatures)) {
+      return Promise.resolve(true);
+    }
+    const technicianName =
+      [person?.first_name, person?.last_name].filter(Boolean).join(" ") ||
+      "this technician";
+    return new Promise((resolve) => {
+      setTerritoryPrompt((current) => {
+        current?.resolve(false);
+        return {
+          technicianName,
+          place: territoryPlaceLabel(job),
+          resolve,
+        };
+      });
+    });
+  }
+
   async function assignRailTechnician(
     job: WorkOrderListItem,
     userId: string,
@@ -1253,6 +1343,7 @@ export default function CalendarTab({
       current === userId &&
       workOrderLocalDate(job) === selectedDate;
     if (alreadyScheduled) return;
+    if (!(await confirmTerritory(job, userId))) return;
     setSaving(true);
     setWarning(null);
     setError(null);
@@ -1314,6 +1405,8 @@ export default function CalendarTab({
     estimatedMinutes?: number,
   ) {
     if (!token) return;
+    const job = jobById.get(workOrderId);
+    if (job && !(await confirmTerritory(job, assignedUserRef))) return;
     setSaving(true);
     setWarning(null);
     try {
@@ -1338,7 +1431,7 @@ export default function CalendarTab({
     }
   }
 
-  function addDroppedJob(overId: string, workOrderId: string) {
+  async function addDroppedJob(overId: string, workOrderId: string) {
     const job = jobById.get(workOrderId);
     if (!job || job.scheduledStart || job.completed) return;
     const droppedTechId = overId.startsWith("tech:")
@@ -1348,6 +1441,7 @@ export default function CalendarTab({
       setRouteMessage("Drop the appointment on a technician, or select one first.");
       return;
     }
+    if (!(await confirmTerritory(job, droppedTechId))) return;
     setRouteMessage(null);
     if (droppedTechId !== effectiveTechId) {
       setRouteTechId(droppedTechId);
@@ -1391,12 +1485,14 @@ export default function CalendarTab({
       overId === "schedule-map" ||
       overId === "route-table"
     ) {
-      addDroppedJob(overId, activeId.slice(4));
+      await addDroppedJob(overId, activeId.slice(4));
       return;
     }
     if (!overId.startsWith("row:")) return;
     const userId = overId.slice(4);
     const workOrderId = activeId.slice(4);
+    const dropped = jobById.get(workOrderId);
+    if (dropped && !(await confirmTerritory(dropped, userId))) return;
     const minutes = dropMinutes(event);
     if (minutes == null) return;
     const hhmm = minutesToHhMm(minutes);
@@ -1496,11 +1592,9 @@ export default function CalendarTab({
     const job = jobById.get(id);
     const assignee = job?.assignedUserRef ?? job?.assignee?._id ?? "";
     return Boolean(
-      job?.scheduledStart &&
-        !job.completed &&
-        !job.appointmentCanceledAt &&
+      job &&
         assignee === effectiveTechId &&
-        workOrderLocalDate(job) === selectedDate,
+        isScheduledOnDate(job, selectedDate),
     );
   }
 
@@ -1562,7 +1656,9 @@ export default function CalendarTab({
 
   const runPlan = useCallback(
     async (optimize: boolean) => {
-      if (!token || !effectiveTechId || routeStopIds.length === 0) {
+      const planIds = routeStopIds.filter((id) => !jobById.get(id)?.completed);
+      if (!token || !effectiveTechId || planIds.length === 0) {
+        if (planIds.length === 0) setRoutePlan(null);
         return;
       }
       if (optimize) optimizeLock.current = true;
@@ -1574,11 +1670,13 @@ export default function CalendarTab({
         const result = await planScheduleRoute(token, {
           userId: effectiveTechId,
           date: selectedDate,
-          workOrderIds: routeStopIds,
+          workOrderIds: planIds,
           roundTrip,
           objective: routeObjective,
           optimize,
-          lockedStops: activeRouteLocks,
+          lockedStops: activeRouteLocks.filter((lock) =>
+            planIds.includes(lock.workOrderId),
+          ),
         });
         if (seq !== planSeq.current) return;
         if (optimize) setManualOrder(result.orderedWorkOrderIds);
@@ -1600,6 +1698,7 @@ export default function CalendarTab({
     [
       token,
       effectiveTechId,
+      jobById,
       routeStopIds,
       selectedDate,
       roundTrip,
@@ -1819,7 +1918,7 @@ export default function CalendarTab({
           objective={routeObjective}
           onObjective={setRouteObjective}
           onOptimize={() => void runPlan(true)}
-          canOptimize={Boolean(effectiveTechId) && routeStopIds.length >= 2}
+          canOptimize={Boolean(effectiveTechId) && routableStopIds.length >= 2}
           optimizing={routeOptimizing}
           message={routeMessage}
           warnings={
@@ -1967,7 +2066,8 @@ export default function CalendarTab({
             <div className="flex h-full min-h-0 flex-col">
               <ScheduleMap
                 unscheduled={addedJobs}
-                scheduled={dayJobs}
+                scheduled={mapAppointments}
+                territoryFeatures={territoryFeatures}
                 pinMode="scheduled"
                 selectedId={selectedRailJob?._id ?? null}
                 onSelect={selectRailJob}
@@ -2092,6 +2192,59 @@ export default function CalendarTab({
       )}
       </div>
       )}
+
+      {territoryPrompt ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+          onClick={() => {
+            territoryPrompt.resolve(false);
+            setTerritoryPrompt(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="territory-warning-title"
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
+          >
+            <h3
+              id="territory-warning-title"
+              className="text-lg font-semibold text-brand-dark"
+            >
+              Outside territory
+            </h3>
+            <p className="mt-2 text-sm text-neutral-600">
+              {territoryPrompt.place
+                ? `${territoryPrompt.place} is outside ${territoryPrompt.technicianName}'s territory.`
+                : `This address is outside ${territoryPrompt.technicianName}'s territory.`}{" "}
+              Add this appointment anyway?
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  territoryPrompt.resolve(false);
+                  setTerritoryPrompt(null);
+                }}
+                className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  territoryPrompt.resolve(true);
+                  setTerritoryPrompt(null);
+                }}
+                className="rounded-md bg-brand-orange px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+              >
+                Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {suggestions && selectedRailJob && !selectedRailJob.scheduledStart && (
         <SuggestAssigneeModal

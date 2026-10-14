@@ -169,6 +169,18 @@ export function localDateToUtc(localDate: string, hhmm: string): Date {
   return new Date(utcGuess + (desiredUtc - shownUtc));
 }
 
+/** Start of a local date through the start of the next local date (exclusive). */
+export function localDayBounds(localDate: string): { start: Date; end: Date } {
+  const [year, month, day] = localDate.split("-").map(Number);
+  const nextNoon = new Date(
+    Date.UTC(year ?? 1970, (month ?? 1) - 1, (day ?? 1) + 1, 12),
+  );
+  return {
+    start: localDateToUtc(localDate, "00:00"),
+    end: localDateToUtc(formatLocalDate(nextNoon), "00:00"),
+  };
+}
+
 export function minutesBetween(start: Date, end: Date): number {
   return Math.round((end.getTime() - start.getTime()) / 60000);
 }

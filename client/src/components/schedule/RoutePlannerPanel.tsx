@@ -317,12 +317,12 @@ export function TechnicianRoutePane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
+      <div className="shrink-0 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
         <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-neutral-200 px-3 py-2 text-[11px] font-medium text-neutral-400">
           <span>Technician</span>
           <span>Today</span>
         </div>
-        <div className="max-h-48 overflow-y-auto">
+        <div>
           {staff.length === 0 ? (
             <p className="px-3 py-4 text-xs text-neutral-500">
               No technicians on the board.

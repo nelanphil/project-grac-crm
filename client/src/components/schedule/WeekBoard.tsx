@@ -25,6 +25,7 @@ import {
   formatLocalClock,
   formatMonthDayYear,
   formatTimeWindow,
+  isScheduledOnDate,
   jobAccent,
   minutesToLabel,
   nyDateParts,
@@ -827,11 +828,7 @@ export default function WeekBoard({
 }) {
   const jobsByUser = new Map<string, WorkOrderListItem[]>();
   for (const job of jobs) {
-    if (!job.scheduledStart) continue;
-    const local = job.scheduledStart;
-    const date = new Date(local);
-    const ymd = `${nyDateParts(date).year}-${String(nyDateParts(date).month).padStart(2, "0")}-${String(nyDateParts(date).day).padStart(2, "0")}`;
-    if (ymd !== selectedDate) continue;
+    if (!isScheduledOnDate(job, selectedDate)) continue;
     const uid = job.assignedUserRef ?? job.assignee?._id ?? "";
     if (!uid) continue;
     const list = jobsByUser.get(uid) ?? [];

@@ -39,6 +39,7 @@ import {
 import { toE164 } from "../utils/messagingContext";
 import { isPubliclyReachableApiHost } from "../utils/publicUrl";
 import { formatScheduleSms } from "../utils/scheduleSms";
+import { formatLocalDate, localDayBounds } from "../utils/scheduleTime";
 import { isUsStateCode } from "../constants/usStates";
 import { getActiveGoogleApiKey } from "../utils/googleAddressValidator";
 import {
@@ -54,7 +55,7 @@ import {
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 
 const SCHEDULE_USER_SELECT =
-  "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions";
+  "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions serviceCities";
 
 /** Self, or an active schedulable technician. */
 async function scheduleUserForViewer(viewerId: string, userId: string) {
@@ -919,13 +920,18 @@ export async function postScheduleText(
     const phoneUser = await User.findById(viewed.person._id).select("phone").lean();
     const phone = typeof phoneUser?.phone === "string" ? phoneUser.phone : "";
     const last4 = phoneLast4(phone);
-    const { start, end } = rangeUtc(parsed.data.date, parsed.data.date);
-    const jobs = await WorkOrder.find({
-      assignedUserRef: viewed.person._id,
-      scheduledStart: { $gte: start, $lte: end },
-    })
-      .sort({ scheduledStart: 1 })
-      .lean();
+    const { start, end } = localDayBounds(parsed.data.date);
+    const jobs = (
+      await WorkOrder.find({
+        assignedUserRef: viewed.person._id,
+        scheduledStart: { $gte: start, $lt: end },
+      })
+        .sort({ scheduledStart: 1 })
+        .lean()
+    ).filter((job) => {
+      if (!(job.scheduledStart instanceof Date)) return false;
+      return formatLocalDate(job.scheduledStart) === parsed.data.date;
+    });
     const enriched = await enrichScheduleWorkOrders(jobs);
     const contacts = await primaryContactsByCustomer(
       enriched.map((job) => textField(job.customerRef)),

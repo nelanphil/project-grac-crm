@@ -5,6 +5,7 @@ import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 import { useDroppable } from "@dnd-kit/core";
 import {
   ApiError,
+  type CityBoundaryCollection,
   getGoogleMapsBrowserKey,
   ScheduleRouteStop,
   WorkOrderListItem,
@@ -12,6 +13,8 @@ import {
 import { useAuthStore } from "@/store/useAuthStore";
 
 const EMPTY_STOPS: ScheduleRouteStop[] = [];
+const EMPTY_TERRITORY: CityBoundaryCollection["features"] = [];
+const TERRITORY_COLOR = "#E87722";
 const FL_CENTER = { lat: 28.5, lng: -81.4 };
 const FIT_PADDING = 48;
 const DEFAULT_SURFACE_HEIGHT = "h-[32rem]";
@@ -128,6 +131,8 @@ type ScheduleMapProps = {
   onSelect: (job: WorkOrderListItem) => void;
   routeStops?: ScheduleRouteStop[];
   encodedPolyline?: string;
+  /** Census polygons for the selected technician's service cities. */
+  territoryFeatures?: CityBoundaryCollection["features"];
   /** Schedule board accepts drops onto the map. Read-only maps leave this off. */
   droppable?: boolean;
   /** Replaces the default 32rem height. `h-full` fills a sized parent. */
@@ -202,6 +207,7 @@ export default function ScheduleMap({
   onSelect,
   routeStops = EMPTY_STOPS,
   encodedPolyline,
+  territoryFeatures = EMPTY_TERRITORY,
   droppable = true,
   surfaceClassName,
 }: ScheduleMapProps) {
@@ -210,6 +216,7 @@ export default function ScheduleMap({
   const mapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
   const polylineRef = useRef<google.maps.Polyline | null>(null);
+  const territoryRef = useRef<google.maps.Data | null>(null);
   const onSelectRef = useRef(onSelect);
   const fittedKeyRef = useRef<string>("");
   const frameRef = useRef<MapFrame>({ count: 0, bounds: null });
@@ -235,6 +242,17 @@ export default function ScheduleMap({
         .map((stop) => `${stop.kind}:${stop.workOrderId ?? stop.label}`)
         .join(","),
     [routeStops],
+  );
+
+  const territoryKey = useMemo(
+    () =>
+      territoryFeatures
+        .map(
+          (feature) =>
+            `${feature.properties.geoid}:${feature.properties.state}:${feature.properties.name}`,
+        )
+        .join("|"),
+    [territoryFeatures],
   );
 
   const pinKey = useMemo(() => {
@@ -295,14 +313,53 @@ export default function ScheduleMap({
       markersRef.current = [];
       polylineRef.current?.setMap(null);
       polylineRef.current = null;
+      territoryRef.current?.setMap(null);
+      territoryRef.current = null;
       mapRef.current = null;
     };
   }, [token]);
 
   useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!territoryRef.current) {
+      territoryRef.current = new google.maps.Data({ map });
+    }
+    const layer = territoryRef.current;
+    layer.forEach((feature) => layer.remove(feature));
+    if (territoryFeatures.length === 0) return;
+    layer.addGeoJson({
+      type: "FeatureCollection",
+      features: territoryFeatures,
+    });
+    const dark = isDarkTheme();
+    layer.setStyle({
+      fillColor: TERRITORY_COLOR,
+      fillOpacity: dark ? 0.22 : 0.14,
+      strokeColor: TERRITORY_COLOR,
+      strokeOpacity: dark ? 0.7 : 0.55,
+      strokeWeight: 1.5,
+      clickable: false,
+      zIndex: 0,
+    });
+  }, [status, mapGeneration, territoryFeatures, territoryKey]);
+
+  useEffect(() => {
     if (status !== "ready") return;
     const observer = new MutationObserver(() => {
       mapRef.current?.setOptions({ styles: mapStylesForTheme() });
+      const layer = territoryRef.current;
+      if (!layer) return;
+      const dark = isDarkTheme();
+      layer.setStyle({
+        fillColor: TERRITORY_COLOR,
+        fillOpacity: dark ? 0.22 : 0.14,
+        strokeColor: TERRITORY_COLOR,
+        strokeOpacity: dark ? 0.7 : 0.55,
+        strokeWeight: 1.5,
+        clickable: false,
+        zIndex: 0,
+      });
     });
     observer.observe(document.documentElement, {
       attributes: true,

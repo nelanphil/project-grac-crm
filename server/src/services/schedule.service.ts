@@ -15,6 +15,7 @@ import {
   formatLocalDate,
   isHhMm,
   localDateToUtc,
+  localDayBounds,
   rangesOverlap,
   resolveDayWindow,
   SCHEDULE_TIMEZONE,
@@ -92,6 +93,7 @@ type LeanUser = {
   serviceCities?: Array<{
     city?: string;
     state?: string;
+    placeId?: string;
     lat?: number | null;
     lng?: number | null;
   }> | null;
@@ -108,6 +110,13 @@ export type PublicStaff = {
   homeLocation: HomeLocation;
   weeklyHours: WeeklyHours;
   scheduleExceptions: ScheduleException[];
+  serviceCities: Array<{
+    city: string;
+    state: string;
+    placeId: string;
+    lat: number | null;
+    lng: number | null;
+  }>;
 };
 
 export function toPublicStaff(user: LeanUser): PublicStaff {
@@ -129,6 +138,20 @@ export function toPublicStaff(user: LeanUser): PublicStaff {
     },
     weeklyHours: user.weeklyHours ?? defaultWeeklyHours(Boolean(user.schedulable)),
     scheduleExceptions: user.scheduleExceptions ?? [],
+    serviceCities: (user.serviceCities ?? []).flatMap((city) => {
+      const name = (city.city ?? "").trim();
+      const state = (city.state ?? "").trim();
+      if (!name || !state) return [];
+      return [
+        {
+          city: name,
+          state,
+          placeId: (city.placeId ?? "").trim(),
+          lat: typeof city.lat === "number" ? city.lat : null,
+          lng: typeof city.lng === "number" ? city.lng : null,
+        },
+      ];
+    }),
   };
 }
 
@@ -1673,21 +1696,26 @@ export async function dayRouteForUser(opts: {
     ...activeUserFilter,
   })
     .select(
-      "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions",
+      "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions serviceCities",
     )
     .lean();
   if (!user) {
     throw Object.assign(new Error("User not found"), { status: 404 });
   }
 
-  const dayStart = localDateToUtc(opts.date, "00:00");
-  const dayEnd = localDateToUtc(opts.date, "23:59");
-  const jobs = await WorkOrder.find({
-    assignedUserRef: user._id,
-    scheduledStart: { $gte: dayStart, $lte: dayEnd },
-  })
-    .sort({ scheduledStart: 1 })
-    .lean();
+  const { start: dayStart, end: dayEnd } = localDayBounds(opts.date);
+  const jobs = (
+    await WorkOrder.find({
+      assignedUserRef: user._id,
+      scheduledStart: { $gte: dayStart, $lt: dayEnd },
+    })
+      .sort({ scheduledStart: 1 })
+      .lean()
+  ).filter(
+    (job) =>
+      job.scheduledStart instanceof Date &&
+      formatLocalDate(job.scheduledStart) === opts.date,
+  );
 
   const enriched = await enrichScheduleWorkOrders(jobs);
   const home = homeCoords(user.homeLocation);

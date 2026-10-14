@@ -2332,6 +2332,7 @@ export interface ScheduleStaffMember {
   homeLocation: UserHomeLocation;
   weeklyHours: UserWeeklyHours;
   scheduleExceptions: ScheduleException[];
+  serviceCities?: ServiceCity[];
 }
 
 export interface TechnicianListItem {

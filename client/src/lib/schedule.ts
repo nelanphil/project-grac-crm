@@ -375,6 +375,15 @@ export function workOrderLocalDate(job: {
   return null;
 }
 
+/** A placed appointment whose start falls on the selected America/New_York date. */
+export function isScheduledOnDate(
+  job: { scheduledStart?: string | null },
+  localDate: string,
+): boolean {
+  if (!job.scheduledStart) return false;
+  return formatLocalDate(new Date(job.scheduledStart)) === localDate;
+}
+
 const JOB_ACCENTS = [
   "#f59e0b",
   "#22c55e",
