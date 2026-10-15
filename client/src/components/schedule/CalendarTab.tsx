@@ -1482,6 +1482,7 @@ export default function CalendarTab({
     job: WorkOrderListItem,
     userId: string,
     insertIndex?: number,
+    estimatedMinutes?: number,
   ): Promise<boolean> {
     if (!token || !canWrite) return false;
     const crew = workOrderCrewIds(job);
@@ -1495,10 +1496,11 @@ export default function CalendarTab({
     setWarning(null);
     setError(null);
     try {
+      const dur = estimatedMinutes || job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES;
       const result = await suggestScheduleAssignee(token, {
         workOrderId: job._id,
         date: selectedDate,
-        estimatedMinutes: job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+        estimatedMinutes: dur,
       });
       const suggestion = result.suggestions.find((item) => item.userId === userId);
       if (!suggestion?.proposedStart && insertIndex === undefined) {
@@ -1523,7 +1525,7 @@ export default function CalendarTab({
         date: selectedDate,
         scheduledStart,
         insertIndex,
-        estimatedMinutes: job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+        estimatedMinutes: dur,
         requirePreferred: nextCrew.length > 1,
       });
       if (placed.warnings?.length) {
@@ -2533,8 +2535,8 @@ export default function CalendarTab({
                     technicianLegend={technicianLegend}
                     recommendations={recommendationsEnabled ? recommendations : {}}
                     staff={orderedStaff}
-                    onAssignTechnician={(job, userId, insertIndex) =>
-                      assignRailTechnician(job, userId, insertIndex)
+                    onAssignTechnician={(job, userId, insertIndex, estimatedMinutes) =>
+                      assignRailTechnician(job, userId, insertIndex, estimatedMinutes)
                     }
                     onJobClick={(job) => {
                       setEditingJob(job);

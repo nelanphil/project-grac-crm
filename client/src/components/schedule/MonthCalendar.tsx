@@ -3,14 +3,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  ArrowRight,
   CalendarDays,
+  Car,
   Check,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Loader2,
   Maximize2,
   Minimize2,
   Sparkles,
+  Timer,
   X,
 } from "lucide-react";
 import type { ScheduleRecommendation, WorkOrderListItem } from "@/lib/api";
@@ -18,6 +22,7 @@ import {
   addDays,
   blendColors,
   daysInMonth,
+  DEFAULT_ESTIMATED_MINUTES,
   formatLocalDate,
   formatLocalClock,
   formatMonthYear,
@@ -95,6 +100,74 @@ function ordinalSuffix(n: number): string {
   if (n % 10 === 2 && n % 100 !== 12) return "nd";
   if (n % 10 === 3 && n % 100 !== 13) return "rd";
   return "th";
+}
+
+const EARTH_MILES = 3958.8;
+const FALLBACK_MPH = 30;
+
+function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_MILES * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function haversineDriveMinutes(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const miles = haversineMiles(a, b);
+  return Math.max(1, Math.round((miles / FALLBACK_MPH) * 60));
+}
+
+function getJobCoordinates(job?: WorkOrderListItem | null): { lat: number; lng: number } | null {
+  if (!job) return null;
+  const lat = job.address?.lat;
+  const lng = job.address?.lng;
+  if (lat != null && lng != null && !Number.isNaN(Number(lat)) && !Number.isNaN(Number(lng))) {
+    return { lat: Number(lat), lng: Number(lng) };
+  }
+  return null;
+}
+
+function estimateDriveMinutes(
+  fromJob?: WorkOrderListItem | null,
+  toJob?: WorkOrderListItem | null,
+): { minutes: number; isEstimate: boolean } {
+  if (!fromJob || !toJob) return { minutes: 0, isEstimate: false };
+
+  const fromCoords = getJobCoordinates(fromJob);
+  const toCoords = getJobCoordinates(toJob);
+
+  if (fromCoords && toCoords) {
+    const mins = haversineDriveMinutes(fromCoords, toCoords);
+    return { minutes: mins, isEstimate: false };
+  }
+
+  // If coordinates are missing, estimate based on cities:
+  const cityFrom = (fromJob.address?.city || fromJob.customerCity || "").trim().toLowerCase();
+  const cityTo = (toJob.address?.city || toJob.customerCity || "").trim().toLowerCase();
+
+  if (cityFrom && cityTo && cityFrom === cityTo) {
+    return { minutes: 12, isEstimate: true };
+  }
+
+  // If both jobs have scheduled times on the same day, check their scheduled gap:
+  if (fromJob.scheduledStart && toJob.scheduledStart) {
+    const fromStart = new Date(fromJob.scheduledStart).getTime();
+    const fromDur = (fromJob.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES) * 60_000;
+    const fromEnd = fromJob.scheduledEnd ? new Date(fromJob.scheduledEnd).getTime() : fromStart + fromDur;
+    const toStart = new Date(toJob.scheduledStart).getTime();
+    const gapMins = Math.round((toStart - fromEnd) / 60_000);
+    if (gapMins > 0 && gapMins <= 90) {
+      return { minutes: gapMins, isEstimate: false };
+    }
+  }
+
+  // Fallback average transit time:
+  return { minutes: 20, isEstimate: true };
 }
 
 function getTechnicianDayAppointments(
@@ -207,6 +280,7 @@ export default function MonthCalendar({
     job: WorkOrderListItem,
     userId: string,
     insertIndex?: number,
+    estimatedMinutes?: number,
   ) => Promise<boolean | void> | void;
   onJobClick?: (job: WorkOrderListItem) => void;
 }) {
@@ -217,6 +291,7 @@ export default function MonthCalendar({
   const [assigningJob, setAssigningJob] = useState<WorkOrderListItem | null>(null);
   const [selectedTechId, setSelectedTechId] = useState<string>("");
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(0);
+  const [jobDuration, setJobDuration] = useState<number>(DEFAULT_ESTIMATED_MINUTES);
   const [isAssigning, setIsAssigning] = useState<boolean>(false);
   const [assignError, setAssignError] = useState<string | null>(null);
 
@@ -375,10 +450,149 @@ export default function MonthCalendar({
     return getTechnicianDayAppointments(jobs, selectedTechId, selectedDate);
   }, [jobs, selectedTechId, selectedDate]);
 
+  // Calculated Landing Stops with ETAs, drive times, and visit windows
+  const calculatedStops = useMemo(() => {
+    if (!assigningJob) return [];
+
+    if (techDayAppointments.length === 0) {
+      const dayStartIso = localDateTimeToIso(selectedDate, "08:00");
+      const eta = new Date(dayStartIso);
+      const departure = new Date(eta.getTime() + jobDuration * 60_000);
+      return [
+        {
+          index: 0,
+          positionTitle: "1st Stop (Start of Day)",
+          positionDetail: "First appointment of the day",
+          eta,
+          departure,
+          driveFromPrevMinutes: 0,
+          driveFromPrevLabel: "Direct start at shift opening",
+          driveToNextMinutes: undefined as number | undefined,
+          driveToNextLabel: undefined as string | undefined,
+          nextJobProjectedStart: undefined as Date | undefined,
+          nextJobCustomerName: undefined as string | undefined,
+          nextJobDelayMinutes: 0,
+        },
+      ];
+    }
+
+    return Array.from({ length: techDayAppointments.length + 1 }, (_, i) => {
+      const isFirst = i === 0;
+      const isLast = i === techDayAppointments.length;
+
+      let positionTitle = `${i + 1}${ordinalSuffix(i + 1)} Stop`;
+      let positionDetail = "";
+      let eta: Date;
+      let departure: Date;
+      let driveFromPrevMinutes = 0;
+      let driveFromPrevLabel = "";
+      let driveToNextMinutes: number | undefined = undefined;
+      let driveToNextLabel: string | undefined = undefined;
+      let nextJobProjectedStart: Date | undefined = undefined;
+      let nextJobCustomerName: string | undefined = undefined;
+      let nextJobDelayMinutes = 0;
+
+      if (isFirst) {
+        positionTitle = "1st Stop (Start of Day)";
+        const nextJob = techDayAppointments[0];
+        nextJobCustomerName = nextJob.customerName || "first appointment";
+        const nextJobCurrentStart = nextJob.scheduledStart
+          ? new Date(nextJob.scheduledStart)
+          : new Date(localDateTimeToIso(selectedDate, "08:00"));
+
+        eta = new Date(localDateTimeToIso(selectedDate, "08:00"));
+        departure = new Date(eta.getTime() + jobDuration * 60_000);
+
+        const driveEst = estimateDriveMinutes(assigningJob, nextJob);
+        driveToNextMinutes = driveEst.minutes;
+        driveToNextLabel = `~${driveEst.minutes}m drive to ${nextJobCustomerName}`;
+        nextJobProjectedStart = new Date(departure.getTime() + driveEst.minutes * 60_000);
+        nextJobDelayMinutes = Math.max(
+          0,
+          Math.round((nextJobProjectedStart.getTime() - nextJobCurrentStart.getTime()) / 60_000),
+        );
+
+        driveFromPrevLabel = "Direct start at day opening";
+        positionDetail = `Before ${nextJobCustomerName} (${formatLocalClock(nextJobCurrentStart)})`;
+      } else if (isLast) {
+        positionTitle = `${i + 1}${ordinalSuffix(i + 1)} Stop (End of Day)`;
+        const prevJob = techDayAppointments[techDayAppointments.length - 1];
+        const prevCustomer = prevJob.customerName || "last appointment";
+        const prevStart = prevJob.scheduledStart
+          ? new Date(prevJob.scheduledStart)
+          : new Date(localDateTimeToIso(selectedDate, "08:00"));
+        const prevDur = prevJob.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES;
+        const prevEnd = prevJob.scheduledEnd
+          ? new Date(prevJob.scheduledEnd)
+          : new Date(prevStart.getTime() + prevDur * 60_000);
+
+        const driveEst = estimateDriveMinutes(prevJob, assigningJob);
+        driveFromPrevMinutes = driveEst.minutes;
+        driveFromPrevLabel = `~${driveEst.minutes}m drive from ${prevCustomer}`;
+
+        eta = new Date(prevEnd.getTime() + driveEst.minutes * 60_000);
+        departure = new Date(eta.getTime() + jobDuration * 60_000);
+
+        positionDetail = `After ${prevCustomer} (${formatLocalClock(prevStart)})`;
+      } else {
+        const prevJob = techDayAppointments[i - 1];
+        const nextJob = techDayAppointments[i];
+        const prevCustomer = prevJob.customerName || "previous appointment";
+        nextJobCustomerName = nextJob.customerName || "next appointment";
+
+        const prevStart = prevJob.scheduledStart
+          ? new Date(prevJob.scheduledStart)
+          : new Date(localDateTimeToIso(selectedDate, "08:00"));
+        const prevDur = prevJob.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES;
+        const prevEnd = prevJob.scheduledEnd
+          ? new Date(prevJob.scheduledEnd)
+          : new Date(prevStart.getTime() + prevDur * 60_000);
+
+        const driveEstPrev = estimateDriveMinutes(prevJob, assigningJob);
+        driveFromPrevMinutes = driveEstPrev.minutes;
+        driveFromPrevLabel = `~${driveEstPrev.minutes}m drive from ${prevCustomer}`;
+
+        eta = new Date(prevEnd.getTime() + driveEstPrev.minutes * 60_000);
+        departure = new Date(eta.getTime() + jobDuration * 60_000);
+
+        const driveEstNext = estimateDriveMinutes(assigningJob, nextJob);
+        driveToNextMinutes = driveEstNext.minutes;
+        driveToNextLabel = `~${driveEstNext.minutes}m drive to ${nextJobCustomerName}`;
+
+        const nextJobCurrentStart = nextJob.scheduledStart
+          ? new Date(nextJob.scheduledStart)
+          : new Date(localDateTimeToIso(selectedDate, "08:00"));
+        nextJobProjectedStart = new Date(departure.getTime() + driveEstNext.minutes * 60_000);
+        nextJobDelayMinutes = Math.max(
+          0,
+          Math.round((nextJobProjectedStart.getTime() - nextJobCurrentStart.getTime()) / 60_000),
+        );
+
+        positionDetail = `Between ${prevCustomer} and ${nextJobCustomerName}`;
+      }
+
+      return {
+        index: i,
+        positionTitle,
+        positionDetail,
+        eta,
+        departure,
+        driveFromPrevMinutes,
+        driveFromPrevLabel,
+        driveToNextMinutes,
+        driveToNextLabel,
+        nextJobProjectedStart,
+        nextJobCustomerName,
+        nextJobDelayMinutes,
+      };
+    });
+  }, [assigningJob, techDayAppointments, selectedDate, jobDuration]);
+
   // When opening assignment menu for a job, compute initial recommendation and default order
   function openAssignMenu(job: WorkOrderListItem) {
     setAssigningJob(job);
     setAssignError(null);
+    setJobDuration(job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES);
 
     const jobRecs = recommendations[job._id] ?? [];
     const bestRec = jobRecs.find((r) => r.available) ?? jobRecs[0];
@@ -948,78 +1162,211 @@ export default function MonthCalendar({
           );
         });
 
-        const routeOrderContent = techDayAppointments.length === 0 ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-900">
-            <div className="flex items-center gap-1.5 font-semibold text-emerald-800">
-              <Check className="h-4 w-4" />
-              <span>1st Stop · First appointment of the day</span>
+        const selectedStopCalc = calculatedStops[selectedOrderIndex];
+
+        const durationSelector = (
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-neutral-100">
+            <div className="flex items-center gap-1.5">
+              <Timer className="h-3.5 w-3.5 text-neutral-400" />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-500">
+                Appointment Length:
+              </span>
             </div>
-            <p className="mt-1 text-[11px] text-emerald-700">
-              This technician has no other scheduled work orders on {formatPrettyDate(selectedDate)}.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {Array.from({ length: techDayAppointments.length + 1 }, (_, i) => {
-              const isPositionSelected = selectedOrderIndex === i;
-              const isFirst = i === 0;
-              const isLast = i === techDayAppointments.length;
-
-              let positionTitle = `${i + 1}${ordinalSuffix(i + 1)} Stop`;
-              let positionDetail = "";
-
-              if (isFirst) {
-                positionTitle = "1st Stop (Start of Day)";
-                const firstJob = techDayAppointments[0];
-                const timeStr = firstJob.scheduledStart ? formatLocalClock(new Date(firstJob.scheduledStart)) : "";
-                positionDetail = `Before ${firstJob.customerName || "first job"}${timeStr ? ` (${timeStr})` : ""}`;
-              } else if (isLast) {
-                positionTitle = `${i + 1}${ordinalSuffix(i + 1)} Stop (End of Day)`;
-                const lastJob = techDayAppointments[techDayAppointments.length - 1];
-                const timeStr = lastJob.scheduledStart ? formatLocalClock(new Date(lastJob.scheduledStart)) : "";
-                positionDetail = `After ${lastJob.customerName || "last job"}${timeStr ? ` (${timeStr})` : ""}`;
-              } else {
-                const prevJob = techDayAppointments[i - 1];
-                const nextJob = techDayAppointments[i];
-                positionDetail = `Between ${prevJob.customerName || "Job"} and ${nextJob.customerName || "Job"}`;
-              }
-
-              return (
+            <div className="flex items-center gap-1">
+              {[15, 30, 45, 60, 90, 120].map((mins) => (
                 <button
-                  key={i}
+                  key={mins}
                   type="button"
-                  onClick={() => setSelectedOrderIndex(i)}
-                  className={`flex w-full items-start gap-3 rounded-xl border p-2.5 text-left transition-all ${
-                    isPositionSelected
-                      ? "border-brand-orange bg-brand-orange/10 ring-1 ring-brand-orange"
-                      : "border-neutral-200 bg-white hover:bg-neutral-50"
+                  onClick={() => setJobDuration(mins)}
+                  className={`rounded-md px-2 py-0.5 text-[11px] font-semibold transition-all ${
+                    jobDuration === mins
+                      ? "bg-brand-orange text-white shadow-xs"
+                      : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
                   }`}
                 >
-                  <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
-                    isPositionSelected
-                      ? "border-brand-orange bg-brand-orange text-white"
-                      : "border-neutral-300 text-neutral-500"
-                  }`}>
-                    {i + 1}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between">
-                      <span className={`text-xs font-semibold ${isPositionSelected ? "text-brand-orange" : "text-brand-dark"}`}>
-                        {positionTitle}
-                      </span>
-                      {isPositionSelected && (
-                        <span className="text-[10px] font-bold uppercase text-brand-orange">
-                          Selected
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-0.5 text-[11px] text-neutral-500 truncate">
-                      {positionDetail}
-                    </p>
-                  </div>
+                  {mins < 60 ? `${mins}m` : `${mins / 60}h`}
                 </button>
-              );
-            })}
+              ))}
+            </div>
+          </div>
+        );
+
+        const routeOrderContent = (
+          <div className="space-y-2">
+            {durationSelector}
+
+            {techDayAppointments.length === 0 ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3.5 text-xs text-emerald-900">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-emerald-800">
+                    <Check className="h-4 w-4" />
+                    <span>1st Stop · First appointment of the day</span>
+                  </div>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600/15 border border-emerald-600/30 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
+                    <Clock className="h-3 w-3 text-emerald-700" />
+                    ETA ~8:00 AM
+                  </span>
+                </div>
+                <p className="mt-1.5 text-[11px] text-emerald-700">
+                  This technician has no other scheduled work orders on {formatPrettyDate(selectedDate)}.
+                </p>
+                <div className="mt-2.5 flex items-center gap-3 text-[11px] text-emerald-800 pt-2 border-t border-emerald-200/60">
+                  <span className="inline-flex items-center gap-1">
+                    <Timer className="h-3 w-3 text-emerald-600" />
+                    <span>
+                      {jobDuration}m visit (8:00 AM –{" "}
+                      {formatLocalClock(
+                        new Date(
+                          new Date(localDateTimeToIso(selectedDate, "08:00")).getTime() +
+                            jobDuration * 60_000,
+                        ),
+                      )}
+                      )
+                    </span>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {calculatedStops.map((item) => {
+                  const isPositionSelected = selectedOrderIndex === item.index;
+
+                  return (
+                    <button
+                      key={item.index}
+                      type="button"
+                      onClick={() => setSelectedOrderIndex(item.index)}
+                      className={`flex w-full flex-col rounded-xl border p-3 text-left transition-all ${
+                        isPositionSelected
+                          ? "border-brand-orange bg-brand-orange/10 ring-1 ring-brand-orange shadow-xs"
+                          : "border-neutral-200 bg-white hover:bg-neutral-50/80 hover:border-neutral-300"
+                      }`}
+                    >
+                      {/* Top Row: Stop Badge, Title, and ETA Badge */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div
+                            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
+                              isPositionSelected
+                                ? "border-brand-orange bg-brand-orange text-white"
+                                : "border-neutral-300 text-neutral-600 bg-neutral-100"
+                            }`}
+                          >
+                            {item.index + 1}
+                          </div>
+                          <span
+                            className={`text-xs font-bold ${
+                              isPositionSelected ? "text-brand-orange" : "text-brand-dark"
+                            } truncate`}
+                          >
+                            {item.positionTitle}
+                          </span>
+                        </div>
+
+                        {/* ETA Pill */}
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 text-xs font-bold text-amber-800 dark:text-amber-300 shadow-2xs">
+                            <Clock className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                            ETA ~{formatLocalClock(item.eta)}
+                          </span>
+                          {isPositionSelected && (
+                            <span className="hidden sm:inline-block rounded-md bg-brand-orange px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
+                              Selected
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Second Row: Placement Context (Before / Between / After) */}
+                      <p className="mt-1.5 text-xs text-neutral-600 font-medium">
+                        {item.positionDetail}
+                      </p>
+
+                      {/* Third Row: Drive Time and Visit Window Metrics */}
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-500 pt-1.5 border-t border-neutral-100">
+                        <span className="inline-flex items-center gap-1">
+                          <Car className="h-3 w-3 text-neutral-400" />
+                          <span>{item.driveFromPrevLabel}</span>
+                        </span>
+
+                        <span className="inline-flex items-center gap-1">
+                          <Timer className="h-3 w-3 text-neutral-400" />
+                          <span>
+                            {jobDuration}m appointment ({formatLocalClock(item.eta)} –{" "}
+                            {formatLocalClock(item.departure)})
+                          </span>
+                        </span>
+
+                        {item.driveToNextLabel && (
+                          <span className="inline-flex items-center gap-1 text-neutral-500">
+                            <ArrowRight className="h-3 w-3 text-neutral-400" />
+                            <span>{item.driveToNextLabel}</span>
+                            {item.nextJobDelayMinutes > 0 && (
+                              <span className="text-amber-600 font-medium">
+                                (shifts +{item.nextJobDelayMinutes}m)
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Expanded Route Timeline Preview when Selected */}
+                      {isPositionSelected && techDayAppointments.length > 0 && (
+                        <div className="mt-3 rounded-lg bg-neutral-50 p-2.5 border border-neutral-200/80 text-[11px]">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1.5">
+                            Projected Route Schedule:
+                          </div>
+                          <div className="space-y-1.5 pl-1 font-mono text-[11px]">
+                            {/* Prior jobs */}
+                            {techDayAppointments.slice(0, item.index).map((j, idx) => (
+                              <div key={j._id} className="flex items-center justify-between text-neutral-600">
+                                <span className="truncate">
+                                  Stop #{idx + 1}: {j.customerName || "Customer"}
+                                </span>
+                                <span className="shrink-0 tabular-nums text-neutral-500">
+                                  {j.scheduledStart ? formatLocalClock(new Date(j.scheduledStart)) : ""}
+                                </span>
+                              </div>
+                            ))}
+
+                            {/* This job */}
+                            <div className="flex items-center justify-between font-bold text-brand-orange bg-brand-orange/10 px-1.5 py-0.5 rounded">
+                              <span className="truncate flex items-center gap-1">
+                                <span className="h-1.5 w-1.5 rounded-full bg-brand-orange" />
+                                Stop #{item.index + 1}: {assigningJob.customerName || "Customer"} (New)
+                              </span>
+                              <span className="shrink-0 tabular-nums">
+                                ETA {formatLocalClock(item.eta)} – {formatLocalClock(item.departure)}
+                              </span>
+                            </div>
+
+                            {/* Subsequent jobs */}
+                            {techDayAppointments.slice(item.index).map((j, idx) => {
+                              const subsequentIndex = item.index + 1 + idx;
+                              const origTime = j.scheduledStart ? new Date(j.scheduledStart) : null;
+                              const adjustedTime =
+                                origTime && item.nextJobDelayMinutes > 0
+                                  ? new Date(origTime.getTime() + item.nextJobDelayMinutes * 60_000)
+                                  : origTime;
+                              return (
+                                <div key={j._id} className="flex items-center justify-between text-neutral-600">
+                                  <span className="truncate">
+                                    Stop #{subsequentIndex + 1}: {j.customerName || "Customer"}
+                                  </span>
+                                  <span className="shrink-0 tabular-nums text-neutral-500">
+                                    {adjustedTime ? formatLocalClock(adjustedTime) : ""}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
 
@@ -1274,7 +1621,12 @@ export default function MonthCalendar({
                     setIsAssigning(true);
                     setAssignError(null);
                     try {
-                      const result = await onAssignTechnician(assigningJob, selectedTechId, selectedOrderIndex);
+                      const result = await onAssignTechnician(
+                        assigningJob,
+                        selectedTechId,
+                        selectedOrderIndex,
+                        jobDuration,
+                      );
                       if (result !== false) {
                         closeAssignMenu();
                       }
@@ -1296,6 +1648,7 @@ export default function MonthCalendar({
                       <Check className="h-3.5 w-3.5" />
                       <span>
                         Assign as Stop #{selectedOrderIndex + 1}
+                        {selectedStopCalc ? ` (ETA ~${formatLocalClock(selectedStopCalc.eta)})` : ""}
                       </span>
                     </>
                   )}
