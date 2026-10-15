@@ -36,6 +36,7 @@ import {
   opaqueTechnicianTint,
   properCaseCity,
   technicianColor,
+  workOrderCrewIds,
 } from "@/lib/schedule";
 
 const NARROW_SCHEDULE_QUERY = "(max-width: 1023px)";
@@ -677,14 +678,93 @@ export function UnscheduledCard({
   );
 }
 
+type JobLane = { lane: number; laneCount: number };
+
+/** Side-by-side columns for appointments that share the same clock time. */
+function assignJobLanes(jobs: WorkOrderListItem[]): Map<string, JobLane> {
+  const placed = jobs
+    .map((job) => ({ job, window: jobWindowMinutes(job) }))
+    .filter(
+      (
+        row,
+      ): row is {
+        job: WorkOrderListItem;
+        window: { startMin: number; endMin: number };
+      } => row.window != null,
+    )
+    .sort(
+      (a, b) =>
+        a.window.startMin - b.window.startMin ||
+        a.window.endMin - b.window.endMin,
+    );
+
+  const laneEnds: number[] = [];
+  const laneOf = new Map<string, number>();
+  for (const row of placed) {
+    let lane = laneEnds.findIndex((end) => end <= row.window.startMin);
+    if (lane < 0) {
+      lane = laneEnds.length;
+      laneEnds.push(row.window.endMin);
+    } else {
+      laneEnds[lane] = row.window.endMin;
+    }
+    laneOf.set(row.job._id, lane);
+  }
+
+  const parent = new Map<string, string>();
+  const find = (id: string): string => {
+    const current = parent.get(id) ?? id;
+    if (current === id) return id;
+    const root = find(current);
+    parent.set(id, root);
+    return root;
+  };
+  const unite = (a: string, b: string) => {
+    const left = find(a);
+    const right = find(b);
+    if (left !== right) parent.set(left, right);
+  };
+  for (const row of placed) parent.set(row.job._id, row.job._id);
+  for (let i = 0; i < placed.length; i += 1) {
+    for (let j = i + 1; j < placed.length; j += 1) {
+      const earlier = placed[i]!;
+      const later = placed[j]!;
+      if (later.window.startMin >= earlier.window.endMin) continue;
+      if (earlier.window.startMin < later.window.endMin) {
+        unite(earlier.job._id, later.job._id);
+      }
+    }
+  }
+
+  const laneCountOf = new Map<string, number>();
+  for (const row of placed) {
+    const root = find(row.job._id);
+    const lanes = (laneOf.get(row.job._id) ?? 0) + 1;
+    laneCountOf.set(root, Math.max(laneCountOf.get(root) ?? 1, lanes));
+  }
+
+  const layout = new Map<string, JobLane>();
+  for (const row of placed) {
+    layout.set(row.job._id, {
+      lane: laneOf.get(row.job._id) ?? 0,
+      laneCount: laneCountOf.get(find(row.job._id)) ?? 1,
+    });
+  }
+  return layout;
+}
+
 function JobBlock({
   order,
   onClick,
   dispatcher,
+  lane,
+  laneCount,
 }: {
   order: WorkOrderListItem;
   onClick: () => void;
   dispatcher: boolean;
+  lane: number;
+  laneCount: number;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
@@ -717,12 +797,16 @@ function JobBlock({
     .join(" · ");
 
   const accent = jobAccent(order);
+  const columns = Math.max(1, laneCount);
   const style: CSSProperties = {
     top: `${topPct}%`,
     height: `${heightPct}%`,
+    left: `calc(${(lane / columns) * 100}% + 3px)`,
+    width: `calc(${100 / columns}% - 5px)`,
     transform: transform ? CSS.Translate.toString(transform) : undefined,
-    backgroundColor: `${accent}26`,
+    backgroundColor: `color-mix(in srgb, ${accent} 34%, var(--staff-surface))`,
     borderLeftColor: accent,
+    zIndex: 10 + lane,
   };
 
   return (
@@ -734,7 +818,7 @@ function JobBlock({
       {...(dispatcher ? attributes : {})}
       onClick={onClick}
       title={[customerName, timeLabel, detail].filter(Boolean).join(" · ")}
-      className={`absolute inset-x-1 z-10 overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight text-brand-dark transition-shadow hover:shadow-md ${
+      className={`absolute overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight text-brand-dark transition-shadow hover:shadow-md ${
         isDragging ? "z-20 opacity-40" : ""
       }`}
     >
@@ -955,6 +1039,7 @@ function StaffColumn({
     "?";
   const boardHeight = HOURS.length * HOUR_PX;
   const cities = citiesByAppointmentCount(jobs);
+  const lanes = assignJobLanes(jobs);
 
   return (
     <div className="flex min-w-[11rem] flex-1 flex-col">
@@ -1026,6 +1111,7 @@ function StaffColumn({
       </div>
       <div
         ref={setNodeRef}
+        data-schedule-day={staff._id}
         style={{ height: boardHeight }}
         className={`relative border-l border-neutral-200/70 transition-colors ${
           isOver ? "bg-brand-orange/10" : ""
@@ -1043,14 +1129,19 @@ function StaffColumn({
         {gaps.map((gap) => (
           <DriveGapBand key={gap.key} gap={gap} />
         ))}
-        {jobs.map((job) => (
-          <JobBlock
-            key={job._id}
-            order={job}
-            dispatcher={dispatcher}
-            onClick={() => onJobClick(job)}
-          />
-        ))}
+        {jobs.map((job) => {
+          const layout = lanes.get(job._id) ?? { lane: 0, laneCount: 1 };
+          return (
+            <JobBlock
+              key={job._id}
+              order={job}
+              dispatcher={dispatcher}
+              lane={layout.lane}
+              laneCount={layout.laneCount}
+              onClick={() => onJobClick(job)}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -1075,11 +1166,11 @@ export default function WeekBoard({
   const jobsByUser = new Map<string, WorkOrderListItem[]>();
   for (const job of jobs) {
     if (!isScheduledOnDate(job, selectedDate)) continue;
-    const uid = job.assignedUserRef ?? job.assignee?._id ?? "";
-    if (!uid) continue;
-    const list = jobsByUser.get(uid) ?? [];
-    list.push(job);
-    jobsByUser.set(uid, list);
+    for (const uid of workOrderCrewIds(job)) {
+      const list = jobsByUser.get(uid) ?? [];
+      list.push(job);
+      jobsByUser.set(uid, list);
+    }
   }
 
   const routeKey = [

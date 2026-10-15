@@ -40,6 +40,7 @@ import {
   formatLocalDate,
   storedTicketDateKey,
 } from "../utils/scheduleTime";
+import { applyCrewIds, assigneeInFilter, crewIdStrings } from "../utils/workOrderCrew";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { capabilitiesForJobRoleIds } from "../utils/jobRoles";
 import { hasRole } from "../utils/roles";
@@ -216,7 +217,8 @@ export async function getWorkOrders(
         res.status(400).json({ message: "Invalid assignedUserId" });
         return;
       }
-      filter.assignedUserRef = scopedUserId;
+      const match = assigneeInFilter([scopedUserId]);
+      filter.$and = [...((filter.$and as unknown[]) ?? []), match];
     }
 
     if (from && to) {
@@ -455,15 +457,20 @@ export async function createWorkOrder(
     }
     workOrder.workOrderTypeRef = typeRef.ref;
 
-    if (data.assignedUserRef) {
-      const assignee = await loadSchedulableAssignee(data.assignedUserRef);
-      if (!assignee.ok) {
-        res.status(400).json({ message: assignee.message });
-        return;
+    const createCrew = data.assignedUserRefs?.length
+      ? data.assignedUserRefs
+      : data.assignedUserRef
+        ? [data.assignedUserRef]
+        : [];
+    if (createCrew.length > 0) {
+      for (const id of createCrew) {
+        const assignee = await loadSchedulableAssignee(id);
+        if (!assignee.ok) {
+          res.status(400).json({ message: assignee.message });
+          return;
+        }
       }
-      workOrder.assignedUserRef = new mongoose.Types.ObjectId(
-        data.assignedUserRef,
-      );
+      applyCrewIds(workOrder, createCrew);
     }
     if (data.scheduledStart) {
       const start = new Date(data.scheduledStart);
@@ -488,18 +495,27 @@ export async function createWorkOrder(
       createdDate
     ) {
       try {
-        const scheduledStart = await placementStartForAssignee({
-          assignedUserRef: String(workOrder.assignedUserRef),
-          date: createdDate,
-          startTime: workOrder.startTime,
-        });
-        const placed = await placeWorkOrder({
-          workOrderId: String(workOrder._id),
-          assignedUserRef: String(workOrder.assignedUserRef),
-          date: createdDate,
-          scheduledStart,
-          estimatedMinutes: workOrder.estimatedMinutes,
-        });
+        const createdCrew = crewIdStrings(workOrder);
+        const placed =
+          createdCrew.length > 1
+            ? await placeWorkOrder({
+                workOrderId: String(workOrder._id),
+                assignedUserRef: createdCrew[0] ?? "",
+                assignedUserRefs: createdCrew,
+                date: createdDate,
+                estimatedMinutes: workOrder.estimatedMinutes,
+              })
+            : await placeWorkOrder({
+                workOrderId: String(workOrder._id),
+                assignedUserRef: String(workOrder.assignedUserRef),
+                date: createdDate,
+                scheduledStart: await placementStartForAssignee({
+                  assignedUserRef: String(workOrder.assignedUserRef),
+                  date: createdDate,
+                  startTime: workOrder.startTime,
+                }),
+                estimatedMinutes: workOrder.estimatedMinutes,
+              });
         placementWarnings.push(...placed.warnings);
         const fresh = await WorkOrder.findById(workOrder._id);
         if (fresh) {
@@ -510,6 +526,8 @@ export async function createWorkOrder(
           workOrder.endTime = fresh.endTime;
           workOrder.tech = fresh.tech;
           workOrder.estimatedMinutes = fresh.estimatedMinutes;
+          workOrder.assignedUserRef = fresh.assignedUserRef;
+          workOrder.assignedUserRefs = fresh.assignedUserRefs;
         }
       } catch (err) {
         const status = (err as { status?: number }).status;
@@ -578,12 +596,11 @@ export async function updateWorkOrder(
     }
 
     const dispatcher = isDispatcherRole(req.user);
-    const isAssignee =
-      workOrder.assignedUserRef &&
-      String(workOrder.assignedUserRef) === req.user?.id;
+    const isAssignee = crewIdStrings(workOrder).includes(req.user?.id ?? "");
 
     const assigning =
       parsed.data.assignedUserRef !== undefined ||
+      parsed.data.assignedUserRefs !== undefined ||
       parsed.data.scheduledStart !== undefined;
 
     if (!dispatcher) {
@@ -601,9 +618,7 @@ export async function updateWorkOrder(
       }
     }
 
-    const prevAssignee = workOrder.assignedUserRef
-      ? String(workOrder.assignedUserRef)
-      : null;
+    const prevCrew = crewIdStrings(workOrder);
     const prevStartTime = workOrder.startTime ?? "";
     const prevScheduledStart = workOrder.scheduledStart
       ? new Date(workOrder.scheduledStart)
@@ -615,6 +630,7 @@ export async function updateWorkOrder(
 
     const rest = { ...parsed.data };
     delete rest.assignedUserRef;
+    delete rest.assignedUserRefs;
     delete rest.workOrderTypeRef;
     delete rest.scheduledStart;
     delete rest.estimatedMinutes;
@@ -673,18 +689,29 @@ export async function updateWorkOrder(
       workOrder.estimatedMinutes = parsed.data.estimatedMinutes;
     }
 
-    if (parsed.data.assignedUserRef !== undefined) {
-      if (parsed.data.assignedUserRef === null || parsed.data.assignedUserRef === "") {
-        workOrder.assignedUserRef = null;
-        workOrder.tech = "";
-      } else if (!mongoose.Types.ObjectId.isValid(parsed.data.assignedUserRef)) {
+    const crewWasSent =
+      parsed.data.assignedUserRefs !== undefined ||
+      parsed.data.assignedUserRef !== undefined;
+    if (crewWasSent) {
+      const nextIds =
+        parsed.data.assignedUserRefs !== undefined
+          ? parsed.data.assignedUserRefs
+          : parsed.data.assignedUserRef
+            ? [parsed.data.assignedUserRef]
+            : [];
+      if (nextIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
         res.status(400).json({ message: "Invalid assignedUserRef" });
         return;
-      } else {
-        workOrder.assignedUserRef = new mongoose.Types.ObjectId(
-          parsed.data.assignedUserRef,
-        );
       }
+      for (const id of nextIds) {
+        const loaded = await loadSchedulableAssignee(id);
+        if (!loaded.ok) {
+          res.status(400).json({ message: loaded.message });
+          return;
+        }
+      }
+      applyCrewIds(workOrder, nextIds);
+      if (nextIds.length === 0) workOrder.tech = "";
     }
 
     if (parsed.data.scheduledStart !== undefined) {
@@ -709,39 +736,26 @@ export async function updateWorkOrder(
       workOrder.scheduledEnd = addMinutes(workOrder.scheduledStart, minutes);
     }
 
-    let assignee: { first_name: string; last_name: string } | null = null;
+    let assignees: Array<{ first_name: string; last_name: string }> = [];
     let placedAppointment = false;
     const placementWarnings: string[] = [];
-    if (workOrder.assignedUserRef) {
-      const assigning =
-        typeof parsed.data.assignedUserRef === "string" &&
-        parsed.data.assignedUserRef !== "";
-      if (assigning) {
-        const loaded = await loadSchedulableAssignee(
-          String(workOrder.assignedUserRef),
-        );
-        if (!loaded.ok) {
-          res.status(400).json({ message: loaded.message });
-          return;
-        }
-        assignee = loaded.user;
-      } else {
-        const user = await User.findOne({
-          _id: workOrder.assignedUserRef,
-          ...activeUserFilter,
-        })
-          .select("first_name last_name weeklyHours scheduleExceptions")
-          .lean();
-        if (!user) {
-          res.status(400).json({ message: "Assigned user not found" });
-          return;
-        }
-        assignee = user;
+    const nextCrew = crewIdStrings(workOrder);
+    if (nextCrew.length > 0) {
+      const users = await User.find({
+        _id: { $in: nextCrew },
+        ...activeUserFilter,
+      })
+        .select("first_name last_name weeklyHours scheduleExceptions")
+        .lean();
+      const byId = new Map(users.map((user) => [String(user._id), user]));
+      assignees = nextCrew
+        .map((id) => byId.get(id))
+        .filter((user): user is NonNullable<typeof user> => Boolean(user));
+      if (assignees.length !== nextCrew.length) {
+        res.status(400).json({ message: "Assigned user not found" });
+        return;
       }
 
-      const nextAssignee = workOrder.assignedUserRef
-        ? String(workOrder.assignedUserRef)
-        : null;
       const nextStartTime = workOrder.startTime ?? "";
       const requestedDate =
         parsed.data.date !== undefined
@@ -755,14 +769,12 @@ export async function updateWorkOrder(
       const startChanged =
         parsed.data.startTime !== undefined && nextStartTime !== prevStartTime;
       const assigneeChanged =
-        parsed.data.assignedUserRef !== undefined &&
-        nextAssignee !== prevAssignee;
-      const clearedAssignee = assigneeChanged && !nextAssignee;
+        crewWasSent && nextCrew.join(",") !== prevCrew.join(",");
       const nextDate =
         requestedDate !== undefined
           ? requestedDate
           : (prevAppointmentDate ?? prevTicketDate);
-      if (clearedAssignee || (dateChanged && !nextDate)) {
+      if (dateChanged && !nextDate) {
         workOrder.scheduledStart = null;
         workOrder.scheduledEnd = null;
       }
@@ -770,8 +782,6 @@ export async function updateWorkOrder(
       const shouldPlace =
         dispatcher &&
         !workOrder.completed &&
-        !clearedAssignee &&
-        Boolean(nextAssignee) &&
         Boolean(nextDate) &&
         parsed.data.scheduledStart === undefined &&
         (dateChanged || startChanged || assigneeChanged || missingSlot);
@@ -782,36 +792,46 @@ export async function updateWorkOrder(
       }
 
       if (!shouldPlace && workOrder.scheduledStart && workOrder.scheduledEnd) {
-        const overlap = await findOverlappingJob({
-          userId: String(workOrder.assignedUserRef),
-          start: workOrder.scheduledStart,
-          end: workOrder.scheduledEnd,
-          excludeId: String(workOrder._id),
-        });
-        if (overlap) {
-          res.status(409).json({
-            message: "This time overlaps another job for that technician",
+        for (const userId of nextCrew) {
+          const overlap = await findOverlappingJob({
+            userId,
+            start: workOrder.scheduledStart,
+            end: workOrder.scheduledEnd,
+            excludeId: String(workOrder._id),
           });
-          return;
+          if (overlap) {
+            res.status(409).json({
+              message: "This time overlaps another job for that technician",
+            });
+            return;
+          }
         }
       }
 
-      if (shouldPlace && nextDate && nextAssignee) {
+      if (shouldPlace && nextDate) {
         await workOrder.save();
         try {
-          const scheduledStart = await placementStartForAssignee({
-            assignedUserRef: nextAssignee,
-            date: nextDate,
-            startTime: workOrder.startTime,
-            previousStart: prevScheduledStart,
-          });
-          const placed = await placeWorkOrder({
-            workOrderId: String(workOrder._id),
-            assignedUserRef: nextAssignee,
-            date: nextDate,
-            scheduledStart,
-            estimatedMinutes: workOrder.estimatedMinutes,
-          });
+          const placed =
+            nextCrew.length > 1
+              ? await placeWorkOrder({
+                  workOrderId: String(workOrder._id),
+                  assignedUserRef: nextCrew[0] ?? "",
+                  assignedUserRefs: nextCrew,
+                  date: nextDate,
+                  estimatedMinutes: workOrder.estimatedMinutes,
+                })
+              : await placeWorkOrder({
+                  workOrderId: String(workOrder._id),
+                  assignedUserRef: nextCrew[0] ?? "",
+                  date: nextDate,
+                  scheduledStart: await placementStartForAssignee({
+                    assignedUserRef: nextCrew[0] ?? "",
+                    date: nextDate,
+                    startTime: workOrder.startTime,
+                    previousStart: prevScheduledStart,
+                  }),
+                  estimatedMinutes: workOrder.estimatedMinutes,
+                });
           placementWarnings.push(...placed.warnings);
         } catch (err) {
           const status = (err as { status?: number }).status;
@@ -837,7 +857,10 @@ export async function updateWorkOrder(
       const dateChanged =
         parsed.data.date !== undefined &&
         (requestedDate ?? null) !== (prevAppointmentDate ?? prevTicketDate);
-      if (dateChanged || parsed.data.assignedUserRef === null || parsed.data.assignedUserRef === "") {
+      if (
+        dateChanged ||
+        (crewWasSent && crewIdStrings(workOrder).length === 0)
+      ) {
         workOrder.scheduledStart = null;
         workOrder.scheduledEnd = null;
       }
@@ -850,7 +873,10 @@ export async function updateWorkOrder(
 
     const warnings: string[] = [...placementWarnings];
     if (!placedAppointment) {
-      await applyAssignmentSideEffects(workOrder, assignee);
+      await applyAssignmentSideEffects(
+        workOrder,
+        assignees.length > 0 ? assignees : null,
+      );
       await workOrder.save();
     }
     await saveWorkOrderAgreements(workOrder);
@@ -867,23 +893,22 @@ export async function updateWorkOrder(
       );
     }
 
-    if (
-      assignee &&
-      workOrder.assignedUserRef &&
-      workOrder.scheduledStart &&
-      workOrder.scheduledEnd
-    ) {
-      const user = await User.findById(workOrder.assignedUserRef)
-        .select("weeklyHours scheduleExceptions")
+    if (workOrder.scheduledStart && workOrder.scheduledEnd && assignees.length > 0) {
+      const crewUsers = await User.find({
+        _id: { $in: crewIdStrings(workOrder) },
+      })
+        .select("first_name last_name weeklyHours scheduleExceptions")
         .lean();
-      const warn = availabilityWarning({
-        weeklyHours: user?.weeklyHours,
-        exceptions: user?.scheduleExceptions,
-        localDate: formatLocalDate(workOrder.scheduledStart),
-        start: workOrder.scheduledStart,
-        end: workOrder.scheduledEnd,
-      });
-      if (warn) warnings.push(warn);
+      for (const user of crewUsers) {
+        const warn = availabilityWarning({
+          weeklyHours: user.weeklyHours,
+          exceptions: user.scheduleExceptions,
+          localDate: formatLocalDate(workOrder.scheduledStart),
+          start: workOrder.scheduledStart,
+          end: workOrder.scheduledEnd,
+        });
+        if (warn) warnings.push(`${user.first_name} ${user.last_name}: ${warn}`);
+      }
     }
 
     logNotificationThrottledAsync(
@@ -939,7 +964,7 @@ export async function cancelWorkOrderAppointment(
 
     workOrder.scheduledStart = null;
     workOrder.scheduledEnd = null;
-    workOrder.assignedUserRef = null;
+    applyCrewIds(workOrder, []);
     workOrder.tech = "";
     workOrder.appointmentCanceledAt = new Date();
     workOrder.appointmentCanceledBy = req.user?.id

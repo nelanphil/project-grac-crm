@@ -12,6 +12,7 @@ import {
   startOfMonth,
   localDateTimeToIso,
   technicianColor,
+  workOrderCrewIds,
 } from "@/lib/schedule";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -20,6 +21,7 @@ const MAX_CHIPS = 4;
 type CityChip = {
   city: string;
   color: string;
+  count: number;
   technicians: string[];
 };
 
@@ -30,10 +32,6 @@ function jobDateKey(job: WorkOrderListItem): string {
 
 function jobCity(job: WorkOrderListItem): string {
   return (job.address?.city || job.customerCity || "").trim();
-}
-
-function jobAssigneeId(job: WorkOrderListItem): string {
-  return job.assignedUserRef || job.assignee?._id || "";
 }
 
 function jobAssigneeName(job: WorkOrderListItem): string {
@@ -52,33 +50,39 @@ function citiesForDay(
 ): CityChip[] {
   const byCity = new Map<
     string,
-    { label: string; techs: Map<string, string> }
+    { label: string; count: number; techs: Map<string, string> }
   >();
   for (const job of jobs) {
     const city = jobCity(job);
-    const assignedId = jobAssigneeId(job);
-    const techId = assignedId || recommendedByJobId[job._id] || "";
-    if (!city || !techId) continue;
+    if (!city) continue;
     const key = city.toLowerCase();
-    const entry = byCity.get(key) ?? { label: city, techs: new Map() };
-    if (!entry.techs.has(techId)) {
-      const name = assignedId
-        ? jobAssigneeName(job)
-        : technicianNames[techId] || "Technician";
+    const entry = byCity.get(key) ?? { label: city, count: 0, techs: new Map() };
+    entry.count += 1;
+    byCity.set(key, entry);
+    const crew = workOrderCrewIds(job);
+    const techIds = crew.length > 0 ? crew : [recommendedByJobId[job._id] || ""];
+    for (const techId of techIds) {
+      if (!techId || entry.techs.has(techId)) continue;
+      const named = job.assignees?.find((person) => person._id === techId);
+      const name = named
+        ? `${named.first_name} ${named.last_name}`.trim()
+        : crew.length === 1
+          ? jobAssigneeName(job)
+          : technicianNames[techId] || job.tech.trim() || "Technician";
       entry.techs.set(techId, name);
     }
-    byCity.set(key, entry);
   }
   return [...byCity.values()]
     .map((entry) => {
-      const color = blendColors(
-        [...entry.techs.keys()].map(
-          (id) => colors[id] || technicianColor(id),
-        ),
-      );
+      const techIds = [...entry.techs.keys()];
+      const color =
+        techIds.length > 0
+          ? blendColors(techIds.map((id) => colors[id] || technicianColor(id)))
+          : "#737373";
       return {
         city: properCaseCity(entry.label),
         color,
+        count: entry.count,
         technicians: [...entry.techs.values()].sort((a, b) =>
           a.localeCompare(b),
         ),
@@ -154,7 +158,7 @@ export default function MonthCalendar({
               )
             : [];
           const shown = dayCities.slice(0, MAX_CHIPS);
-          const hidden = dayCities.length - shown.length;
+          const extra = dayCities.slice(MAX_CHIPS);
           const selected = date === selectedDate;
           const isToday = date === today;
           const lastCol = index % 7 === 6;
@@ -163,33 +167,62 @@ export default function MonthCalendar({
             <div
               key={date}
               onClick={() => onSelectDate(date)}
-              className={`group relative flex h-full min-h-0 cursor-pointer flex-col gap-1 overflow-hidden p-1 transition-colors sm:p-1.5 ${
+              className={`group relative z-0 flex h-full min-h-0 cursor-pointer flex-col gap-1 overflow-visible p-1 transition-colors hover:z-20 sm:p-1.5 ${
                 lastCol ? "" : "border-r"
               } ${lastRow ? "" : "border-b"} border-neutral-200/70 ${
                 selected ? "bg-neutral-100" : "hover:bg-neutral-50"
               } ${inMonth ? "" : "opacity-40"}`}
             >
-              <div className="min-w-0 flex-1 space-y-0.5">
+              <div className="min-h-0 min-w-0 flex-1 space-y-0.5 overflow-hidden">
                 {shown.map((chip) => (
                   <div
                     key={chip.city}
-                    title={chip.technicians.join(", ")}
-                    className="truncate rounded border-l-[3px] px-1 text-[10px] font-medium leading-4 sm:text-[11px]"
+                    title={`${chip.city}: ${chip.count} ${
+                      chip.count === 1 ? "appointment" : "appointments"
+                    }${chip.technicians.length ? ` · ${chip.technicians.join(", ")}` : ""}`}
+                    className="flex items-center gap-1 rounded border-l-[3px] px-1 text-[10px] font-medium leading-4 sm:text-[11px]"
                     style={{
                       backgroundColor: opaqueTechnicianTint(chip.color),
                       borderLeftColor: chip.color,
                       color: "#231f20",
                     }}
                   >
-                    {chip.city}
+                    <span className="min-w-0 truncate">{chip.city}</span>
+                    <span className="shrink-0 tabular-nums">{chip.count}</span>
                   </div>
                 ))}
-                {hidden > 0 && (
-                  <div className="px-1 text-[10px] font-medium text-neutral-400">
-                    +{hidden} more
-                  </div>
-                )}
               </div>
+              {extra.length > 0 && (
+                <div
+                  className="group/more relative z-10 hover:z-30"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="px-1 text-[10px] font-medium text-neutral-400">
+                    +{extra.length} more
+                  </div>
+                  <div
+                    className={`pointer-events-none absolute left-0 z-30 hidden w-44 rounded-lg border border-neutral-200 bg-white p-2 shadow-lg group-hover/more:block ${
+                      lastRow ? "bottom-full mb-1" : "top-full mt-1"
+                    }`}
+                  >
+                    <ul className="space-y-1">
+                      {extra.map((chip) => (
+                        <li
+                          key={chip.city}
+                          className="flex items-baseline justify-between gap-3 text-[11px] leading-tight"
+                        >
+                          <span className="min-w-0 truncate text-brand-dark">
+                            {chip.city}
+                          </span>
+                          <span className="shrink-0 tabular-nums text-neutral-500">
+                            {chip.count}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
               <button
                 type="button"
                 aria-label={`Show ${date} in the job list${

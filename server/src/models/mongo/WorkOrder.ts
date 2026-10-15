@@ -44,6 +44,7 @@ export interface IWorkOrder extends Document {
   endTime: string;
   tech: string;
   assignedUserRef?: Types.ObjectId | null;
+  assignedUserRefs?: Types.ObjectId[];
   workOrderTypeRef?: Types.ObjectId | null;
   scheduledStart: Date | null;
   scheduledEnd: Date | null;
@@ -168,6 +169,10 @@ const workOrderSchema = new Schema<IWorkOrder>(
       default: null,
       index: true,
     },
+    assignedUserRefs: {
+      type: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      default: [],
+    },
     workOrderTypeRef: {
       type: Schema.Types.ObjectId,
       ref: "WorkOrderType",
@@ -244,6 +249,7 @@ export function includingDeletedWorkOrders<Q extends Query<unknown, IWorkOrder>>
 
 workOrderSchema.index({ customerId: 1, date: -1 });
 workOrderSchema.index({ assignedUserRef: 1, scheduledStart: 1 });
+workOrderSchema.index({ assignedUserRefs: 1, scheduledStart: 1 });
 workOrderSchema.index({ number: 1 }, { unique: true, sparse: true });
 workOrderSchema.index({ completed: 1, paid: 1, date: -1 });
 

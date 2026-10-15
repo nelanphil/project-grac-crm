@@ -47,6 +47,7 @@ export const createWorkOrderSchema = z
     endTime: optionalTime,
     tech: z.string().optional(),
     assignedUserRef: objectIdOrNull,
+    assignedUserRefs: z.array(z.string().trim()).max(8).optional(),
     workOrderTypeRef: objectIdOrNull,
     scheduledStart: z.union([z.string(), z.null()]).optional(),
     estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
@@ -64,6 +65,7 @@ export const createWorkOrderSchema = z
 export const updateWorkOrderSchema = z
   .object({
     assignedUserRef: objectIdOrNull,
+    assignedUserRefs: z.array(z.string().trim()).max(8).optional(),
     workOrderTypeRef: objectIdOrNull,
     scheduledStart: z.union([z.string(), z.null()]).optional(),
     estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),

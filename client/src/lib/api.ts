@@ -2098,6 +2098,8 @@ export interface WorkOrderListItem {
   contractDiscount?: TicketContractDiscount | null;
   address?: CustomerAddressSummary | null;
   assignedUserRef?: string | null;
+  assignedUserRefs?: string[];
+  assignees?: Array<{ _id: string; first_name: string; last_name: string }>;
   workOrderTypeRef?: string | null;
   workOrderType?: WorkOrderTypeSummary | null;
   scheduledStart?: string | null;
@@ -2125,6 +2127,7 @@ export type ServiceTicketPayload = {
   endTime?: string | null;
   tech?: string;
   assignedUserRef?: string | null;
+  assignedUserRefs?: string[];
   workOrderTypeRef?: string | null;
   paid?: boolean;
   completed?: boolean;
@@ -2275,6 +2278,7 @@ export async function updateWorkOrder(
   id: string,
   data: Partial<ServiceTicketPayload> & {
     assignedUserRef?: string | null;
+    assignedUserRefs?: string[];
     scheduledStart?: string | null;
     estimatedMinutes?: number;
   },
@@ -2638,10 +2642,12 @@ export async function placeScheduleWorkOrder(
   data: {
     workOrderId: string;
     assignedUserRef: string;
+    assignedUserRefs?: string[];
     date: string;
     scheduledStart?: string;
     estimatedMinutes?: number;
     insertIndex?: number;
+    requirePreferred?: boolean;
   },
 ): Promise<{ workOrders: WorkOrderListItem[]; warnings: string[] }> {
   return authRequest(`/schedule/place`, {

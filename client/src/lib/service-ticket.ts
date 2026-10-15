@@ -48,6 +48,7 @@ export interface TicketFormState {
   endTime: string;
   tech: string;
   assignedUserRef: string | null;
+  assignedUserRefs: string[];
   workOrderTypeRef: string | null;
   workOrderTypeLabel: string;
   /** True once this form has shown an equipment line, so removing the last one can reset the type. */
@@ -179,6 +180,7 @@ export function emptyTicketForm(): TicketFormState {
     endTime: "",
     tech: "",
     assignedUserRef: null,
+    assignedUserRefs: [],
     workOrderTypeRef: null,
     workOrderTypeLabel: "",
     trackedEquipment: false,
@@ -503,6 +505,10 @@ export function mergeSavedTicket(
     current.assignedUserRef === sent.assignedUserRef
       ? saved.assignedUserRef
       : current.assignedUserRef;
+  const assignedUserRefs =
+    current.assignedUserRefs.join(",") === sent.assignedUserRefs.join(",")
+      ? saved.assignedUserRefs
+      : current.assignedUserRefs;
   if (
     number === current.number &&
     customerRef === current.customerRef &&
@@ -512,7 +518,8 @@ export function mergeSavedTicket(
     startTime === current.startTime &&
     endTime === current.endTime &&
     tech === current.tech &&
-    assignedUserRef === current.assignedUserRef
+    assignedUserRef === current.assignedUserRef &&
+    assignedUserRefs.join(",") === current.assignedUserRefs.join(",")
   ) {
     return current;
   }
@@ -527,6 +534,7 @@ export function mergeSavedTicket(
     endTime,
     tech,
     assignedUserRef,
+    assignedUserRefs,
   };
 }
 
@@ -541,7 +549,8 @@ export function ticketToPayload(form: TicketFormState) {
     startTime: form.startTime.trim(),
     endTime: form.endTime.trim(),
     tech: form.tech,
-    assignedUserRef: form.assignedUserRef || null,
+    assignedUserRef: form.assignedUserRefs[0] || form.assignedUserRef || null,
+    assignedUserRefs: form.assignedUserRefs,
     workOrderTypeRef: form.workOrderTypeRef || null,
     paid: form.paid,
     completed: form.completed,
@@ -649,6 +658,7 @@ export function ticketFromRecord(record: {
   endTime?: string | null;
   tech?: string | null;
   assignedUserRef?: string | null;
+  assignedUserRefs?: string[] | null;
   workOrderTypeRef?: string | null;
   workOrderType?: { _id: string; label: string } | null;
   customerId?: number | null;
@@ -739,7 +749,13 @@ export function ticketFromRecord(record: {
       record.endTime?.trim() ||
       (record.scheduledEnd ? formatLocalTime(new Date(record.scheduledEnd)) : ""),
     tech: record.tech ?? "",
-    assignedUserRef: record.assignedUserRef ?? null,
+    assignedUserRef: record.assignedUserRefs?.[0] || record.assignedUserRef || null,
+    assignedUserRefs:
+      record.assignedUserRefs && record.assignedUserRefs.length > 0
+        ? record.assignedUserRefs
+        : record.assignedUserRef
+          ? [record.assignedUserRef]
+          : [],
     workOrderTypeRef:
       record.workOrderTypeRef ?? record.workOrderType?._id ?? null,
     workOrderTypeLabel: record.workOrderType?.label ?? "",

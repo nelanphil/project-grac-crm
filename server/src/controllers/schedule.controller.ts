@@ -22,6 +22,7 @@ import {
   rangeUtc,
 } from "../services/schedule.service";
 import { WorkOrder } from "../models/mongo/WorkOrder";
+import { assigneeInFilter } from "../utils/workOrderCrew";
 import { User, activeUserFilter } from "../models/mongo/User";
 import {
   CustomerContact,
@@ -140,14 +141,28 @@ const technicianRecommendationSchema = z
 const placeSchema = z
   .object({
     workOrderId: z.string().min(1),
-    assignedUserRef: z.string().min(1),
+    assignedUserRef: z.string().min(1).optional(),
+    assignedUserRefs: z.array(z.string().min(1)).max(8).optional(),
     date: z.string().regex(localDateRe),
     scheduledStart: z.string().min(1).optional(),
     estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
     insertIndex: z.number().int().min(0).optional(),
+    requirePreferred: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
-    if (!data.scheduledStart && data.insertIndex === undefined) {
+    const crew = data.assignedUserRefs?.length
+      ? data.assignedUserRefs
+      : data.assignedUserRef
+        ? [data.assignedUserRef]
+        : [];
+    if (crew.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "assignedUserRef is required",
+        path: ["assignedUserRef"],
+      });
+    }
+    if (!data.scheduledStart && data.insertIndex === undefined && crew.length < 2) {
       ctx.addIssue({
         code: "custom",
         message: "scheduledStart or insertIndex is required",
@@ -313,7 +328,7 @@ export async function getScheduleStaff(
       userIds.length === 0
         ? []
         : await WorkOrder.find({
-            assignedUserRef: { $in: userIds },
+            ...assigneeInFilter(userIds),
             scheduledStart: { $gte: start, $lte: end },
           })
             .sort({ scheduledStart: 1 })
@@ -459,13 +474,20 @@ export async function postSchedulePlace(
       }
     }
 
+    const crew = parsed.data.assignedUserRefs?.length
+      ? parsed.data.assignedUserRefs
+      : parsed.data.assignedUserRef
+        ? [parsed.data.assignedUserRef]
+        : [];
     const result = await placeWorkOrder({
       workOrderId: parsed.data.workOrderId,
-      assignedUserRef: parsed.data.assignedUserRef,
+      assignedUserRef: crew[0] ?? "",
+      assignedUserRefs: crew,
       date: parsed.data.date,
       scheduledStart,
       estimatedMinutes: parsed.data.estimatedMinutes,
       insertIndex: parsed.data.insertIndex,
+      requirePreferred: parsed.data.requirePreferred,
     });
     res.json(result);
   } catch (err) {
@@ -665,7 +687,7 @@ async function addressIdsOnAssignedWorkOrders(
   const ids = addressIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
   if (ids.length === 0) return new Set();
   const rows = await WorkOrder.find({
-    assignedUserRef: userId,
+    ...assigneeInFilter([userId]),
     addressRef: { $in: ids },
   })
     .select("addressRef")
@@ -947,7 +969,7 @@ export async function postScheduleText(
     const { start, end } = localDayBounds(parsed.data.date);
     const jobs = (
       await WorkOrder.find({
-        assignedUserRef: viewed.person._id,
+        ...assigneeInFilter([viewed.person._id]),
         scheduledStart: { $gte: start, $lt: end },
       })
         .sort({ scheduledStart: 1 })

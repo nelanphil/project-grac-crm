@@ -18,6 +18,7 @@ import {
   localDateToUtc,
   localDayBounds,
   rangesOverlap,
+  sharedGaps,
   resolveDayWindow,
   SCHEDULE_TIMEZONE,
   windowToUtcRange,
@@ -43,6 +44,7 @@ import {
   type RouteObjective,
 } from "../utils/routeOrder";
 import { stateCodeOrFlorida } from "../constants/usStates";
+import { applyCrewIds, assigneeInFilter, crewIdStrings } from "../utils/workOrderCrew";
 import {
   geocodeSitePoint,
   shouldKeepStoredSitePoint,
@@ -169,7 +171,7 @@ export async function findOverlappingJob(opts: {
   excludeId?: string;
 }): Promise<{ _id: mongoose.Types.ObjectId } | null> {
   const filter: Record<string, unknown> = {
-    assignedUserRef: opts.userId,
+    ...assigneeInFilter([opts.userId]),
     scheduledStart: { $ne: null },
     scheduledEnd: { $ne: null },
     $expr: {
@@ -290,9 +292,14 @@ export async function enrichScheduleWorkOrders(
   ];
   const userIds = [
     ...new Set(
-      workOrders
-        .map((wo) => wo.assignedUserRef?.toString())
-        .filter(Boolean) as string[],
+      workOrders.flatMap((wo) =>
+        crewIdStrings({
+          assignedUserRef: wo.assignedUserRef as { toString(): string } | null,
+          assignedUserRefs: wo.assignedUserRefs as
+            | Array<{ toString(): string }>
+            | null,
+        }),
+      ),
     ),
   ];
   const typeIds = [
@@ -400,6 +407,12 @@ export async function enrichScheduleWorkOrders(
     const note = noteByWorkOrder.get(wo._id?.toString() ?? "") ?? "";
     const description =
       typeof wo.descPerform === "string" ? wo.descPerform.trim() : "";
+    const crew = crewIdStrings({
+      assignedUserRef: wo.assignedUserRef as { toString(): string } | null,
+      assignedUserRefs: wo.assignedUserRefs as
+        | Array<{ toString(): string }>
+        | null,
+    });
     return {
       ...wo,
       customerRef: resolvedRef,
@@ -407,7 +420,12 @@ export async function enrichScheduleWorkOrders(
       workOrderType: typeById.get(wo.workOrderTypeRef?.toString() ?? "") ?? null,
       address: addressById.get(wo.addressRef?.toString() ?? "") ?? null,
       customerName: lookedUpName ?? snapshotName,
-      assignee: userById.get(wo.assignedUserRef?.toString() ?? "") ?? null,
+      assignedUserRef: crew[0] ?? null,
+      assignedUserRefs: crew,
+      assignees: crew
+        .map((id) => userById.get(id))
+        .filter((user): user is AssigneeSummary => Boolean(user)),
+      assignee: userById.get(crew[0] ?? "") ?? null,
       scheduleNote: note || description || null,
     };
   });
@@ -439,12 +457,16 @@ export async function countTechnicianJobsOnDate(opts: {
   const utcDateEnd = new Date(`${opts.localDate}T23:59:59.999Z`);
 
   const filter: Record<string, unknown> = {
-    assignedUserRef: { $in: opts.userIds },
-    $or: [
-      { scheduledStart: { $gte: start, $lte: end } },
+    $and: [
+      assigneeInFilter(opts.userIds),
       {
-        scheduledStart: null,
-        date: { $gte: utcDateStart, $lte: utcDateEnd },
+        $or: [
+          { scheduledStart: { $gte: start, $lte: end } },
+          {
+            scheduledStart: null,
+            date: { $gte: utcDateStart, $lte: utcDateEnd },
+          },
+        ],
       },
     ],
   };
@@ -455,10 +477,15 @@ export async function countTechnicianJobsOnDate(opts: {
     filter._id = { $ne: new mongoose.Types.ObjectId(opts.excludeWorkOrderId) };
   }
 
-  const rows = await WorkOrder.find(filter).select("assignedUserRef").lean();
+  const rows = await WorkOrder.find(filter)
+    .select("assignedUserRef assignedUserRefs")
+    .lean();
+  const wanted = new Set(opts.userIds.map((id) => String(id)));
   for (const row of rows) {
-    const key = String(row.assignedUserRef);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    for (const key of crewIdStrings(row)) {
+      if (!wanted.has(key)) continue;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
   }
   return counts;
 }
@@ -829,23 +856,27 @@ export async function suggestAssignees(opts: {
   const dayEnd = localDateToUtc(opts.date, "23:59");
 
   const dayJobs = await WorkOrder.find({
-    assignedUserRef: { $in: staff.map((s) => s._id) },
-    scheduledStart: { $gte: dayStart, $lte: dayEnd },
-    _id: { $ne: workOrder._id },
+    $and: [
+      assigneeInFilter(staff.map((s) => s._id)),
+      {
+        scheduledStart: { $gte: dayStart, $lte: dayEnd },
+        _id: { $ne: workOrder._id },
+      },
+    ],
   })
     .select(
-      "assignedUserRef scheduledStart scheduledEnd estimatedMinutes addressRef customerRef",
+      "assignedUserRef assignedUserRefs scheduledStart scheduledEnd estimatedMinutes addressRef customerRef",
     )
     .sort({ scheduledStart: 1 })
     .lean();
 
   const jobsByUser = new Map<string, typeof dayJobs>();
   for (const job of dayJobs) {
-    const key = job.assignedUserRef?.toString() ?? "";
-    if (!key) continue;
-    const list = jobsByUser.get(key) ?? [];
-    list.push(job);
-    jobsByUser.set(key, list);
+    for (const key of crewIdStrings(job)) {
+      const list = jobsByUser.get(key) ?? [];
+      list.push(job);
+      jobsByUser.set(key, list);
+    }
   }
 
   const jobAddressIds = [
@@ -1200,15 +1231,23 @@ export async function recommendAssignees(opts: {
   const dayJobs =
     staff.length > 0
       ? await WorkOrder.find({
-          assignedUserRef: { $in: staff.map((tech) => tech._id) },
-          scheduledStart: { $gte: dayStart, $lte: dayEnd },
-          completed: { $ne: true },
-          $or: [
-            { appointmentCanceledAt: null },
-            { appointmentCanceledAt: { $exists: false } },
+          $and: [
+            assigneeInFilter(staff.map((tech) => tech._id)),
+            {
+              scheduledStart: { $gte: dayStart, $lte: dayEnd },
+              completed: { $ne: true },
+            },
+            {
+              $or: [
+                { appointmentCanceledAt: null },
+                { appointmentCanceledAt: { $exists: false } },
+              ],
+            },
           ],
         })
-          .select("assignedUserRef scheduledStart scheduledEnd addressRef")
+          .select(
+            "assignedUserRef assignedUserRefs scheduledStart scheduledEnd addressRef",
+          )
           .lean()
       : [];
 
@@ -1265,19 +1304,20 @@ export async function recommendAssignees(opts: {
     }>
   >();
   for (const job of dayJobs) {
-    const key = job.assignedUserRef?.toString() ?? "";
-    if (!key) continue;
     const address = job.addressRef
       ? addressById.get(job.addressRef.toString())
       : undefined;
-    const list = dayJobsByUser.get(key) ?? [];
-    list.push({
+    const entry = {
       id: job._id.toString(),
       scheduledStart: job.scheduledStart ? new Date(job.scheduledStart) : null,
       scheduledEnd: job.scheduledEnd ? new Date(job.scheduledEnd) : null,
       coords: addressCoords(address ?? null),
-    });
-    dayJobsByUser.set(key, list);
+    };
+    for (const key of crewIdStrings(job)) {
+      const list = dayJobsByUser.get(key) ?? [];
+      list.push(entry);
+      dayJobsByUser.set(key, list);
+    }
   }
 
   const ranked = new Map<string, AssigneeRecommendation[]>();
@@ -1590,16 +1630,22 @@ export async function recommendTechnicianForSlot(opts: {
 
   const { start: dayStart, end: dayEnd } = rangeUtc(opts.date, opts.date);
   const dayJobs = await WorkOrder.find({
-    assignedUserRef: { $in: staff.map((tech) => tech._id) },
-    scheduledStart: { $gte: dayStart, $lte: dayEnd },
-    completed: { $ne: true },
-    ...(excludeId ? { _id: { $ne: excludeId } } : {}),
-    $or: [
-      { appointmentCanceledAt: null },
-      { appointmentCanceledAt: { $exists: false } },
+    $and: [
+      assigneeInFilter(staff.map((tech) => tech._id)),
+      {
+        scheduledStart: { $gte: dayStart, $lte: dayEnd },
+        completed: { $ne: true },
+        ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+      },
+      {
+        $or: [
+          { appointmentCanceledAt: null },
+          { appointmentCanceledAt: { $exists: false } },
+        ],
+      },
     ],
   })
-    .select("assignedUserRef scheduledStart scheduledEnd addressRef")
+    .select("assignedUserRef assignedUserRefs scheduledStart scheduledEnd addressRef")
     .lean();
 
   const addressIds = [
@@ -1631,17 +1677,18 @@ export async function recommendTechnicianForSlot(opts: {
     }>
   >();
   for (const job of dayJobs) {
-    const key = job.assignedUserRef?.toString() ?? "";
-    if (!key) continue;
-    const list = dayJobsByUser.get(key) ?? [];
-    list.push({
+    const entry = {
       scheduledStart: job.scheduledStart ? new Date(job.scheduledStart) : null,
       scheduledEnd: job.scheduledEnd ? new Date(job.scheduledEnd) : null,
       coords: job.addressRef
         ? (coordsByAddress.get(job.addressRef.toString()) ?? null)
         : null,
-    });
-    dayJobsByUser.set(key, list);
+    };
+    for (const key of crewIdStrings(job)) {
+      const list = dayJobsByUser.get(key) ?? [];
+      list.push(entry);
+      dayJobsByUser.set(key, list);
+    }
   }
 
   const picks: SlotPick[] = staff.map((tech) => {
@@ -1749,7 +1796,7 @@ export async function dayRouteForUser(opts: {
   const { start: dayStart, end: dayEnd } = localDayBounds(opts.date);
   const jobs = (
     await WorkOrder.find({
-      assignedUserRef: user._id,
+      ...assigneeInFilter([user._id]),
       scheduledStart: { $gte: dayStart, $lt: dayEnd },
     })
       .sort({ scheduledStart: 1 })
@@ -1993,15 +2040,21 @@ async function loadOrderedWorkOrders(ids: string[]) {
 }
 
 function assertJobCanJoinRoute(
-  job: { completed?: boolean; scheduledStart?: Date | null; assignedUserRef?: { toString(): string } | null; customerName?: string | null },
+  job: {
+    completed?: boolean;
+    scheduledStart?: Date | null;
+    assignedUserRef?: { toString(): string } | null;
+    assignedUserRefs?: Array<{ toString(): string }> | null;
+    customerName?: string | null;
+  },
   userId: string,
   date: string,
 ): void {
   if (job.completed) {
     throw routeError("Completed work orders cannot be rescheduled.");
   }
-  const assigneeId = job.assignedUserRef?.toString() ?? "";
-  if (assigneeId && assigneeId !== userId) {
+  const crew = crewIdStrings(job);
+  if (crew.length > 0 && !crew.includes(userId)) {
     throw routeError(
       `${placeJobLabel(job)} is already assigned to another technician.`,
     );
@@ -2083,6 +2136,12 @@ export async function planRouteForUser(opts: {
   }
   let visit = limited.jobs;
   const lockById = lockArrivalById(opts.lockedStops);
+  for (const row of visit) {
+    const crew = crewIdStrings(row.job);
+    if (crew.length > 1 && row.job.scheduledStart instanceof Date) {
+      lockById.set(String(row.job._id), row.job.scheduledStart);
+    }
+  }
   const dayWindow = resolveDayWindow(
     user.weeklyHours,
     user.scheduleExceptions,
@@ -2208,6 +2267,78 @@ export async function planRouteForUser(opts: {
   };
 }
 
+type DayJob = InstanceType<typeof WorkOrder>;
+
+type TimeBlock = {
+  start: Date;
+  end: Date;
+  point: LatLng | null;
+  label: string;
+};
+
+type DriveBetween = (
+  from: LatLng | null,
+  to: LatLng | null,
+  fromLabel: string,
+  toLabel: string,
+) => Promise<number>;
+
+function createdAtMs(job: DayJob): number {
+  const created = (job as { createdAt?: Date }).createdAt;
+  return created instanceof Date ? created.getTime() : 0;
+}
+
+function isFixedVisit(job: DayJob, exceptId?: string): boolean {
+  if (exceptId && String(job._id) === exceptId) return false;
+  return crewIdStrings(job).length > 1 && job.scheduledStart instanceof Date;
+}
+
+/** First start that is not inside an existing block, after the previous stop and drive. */
+async function firstOpenStart(opts: {
+  desired: Date;
+  duration: number;
+  windowStart: Date;
+  previous: TimeBlock | null;
+  blocks: TimeBlock[];
+  dest: LatLng | null;
+  destLabel: string;
+  driveBetween: DriveBetween;
+}): Promise<Date> {
+  let start =
+    opts.desired.getTime() < opts.windowStart.getTime()
+      ? new Date(opts.windowStart)
+      : new Date(opts.desired);
+  if (opts.previous) {
+    const drive = await opts.driveBetween(
+      opts.previous.point,
+      opts.dest,
+      opts.previous.label,
+      opts.destLabel,
+    );
+    const after = addMinutes(opts.previous.end, drive);
+    if (after.getTime() > start.getTime()) start = after;
+  }
+  let guard = 0;
+  while (guard < opts.blocks.length + 1) {
+    guard += 1;
+    const end = addMinutes(start, opts.duration);
+    const hit = opts.blocks
+      .filter((block) => rangesOverlap(start, end, block.start, block.end))
+      .sort((a, b) => b.end.getTime() - a.end.getTime())[0];
+    if (!hit) return start;
+    const drive = await opts.driveBetween(
+      hit.point,
+      opts.dest,
+      hit.label,
+      opts.destLabel,
+    );
+    const next = addMinutes(hit.end, drive);
+    if (next.getTime() <= start.getTime()) return start;
+    start = next;
+  }
+  return start;
+}
+
 export async function applyPlannedRoute(opts: {
   userId: string;
   date: string;
@@ -2236,7 +2367,7 @@ export async function applyPlannedRoute(opts: {
   const dayStart = localDateToUtc(opts.date, "00:00");
   const dayEnd = localDateToUtc(opts.date, "23:59");
   const existing = await WorkOrder.find({
-    assignedUserRef: user._id,
+    ...assigneeInFilter([user._id]),
     scheduledStart: { $gte: dayStart, $lte: dayEnd },
     completed: { $ne: true },
   }).select("_id customerName");
@@ -2281,41 +2412,57 @@ export async function applyPlannedRoute(opts: {
     return drive.minutes;
   };
 
-  let cursorEnd: Date | null = null;
-  let cursorPoint: LatLng | null = null;
-  let cursorLabel = "home";
   const lockById = lockArrivalById(opts.lockedStops);
-  for (let index = 0; index < sequence.length; index += 1) {
-    const job = sequence[index]!;
-    const duration = estimatedMinutesForWorkOrder(job);
-    const point = pointFor(job);
-    const earliest =
-      index === 0
-        ? new Date(workRange.start)
-        : addMinutes(
-            cursorEnd ?? workRange.start,
-            await driveBetween(
-              cursorPoint,
-              point,
-              cursorLabel,
-              placeJobLabel(job),
-            ),
-          );
-    const locked = lockById.get(String(job._id)) ?? null;
-    const start = locked ?? earliest;
-    if (locked && locked.getTime() + 1000 < earliest.getTime()) {
-      warn(
-        `${placeJobLabel(job)} stays at ${formatRouteClock(locked)}, which is earlier than the stop before it allows.`,
-      );
+  for (const job of sequence) {
+    if (
+      crewIdStrings(job).length > 1 &&
+      job.scheduledStart instanceof Date
+    ) {
+      lockById.set(String(job._id), job.scheduledStart);
     }
+  }
+  const obstacles: TimeBlock[] = [];
+  for (const job of sequence) {
+    const locked = lockById.get(String(job._id));
+    if (!locked) continue;
+    const duration = estimatedMinutesForWorkOrder(job);
+    obstacles.push({
+      start: locked,
+      end: addMinutes(locked, duration),
+      point: pointFor(job),
+      label: placeJobLabel(job),
+    });
+  }
+  let routePrev: TimeBlock | null = null;
+  for (const job of sequence) {
+    const duration = estimatedMinutesForWorkOrder(job);
+    const locked = lockById.get(String(job._id)) ?? null;
+    const dest = pointFor(job);
+    const label = placeJobLabel(job);
+    const start: Date = locked
+      ? locked
+      : await firstOpenStart({
+          desired: routePrev ? routePrev.end : workRange.start,
+          duration,
+          windowStart: workRange.start,
+          previous: routePrev,
+          blocks: obstacles,
+          dest,
+          destLabel: label,
+          driveBetween,
+        });
     const end = addMinutes(start, duration);
     job.scheduledStart = start;
     job.scheduledEnd = end;
     job.estimatedMinutes = duration;
-    job.assignedUserRef = user._id;
     job.appointmentCanceledAt = null;
     job.appointmentCanceledBy = null;
-    await applyAssignmentSideEffects(job, user);
+    if (crewIdStrings(job).length > 1) {
+      writeTicketClock(job);
+    } else {
+      applyCrewIds(job, [String(user._id)]);
+      await applyAssignmentSideEffects(job, user);
+    }
     const hoursWarn = availabilityWarning({
       weeklyHours: user.weeklyHours,
       exceptions: user.scheduleExceptions,
@@ -2324,9 +2471,9 @@ export async function applyPlannedRoute(opts: {
       end,
     });
     if (hoursWarn) warn(`${placeJobLabel(job)}: ${hoursWarn}`);
-    cursorEnd = end;
-    cursorPoint = point;
-    cursorLabel = placeJobLabel(job);
+    const block: TimeBlock = { start, end, point: dest, label };
+    if (!locked) obstacles.push(block);
+    if (!routePrev || end.getTime() > routePrev.end.getTime()) routePrev = block;
   }
 
   for (const job of sequence) {
@@ -2339,9 +2486,23 @@ export async function applyPlannedRoute(opts: {
   return { workOrders, warnings };
 }
 
+export function assignmentTechLabel(
+  assignee:
+    | Pick<IUser, "first_name" | "last_name">
+    | Array<Pick<IUser, "first_name" | "last_name">>
+    | null,
+): string {
+  if (!assignee) return "";
+  const list = Array.isArray(assignee) ? assignee : [assignee];
+  return list.map((user) => staffDisplayName(user)).filter(Boolean).join(", ");
+}
+
 export async function applyAssignmentSideEffects(
   workOrder: InstanceType<typeof WorkOrder>,
-  assignee: Pick<IUser, "first_name" | "last_name"> | null,
+  assignee:
+    | Pick<IUser, "first_name" | "last_name">
+    | Array<Pick<IUser, "first_name" | "last_name">>
+    | null,
 ): Promise<void> {
   if (workOrder.scheduledStart) {
     workOrder.date = localDateToUtc(
@@ -2349,9 +2510,8 @@ export async function applyAssignmentSideEffects(
       "00:00",
     );
   }
-  if (assignee) {
-    workOrder.tech = staffDisplayName(assignee);
-  }
+  const label = assignmentTechLabel(assignee);
+  if (label) workOrder.tech = label;
 }
 
 function placeJobLabel(workOrder: { customerName?: string | null }): string {
@@ -2416,7 +2576,7 @@ export async function startOptionsForWorkOrder(
   const date = formatLocalDate(job.scheduledStart);
   const dayStart = localDateToUtc(date, "00:00");
   const earlier = await WorkOrder.find({
-    assignedUserRef: assignee._id,
+    ...assigneeInFilter([assignee._id]),
     scheduledStart: { $gte: dayStart, $lt: job.scheduledStart },
     _id: { $ne: job._id },
   }).sort({ scheduledStart: -1 });
@@ -2540,15 +2700,203 @@ export async function placementStartForAssignee(opts: {
   return localDateToUtc(opts.date, clock);
 }
 
+export type SharedSlot =
+  | { ok: true; start: Date; end: Date }
+  | { ok: false; message: string };
+
+/**
+ * One start that sits in every technician's working hours and in a gap none of
+ * them already have booked. Does not move other jobs.
+ */
+export async function findSharedSlot(opts: {
+  userIds: string[];
+  date: string;
+  minutes: number;
+  startTime?: string | null;
+  excludeWorkOrderId?: string;
+  /** When set, refuse instead of sliding to an earlier open gap. */
+  requirePreferred?: boolean;
+}): Promise<SharedSlot> {
+  const userIds = [...new Set(opts.userIds.filter((id) => mongoose.Types.ObjectId.isValid(id)))];
+  if (userIds.length === 0) {
+    return { ok: false, message: "Choose a technician" };
+  }
+  const users = await User.find({
+    _id: { $in: userIds },
+    ...activeUserFilter,
+  })
+    .select("first_name last_name schedulable weeklyHours scheduleExceptions")
+    .lean();
+  const byId = new Map(users.map((user) => [String(user._id), user]));
+  const ranges: Array<{ start: Date; end: Date }> = [];
+  for (const id of userIds) {
+    const user = byId.get(id);
+    if (!user) return { ok: false, message: "Assigned user not found" };
+    if (!user.schedulable) {
+      return {
+        ok: false,
+        message: `${staffDisplayName(user)} cannot be scheduled for work orders`,
+      };
+    }
+    const range = windowToUtcRange(
+      opts.date,
+      resolveDayWindow(user.weeklyHours, user.scheduleExceptions, opts.date),
+    );
+    if (!range) {
+      return {
+        ok: false,
+        message: `${staffDisplayName(user)} is not working on ${opts.date}`,
+      };
+    }
+    ranges.push(range);
+  }
+  const windowStart = Math.max(...ranges.map((range) => range.start.getTime()));
+  const windowEnd = Math.min(...ranges.map((range) => range.end.getTime()));
+  if (windowEnd - windowStart < opts.minutes * 60_000) {
+    return { ok: false, message: `No overlapping working hours on ${opts.date}` };
+  }
+
+  const exclude =
+    opts.excludeWorkOrderId && mongoose.Types.ObjectId.isValid(opts.excludeWorkOrderId)
+      ? opts.excludeWorkOrderId
+      : "";
+  const dayStart = localDateToUtc(opts.date, "00:00");
+  const dayEnd = localDateToUtc(opts.date, "23:59");
+  const busyJobs = await WorkOrder.find({
+    $and: [
+      assigneeInFilter(userIds),
+      {
+        scheduledStart: { $gte: dayStart, $lte: dayEnd },
+        scheduledEnd: { $ne: null },
+        ...(exclude ? { _id: { $ne: exclude } } : {}),
+      },
+    ],
+  })
+    .select("scheduledStart scheduledEnd")
+    .lean();
+  const busy = busyJobs
+    .filter((job) => job.scheduledStart && job.scheduledEnd)
+    .map((job) => ({
+      start: new Date(job.scheduledStart as Date).getTime(),
+      end: new Date(job.scheduledEnd as Date).getTime(),
+    }));
+  const gaps = sharedGaps(windowStart, windowEnd, busy, opts.minutes);
+  if (gaps.length === 0) {
+    return { ok: false, message: `No shared open time on ${opts.date}` };
+  }
+  const preferredClock = opts.startTime?.trim() ?? "";
+  if (isHhMm(preferredClock)) {
+    const preferred = localDateToUtc(opts.date, preferredClock).getTime();
+    const need = opts.minutes * 60_000;
+    const fit = gaps.find(
+      (gap) => gap.start <= preferred && preferred + need <= gap.end,
+    );
+    if (fit) {
+      return {
+        ok: true,
+        start: new Date(preferred),
+        end: addMinutes(new Date(preferred), opts.minutes),
+      };
+    }
+    if (opts.requirePreferred) {
+      return {
+        ok: false,
+        message: `That time is not open for every technician on ${opts.date}`,
+      };
+    }
+  } else if (opts.requirePreferred) {
+    return { ok: false, message: `No shared open time on ${opts.date}` };
+  }
+  const earliest = gaps[0]!;
+  return {
+    ok: true,
+    start: new Date(earliest.start),
+    end: addMinutes(new Date(earliest.start), opts.minutes),
+  };
+}
+
+async function placeSharedCrew(opts: {
+  workOrderId: string;
+  userIds: string[];
+  date: string;
+  scheduledStart?: Date;
+  estimatedMinutes?: number;
+  requirePreferred?: boolean;
+}): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
+  if (!mongoose.Types.ObjectId.isValid(opts.workOrderId)) {
+    throw Object.assign(new Error("Invalid workOrderId"), { status: 400 });
+  }
+  const job = await WorkOrder.findById(opts.workOrderId);
+  if (!job) {
+    throw Object.assign(new Error("Work order not found"), { status: 404 });
+  }
+  if (job.completed) {
+    throw Object.assign(new Error("Completed work orders cannot be rescheduled"), {
+      status: 400,
+    });
+  }
+  const minutes =
+    typeof opts.estimatedMinutes === "number" && opts.estimatedMinutes > 0
+      ? opts.estimatedMinutes
+      : estimatedMinutesForWorkOrder(job);
+  const preferred = opts.scheduledStart
+    ? formatLocalTime(opts.scheduledStart)
+    : job.startTime;
+  const slot = await findSharedSlot({
+    userIds: opts.userIds,
+    date: opts.date,
+    minutes,
+    startTime: preferred,
+    excludeWorkOrderId: String(job._id),
+    requirePreferred: opts.requirePreferred,
+  });
+  if (!slot.ok) {
+    throw Object.assign(new Error(slot.message), { status: 409 });
+  }
+  const users = await User.find({
+    _id: { $in: opts.userIds },
+    ...activeUserFilter,
+  })
+    .select("first_name last_name")
+    .lean();
+  const byId = new Map(users.map((user) => [String(user._id), user]));
+  const ordered = opts.userIds
+    .map((id) => byId.get(id))
+    .filter((user): user is NonNullable<typeof user> => Boolean(user));
+  applyCrewIds(job, opts.userIds);
+  job.scheduledStart = slot.start;
+  job.scheduledEnd = slot.end;
+  job.estimatedMinutes = minutes;
+  job.appointmentCanceledAt = null;
+  job.appointmentCanceledBy = null;
+  await applyAssignmentSideEffects(job, ordered);
+  writeTicketClock(job);
+  await job.save();
+  const workOrders = await enrichScheduleWorkOrders([
+    job.toObject() as unknown as Record<string, unknown>,
+  ]);
+  return { workOrders, warnings: [] };
+}
+
 export async function placeWorkOrder(opts: {
   workOrderId: string;
   assignedUserRef: string;
+  assignedUserRefs?: string[];
   date: string;
   scheduledStart?: Date;
   estimatedMinutes?: number;
   /** 0 places the job first. Omit to insert by scheduledStart. */
   insertIndex?: number;
+  /** Dropped time must fit the whole crew. Do not slide to another gap. */
+  requirePreferred?: boolean;
 }): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
+  const requestedCrew = (opts.assignedUserRefs?.length
+    ? opts.assignedUserRefs
+    : [opts.assignedUserRef]
+  ).filter((id) => mongoose.Types.ObjectId.isValid(id));
+  if (requestedCrew.length > 1) {
+    return placeSharedCrew({ ...opts, userIds: [...new Set(requestedCrew)] });
+  }
   const useIndex =
     typeof opts.insertIndex === "number" && Number.isFinite(opts.insertIndex);
   if (!mongoose.Types.ObjectId.isValid(opts.workOrderId)) {
@@ -2593,7 +2941,7 @@ export async function placeWorkOrder(opts: {
   const dayStart = localDateToUtc(opts.date, "00:00");
   const dayEnd = localDateToUtc(opts.date, "23:59");
   const existing = await WorkOrder.find({
-    assignedUserRef: assignee._id,
+    ...assigneeInFilter([assignee._id]),
     scheduledStart: { $gte: dayStart, $lte: dayEnd },
     _id: { $ne: dropped._id },
   }).sort({ scheduledStart: 1 });
@@ -2602,43 +2950,24 @@ export async function placeWorkOrder(opts: {
     opts.scheduledStart && !Number.isNaN(opts.scheduledStart.getTime())
       ? opts.scheduledStart
       : localDateToUtc(opts.date, DEFAULT_DAY_START);
-  const insertAt = existing.findIndex((job) => {
-    const start = job.scheduledStart?.getTime() ?? Number.POSITIVE_INFINITY;
-    return start >= requestedStart.getTime();
-  });
-  const index = useIndex
-    ? Math.min(Math.max(0, Math.floor(opts.insertIndex ?? 0)), existing.length)
-    : insertAt === -1
-      ? existing.length
-      : insertAt;
-  const sequence = [...existing];
-  sequence.splice(index, 0, dropped);
+  if (typeof opts.estimatedMinutes === "number" && opts.estimatedMinutes > 0) {
+    dropped.estimatedMinutes = opts.estimatedMinutes;
+  }
 
+  const dayJobs = [...existing, dropped];
   const addressIds = [
     ...new Set(
-      sequence
+      dayJobs
         .map((job) => job.addressRef?.toString())
         .filter((id): id is string => Boolean(id)),
     ),
   ];
   const addressPoints = await coordsByAddressId(addressIds);
-  const geocodeCache = new Map<string, LatLng | null>();
-  let home = homeCoords(assignee.homeLocation);
-  if (!home && assignee.homeLocation?.address?.trim()) {
-    home = await geocodeToLatLng(assignee.homeLocation, geocodeCache);
-    if (home) {
-      await User.updateOne(
-        { _id: assignee._id },
-        { $set: { "homeLocation.lat": home.lat, "homeLocation.lng": home.lng } },
-      );
-    }
-  }
-
   const warnings: string[] = [];
   const warn = (message: string) => {
     if (!warnings.includes(message)) warnings.push(message);
   };
-  const pointFor = (job: InstanceType<typeof WorkOrder>): LatLng | null => {
+  const pointFor = (job: DayJob): LatLng | null => {
     const id = job.addressRef?.toString();
     if (!id) return null;
     return addressPoints.get(id) ?? null;
@@ -2665,111 +2994,96 @@ export async function placeWorkOrder(opts: {
     opts.date,
   );
   const workRange = windowToUtcRange(opts.date, dayWindow);
-
-  let previousEnd: Date | null = null;
-  let previousPoint: LatLng | null = null;
-  let previousLabel = "home";
-  if (index === 0) {
-    previousPoint = home;
-    previousEnd = workRange?.start ?? null;
-  } else {
-    const previous = sequence[index - 1];
-    if (previous) {
-      previousPoint = pointFor(previous);
-      previousLabel = placeJobLabel(previous);
-      const previousDuration = estimatedMinutesForWorkOrder(previous);
-      previousEnd =
-        previous.scheduledEnd ??
-        (previous.scheduledStart
-          ? addMinutes(previous.scheduledStart, previousDuration)
-          : null);
-    }
-  }
-
-  const inserted = sequence[index];
-  if (!inserted) {
-    throw Object.assign(new Error("Work order not found"), { status: 404 });
-  }
-  if (typeof opts.estimatedMinutes === "number" && opts.estimatedMinutes > 0) {
-    inserted.estimatedMinutes = opts.estimatedMinutes;
-  }
-  const insertedDuration = estimatedMinutesForWorkOrder(inserted);
-  const isFirstStop = index === 0;
-  const inboundDrive = isFirstStop
-    ? 0
-    : await driveBetween(
-        previousPoint,
-        pointFor(inserted),
-        previousLabel,
-        placeJobLabel(inserted),
-      );
-  const earliestInserted =
-    !isFirstStop && previousEnd
-      ? addMinutes(previousEnd, inboundDrive)
-      : requestedStart;
   const windowStart = workRange?.start ?? localDateToUtc(opts.date, DEFAULT_DAY_START);
-  const insertedStart = useIndex
-    ? isFirstStop
-      ? windowStart
-      : earliestInserted
-    : new Date(Math.max(requestedStart.getTime(), earliestInserted.getTime()));
-  const insertedEnd = addMinutes(insertedStart, insertedDuration);
-  inserted.scheduledStart = insertedStart;
-  inserted.scheduledEnd = insertedEnd;
-  inserted.estimatedMinutes = insertedDuration;
-  inserted.assignedUserRef = assignee._id;
-  inserted.appointmentCanceledAt = null;
-  inserted.appointmentCanceledBy = null;
-  await applyAssignmentSideEffects(inserted, assignee);
-  writeTicketClock(inserted);
-
-  const hoursWarn = availabilityWarning({
-    weeklyHours: assignee.weeklyHours,
-    exceptions: assignee.scheduleExceptions,
-    localDate: opts.date,
-    start: insertedStart,
-    end: insertedEnd,
-  });
-  if (hoursWarn) warn(`${placeJobLabel(inserted)}: ${hoursWarn}`);
-
-  const changed: Array<InstanceType<typeof WorkOrder>> = [inserted];
-  let cursorEnd = insertedEnd;
-  let cursorPoint = pointFor(inserted);
-  let cursorLabel = placeJobLabel(inserted);
-
-  for (let i = index + 1; i < sequence.length; i += 1) {
-    const job = sequence[i];
-    if (!job) break;
+  const droppedId = String(dropped._id);
+  const obstacles = dayJobs.filter((job) => isFixedVisit(job, droppedId)).map((job) => {
     const duration = estimatedMinutesForWorkOrder(job);
-    const drive = await driveBetween(
-      cursorPoint,
-      pointFor(job),
-      cursorLabel,
-      placeJobLabel(job),
+    const start = job.scheduledStart ?? windowStart;
+    return {
+      start,
+      end: job.scheduledEnd ?? addMinutes(start, duration),
+      point: pointFor(job),
+      label: placeJobLabel(job),
+    };
+  });
+  const movable = dayJobs.filter((job) => !isFixedVisit(job, droppedId));
+  if (useIndex) {
+    const others = movable.filter((job) => String(job._id) !== droppedId);
+    others.sort(
+      (a, b) =>
+        (a.scheduledStart?.getTime() ?? 0) - (b.scheduledStart?.getTime() ?? 0),
     );
-    const earliest = addMinutes(cursorEnd, drive);
-    const currentStart = job.scheduledStart;
-    if (currentStart && currentStart.getTime() >= earliest.getTime()) break;
+    const index = Math.min(
+      Math.max(0, Math.floor(opts.insertIndex ?? 0)),
+      others.length,
+    );
+    others.splice(index, 0, dropped);
+    movable.splice(0, movable.length, ...others);
+  } else {
+    movable.sort((a, b) => {
+      const aDesired =
+        String(a._id) === droppedId
+          ? requestedStart.getTime()
+          : (a.scheduledStart?.getTime() ?? requestedStart.getTime());
+      const bDesired =
+        String(b._id) === droppedId
+          ? requestedStart.getTime()
+          : (b.scheduledStart?.getTime() ?? requestedStart.getTime());
+      if (aDesired !== bDesired) return aDesired - bDesired;
+      return createdAtMs(a) - createdAtMs(b);
+    });
+  }
 
-    const start = earliest;
+  let previous: TimeBlock | null = null;
+  const changed: DayJob[] = [];
+  for (const job of movable) {
+    const duration = estimatedMinutesForWorkOrder(job);
+    const desired =
+      useIndex
+        ? previous
+          ? previous.end
+          : windowStart
+        : String(job._id) === droppedId
+          ? requestedStart
+          : (job.scheduledStart ?? requestedStart);
+    const start = await firstOpenStart({
+      desired,
+      duration,
+      windowStart,
+      previous,
+      blocks: obstacles,
+      dest: pointFor(job),
+      destLabel: placeJobLabel(job),
+      driveBetween,
+    });
     const end = addMinutes(start, duration);
     job.scheduledStart = start;
     job.scheduledEnd = end;
     job.estimatedMinutes = duration;
+    if (String(job._id) === droppedId) {
+      applyCrewIds(job, [String(assignee._id)]);
+      job.appointmentCanceledAt = null;
+      job.appointmentCanceledBy = null;
+    }
     await applyAssignmentSideEffects(job, assignee);
     writeTicketClock(job);
+    const block = {
+      start,
+      end,
+      point: pointFor(job),
+      label: placeJobLabel(job),
+    };
+    obstacles.push(block);
+    previous = block;
     changed.push(job);
-    const jobWarn = availabilityWarning({
+    const hoursWarn = availabilityWarning({
       weeklyHours: assignee.weeklyHours,
       exceptions: assignee.scheduleExceptions,
       localDate: opts.date,
       start,
       end,
     });
-    if (jobWarn) warn(`${placeJobLabel(job)}: ${jobWarn}`);
-    cursorEnd = end;
-    cursorPoint = pointFor(job);
-    cursorLabel = placeJobLabel(job);
+    if (hoursWarn) warn(`${placeJobLabel(job)}: ${hoursWarn}`);
   }
 
   for (const job of changed) {
@@ -2820,7 +3134,7 @@ export async function listScheduleQueue(opts: {
 
   const base: Record<string, unknown> = { completed: { $ne: true } };
   if (!opts.dispatcher) {
-    base.assignedUserRef = opts.userId;
+    Object.assign(base, assigneeInFilter([opts.userId]));
   }
 
   const dateWindow =
@@ -2838,18 +3152,28 @@ export async function listScheduleQueue(opts: {
     scheduledStart: null,
   };
   if (dateWindow && opts.includeUndated) {
-    unscheduledFilter.$or = [
-      dateWindow,
-      { date: null },
-      { date: { $exists: false } },
-    ];
+    const dateOr = [dateWindow, { date: null }, { date: { $exists: false } }];
+    if (unscheduledFilter.$or) {
+      const assigneeOr = unscheduledFilter.$or;
+      delete unscheduledFilter.$or;
+      unscheduledFilter.$and = [{ $or: assigneeOr }, { $or: dateOr }];
+    } else {
+      unscheduledFilter.$or = dateOr;
+    }
   } else if (dateWindow) {
     Object.assign(unscheduledFilter, dateWindow);
   } else {
-    unscheduledFilter.$or = [
+    const canceledOr = [
       { appointmentCanceledAt: null },
       { appointmentCanceledAt: { $exists: false } },
     ];
+    if (unscheduledFilter.$or) {
+      const assigneeOr = unscheduledFilter.$or;
+      delete unscheduledFilter.$or;
+      unscheduledFilter.$and = [{ $or: assigneeOr }, { $or: canceledOr }];
+    } else {
+      unscheduledFilter.$or = canceledOr;
+    }
   }
 
   const unscheduledQuery = opts.dispatcher
@@ -2872,12 +3196,16 @@ export async function listScheduleQueue(opts: {
         .sort({ scheduledStart: 1 })
         .lean(),
       WorkOrder.find({
-        ...base,
-        $or: [
-          { appointmentCanceledAt: { $type: "date" } },
-          { scheduledStart: { $ne: null, $lt: todayStart } },
+        $and: [
+          base,
+          {
+            $or: [
+              { appointmentCanceledAt: { $type: "date" } },
+              { scheduledStart: { $ne: null, $lt: todayStart } },
+            ],
+          },
         ],
-      })
+      } as mongoose.FilterQuery<InstanceType<typeof WorkOrder>>)
         .sort({ updatedAt: -1 })
         .limit(200)
         .lean(),
@@ -2938,23 +3266,27 @@ export async function listNextAvailableSlots(opts?: {
   const rangeEnd = localDateToUtc(lastDate, "23:59");
 
   const jobs = await WorkOrder.find({
-    assignedUserRef: { $in: staff.map((s) => s._id) },
-    scheduledStart: { $gte: rangeStart, $lte: rangeEnd },
-    $or: [
-      { appointmentCanceledAt: null },
-      { appointmentCanceledAt: { $exists: false } },
+    $and: [
+      assigneeInFilter(staff.map((s) => s._id)),
+      { scheduledStart: { $gte: rangeStart, $lte: rangeEnd } },
+      {
+        $or: [
+          { appointmentCanceledAt: null },
+          { appointmentCanceledAt: { $exists: false } },
+        ],
+      },
     ],
   })
-    .select("assignedUserRef scheduledStart scheduledEnd estimatedMinutes")
+    .select("assignedUserRef assignedUserRefs scheduledStart scheduledEnd estimatedMinutes")
     .lean();
 
   const jobsByUser = new Map<string, typeof jobs>();
   for (const job of jobs) {
-    const key = job.assignedUserRef?.toString() ?? "";
-    if (!key) continue;
-    const list = jobsByUser.get(key) ?? [];
-    list.push(job);
-    jobsByUser.set(key, list);
+    for (const key of crewIdStrings(job)) {
+      const list = jobsByUser.get(key) ?? [];
+      list.push(job);
+      jobsByUser.set(key, list);
+    }
   }
 
   const slots: PhoneBookingSlot[] = [];

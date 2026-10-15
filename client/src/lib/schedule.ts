@@ -514,6 +514,18 @@ export function blendColors(hexes: string[]): string {
   return `#${channel(red)}${channel(green)}${channel(blue)}`;
 }
 
+/** Technicians on a work order. Falls back to the single assignee. */
+export function workOrderCrewIds(job: {
+  assignedUserRefs?: string[] | null;
+  assignedUserRef?: string | null;
+  assignee?: { _id: string } | null;
+}): string[] {
+  const listed = (job.assignedUserRefs ?? []).filter(Boolean);
+  if (listed.length > 0) return [...new Set(listed)];
+  const single = job.assignedUserRef || job.assignee?._id || "";
+  return single ? [single] : [];
+}
+
 /** Opaque wash of a color: about 18% of the source mixed toward white. */
 export function opaqueTechnicianTint(hex: string, mix = 0.18): string {
   const { r, g, b } = hexToRgb(hex);

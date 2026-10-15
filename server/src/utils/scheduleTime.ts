@@ -225,6 +225,47 @@ export function rangesOverlap(
   return aStart.getTime() < bEnd.getTime() && aEnd.getTime() > bStart.getTime();
 }
 
+export type TimeInterval = { start: number; end: number };
+
+/** Gaps inside a window that are long enough after every busy interval is removed. */
+export function sharedGaps(
+  windowStart: number,
+  windowEnd: number,
+  busy: TimeInterval[],
+  minutes: number,
+): TimeInterval[] {
+  const need = minutes * 60_000;
+  if (need <= 0 || windowEnd - windowStart < need) return [];
+  const blocks = busy
+    .map((block) => ({
+      start: Math.max(block.start, windowStart),
+      end: Math.min(block.end, windowEnd),
+    }))
+    .filter((block) => block.end > block.start)
+    .sort((a, b) => a.start - b.start);
+  const merged: TimeInterval[] = [];
+  for (const block of blocks) {
+    const last = merged[merged.length - 1];
+    if (!last || block.start > last.end) {
+      merged.push({ start: block.start, end: block.end });
+    } else {
+      last.end = Math.max(last.end, block.end);
+    }
+  }
+  const gaps: TimeInterval[] = [];
+  let cursor = windowStart;
+  for (const block of merged) {
+    if (block.start - cursor >= need) {
+      gaps.push({ start: cursor, end: block.start });
+    }
+    cursor = Math.max(cursor, block.end);
+  }
+  if (windowEnd - cursor >= need) {
+    gaps.push({ start: cursor, end: windowEnd });
+  }
+  return gaps;
+}
+
 export type DayWindow = {
   enabled: boolean;
   start: string;

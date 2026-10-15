@@ -31,6 +31,7 @@ import {
   getScheduleStaff,
   getScheduleStartOptions,
   getWorkOrder,
+  applyScheduleRoute,
   placeScheduleWorkOrder,
   planScheduleRoute,
   type PlannedRoute,
@@ -65,6 +66,7 @@ import {
   startOfMonth,
   startOfWeekSunday,
   resolvedTechnicianColor,
+  workOrderCrewIds,
   workOrderLocalDate,
 } from "@/lib/schedule";
 import WeekBoard, {
@@ -92,13 +94,26 @@ type ViewMode = "week" | "month";
 type MonthMode = "calendar" | "table";
 type SurfaceMode = "calendar" | "map";
 
-function dropMinutes(event: DragEndEvent): number | null {
-  const over = event.over;
+function dropColumnId(overId: string): string {
+  if (overId.startsWith("row:") || overId.startsWith("col:")) return overId.slice(4);
+  return "";
+}
+
+function dayColumnMinutes(userId: string, event: DragEndEvent): number | null {
   const translated = event.active.rect.current.translated;
-  if (!over || !translated) return null;
-  const y =
-    translated.top + Math.min(translated.height, 24) / 2 - over.rect.top;
-  const ratio = Math.max(0, Math.min(0.999, y / Math.max(1, over.rect.height)));
+  if (!translated) return null;
+  const day =
+    typeof document !== "undefined"
+      ? document.querySelector(`[data-schedule-day="${userId}"]`)
+      : null;
+  const rect = day?.getBoundingClientRect();
+  const overId = event.over?.id ? String(event.over.id) : "";
+  const top = rect?.top ?? (overId.startsWith("row:") ? event.over?.rect.top : undefined);
+  const height =
+    rect?.height ?? (overId.startsWith("row:") ? event.over?.rect.height : undefined);
+  if (top == null || height == null) return null;
+  const y = translated.top + Math.min(translated.height, 24) / 2 - top;
+  const ratio = Math.max(0, Math.min(0.999, y / Math.max(1, height)));
   const total = (BOARD_HOUR_END - BOARD_HOUR_START) * 60;
   return Math.round((BOARD_HOUR_START * 60 + ratio * total) / 15) * 15;
 }
@@ -1195,10 +1210,10 @@ export default function CalendarTab({
     : null;
   const dayAppointments = useMemo(() => {
     return jobs
-      .filter((job) => {
-        const assignee = job.assignedUserRef ?? job.assignee?._id ?? "";
-        return Boolean(assignee) && isScheduledOnDate(job, selectedDate);
-      })
+      .filter(
+        (job) =>
+          workOrderCrewIds(job).length > 0 && isScheduledOnDate(job, selectedDate),
+      )
       .sort((a, b) => {
         const aTime = a.scheduledStart ? new Date(a.scheduledStart).getTime() : 0;
         const bTime = b.scheduledStart ? new Date(b.scheduledStart).getTime() : 0;
@@ -1207,10 +1222,9 @@ export default function CalendarTab({
   }, [jobs, selectedDate]);
   const selectedTechAppointments = useMemo(() => {
     if (!effectiveTechId) return [];
-    return dayAppointments.filter((job) => {
-      const assignee = job.assignedUserRef ?? job.assignee?._id ?? "";
-      return assignee === effectiveTechId;
-    });
+    return dayAppointments.filter((job) =>
+      workOrderCrewIds(job).includes(effectiveTechId),
+    );
   }, [dayAppointments, effectiveTechId]);
   const mapAppointments = effectiveTechId
     ? selectedTechAppointments
@@ -1232,9 +1246,9 @@ export default function CalendarTab({
   const jobsTodayByTech = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const job of dayAppointments) {
-      const id = job.assignedUserRef ?? job.assignee?._id ?? "";
-      if (!id) continue;
-      counts[id] = (counts[id] ?? 0) + 1;
+      for (const id of workOrderCrewIds(job)) {
+        counts[id] = (counts[id] ?? 0) + 1;
+      }
     }
     return counts;
   }, [dayAppointments]);
@@ -1461,10 +1475,10 @@ export default function CalendarTab({
     userId: string,
   ) {
     if (!token || !canWrite) return;
-    const current = job.assignee?._id ?? job.assignedUserRef ?? "";
+    const crew = workOrderCrewIds(job);
     const alreadyScheduled =
       Boolean(job.scheduledStart) &&
-      current === userId &&
+      crew.includes(userId) &&
       workOrderLocalDate(job) === selectedDate;
     if (alreadyScheduled) return;
     if (!(await confirmTerritory(job, userId))) return;
@@ -1492,12 +1506,15 @@ export default function CalendarTab({
           scheduledStart = windowIso;
         }
       }
+      const nextCrew = crew.includes(userId) ? crew : [...crew, userId];
       const placed = await placeScheduleWorkOrder(token, {
         workOrderId: job._id,
-        assignedUserRef: userId,
+        assignedUserRef: nextCrew[0] ?? userId,
+        assignedUserRefs: nextCrew,
         date: selectedDate,
         scheduledStart,
         estimatedMinutes: job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+        requirePreferred: nextCrew.length > 1,
       });
       if (placed.warnings?.length) {
         setWarning(placed.warnings.join(" "));
@@ -1612,12 +1629,12 @@ export default function CalendarTab({
       await addDroppedJob(overId, activeId.slice(4));
       return;
     }
-    if (!overId.startsWith("row:")) return;
-    const userId = overId.slice(4);
+    const userId = dropColumnId(overId);
+    if (!userId) return;
     const workOrderId = activeId.slice(4);
     const dropped = jobById.get(workOrderId);
     if (dropped && !(await confirmTerritory(dropped, userId))) return;
-    const minutes = dropMinutes(event);
+    const minutes = dayColumnMinutes(userId, event);
     if (minutes == null) return;
     const hhmm = minutesToHhMm(minutes);
     const iso = localDateTimeToIso(selectedDate, hhmm);
@@ -1626,11 +1643,17 @@ export default function CalendarTab({
     setWarning(null);
     setError(null);
     try {
+      const existing = dropped ? workOrderCrewIds(dropped) : [];
+      const nextCrew = existing.includes(userId)
+        ? existing
+        : [...existing, userId];
       const placed = await placeScheduleWorkOrder(token, {
         workOrderId,
-        assignedUserRef: userId,
+        assignedUserRef: nextCrew[0] ?? userId,
+        assignedUserRefs: nextCrew,
         date: selectedDate,
         scheduledStart: iso,
+        requirePreferred: nextCrew.length > 1,
       });
       if (placed.warnings?.length) {
         setWarning(placed.warnings.join(" "));
@@ -1714,10 +1737,10 @@ export default function CalendarTab({
 
   function stopIsScheduledOnDay(id: string): boolean {
     const job = jobById.get(id);
-    const assignee = job?.assignedUserRef ?? job?.assignee?._id ?? "";
     return Boolean(
       job &&
-        assignee === effectiveTechId &&
+        effectiveTechId &&
+        workOrderCrewIds(job).includes(effectiveTechId) &&
         isScheduledOnDate(job, selectedDate),
     );
   }
@@ -1803,8 +1826,35 @@ export default function CalendarTab({
           ),
         });
         if (seq !== planSeq.current) return;
-        if (optimize) setManualOrder(result.orderedWorkOrderIds);
-        setRoutePlan(result);
+        if (optimize) {
+          const applied = await applyScheduleRoute(token, {
+            userId: effectiveTechId,
+            date: selectedDate,
+            orderedWorkOrderIds: result.orderedWorkOrderIds,
+            lockedStops: activeRouteLocks.filter((lock) =>
+              result.orderedWorkOrderIds.includes(lock.workOrderId),
+            ),
+          });
+          if (seq !== planSeq.current) return;
+          setManualOrder(result.orderedWorkOrderIds);
+          setRoutePlan({
+            ...result,
+            warnings: [...result.warnings, ...(applied.warnings ?? [])],
+          });
+          setJobs((current) => {
+            const byId = new Map(current.map((job) => [job._id, job]));
+            for (const job of applied.workOrders) {
+              byId.set(job._id, { ...byId.get(job._id), ...job });
+            }
+            return [...byId.values()];
+          });
+          if (applied.warnings?.length) {
+            setWarning(applied.warnings.join(" "));
+          }
+          await load();
+        } else {
+          setRoutePlan(result);
+        }
       } catch (err) {
         if (seq !== planSeq.current) return;
         setRoutePlan(null);
@@ -1828,6 +1878,7 @@ export default function CalendarTab({
       roundTrip,
       routeObjective,
       activeRouteLocks,
+      load,
     ],
   );
 
@@ -1927,7 +1978,7 @@ export default function CalendarTab({
     }
     const groups = new Map<string, string[]>();
     for (const job of rangeJobs) {
-      if (job.assignedUserRef || job.assignee?._id) continue;
+      if (workOrderCrewIds(job).length > 0) continue;
       const date = workOrderLocalDate(job);
       if (!date || date < range.from || date > range.to) continue;
       const ids = groups.get(date) ?? [];
@@ -2000,20 +2051,28 @@ export default function CalendarTab({
     );
     const seen = new Map<string, string>();
     for (const job of rangeJobs) {
-      const id = job.assignedUserRef || job.assignee?._id || "";
       const city = (job.address?.city || job.customerCity || "").trim();
       const date = workOrderLocalDate(job);
-      if (!id || !city || !date || date < range.from || date > range.to || seen.has(id)) {
-        continue;
-      }
+      if (!city || !date || date < range.from || date > range.to) continue;
       const fromAssignee = [job.assignee?.first_name, job.assignee?.last_name]
         .filter(Boolean)
         .join(" ")
         .trim();
-      seen.set(
-        id,
-        staffNames.get(id) || fromAssignee || job.tech.trim() || "Technician",
-      );
+      for (const id of workOrderCrewIds(job)) {
+        if (seen.has(id)) continue;
+        const named = job.assignees?.find((person) => person._id === id);
+        const crewName = named
+          ? `${named.first_name} ${named.last_name}`.trim()
+          : "";
+        seen.set(
+          id,
+          staffNames.get(id) ||
+            crewName ||
+            fromAssignee ||
+            job.tech.trim() ||
+            "Technician",
+        );
+      }
     }
     return [...seen.entries()]
       .map(([id, name]) => ({
@@ -2379,6 +2438,7 @@ export default function CalendarTab({
         <DndContext
           key="schedule-calendar"
           sensors={sensors}
+          collisionDetection={pointerWithin}
           onDragEnd={(e) => void handleDragEnd(e)}
         >
           {view === "week" && monthMode === "table" ? (

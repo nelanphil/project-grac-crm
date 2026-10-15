@@ -483,6 +483,7 @@ export default function ServiceTicketForm({
         ...prev,
         tech: name,
         assignedUserRef: recommendedTech.userId,
+        assignedUserRefs: [recommendedTech.userId],
       };
     });
   }, [recommendedTech, variant]);
@@ -655,23 +656,42 @@ export default function ServiceTicketForm({
     if ("addresses" in c) setCustomer(c);
   }
 
-  function selectWorkOrderTechnician(userId: string) {
+  function technicianName(userId: string): string {
+    const listed = schedulableTechnicians.find((tech) => tech._id === userId);
+    if (listed) return technicianDisplayName(listed);
+    const ranked = slotRank?.technicians.find((tech) => tech.userId === userId);
+    if (ranked) return technicianDisplayName(ranked);
+    const known = form.tech
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    return known[form.assignedUserRefs.indexOf(userId)] || "";
+  }
+
+  function toggleWorkOrderTechnician(userId: string) {
     setPendingInsertIndex(null);
     if (!userId) {
       techChoiceLocked.current = false;
       autoAppliedTechId.current = null;
-      patch({ tech: "", assignedUserRef: null });
+      patch({ tech: "", assignedUserRef: null, assignedUserRefs: [] });
       return;
     }
-    techChoiceLocked.current = true;
-    const listed = schedulableTechnicians.find((tech) => tech._id === userId);
-    const ranked = slotRank?.technicians.find((tech) => tech.userId === userId);
-    const name = listed
-      ? technicianDisplayName(listed)
-      : ranked
-        ? technicianDisplayName(ranked)
-        : form.tech;
-    patch({ tech: name, assignedUserRef: userId });
+    const current = form.assignedUserRefs.length
+      ? form.assignedUserRefs
+      : form.assignedUserRef
+        ? [form.assignedUserRef]
+        : [];
+    const next = current.includes(userId)
+      ? current.filter((id) => id !== userId)
+      : [...current, userId];
+    techChoiceLocked.current = next.length > 0;
+    if (next.length === 0) autoAppliedTechId.current = null;
+    const names = next.map((id) => technicianName(id)).filter(Boolean);
+    patch({
+      tech: names.join(", "),
+      assignedUserRef: next[0] ?? null,
+      assignedUserRefs: next,
+    });
   }
 
   function applyAddress(addressId: string) {
@@ -781,14 +801,18 @@ export default function ServiceTicketForm({
   }, [autosave.status]);
 
   useEffect(() => {
-    if (variant !== "work-order" || !token || !form.assignedUserRef || !form.date) {
+    const scheduleTechId =
+      collapsedTechId && form.assignedUserRefs.includes(collapsedTechId)
+        ? collapsedTechId
+        : form.assignedUserRefs[0] || form.assignedUserRef || "";
+    if (variant !== "work-order" || !token || !scheduleTechId || !form.date) {
       setDayStops([]);
       setDayStopsLoading(false);
       return;
     }
     let cancelled = false;
     setDayStopsLoading(true);
-    getScheduleStaff(token, form.date, form.date, form.assignedUserRef)
+    getScheduleStaff(token, form.date, form.date, scheduleTechId)
       .then((board) => {
         if (cancelled) return;
         const stops = [...board.workOrders].sort((a, b) => {
@@ -807,7 +831,15 @@ export default function ServiceTicketForm({
     return () => {
       cancelled = true;
     };
-  }, [variant, token, form.assignedUserRef, form.date, dayStopsNonce]);
+  }, [
+    variant,
+    token,
+    form.assignedUserRef,
+    form.assignedUserRefs,
+    form.date,
+    dayStopsNonce,
+    collapsedTechId,
+  ]);
 
   const placeOnTechnicianDay = useCallback(
     async (insertIndex: number) => {
@@ -835,7 +867,13 @@ export default function ServiceTicketForm({
             startTime: mine.startTime?.trim() || prev.startTime,
             endTime: mine.endTime?.trim() || prev.endTime,
             tech: mine.tech || prev.tech,
-            assignedUserRef: mine.assignedUserRef ?? prev.assignedUserRef,
+            assignedUserRef: mine.assignedUserRefs?.[0] || mine.assignedUserRef || prev.assignedUserRef,
+            assignedUserRefs:
+              mine.assignedUserRefs && mine.assignedUserRefs.length > 0
+                ? mine.assignedUserRefs
+                : mine.assignedUserRef
+                  ? [mine.assignedUserRef]
+                  : prev.assignedUserRefs,
           }));
         }
         if (result.warnings.length > 0) {
@@ -1190,7 +1228,7 @@ export default function ServiceTicketForm({
                       </tr>
                     ) : (
                       technicianRows.map((row) => {
-                        const selected = form.assignedUserRef === row.userId;
+                        const selected = form.assignedUserRefs.includes(row.userId);
                         const showConflict = selected && !row.fits;
                         const dayOpen = selected && collapsedTechId !== row.userId;
                         const dayItems = technicianDayRows(dayStops, recordId);
@@ -1200,15 +1238,16 @@ export default function ServiceTicketForm({
                               className={`cursor-pointer border-t border-neutral-200 ${
                                 selected ? "bg-neutral-50" : "hover:bg-neutral-50"
                               }`}
-                              onClick={() => selectWorkOrderTechnician(row.userId)}
+                              onClick={() => toggleWorkOrderTechnician(row.userId)}
                             >
                               <td className="px-2 py-2">
                                 <input
-                                  type="radio"
+                                  type="checkbox"
                                   name="work-order-technician"
                                   value={row.userId}
                                   checked={selected}
-                                  onChange={() => selectWorkOrderTechnician(row.userId)}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onChange={() => toggleWorkOrderTechnician(row.userId)}
                                   aria-label={row.name}
                                 />
                               </td>
@@ -1281,7 +1320,7 @@ export default function ServiceTicketForm({
                                                   ? " · This work order"
                                                   : ""}
                                               </p>
-                                            ) : dispatcher ? (
+                                            ) : dispatcher && form.assignedUserRefs.length < 2 ? (
                                               <button
                                                 key={`slot-${item.insertIndex}`}
                                                 type="button"
@@ -1328,13 +1367,13 @@ export default function ServiceTicketForm({
                   </tbody>
                 </table>
               </div>
-              {form.assignedUserRef ? (
+              {form.assignedUserRefs.length > 0 ? (
                 <button
                   type="button"
-                  onClick={() => selectWorkOrderTechnician("")}
+                  onClick={() => toggleWorkOrderTechnician("")}
                   className="mt-2 text-xs font-medium text-neutral-500 hover:text-brand-dark"
                 >
-                  Clear technician
+                  Clear technician{form.assignedUserRefs.length > 1 ? "s" : ""}
                 </button>
               ) : null}
               {showEquipment ? (
