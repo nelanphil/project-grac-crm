@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   CalendarDays,
@@ -33,6 +33,33 @@ import {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MAX_CHIPS = 4;
+
+const DEFAULT_ASSIGN_MODAL_WIDTH = 540;
+const DEFAULT_ASSIGN_MODAL_HEIGHT = 640;
+const MIN_ASSIGN_MODAL_WIDTH = 420;
+const MIN_ASSIGN_MODAL_HEIGHT = 420;
+const STORAGE_KEY_ASSIGN_MODAL = "grac_assign_modal_dimensions";
+
+function readModalDimensions(): { width: number; height: number } {
+  if (typeof window === "undefined") {
+    return { width: DEFAULT_ASSIGN_MODAL_WIDTH, height: DEFAULT_ASSIGN_MODAL_HEIGHT };
+  }
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY_ASSIGN_MODAL);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.width === "number" && typeof parsed?.height === "number") {
+        return {
+          width: Math.max(MIN_ASSIGN_MODAL_WIDTH, Math.min(window.innerWidth - 32, parsed.width)),
+          height: Math.max(MIN_ASSIGN_MODAL_HEIGHT, Math.min(window.innerHeight - 32, parsed.height)),
+        };
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { width: DEFAULT_ASSIGN_MODAL_WIDTH, height: DEFAULT_ASSIGN_MODAL_HEIGHT };
+}
 
 type CityTechnician = {
   name: string;
@@ -193,6 +220,107 @@ export default function MonthCalendar({
   const [isAssigning, setIsAssigning] = useState<boolean>(false);
   const [assignError, setAssignError] = useState<string | null>(null);
 
+  // Dynamically Resizable Modal State
+  const [modalDimensions, setModalDimensions] = useState<{ width: number; height: number }>(readModalDimensions);
+  const [isModalMaximized, setIsModalMaximized] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const isResizingRef = useRef(false);
+
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+
+  function closeAssignMenu() {
+    resizeCleanupRef.current?.();
+    setAssigningJob(null);
+  }
+
+  function startModalResize(
+    e: React.PointerEvent,
+    dir: "e" | "w" | "s" | "n" | "se" | "sw" | "ne" | "nw",
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeCleanupRef.current?.();
+
+    if (isModalMaximized) {
+      setIsModalMaximized(false);
+    }
+
+    const modalEl = modalRef.current;
+    if (!modalEl) return;
+
+    const rect = modalEl.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    let currentWidth = rect.width;
+    let currentHeight = rect.height;
+
+    setIsResizing(true);
+    isResizingRef.current = true;
+
+    let cursor = "se-resize";
+    if (dir === "e" || dir === "w") cursor = "ew-resize";
+    else if (dir === "s" || dir === "n") cursor = "ns-resize";
+    else if (dir === "sw" || dir === "ne") cursor = "nesw-resize";
+    else if (dir === "se" || dir === "nw") cursor = "nwse-resize";
+
+    const prevCursor = document.body.style.cursor;
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = cursor;
+    document.body.style.userSelect = "none";
+
+    function onPointerMove(moveEvent: PointerEvent) {
+      const maxWidth = Math.max(MIN_ASSIGN_MODAL_WIDTH, window.innerWidth - 32);
+      const maxHeight = Math.max(MIN_ASSIGN_MODAL_HEIGHT, window.innerHeight - 32);
+
+      let nextWidth = currentWidth;
+      let nextHeight = currentHeight;
+
+      if (dir.includes("e")) {
+        nextWidth = Math.max(MIN_ASSIGN_MODAL_WIDTH, Math.min(maxWidth, (moveEvent.clientX - centerX) * 2));
+      } else if (dir.includes("w")) {
+        nextWidth = Math.max(MIN_ASSIGN_MODAL_WIDTH, Math.min(maxWidth, (centerX - moveEvent.clientX) * 2));
+      }
+
+      if (dir.includes("s")) {
+        nextHeight = Math.max(MIN_ASSIGN_MODAL_HEIGHT, Math.min(maxHeight, (moveEvent.clientY - centerY) * 2));
+      } else if (dir.includes("n")) {
+        nextHeight = Math.max(MIN_ASSIGN_MODAL_HEIGHT, Math.min(maxHeight, (centerY - moveEvent.clientY) * 2));
+      }
+
+      currentWidth = nextWidth;
+      currentHeight = nextHeight;
+      setModalDimensions({ width: Math.round(nextWidth), height: Math.round(nextHeight) });
+    }
+
+    function onPointerUp() {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevUserSelect;
+      resizeCleanupRef.current = null;
+      setTimeout(() => {
+        setIsResizing(false);
+        isResizingRef.current = false;
+      }, 50);
+
+      try {
+        localStorage.setItem(
+          STORAGE_KEY_ASSIGN_MODAL,
+          JSON.stringify({ width: Math.round(currentWidth), height: Math.round(currentHeight) }),
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    resizeCleanupRef.current = onPointerUp;
+  }
+
   const start = startOfMonth(monthDate);
   const count = daysInMonth(start);
   const firstWeekday = nyDateParts(
@@ -279,7 +407,7 @@ export default function MonthCalendar({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (assigningJob) {
-          setAssigningJob(null);
+          closeAssignMenu();
         } else if (isDrawerOpen) {
           setDrawerOpen(false);
         } else if (onToggleExpand) {
@@ -759,259 +887,424 @@ export default function MonthCalendar({
       </div>
 
       {/* Pop Up Menu for Unscheduled Appointment Assignment & Route Ordering */}
-      {assigningJob && (
-        <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[1px]"
-          onClick={() => setAssigningJob(null)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white text-brand-dark shadow-2xl animate-in fade-in zoom-in-95 duration-150"
-          >
-            {/* Popup Header */}
-            <div className="flex shrink-0 items-start justify-between border-b border-neutral-200 px-5 py-4 bg-neutral-50/50">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="rounded-full bg-[#c2410c] px-2 py-0.5 text-[10px] font-bold uppercase text-white">
-                    Unscheduled
-                  </span>
-                  <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                    Assign & Place
-                  </span>
-                </div>
-                <h3 className="mt-1 text-base font-bold text-brand-dark">
-                  {assigningJob.customerName || "Customer"}
-                </h3>
-                <p className="text-xs text-neutral-500">
-                  {[jobCity(assigningJob), assigningJob.workOrderType?.label, formatPrettyDate(selectedDate)]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAssigningJob(null)}
-                className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
-                aria-label="Close dialog"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+      {assigningJob && (() => {
+        const isWide = isModalMaximized || modalDimensions.width >= 720;
 
-            {/* Popup Scrollable Body */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-              {assignError && (
-                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-                  {assignError}
-                </div>
-              )}
+        const technicianItems = technicianList.map((tech) => {
+          const isSelected = tech.id === selectedTechId;
+          const techRecs = recommendations[assigningJob._id] ?? [];
+          const rec = techRecs.find((r) => r.userId === tech.id);
+          const isRecommended = (rec && rec.available) || recommendedByJobId[assigningJob._id] === tech.id;
+          const existingCount = getTechnicianDayAppointments(jobs, tech.id, selectedDate).length;
 
-              {/* 1. Technician Selection */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-neutral-500 mb-2">
-                  1. Select Technician
-                </label>
-                <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                  {technicianList.map((tech) => {
-                    const isSelected = tech.id === selectedTechId;
-                    const techRecs = recommendations[assigningJob._id] ?? [];
-                    const rec = techRecs.find((r) => r.userId === tech.id);
-                    const isRecommended = (rec && rec.available) || recommendedByJobId[assigningJob._id] === tech.id;
-                    const existingCount = getTechnicianDayAppointments(jobs, tech.id, selectedDate).length;
-
-                    return (
-                      <button
-                        key={tech.id}
-                        type="button"
-                        onClick={() => handleSelectTech(tech.id)}
-                        className={`flex w-full items-center justify-between rounded-xl border p-2.5 text-left transition-all ${
-                          isSelected
-                            ? "border-brand-orange bg-brand-orange/10 ring-1 ring-brand-orange"
-                            : "border-neutral-200 bg-white hover:bg-neutral-50"
-                        }`}
-                      >
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <span
-                            aria-hidden
-                            className="h-3 w-3 shrink-0 rounded-full"
-                            style={{ backgroundColor: tech.color }}
-                          />
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`text-xs font-semibold ${isSelected ? "text-brand-orange" : "text-brand-dark"} truncate`}>
-                                {tech.name}
-                              </span>
-                              {isRecommended && (
-                                <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.2 text-[10px] font-bold text-emerald-700">
-                                  <Sparkles className="h-2.5 w-2.5" />
-                                  Recommended
-                                </span>
-                              )}
-                            </div>
-                            {rec?.reason && (
-                              <p className="text-[11px] text-neutral-500 truncate">
-                                {rec.reason}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex shrink-0 items-center gap-2 pl-2">
-                          <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-600">
-                            {existingCount} {existingCount === 1 ? "job" : "jobs"}
-                          </span>
-                          <div className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-                            isSelected ? "border-brand-orange bg-brand-orange text-white" : "border-neutral-300"
-                          }`}>
-                            {isSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 2. Order in Technician's Schedule */}
-              {selectedTechId && (
-                <div className="pt-2 border-t border-neutral-100">
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-                      2. Route Landing Order
-                    </label>
-                    <span className="text-[11px] text-neutral-400 font-medium">
-                      {techDayAppointments.length === 0
-                        ? "1st stop (No existing jobs)"
-                        : `Landing position ${selectedOrderIndex + 1} of ${techDayAppointments.length + 1}`}
+          return (
+            <button
+              key={tech.id}
+              type="button"
+              onClick={() => handleSelectTech(tech.id)}
+              className={`flex w-full items-center justify-between rounded-xl border p-2.5 text-left transition-all ${
+                isSelected
+                  ? "border-brand-orange bg-brand-orange/10 ring-1 ring-brand-orange"
+                  : "border-neutral-200 bg-white hover:bg-neutral-50"
+              }`}
+            >
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span
+                  aria-hidden
+                  className="h-3 w-3 shrink-0 rounded-full"
+                  style={{ backgroundColor: tech.color }}
+                />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-xs font-semibold ${isSelected ? "text-brand-orange" : "text-brand-dark"} truncate`}>
+                      {tech.name}
                     </span>
+                    {isRecommended && (
+                      <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.2 text-[10px] font-bold text-emerald-700">
+                        <Sparkles className="h-2.5 w-2.5" />
+                        Recommended
+                      </span>
+                    )}
                   </div>
-
-                  {techDayAppointments.length === 0 ? (
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-900">
-                      <div className="flex items-center gap-1.5 font-semibold text-emerald-800">
-                        <Check className="h-4 w-4" />
-                        <span>1st Stop · First appointment of the day</span>
-                      </div>
-                      <p className="mt-1 text-[11px] text-emerald-700">
-                        This technician has no other scheduled work orders on {formatPrettyDate(selectedDate)}.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {Array.from({ length: techDayAppointments.length + 1 }, (_, i) => {
-                        const isPositionSelected = selectedOrderIndex === i;
-                        const isFirst = i === 0;
-                        const isLast = i === techDayAppointments.length;
-
-                        let positionTitle = `${i + 1}${ordinalSuffix(i + 1)} Stop`;
-                        let positionDetail = "";
-
-                        if (isFirst) {
-                          positionTitle = "1st Stop (Start of Day)";
-                          const firstJob = techDayAppointments[0];
-                          const timeStr = firstJob.scheduledStart ? formatLocalClock(new Date(firstJob.scheduledStart)) : "";
-                          positionDetail = `Before ${firstJob.customerName || "first job"}${timeStr ? ` (${timeStr})` : ""}`;
-                        } else if (isLast) {
-                          positionTitle = `${i + 1}${ordinalSuffix(i + 1)} Stop (End of Day)`;
-                          const lastJob = techDayAppointments[techDayAppointments.length - 1];
-                          const timeStr = lastJob.scheduledStart ? formatLocalClock(new Date(lastJob.scheduledStart)) : "";
-                          positionDetail = `After ${lastJob.customerName || "last job"}${timeStr ? ` (${timeStr})` : ""}`;
-                        } else {
-                          const prevJob = techDayAppointments[i - 1];
-                          const nextJob = techDayAppointments[i];
-                          positionDetail = `Between ${prevJob.customerName || "Job"} and ${nextJob.customerName || "Job"}`;
-                        }
-
-                        return (
-                          <button
-                            key={i}
-                            type="button"
-                            onClick={() => setSelectedOrderIndex(i)}
-                            className={`flex w-full items-start gap-3 rounded-xl border p-2.5 text-left transition-all ${
-                              isPositionSelected
-                                ? "border-brand-orange bg-brand-orange/10 ring-1 ring-brand-orange"
-                                : "border-neutral-200 bg-white hover:bg-neutral-50"
-                            }`}
-                          >
-                            <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
-                              isPositionSelected
-                                ? "border-brand-orange bg-brand-orange text-white"
-                                : "border-neutral-300 text-neutral-500"
-                            }`}>
-                              {i + 1}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center justify-between">
-                                <span className={`text-xs font-semibold ${isPositionSelected ? "text-brand-orange" : "text-brand-dark"}`}>
-                                  {positionTitle}
-                                </span>
-                                {isPositionSelected && (
-                                  <span className="text-[10px] font-bold uppercase text-brand-orange">
-                                    Selected
-                                  </span>
-                                )}
-                              </div>
-                              <p className="mt-0.5 text-[11px] text-neutral-500 truncate">
-                                {positionDetail}
-                              </p>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
+                  {rec?.reason && (
+                    <p className="text-[11px] text-neutral-500 truncate">
+                      {rec.reason}
+                    </p>
                   )}
                 </div>
-              )}
-            </div>
+              </div>
 
-            {/* Popup Action Buttons */}
-            <div className="flex shrink-0 items-center justify-end gap-2 border-t border-neutral-200 bg-neutral-50 px-5 py-3">
-              <button
-                type="button"
-                onClick={() => setAssigningJob(null)}
-                disabled={isAssigning}
-                className="rounded-lg border border-neutral-200 px-3.5 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isAssigning || !selectedTechId || !onAssignTechnician}
-                onClick={async () => {
-                  if (!onAssignTechnician || !selectedTechId) return;
-                  setIsAssigning(true);
-                  setAssignError(null);
-                  try {
-                    const result = await onAssignTechnician(assigningJob, selectedTechId, selectedOrderIndex);
-                    if (result !== false) {
-                      setAssigningJob(null);
+              <div className="flex shrink-0 items-center gap-2 pl-2">
+                <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-600">
+                  {existingCount} {existingCount === 1 ? "job" : "jobs"}
+                </span>
+                <div className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                  isSelected ? "border-brand-orange bg-brand-orange text-white" : "border-neutral-300"
+                }`}>
+                  {isSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                </div>
+              </div>
+            </button>
+          );
+        });
+
+        const routeOrderContent = techDayAppointments.length === 0 ? (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-xs text-emerald-900">
+            <div className="flex items-center gap-1.5 font-semibold text-emerald-800">
+              <Check className="h-4 w-4" />
+              <span>1st Stop · First appointment of the day</span>
+            </div>
+            <p className="mt-1 text-[11px] text-emerald-700">
+              This technician has no other scheduled work orders on {formatPrettyDate(selectedDate)}.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {Array.from({ length: techDayAppointments.length + 1 }, (_, i) => {
+              const isPositionSelected = selectedOrderIndex === i;
+              const isFirst = i === 0;
+              const isLast = i === techDayAppointments.length;
+
+              let positionTitle = `${i + 1}${ordinalSuffix(i + 1)} Stop`;
+              let positionDetail = "";
+
+              if (isFirst) {
+                positionTitle = "1st Stop (Start of Day)";
+                const firstJob = techDayAppointments[0];
+                const timeStr = firstJob.scheduledStart ? formatLocalClock(new Date(firstJob.scheduledStart)) : "";
+                positionDetail = `Before ${firstJob.customerName || "first job"}${timeStr ? ` (${timeStr})` : ""}`;
+              } else if (isLast) {
+                positionTitle = `${i + 1}${ordinalSuffix(i + 1)} Stop (End of Day)`;
+                const lastJob = techDayAppointments[techDayAppointments.length - 1];
+                const timeStr = lastJob.scheduledStart ? formatLocalClock(new Date(lastJob.scheduledStart)) : "";
+                positionDetail = `After ${lastJob.customerName || "last job"}${timeStr ? ` (${timeStr})` : ""}`;
+              } else {
+                const prevJob = techDayAppointments[i - 1];
+                const nextJob = techDayAppointments[i];
+                positionDetail = `Between ${prevJob.customerName || "Job"} and ${nextJob.customerName || "Job"}`;
+              }
+
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setSelectedOrderIndex(i)}
+                  className={`flex w-full items-start gap-3 rounded-xl border p-2.5 text-left transition-all ${
+                    isPositionSelected
+                      ? "border-brand-orange bg-brand-orange/10 ring-1 ring-brand-orange"
+                      : "border-neutral-200 bg-white hover:bg-neutral-50"
+                  }`}
+                >
+                  <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
+                    isPositionSelected
+                      ? "border-brand-orange bg-brand-orange text-white"
+                      : "border-neutral-300 text-neutral-500"
+                  }`}>
+                    {i + 1}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-semibold ${isPositionSelected ? "text-brand-orange" : "text-brand-dark"}`}>
+                        {positionTitle}
+                      </span>
+                      {isPositionSelected && (
+                        <span className="text-[10px] font-bold uppercase text-brand-orange">
+                          Selected
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-neutral-500 truncate">
+                      {positionDetail}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        );
+
+        return (
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[1px]"
+            onClick={() => {
+              if (isResizingRef.current) return;
+              closeAssignMenu();
+            }}
+          >
+            <div
+              ref={modalRef}
+              onClick={(e) => e.stopPropagation()}
+              style={
+                isModalMaximized
+                  ? {
+                      width: "min(1280px, calc(100vw - 32px))",
+                      height: "calc(100vh - 32px)",
                     }
-                  } catch (err: unknown) {
-                    setAssignError(err instanceof Error ? err.message : "Failed to assign appointment");
-                  } finally {
-                    setIsAssigning(false);
-                  }
+                  : {
+                      width: `min(${modalDimensions.width}px, calc(100vw - 32px))`,
+                      height: `min(${modalDimensions.height}px, calc(100vh - 32px))`,
+                    }
+              }
+              className={`relative flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white text-brand-dark shadow-2xl transition-[box-shadow,border-color] duration-150 ${
+                isResizing ? "ring-2 ring-brand-orange/40 select-none" : ""
+              }`}
+            >
+              {/* Edge & Corner Resize Handles (active when not maximized) */}
+              {!isModalMaximized && (
+                <>
+                  {/* Right edge */}
+                  <div
+                    onPointerDown={(e) => startModalResize(e, "e")}
+                    className="absolute top-0 right-0 h-full w-2.5 cursor-ew-resize hover:bg-brand-orange/20 transition-colors z-20"
+                    title="Drag to resize horizontally"
+                  />
+                  {/* Left edge */}
+                  <div
+                    onPointerDown={(e) => startModalResize(e, "w")}
+                    className="absolute top-0 left-0 h-full w-2.5 cursor-ew-resize hover:bg-brand-orange/20 transition-colors z-20"
+                    title="Drag to resize horizontally"
+                  />
+                  {/* Bottom edge */}
+                  <div
+                    onPointerDown={(e) => startModalResize(e, "s")}
+                    className="absolute bottom-0 left-0 w-full h-2.5 cursor-ns-resize hover:bg-brand-orange/20 transition-colors z-20"
+                    title="Drag to resize vertically"
+                  />
+                  {/* Top edge */}
+                  <div
+                    onPointerDown={(e) => startModalResize(e, "n")}
+                    className="absolute top-0 left-0 w-full h-2 cursor-ns-resize hover:bg-brand-orange/20 transition-colors z-20"
+                    title="Drag to resize vertically"
+                  />
+                  {/* Bottom-right corner handle with 6-dot gripper */}
+                  <div
+                    onPointerDown={(e) => startModalResize(e, "se")}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setModalDimensions({ width: DEFAULT_ASSIGN_MODAL_WIDTH, height: DEFAULT_ASSIGN_MODAL_HEIGHT });
+                      try {
+                        localStorage.removeItem(STORAGE_KEY_ASSIGN_MODAL);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    className="group absolute bottom-1 right-1 z-30 flex h-5 w-5 cursor-nwse-resize items-end justify-end p-0.5 text-neutral-300 hover:text-brand-orange transition-colors"
+                    title="Drag to resize (double-click to reset default size)"
+                    aria-label="Resize modal handle"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                      <circle cx="8.5" cy="8.5" r="1" />
+                      <circle cx="5" cy="8.5" r="1" />
+                      <circle cx="8.5" cy="5" r="1" />
+                      <circle cx="1.5" cy="8.5" r="1" />
+                      <circle cx="5" cy="5" r="1" />
+                      <circle cx="8.5" cy="1.5" r="1" />
+                    </svg>
+                  </div>
+                  {/* Bottom-left corner handle */}
+                  <div
+                    onPointerDown={(e) => startModalResize(e, "sw")}
+                    className="absolute bottom-0 left-0 z-30 h-5 w-5 cursor-nesw-resize"
+                  />
+                  {/* Top-right corner handle */}
+                  <div
+                    onPointerDown={(e) => startModalResize(e, "ne")}
+                    className="absolute top-0 right-0 z-20 h-4 w-4 cursor-nesw-resize"
+                  />
+                  {/* Top-left corner handle */}
+                  <div
+                    onPointerDown={(e) => startModalResize(e, "nw")}
+                    className="absolute top-0 left-0 z-20 h-4 w-4 cursor-nwse-resize"
+                  />
+                </>
+              )}
+
+              {/* Popup Header */}
+              <div
+                onDoubleClick={(e) => {
+                  if ((e.target as HTMLElement).closest("button")) return;
+                  setIsModalMaximized((prev) => !prev);
                 }}
-                className="btn-primary inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold shadow-xs"
+                className="flex shrink-0 select-none items-start justify-between border-b border-neutral-200 px-5 py-4 bg-neutral-50/70 cursor-default"
+                title="Double-click header to maximize or restore"
               >
-                {isAssigning ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    <span>Assigning…</span>
-                  </>
-                ) : (
-                  <>
-                    <Check className="h-3.5 w-3.5" />
-                    <span>
-                      Assign as Stop #{selectedOrderIndex + 1}
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-[#c2410c] px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                      Unscheduled
                     </span>
-                  </>
+                    <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
+                      Assign & Place
+                    </span>
+                  </div>
+                  <h3 className="mt-1 text-base font-bold text-brand-dark">
+                    {assigningJob.customerName || "Customer"}
+                  </h3>
+                  <p className="text-xs text-neutral-500">
+                    {[jobCity(assigningJob), assigningJob.workOrderType?.label, formatPrettyDate(selectedDate)]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                </div>
+                <div className="relative z-30 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalMaximized((prev) => !prev)}
+                    className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
+                    title={isModalMaximized ? "Restore size" : "Maximize dialog"}
+                    aria-label={isModalMaximized ? "Restore size" : "Maximize dialog"}
+                  >
+                    {isModalMaximized ? (
+                      <Minimize2 className="h-4 w-4" />
+                    ) : (
+                      <Maximize2 className="h-4 w-4" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeAssignMenu}
+                    className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
+                    aria-label="Close dialog"
+                    title="Close (Esc)"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Popup Body */}
+              <div className="flex-1 min-h-0 overflow-hidden px-5 py-4 flex flex-col">
+                {assignError && (
+                  <div className="shrink-0 mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                    {assignError}
+                  </div>
                 )}
-              </button>
+
+                {isWide ? (
+                  <div className="grid grid-cols-2 gap-6 flex-1 min-h-0">
+                    {/* Col 1: Technician Selection */}
+                    <div className="flex flex-col min-h-0">
+                      <div className="flex items-center justify-between mb-2 shrink-0">
+                        <label className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                          1. Select Technician
+                        </label>
+                        <span className="text-[11px] text-neutral-400 font-medium">
+                          {technicianList.length} technicians
+                        </span>
+                      </div>
+                      <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1.5">
+                        {technicianItems}
+                      </div>
+                    </div>
+
+                    {/* Col 2: Route Landing Order */}
+                    <div className="flex flex-col min-h-0 border-l border-neutral-100 pl-6">
+                      {selectedTechId ? (
+                        <>
+                          <div className="flex items-center justify-between mb-2 shrink-0">
+                            <label className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                              2. Route Landing Order
+                            </label>
+                            <span className="text-[11px] text-neutral-400 font-medium">
+                              {techDayAppointments.length === 0
+                                ? "1st stop (No existing jobs)"
+                                : `Landing position ${selectedOrderIndex + 1} of ${techDayAppointments.length + 1}`}
+                            </span>
+                          </div>
+                          <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1.5">
+                            {routeOrderContent}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-neutral-200 p-6 text-center text-neutral-400">
+                          <p className="text-xs font-medium">Select a technician to configure route order</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
+                    {/* 1. Technician Selection */}
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-neutral-500 mb-2">
+                        1. Select Technician
+                      </label>
+                      <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                        {technicianItems}
+                      </div>
+                    </div>
+
+                    {/* 2. Route Landing Order */}
+                    {selectedTechId && (
+                      <div className="pt-2 border-t border-neutral-100">
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                            2. Route Landing Order
+                          </label>
+                          <span className="text-[11px] text-neutral-400 font-medium">
+                            {techDayAppointments.length === 0
+                              ? "1st stop (No existing jobs)"
+                              : `Landing position ${selectedOrderIndex + 1} of ${techDayAppointments.length + 1}`}
+                          </span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {routeOrderContent}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Popup Action Buttons */}
+              <div className="flex shrink-0 items-center justify-end gap-2 border-t border-neutral-200 bg-neutral-50 px-5 py-3">
+                <button
+                  type="button"
+                  onClick={closeAssignMenu}
+                  disabled={isAssigning}
+                  className="rounded-lg border border-neutral-200 px-3.5 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isAssigning || !selectedTechId || !onAssignTechnician}
+                  onClick={async () => {
+                    if (!onAssignTechnician || !selectedTechId) return;
+                    setIsAssigning(true);
+                    setAssignError(null);
+                    try {
+                      const result = await onAssignTechnician(assigningJob, selectedTechId, selectedOrderIndex);
+                      if (result !== false) {
+                        closeAssignMenu();
+                      }
+                    } catch (err: unknown) {
+                      setAssignError(err instanceof Error ? err.message : "Failed to assign appointment");
+                    } finally {
+                      setIsAssigning(false);
+                    }
+                  }}
+                  className="btn-primary inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold shadow-xs"
+                >
+                  {isAssigning ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Assigning…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3.5 w-3.5" />
+                      <span>
+                        Assign as Stop #{selectedOrderIndex + 1}
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 
