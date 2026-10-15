@@ -2110,6 +2110,7 @@ export interface WorkOrderListItem {
   assignee?: WorkOrderAssignee | null;
   warnings?: string[];
   scheduleNote?: string | null;
+  deletedAt?: string | null;
 }
 
 export type ServiceTicketPayload = {
@@ -2168,6 +2169,7 @@ export async function getWorkOrders(
     from?: string;
     to?: string;
     customerId?: number;
+    deleted?: boolean;
   },
 ): Promise<{
   workOrders: WorkOrderListItem[];
@@ -2187,6 +2189,7 @@ export async function getWorkOrders(
   if (opts?.from) params.set("from", opts.from);
   if (opts?.to) params.set("to", opts.to);
   if (opts?.customerId != null) params.set("customerId", String(opts.customerId));
+  if (opts?.deleted) params.set("deleted", "1");
   return authRequest<{
     workOrders: WorkOrderListItem[];
     total: number;
@@ -2221,8 +2224,15 @@ export async function createWorkOrder(
 }
 
 export async function deleteWorkOrder(token: string, id: string): Promise<void> {
-  await authRequest<void>(`/work-orders/${id}`, {
+  await authRequest(`/work-orders/${id}`, {
     method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function restoreWorkOrder(token: string, id: string): Promise<void> {
+  await authRequest(`/work-orders/${id}/restore`, {
+    method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
 }
@@ -2231,9 +2241,11 @@ export async function getWorkOrdersForCustomer(
   token: string,
   legacyId: number,
   addressId?: string,
+  opts?: { deleted?: boolean },
 ): Promise<WorkOrderListItem[]> {
   const params = new URLSearchParams({ customerId: String(legacyId) });
   if (addressId) params.set("addressId", addressId);
+  if (opts?.deleted) params.set("deleted", "1");
   return authRequest<WorkOrderListItem[]>(`/work-orders?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },

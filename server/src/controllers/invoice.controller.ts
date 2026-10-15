@@ -3,7 +3,10 @@ import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { Invoice, IInvoice } from "../models/mongo/Invoice";
 import { Contract } from "../models/mongo/Contract";
-import { WorkOrder } from "../models/mongo/WorkOrder";
+import {
+  includingDeletedWorkOrders,
+  WorkOrder,
+} from "../models/mongo/WorkOrder";
 import { ContractTemplate } from "../models/mongo/ContractTemplate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
@@ -171,9 +174,9 @@ async function enrichInvoiceDetail(invoice: {
       .lean();
     addressRef = contract?.addressRef ?? null;
   } else if (invoice.workOrderRef) {
-    const wo = await WorkOrder.findById(invoice.workOrderRef)
-      .select("addressRef")
-      .lean();
+    const wo = await includingDeletedWorkOrders(
+      WorkOrder.findById(invoice.workOrderRef).select("addressRef"),
+    ).lean();
     addressRef = wo?.addressRef ?? null;
   }
 
@@ -542,7 +545,9 @@ export async function createInvoice(
         res.status(400).json({ message: "workOrderRef is required" });
         return;
       }
-      const wo = await WorkOrder.findById(data.workOrderRef);
+      const wo = await includingDeletedWorkOrders(
+        WorkOrder.findById(data.workOrderRef),
+      );
       if (!wo) {
         res.status(404).json({ message: "Work order not found" });
         return;
@@ -682,7 +687,9 @@ export async function updateInvoiceTax(
     await invoice.save();
 
     if (invoice.workOrderRef) {
-      const workOrder = await WorkOrder.findById(invoice.workOrderRef);
+      const workOrder = await includingDeletedWorkOrders(
+        WorkOrder.findById(invoice.workOrderRef),
+      );
       if (workOrder) {
         const preTax = roundMoney(
           (Number(workOrder.subtotal) || 0) + (Number(workOrder.shipping) || 0),

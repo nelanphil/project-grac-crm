@@ -15,7 +15,10 @@ import { CustomerNote } from "../models/mongo/CustomerNote";
 import { Contract } from "../models/mongo/Contract";
 import { Equipment } from "../models/mongo/Equipment";
 import { Invoice } from "../models/mongo/Invoice";
-import { WorkOrder } from "../models/mongo/WorkOrder";
+import {
+  includingDeletedWorkOrders,
+  WorkOrder,
+} from "../models/mongo/WorkOrder";
 import {
   createCustomerAddressSchema,
   createCustomerContactSchema,
@@ -2791,12 +2794,16 @@ export async function getMergePreview(
       })
         .sort({ isPrimary: -1, createdAt: 1 })
         .lean(),
-      WorkOrder.find(customerOwnedFilter(survivor._id, survivor.legacyId))
-        .select("_id addressRef")
-        .lean(),
-      WorkOrder.find(customerOwnedFilter(source._id, source.legacyId))
-        .select("_id addressRef")
-        .lean(),
+      includingDeletedWorkOrders(
+        WorkOrder.find(customerOwnedFilter(survivor._id, survivor.legacyId)).select(
+          "_id addressRef",
+        ),
+      ).lean(),
+      includingDeletedWorkOrders(
+        WorkOrder.find(customerOwnedFilter(source._id, source.legacyId)).select(
+          "_id addressRef",
+        ),
+      ).lean(),
       Contract.find({
         ...customerOwnedFilter(survivor._id, survivor.legacyId),
         temporary: { $ne: true },

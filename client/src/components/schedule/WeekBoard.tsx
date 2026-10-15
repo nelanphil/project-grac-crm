@@ -76,6 +76,27 @@ function hourLabel(hour: number): string {
   return `${hour} AM`;
 }
 
+function jobCity(order: WorkOrderListItem): string {
+  return properCaseCity(
+    order.address?.city?.trim() || order.customerCity?.trim() || "",
+  );
+}
+
+/** Cities for one technician-day, most appointments first. Ties use the city name. */
+function citiesByAppointmentCount(
+  jobs: WorkOrderListItem[],
+): { city: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const job of jobs) {
+    const city = jobCity(job);
+    if (!city) continue;
+    counts.set(city, (counts.get(city) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([city, count]) => ({ city, count }))
+    .sort((a, b) => b.count - a.count || a.city.localeCompare(b.city));
+}
+
 function personName(
   person?: { first_name?: string; last_name?: string } | null,
 ): string {
@@ -933,6 +954,7 @@ function StaffColumn({
     `${staff.first_name?.[0] ?? ""}${staff.last_name?.[0] ?? ""}`.toUpperCase() ||
     "?";
   const boardHeight = HOURS.length * HOUR_PX;
+  const cities = citiesByAppointmentCount(jobs);
 
   return (
     <div className="flex min-w-[11rem] flex-1 flex-col">
@@ -944,7 +966,7 @@ function StaffColumn({
         style={{
           transform: transform ? CSS.Translate.toString(transform) : undefined,
         }}
-        className={`sticky top-0 z-20 flex h-[4.25rem] items-center gap-1.5 border-b border-l border-neutral-200 bg-white px-2 ${
+        className={`group sticky top-0 z-20 flex h-[4.25rem] items-center gap-1.5 border-b border-l border-neutral-200 bg-white px-2 ${
           headerOver ? "bg-brand-orange/10" : ""
         } ${isDragging ? "z-30 opacity-60" : ""}`}
       >
@@ -969,10 +991,29 @@ function StaffColumn({
           <div className="truncate text-xs font-semibold text-brand-dark">
             {staff.first_name} {staff.last_name}
           </div>
-          <div className="truncate text-[10px] text-neutral-400">
-            {(staff.roles?.length ? staff.roles : [staff.role]).join(", ")}
-          </div>
+          {cities.length > 0 ? (
+            <div className="truncate text-[10px] text-neutral-400">
+              {cities.map((row) => row.city).join(" · ")}
+            </div>
+          ) : null}
         </div>
+        {cities.length > 0 && !isDragging ? (
+          <div className="pointer-events-none absolute inset-x-2 top-full z-30 mt-1 hidden rounded-lg border border-neutral-200 bg-white p-2 shadow-lg group-hover:block">
+            <ul className="space-y-1">
+              {cities.map((row) => (
+                <li
+                  key={row.city}
+                  className="flex items-baseline justify-between gap-3 text-[11px] leading-tight"
+                >
+                  <span className="min-w-0 text-brand-dark">{row.city}</span>
+                  <span className="shrink-0 tabular-nums text-neutral-500">
+                    {row.count}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <button
           type="button"
           onClick={onMap}

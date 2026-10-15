@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Download } from "lucide-react";
+import SoftDeleteWarning from "@/components/work-orders/SoftDeleteWarning";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink, {
   dashboardBackLinkMutedClass,
@@ -16,6 +17,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
   deleteWorkOrder,
+  restoreWorkOrder,
   getInvoices,
   getWorkOrder,
   InvoiceItem,
@@ -41,11 +43,13 @@ function WorkOrderDetailContent() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
-  const canDelete = useAuthStore((s) => s.hasPermission("jobs:delete"));
   const [order, setOrder] = useState<WorkOrderListItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
   const [invoiceListVersion, setInvoiceListVersion] = useState(0);
 
@@ -241,7 +245,39 @@ function WorkOrderDetailContent() {
         </div>
       ) : null}
 
-      {canWrite ? (
+      {order.deletedAt ? (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-4 text-sm text-amber-900 print:hidden">
+          <p>
+            This work order is deleted
+            {number ? ` (${number})` : ""}. Restore it to put it back on
+            schedules and lists.
+          </p>
+          <button
+            type="button"
+            disabled={restoring || !token}
+            onClick={async () => {
+              if (!token) return;
+              setRestoring(true);
+              setError(null);
+              try {
+                await restoreWorkOrder(token, order._id);
+                router.push("/dashboard/work-orders");
+              } catch (err) {
+                setError(
+                  err instanceof ApiError
+                    ? err.message
+                    : "Failed to restore work order.",
+                );
+              } finally {
+                setRestoring(false);
+              }
+            }}
+            className="mt-3 inline-flex items-center justify-center rounded-md bg-brand-orange px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+          >
+            {restoring ? "Restoring…" : "Restore"}
+          </button>
+        </div>
+      ) : canWrite ? (
         <>
           <ServiceTicketForm
             variant="work-order"
@@ -251,27 +287,38 @@ function WorkOrderDetailContent() {
             submitLabel="Save work order"
             invoiceAction={invoiceAction}
             extraActions={
-              canDelete ? (
+              confirmingDelete ? (
+                <div className="basis-full">
+                  <SoftDeleteWarning
+                    deleting={deleting}
+                    onCancel={() => setConfirmingDelete(false)}
+                    onConfirm={async () => {
+                      if (!token) return;
+                      setDeleting(true);
+                      setError(null);
+                      try {
+                        await deleteWorkOrder(token, order._id);
+                        router.push("/dashboard/work-orders");
+                      } catch (err) {
+                        setDeleting(false);
+                        setError(
+                          err instanceof ApiError
+                            ? err.message
+                            : "Failed to delete work order.",
+                        );
+                      }
+                    }}
+                  />
+                </div>
+              ) : (
                 <button
                   type="button"
-                  onClick={async () => {
-                    if (!token || !window.confirm("Delete this work order?")) return;
-                    try {
-                      await deleteWorkOrder(token, order._id);
-                      router.push("/dashboard/work-orders");
-                    } catch (err) {
-                      setError(
-                        err instanceof ApiError
-                          ? err.message
-                          : "Failed to delete work order.",
-                      );
-                    }
-                  }}
+                  onClick={() => setConfirmingDelete(true)}
                   className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700"
                 >
                   Delete
                 </button>
-              ) : null
+              )
             }
             autoSave={async (payload) => {
               if (!token) throw new Error("You are signed out.");

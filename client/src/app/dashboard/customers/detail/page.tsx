@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -21,6 +21,7 @@ import MergeCustomersDialog from "@/components/customers/MergeCustomersDialog";
 import MobileSectionNav from "@/components/ui/MobileSectionNav";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
+import SoftDeleteWarning from "@/components/work-orders/SoftDeleteWarning";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   getCustomer,
@@ -29,6 +30,8 @@ import {
   getCustomerCheckoutLink,
   updateCustomer,
   updateWorkOrder,
+  deleteWorkOrder,
+  restoreWorkOrder,
   promoteCustomer,
   softDeleteCustomer,
   CustomerDetail,
@@ -107,9 +110,15 @@ function CustomerDetailContent() {
   const canManageCustomers = useAuthStore((s) =>
     s.hasRole("admin", "super-admin"),
   );
+  const canViewDeletedWorkOrders = useAuthStore(
+    (s) =>
+      s.hasRole("admin", "super-admin") ||
+      Boolean(s.user?.capabilities?.territoryOwner),
+  );
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [workOrders, setWorkOrders] = useState<WorkOrderListItem[]>([]);
+  const [workOrdersLoading, setWorkOrdersLoading] = useState(true);
   const [contracts, setContracts] = useState<ContractListItem[]>([]);
   const [addressFilter, setAddressFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
@@ -130,12 +139,26 @@ function CustomerDetailContent() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [statusSaving, setStatusSaving] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [workOrderListView, setWorkOrderListView] = useState<
+    "active" | "deleted"
+  >("active");
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(
+    null,
+  );
+  const [deletingWorkOrderId, setDeletingWorkOrderId] = useState<string | null>(
+    null,
+  );
+  const [restoringWorkOrderId, setRestoringWorkOrderId] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     if (!token || !id) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
+    setWorkOrders([]);
+    setWorkOrdersLoading(true);
 
     setError(null);
 
@@ -146,13 +169,9 @@ function CustomerDetailContent() {
           addresses: c.addresses ?? [],
           contacts: c.contacts ?? [],
         });
-        return Promise.all([
-          getWorkOrdersForCustomer(token, c.legacyId),
-          getContractsForCustomer(token, c.legacyId),
-        ]);
+        return getContractsForCustomer(token, c.legacyId);
       })
-      .then(([orders, { contracts: contractList }]) => {
-        setWorkOrders(orders);
+      .then(({ contracts: contractList }) => {
         setContracts(contractList);
       })
       .catch((err) =>
@@ -162,6 +181,33 @@ function CustomerDetailContent() {
       )
       .finally(() => setLoading(false));
   }, [token, id]);
+
+  const customerLegacyId = customer?.legacyId;
+
+  useEffect(() => {
+    if (!token || customerLegacyId == null) return;
+    let cancelled = false;
+    const deleted = canViewDeletedWorkOrders && workOrderListView === "deleted";
+    getWorkOrdersForCustomer(token, customerLegacyId, undefined, { deleted })
+      .then((orders) => {
+        if (!cancelled) setWorkOrders(orders);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setStatusError(
+            err instanceof ApiError
+              ? err.message
+              : "Failed to load work orders.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setWorkOrdersLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, customerLegacyId, canViewDeletedWorkOrders, workOrderListView]);
 
   const filteredWorkOrders = useMemo(() => {
     if (addressFilter === "all") return workOrders;
@@ -221,6 +267,45 @@ function CustomerDetailContent() {
     }
   }
 
+  const showingDeletedWorkOrders =
+    canViewDeletedWorkOrders && workOrderListView === "deleted";
+  const showWorkOrderActions = canWriteJobs || showingDeletedWorkOrders;
+
+  async function confirmSoftDelete(orderId: string) {
+    if (!token) return;
+    setDeletingWorkOrderId(orderId);
+    setStatusError(null);
+    try {
+      await deleteWorkOrder(token, orderId);
+      setWorkOrders((prev) => prev.filter((wo) => wo._id !== orderId));
+      setConfirmingDeleteId(null);
+    } catch (err) {
+      setStatusError(
+        err instanceof ApiError ? err.message : "Failed to delete work order.",
+      );
+    } finally {
+      setDeletingWorkOrderId(null);
+    }
+  }
+
+  async function handleRestoreWorkOrder(orderId: string) {
+    if (!token) return;
+    setRestoringWorkOrderId(orderId);
+    setStatusError(null);
+    try {
+      await restoreWorkOrder(token, orderId);
+      setWorkOrders((prev) => prev.filter((wo) => wo._id !== orderId));
+    } catch (err) {
+      setStatusError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to restore work order.",
+      );
+    } finally {
+      setRestoringWorkOrderId(null);
+    }
+  }
+
   function renderWorkOrderStatus(order: WorkOrderListItem) {
     return (
       <div className="flex gap-2">
@@ -229,7 +314,7 @@ function CustomerDetailContent() {
           active={order.paid}
           disabled={statusSaving === `${order._id}:paid`}
           onClick={
-            canWriteJobs
+            canWriteJobs && !showingDeletedWorkOrders
               ? () => void toggleWorkOrderStatus(order, "paid")
               : undefined
           }
@@ -239,7 +324,7 @@ function CustomerDetailContent() {
           active={order.completed}
           disabled={statusSaving === `${order._id}:completed`}
           onClick={
-            canWriteJobs
+            canWriteJobs && !showingDeletedWorkOrders
               ? () => void toggleWorkOrderStatus(order, "completed")
               : undefined
           }
@@ -575,10 +660,50 @@ function CustomerDetailContent() {
         className="scroll-mt-28 space-y-4 lg:scroll-mt-6"
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold text-brand-dark">
-            Work Orders ({filteredWorkOrders.length})
-          </h2>
-          {canWriteJobs ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-lg font-semibold text-brand-dark">
+              Work Orders ({filteredWorkOrders.length})
+            </h2>
+            {canViewDeletedWorkOrders ? (
+              <div className="inline-flex shrink-0 rounded-lg border border-neutral-200 bg-white p-0.5 text-sm">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (workOrderListView === "active") return;
+                    setWorkOrderListView("active");
+                    setWorkOrdersLoading(true);
+                    setConfirmingDeleteId(null);
+                    setStatusError(null);
+                  }}
+                  className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+                    workOrderListView === "active"
+                      ? "bg-brand-dark text-white"
+                      : "text-neutral-600 hover:text-brand-dark"
+                  }`}
+                >
+                  Active
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (workOrderListView === "deleted") return;
+                    setWorkOrderListView("deleted");
+                    setWorkOrdersLoading(true);
+                    setConfirmingDeleteId(null);
+                    setStatusError(null);
+                  }}
+                  className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+                    workOrderListView === "deleted"
+                      ? "bg-brand-dark text-white"
+                      : "text-neutral-600 hover:text-brand-dark"
+                  }`}
+                >
+                  Deleted
+                </button>
+              </div>
+            ) : null}
+          </div>
+          {canWriteJobs && !showingDeletedWorkOrders ? (
             <Link
               href={`/dashboard/work-orders/create?customerId=${customer._id}`}
               className="inline-flex min-h-11 items-center gap-1 rounded-lg bg-brand-dark px-3 py-2 text-xs font-medium text-white hover:opacity-90"
@@ -595,16 +720,22 @@ function CustomerDetailContent() {
           </div>
         ) : null}
 
-        {filteredWorkOrders.length === 0 ? (
+        {workOrdersLoading ? (
+          <p className="text-sm text-neutral-500">Loading work orders…</p>
+        ) : filteredWorkOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-16 text-center shadow-sm">
             <ClipboardList className="mb-4 h-10 w-10 text-neutral-300" />
             <p className="text-sm font-medium text-neutral-500">
-              No work orders yet
+              {showingDeletedWorkOrders
+                ? "No deleted work orders"
+                : "No work orders yet"}
             </p>
             <p className="mt-1 text-xs text-neutral-400">
-              Work orders for this customer will appear here.
+              {showingDeletedWorkOrders
+                ? "Soft-deleted work orders for this customer will appear here."
+                : "Work orders for this customer will appear here."}
             </p>
-            {canWriteJobs ? (
+            {canWriteJobs && !showingDeletedWorkOrders ? (
               <Link
                 href={`/dashboard/work-orders/create?customerId=${customer._id}`}
                 className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-brand-orange hover:underline"
@@ -628,6 +759,30 @@ function CustomerDetailContent() {
                   router.push(`/dashboard/work-orders/detail?id=${order._id}`)
                 }
                 badges={renderWorkOrderStatus(order)}
+                actions={
+                  showingDeletedWorkOrders ? (
+                    <button
+                      type="button"
+                      disabled={restoringWorkOrderId === order._id}
+                      onClick={() => void handleRestoreWorkOrder(order._id)}
+                      className="text-xs font-medium text-brand-orange hover:underline disabled:opacity-60"
+                    >
+                      {restoringWorkOrderId === order._id
+                        ? "Restoring…"
+                        : "Restore"}
+                    </button>
+                  ) : canWriteJobs && confirmingDeleteId !== order._id ? (
+                    <button
+                      type="button"
+                      title="Delete work order"
+                      aria-label="Delete work order"
+                      onClick={() => setConfirmingDeleteId(order._id)}
+                      className="inline-flex items-center justify-center rounded p-1 text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  ) : null
+                }
                 fields={
                   <>
                     <DataField
@@ -642,7 +797,21 @@ function CustomerDetailContent() {
                     />
                   </>
                 }
-              />
+              >
+                {confirmingDeleteId === order._id ? (
+                  <div
+                    className="mt-3"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <SoftDeleteWarning
+                      deleting={deletingWorkOrderId === order._id}
+                      onCancel={() => setConfirmingDeleteId(null)}
+                      onConfirm={() => void confirmSoftDelete(order._id)}
+                    />
+                  </div>
+                ) : null}
+              </MobileDataCard>
             ))}
             desktop={
               <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
@@ -670,12 +839,17 @@ function CustomerDetailContent() {
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                           Status
                         </th>
+                        {showWorkOrderActions ? (
+                          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                            <span className="sr-only">Actions</span>
+                          </th>
+                        ) : null}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-100 bg-white">
                       {filteredWorkOrders.map((order) => (
+                        <Fragment key={order._id}>
                         <tr
-                          key={order._id}
                           className="cursor-pointer hover:bg-neutral-50"
                           onClick={() =>
                             router.push(
@@ -706,7 +880,61 @@ function CustomerDetailContent() {
                           >
                             {renderWorkOrderStatus(order)}
                           </td>
+                          {showWorkOrderActions ? (
+                            <td
+                              className="whitespace-nowrap px-6 py-4 text-right"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {showingDeletedWorkOrders ? (
+                                <button
+                                  type="button"
+                                  disabled={restoringWorkOrderId === order._id}
+                                  onClick={() =>
+                                    void handleRestoreWorkOrder(order._id)
+                                  }
+                                  className="text-xs font-medium text-brand-orange hover:underline disabled:opacity-60"
+                                >
+                                  {restoringWorkOrderId === order._id
+                                    ? "Restoring…"
+                                    : "Restore"}
+                                </button>
+                              ) : confirmingDeleteId === order._id ? null : (
+                                <button
+                                  type="button"
+                                  title="Delete work order"
+                                  aria-label="Delete work order"
+                                  onClick={() =>
+                                    setConfirmingDeleteId(order._id)
+                                  }
+                                  className="inline-flex items-center justify-center rounded p-1 text-red-600 hover:bg-red-50"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              )}
+                            </td>
+                          ) : null}
                         </tr>
+                        {confirmingDeleteId === order._id ? (
+                          <tr>
+                            <td
+                              colSpan={
+                                5 +
+                                (addresses.length > 0 ? 1 : 0) +
+                                (showWorkOrderActions ? 1 : 0)
+                              }
+                              className="px-6 py-3"
+                            >
+                              <SoftDeleteWarning
+                                deleting={deletingWorkOrderId === order._id}
+                                onCancel={() => setConfirmingDeleteId(null)}
+                                onConfirm={() =>
+                                  void confirmSoftDelete(order._id)
+                                }
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -733,7 +961,9 @@ function CustomerDetailContent() {
           );
           setAddressFilter("all");
           Promise.all([
-            getWorkOrdersForCustomer(token!, merged.legacyId),
+            getWorkOrdersForCustomer(token!, merged.legacyId, undefined, {
+              deleted: showingDeletedWorkOrders,
+            }),
             getContractsForCustomer(token!, merged.legacyId),
           ]).then(([orders, { contracts: contractList }]) => {
             setWorkOrders(orders);

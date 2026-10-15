@@ -1,4 +1,11 @@
-import mongoose, { Schema, Document, Types } from "mongoose";
+import mongoose, { Query, Schema, Document, Types } from "mongoose";
+
+declare module "mongoose" {
+  interface QueryOptions {
+    /** When set, find/count queries include soft-deleted work orders. */
+    includeDeleted?: boolean;
+  }
+}
 import { TicketContractDiscount } from "../../utils/productDiscounts";
 import { ticketContractDiscountSchema } from "./productDiscounts";
 
@@ -73,6 +80,8 @@ export interface IWorkOrder extends Document {
   signedByName: string;
   certify: boolean;
   completed: boolean;
+  deletedAt: Date | null;
+  deletedBy?: Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -204,9 +213,34 @@ const workOrderSchema = new Schema<IWorkOrder>(
     signedByName: { type: String, default: "" },
     certify: { type: Boolean, default: false },
     completed: { type: Boolean, default: false },
+    deletedAt: { type: Date, default: null, index: true },
+    deletedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
   { timestamps: true },
 );
+
+/** Active (non–soft-deleted) work orders. `{ deletedAt: null }` also matches missing fields. */
+export const activeWorkOrderFilter = { deletedAt: null } as const;
+
+function hideSoftDeletedWorkOrders(this: Query<unknown, IWorkOrder>) {
+  if (this.getOptions().includeDeleted) return;
+  this.where(activeWorkOrderFilter);
+}
+
+workOrderSchema.pre("find", hideSoftDeletedWorkOrders);
+workOrderSchema.pre("findOne", hideSoftDeletedWorkOrders);
+workOrderSchema.pre("countDocuments", hideSoftDeletedWorkOrders);
+
+export function includingDeletedWorkOrders<Q extends Query<unknown, IWorkOrder>>(
+  query: Q,
+): Q {
+  query.setOptions({ includeDeleted: true });
+  return query;
+}
 
 workOrderSchema.index({ customerId: 1, date: -1 });
 workOrderSchema.index({ assignedUserRef: 1, scheduledStart: 1 });

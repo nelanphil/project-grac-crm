@@ -1,7 +1,10 @@
 import { Types } from "mongoose";
 import { Customer } from "../models/mongo/Customer";
 import { Invoice, IInvoice } from "../models/mongo/Invoice";
-import { WorkOrder } from "../models/mongo/WorkOrder";
+import {
+  includingDeletedWorkOrders,
+  WorkOrder,
+} from "../models/mongo/WorkOrder";
 import { PaymentProviderName } from "../models/mongo/PaymentProviderAccount";
 import { resolveCheckoutBuyer } from "../payments/checkoutBuyer";
 import { getAdapter, resolveCheckoutProviderForInvoice } from "../payments/registry";
@@ -206,7 +209,9 @@ async function resolveCheckoutSelection(input: {
     }
   }
 
-  const workOrders = await WorkOrder.find({ _id: { $in: workOrderIds } });
+  const workOrders = await includingDeletedWorkOrders(
+    WorkOrder.find({ _id: { $in: workOrderIds } }),
+  );
   if (workOrders.length !== workOrderIds.length) {
     throw new CheckoutError("One or more work orders were not found", 400);
   }

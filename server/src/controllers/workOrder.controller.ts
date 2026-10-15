@@ -1,7 +1,10 @@
 import { Response } from "express";
 import mongoose from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { WorkOrder } from "../models/mongo/WorkOrder";
+import {
+  includingDeletedWorkOrders,
+  WorkOrder,
+} from "../models/mongo/WorkOrder";
 import { Estimate } from "../models/mongo/Estimate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
@@ -38,6 +41,8 @@ import {
   storedTicketDateKey,
 } from "../utils/scheduleTime";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
+import { capabilitiesForJobRoleIds } from "../utils/jobRoles";
+import { hasRole } from "../utils/roles";
 import { findWorkOrderIdsMatchingNoteSearch } from "./workOrderNote.controller";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
@@ -94,6 +99,23 @@ function hasJobsPermission(req: AuthRequest, permission: string): boolean {
   return Boolean(req.user?.permissions.includes(permission));
 }
 
+async function canViewDeletedWorkOrders(req: AuthRequest): Promise<boolean> {
+  if (!req.user) return false;
+  if (hasRole(req.user, "admin", "super-admin")) return true;
+  const caps = await capabilitiesForJobRoleIds(req.user.jobRoles);
+  return caps.territoryOwner;
+}
+
+function deletedOnlyQuery(req: AuthRequest): boolean {
+  return req.query.deleted === "1" || req.query.deleted === "true";
+}
+
+/**
+ * Soft-deleted only. `$ne: null` also matches documents that never had the
+ * field, so require a stored date.
+ */
+const softDeletedWorkOrderFilter = { deletedAt: { $type: "date" } } as const;
+
 // GET /work-orders?customerId=&addressId=&from=&to=&assignedUserId=&unscheduled=
 export async function getWorkOrders(
   req: AuthRequest,
@@ -136,7 +158,14 @@ export async function getWorkOrders(
       return;
     }
 
+    const deletedOnly = deletedOnlyQuery(req);
+    if (deletedOnly && !(await canViewDeletedWorkOrders(req))) {
+      res.status(403).json({ message: "Insufficient role" });
+      return;
+    }
+
     const filter: Record<string, unknown> = {};
+    if (deletedOnly) Object.assign(filter, softDeletedWorkOrderFilter);
 
     if (!canReadJobs) {
       const refs = await resolveCustomerRefsForAuthUser(req.user?.id ?? "");
@@ -243,13 +272,14 @@ export async function getWorkOrders(
         500,
         Math.max(1, parseInt(String(req.query.pageSize ?? "50"), 10) || 50),
       );
+      const countQuery = WorkOrder.countDocuments(filter);
+      const listQuery = WorkOrder.find(filter)
+        .sort({ date: -1, createdAt: -1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize);
       const [total, workOrders, statsTotal, paidCount] = await Promise.all([
-        WorkOrder.countDocuments(filter),
-        WorkOrder.find(filter)
-          .sort({ date: -1, createdAt: -1 })
-          .skip((page - 1) * pageSize)
-          .limit(pageSize)
-          .lean(),
+        (deletedOnly ? includingDeletedWorkOrders(countQuery) : countQuery),
+        (deletedOnly ? includingDeletedWorkOrders(listQuery) : listQuery).lean(),
         WorkOrder.countDocuments({}),
         WorkOrder.countDocuments({ paid: true }),
       ]);
@@ -268,9 +298,10 @@ export async function getWorkOrders(
       return;
     }
 
-    const workOrders = await WorkOrder.find(filter)
-      .sort({ scheduledStart: 1, date: 1 })
-      .lean();
+    const listQuery = WorkOrder.find(filter).sort({ scheduledStart: 1, date: 1 });
+    const workOrders = await (
+      deletedOnly ? includingDeletedWorkOrders(listQuery) : listQuery
+    ).lean();
     const enriched = await enrichWithAddress(workOrders);
 
     res.json(enriched);
@@ -285,8 +316,14 @@ export async function getWorkOrderById(
   res: Response,
 ): Promise<void> {
   try {
-    const workOrder = await WorkOrder.findById(req.params.id).lean();
+    const workOrder = await includingDeletedWorkOrders(
+      WorkOrder.findById(req.params.id),
+    ).lean();
     if (!workOrder) {
+      res.status(404).json({ message: "Work order not found" });
+      return;
+    }
+    if (workOrder.deletedAt && !(await canViewDeletedWorkOrders(req))) {
       res.status(404).json({ message: "Work order not found" });
       return;
     }
@@ -314,9 +351,19 @@ export async function getWorkOrdersByCustomer(
       return;
     }
 
-    const workOrders = await WorkOrder.find({ customerId: legacyId })
-      .sort({ date: -1 })
-      .lean();
+    const deletedOnly = deletedOnlyQuery(req);
+    if (deletedOnly && !(await canViewDeletedWorkOrders(req))) {
+      res.status(403).json({ message: "Insufficient role" });
+      return;
+    }
+
+    const listQuery = WorkOrder.find({
+      customerId: legacyId,
+      ...(deletedOnly ? softDeletedWorkOrderFilter : {}),
+    }).sort({ date: -1 });
+    const workOrders = await (
+      deletedOnly ? includingDeletedWorkOrders(listQuery) : listQuery
+    ).lean();
 
     res.json({ customer, workOrders });
   } catch {
@@ -924,16 +971,27 @@ export async function deleteWorkOrder(
   res: Response,
 ): Promise<void> {
   try {
-    if (!hasJobsPermission(req, "jobs:delete")) {
-      res.status(403).json({ message: "Missing permission: jobs:delete" });
+    if (!hasJobsPermission(req, "jobs:write")) {
+      res.status(403).json({ message: "Missing permission: jobs:write" });
       return;
     }
 
-    const workOrder = await WorkOrder.findByIdAndDelete(req.params.id).lean();
+    if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) {
+      res.status(400).json({ message: "Invalid work order id" });
+      return;
+    }
+
+    const workOrder = await WorkOrder.findById(req.params.id);
     if (!workOrder) {
       res.status(404).json({ message: "Work order not found" });
       return;
     }
+
+    workOrder.deletedAt = new Date();
+    workOrder.deletedBy = req.user?.id
+      ? new mongoose.Types.ObjectId(req.user.id)
+      : null;
+    await workOrder.save();
 
     logNotificationAsync({
       entityType: "work_order",
@@ -944,8 +1002,67 @@ export async function deleteWorkOrder(
       ...actorFromRequest(req.user),
     });
 
-    res.status(204).send();
+    res.status(200).json({
+      message: "Work order deleted",
+      workOrder: {
+        _id: String(workOrder._id),
+        deletedAt: workOrder.deletedAt.toISOString(),
+      },
+    });
   } catch {
     res.status(500).json({ message: "Failed to delete work order" });
+  }
+}
+
+export async function restoreWorkOrder(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!(await canViewDeletedWorkOrders(req))) {
+      res.status(403).json({ message: "Insufficient role" });
+      return;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) {
+      res.status(400).json({ message: "Invalid work order id" });
+      return;
+    }
+
+    const workOrder = await includingDeletedWorkOrders(
+      WorkOrder.findOne({
+        _id: req.params.id,
+        ...softDeletedWorkOrderFilter,
+      }),
+    );
+    if (!workOrder) {
+      res.status(404).json({ message: "Work order not found" });
+      return;
+    }
+
+    workOrder.deletedAt = null;
+    workOrder.deletedBy = null;
+    await workOrder.save();
+
+    logNotificationAsync({
+      entityType: "work_order",
+      action: "updated",
+      entityId: String(workOrder._id),
+      customerRef: workOrder.customerRef ?? null,
+      summary: "Work order restored",
+      metadata: { restored: true },
+      ...actorFromRequest(req.user),
+    });
+
+    res.status(200).json({
+      message: "Work order restored",
+      workOrder: {
+        _id: String(workOrder._id),
+        deletedAt: null,
+      },
+    });
+  } catch (err) {
+    console.error("POST /work-orders/:id/restore error:", err);
+    res.status(500).json({ message: "Failed to restore work order" });
   }
 }

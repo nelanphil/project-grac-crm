@@ -6,7 +6,10 @@ import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { Invoice, type IInvoice } from "../models/mongo/Invoice";
 import { ensureDefaultInvoiceTemplate } from "../models/mongo/InvoiceTemplate";
-import { WorkOrder } from "../models/mongo/WorkOrder";
+import {
+  includingDeletedWorkOrders,
+  WorkOrder,
+} from "../models/mongo/WorkOrder";
 import {
   invoiceBlocksSchema,
   sanitizeInvoiceBlocks,
@@ -89,9 +92,9 @@ export async function loadInvoiceEmailContext(invoice: IInvoice): Promise<{
       .lean();
     addressRef = contract?.addressRef ?? null;
   } else if (invoice.workOrderRef) {
-    const workOrder = await WorkOrder.findById(invoice.workOrderRef)
-      .select("addressRef")
-      .lean();
+    const workOrder = await includingDeletedWorkOrders(
+      WorkOrder.findById(invoice.workOrderRef).select("addressRef"),
+    ).lean();
     addressRef = workOrder?.addressRef ?? null;
   }
 

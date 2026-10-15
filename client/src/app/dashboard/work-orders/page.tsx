@@ -14,6 +14,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
   getWorkOrders,
+  restoreWorkOrder,
   updateWorkOrder,
   WorkOrderListItem,
 } from "@/lib/api";
@@ -130,6 +131,11 @@ export default function WorkOrdersPage() {
 function WorkOrdersContent() {
   const router = useRouter();
   const token = useAuthStore((s) => s.token);
+  const canViewDeleted = useAuthStore(
+    (s) =>
+      s.hasRole("admin", "super-admin") ||
+      Boolean(s.user?.capabilities?.territoryOwner),
+  );
   const [orders, setOrders] = useState<WorkOrderListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -139,8 +145,11 @@ function WorkOrdersContent() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [paidFilter, setPaidFilter] = useState<PaidFilter>("all");
+  const [listView, setListView] = useState<"active" | "deleted">("active");
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   const [stats, setStats] = useState({ total: 0, unpaid: 0, paid: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
+  const showingDeleted = canViewDeleted && listView === "deleted";
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -158,7 +167,15 @@ function WorkOrdersContent() {
       page,
       pageSize,
       search: debounced || undefined,
-      paid: paidFilter === "paid" ? true : paidFilter === "unpaid" ? false : undefined,
+      paid:
+        showingDeleted
+          ? undefined
+          : paidFilter === "paid"
+            ? true
+            : paidFilter === "unpaid"
+              ? false
+              : undefined,
+      deleted: showingDeleted,
     })
       .then((res) => {
         setOrders(res.workOrders);
@@ -172,7 +189,7 @@ function WorkOrdersContent() {
         setError(err instanceof ApiError ? err.message : "Failed to load work orders."),
       )
       .finally(() => setLoading(false));
-  }, [token, page, pageSize, debounced, paidFilter]);
+  }, [token, page, pageSize, debounced, paidFilter, showingDeleted]);
 
   const { safePage, totalPages, rangeStart, rangeEnd } = paginationRange(
     page,
@@ -216,15 +233,75 @@ function WorkOrdersContent() {
     { label: "Paid", value: value(stats.paid), tone: "success", filter: "paid" },
   ];
 
+  async function handleRestore(orderId: string) {
+    if (!token) return;
+    setRestoringId(orderId);
+    setError(null);
+    try {
+      await restoreWorkOrder(token, orderId);
+      setOrders((current) => current.filter((order) => order._id !== orderId));
+      setTotal((current) => Math.max(0, current - 1));
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to restore work order.",
+      );
+    } finally {
+      setRestoringId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-brand-dark">Work orders</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          Service tickets, labor, and parts used to generate invoices.
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-brand-dark">Work orders</h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            Service tickets, labor, and parts used to generate invoices.
+          </p>
+        </div>
+        {canViewDeleted ? (
+          <div className="inline-flex shrink-0 self-start rounded-lg border border-neutral-200 bg-white p-0.5 text-sm">
+            <button
+              type="button"
+              onClick={() => {
+                if (listView === "active") return;
+                setListView("active");
+                setOrders([]);
+                setLoading(true);
+                setPage(1);
+                setError(null);
+              }}
+              className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+                listView === "active"
+                  ? "bg-brand-dark text-white"
+                  : "text-neutral-600 hover:text-brand-dark"
+              }`}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (listView === "deleted") return;
+                setListView("deleted");
+                setOrders([]);
+                setLoading(true);
+                setPage(1);
+                setError(null);
+              }}
+              className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+                listView === "deleted"
+                  ? "bg-brand-dark text-white"
+                  : "text-neutral-600 hover:text-brand-dark"
+              }`}
+            >
+              Deleted
+            </button>
+          </div>
+        ) : null}
       </div>
 
+      {showingDeleted ? null : (
       <FilterStatsCards
         title="Work order stats"
         icon={ClipboardList}
@@ -236,6 +313,7 @@ function WorkOrdersContent() {
           setPage(1);
         }}
       />
+      )}
 
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
@@ -263,7 +341,9 @@ function WorkOrdersContent() {
           empty={
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-24 text-center shadow-sm">
               <ClipboardList className="mb-4 h-10 w-10 text-neutral-300" />
-              <p className="text-sm font-medium text-neutral-500">No work orders yet</p>
+              <p className="text-sm font-medium text-neutral-500">
+                {showingDeleted ? "No deleted work orders." : "No work orders yet"}
+              </p>
             </div>
           }
           mobile={
@@ -279,6 +359,18 @@ function WorkOrdersContent() {
                   onClick={() =>
                     router.push(`/dashboard/work-orders/detail?id=${order._id}`)
                   }
+                  actions={
+                    showingDeleted ? (
+                      <button
+                        type="button"
+                        disabled={restoringId === order._id}
+                        onClick={() => void handleRestore(order._id)}
+                        className="text-xs font-medium text-brand-orange hover:underline disabled:opacity-60"
+                      >
+                        {restoringId === order._id ? "Restoring…" : "Restore"}
+                      </button>
+                    ) : null
+                  }
                   fields={
                     <>
                       <DataField
@@ -288,6 +380,9 @@ function WorkOrdersContent() {
                       <DataField
                         label="Start"
                         value={
+                          showingDeleted ? (
+                            order.startTime || "—"
+                          ) : (
                           <WindowTimeInput
                             label={`Start time for ${displayNumber(order)}`}
                             field="startTime"
@@ -295,11 +390,15 @@ function WorkOrdersContent() {
                             token={token}
                             onSaved={saveOrderTimes}
                           />
+                          )
                         }
                       />
                       <DataField
                         label="End"
                         value={
+                          showingDeleted ? (
+                            order.endTime || "—"
+                          ) : (
                           <WindowTimeInput
                             label={`End time for ${displayNumber(order)}`}
                             field="endTime"
@@ -307,6 +406,7 @@ function WorkOrdersContent() {
                             token={token}
                             onSaved={saveOrderTimes}
                           />
+                          )
                         }
                       />
                       <DataField label="Total" value={formatMoney(order.total)} />
@@ -346,6 +446,11 @@ function WorkOrdersContent() {
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Status
                     </th>
+                    {showingDeleted ? (
+                      <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        <span className="sr-only">Actions</span>
+                      </th>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
@@ -368,6 +473,11 @@ function WorkOrdersContent() {
                       </td>
                       <td className="px-6 py-4 text-neutral-600">{order.tech || "—"}</td>
                       <td className="px-6 py-4">
+                        {showingDeleted ? (
+                          <span className="text-neutral-600">
+                            {order.startTime || "—"}
+                          </span>
+                        ) : (
                         <WindowTimeInput
                           label={`Start time for ${displayNumber(order)}`}
                           field="startTime"
@@ -375,8 +485,14 @@ function WorkOrdersContent() {
                           token={token}
                           onSaved={saveOrderTimes}
                         />
+                        )}
                       </td>
                       <td className="px-6 py-4">
+                        {showingDeleted ? (
+                          <span className="text-neutral-600">
+                            {order.endTime || "—"}
+                          </span>
+                        ) : (
                         <WindowTimeInput
                           label={`End time for ${displayNumber(order)}`}
                           field="endTime"
@@ -384,12 +500,28 @@ function WorkOrdersContent() {
                           token={token}
                           onSaved={saveOrderTimes}
                         />
+                        )}
                       </td>
                       <td className="px-6 py-4">{formatMoney(order.total)}</td>
                       <td className="px-6 py-4 text-neutral-600">
                         {order.completed ? "Completed" : "Open"}
                         {order.paid ? " · Paid" : ""}
                       </td>
+                      {showingDeleted ? (
+                        <td
+                          className="px-6 py-4 text-right"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            disabled={restoringId === order._id}
+                            onClick={() => void handleRestore(order._id)}
+                            className="text-xs font-medium text-brand-orange hover:underline disabled:opacity-60"
+                          >
+                            {restoringId === order._id ? "Restoring…" : "Restore"}
+                          </button>
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>

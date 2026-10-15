@@ -3,7 +3,10 @@ import {
   TAX_SETTINGS_SLUG,
   TaxSettings,
 } from "../models/mongo/TaxSettings";
-import { WorkOrder } from "../models/mongo/WorkOrder";
+import {
+  includingDeletedWorkOrders,
+  WorkOrder,
+} from "../models/mongo/WorkOrder";
 
 export const DEFAULT_TAX_RATE_PERCENT = 0;
 
@@ -225,7 +228,9 @@ export async function applyCompanyTaxRateToUnpaidInvoices(
     .filter((id): id is NonNullable<typeof id> => Boolean(id));
   const workOrders =
     workOrderIds.length > 0
-      ? await WorkOrder.find({ _id: { $in: workOrderIds } })
+      ? await includingDeletedWorkOrders(
+          WorkOrder.find({ _id: { $in: workOrderIds } }),
+        )
       : [];
   const workOrderById = new Map(
     workOrders.map((workOrder) => [String(workOrder._id), workOrder]),

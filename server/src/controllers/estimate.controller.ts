@@ -2,7 +2,10 @@ import { Response } from "express";
 import mongoose from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { Estimate, ESTIMATE_STATUSES } from "../models/mongo/Estimate";
-import { WorkOrder } from "../models/mongo/WorkOrder";
+import {
+  includingDeletedWorkOrders,
+  WorkOrder,
+} from "../models/mongo/WorkOrder";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import {
@@ -309,7 +312,9 @@ export async function convertEstimate(
       return;
     }
     if (estimate.status === "converted" && estimate.workOrderRef) {
-      const existing = await WorkOrder.findById(estimate.workOrderRef).lean();
+      const existing = await includingDeletedWorkOrders(
+        WorkOrder.findById(estimate.workOrderRef),
+      ).lean();
       res.json({
         estimate: toPublic(estimate.toObject() as unknown as Record<string, unknown>),
         workOrder: existing,

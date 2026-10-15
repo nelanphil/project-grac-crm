@@ -8,6 +8,7 @@ import {
   updateWorkOrder,
   cancelWorkOrderAppointment,
   deleteWorkOrder,
+  restoreWorkOrder,
 } from "../controllers/workOrder.controller";
 import {
   getRecentWorkOrderNotes,
@@ -34,6 +35,7 @@ router.get("/:id", getWorkOrderById);
 router.post("/", createWorkOrder);
 router.patch("/:id", updateWorkOrder);
 router.post("/:id/cancel-appointment", cancelWorkOrderAppointment);
+router.post("/:id/restore", restoreWorkOrder);
 router.delete("/:id", deleteWorkOrder);
 
 export default router;
