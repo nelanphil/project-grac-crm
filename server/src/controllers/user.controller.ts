@@ -183,6 +183,7 @@ function formatUser(
     scheduleExceptions?: IScheduleException[] | null;
     phone?: string | null;
     scheduleColor?: string | null;
+    initials?: string | null;
     lastLoginAt?: Date | null;
     lastLoginLocation?: IUserLoginLocation | null;
     createdAt: Date;
@@ -215,6 +216,7 @@ function formatUser(
     scheduleExceptions: user.scheduleExceptions ?? [],
     phone: formatUsPhone(user.phone),
     scheduleColor: user.scheduleColor ?? "",
+    initials: user.initials ?? "",
     lastLoginAt: user.lastLoginAt ?? null,
     lastLoginLocation: user.lastLoginLocation ?? null,
     createdAt: user.createdAt,
@@ -754,6 +756,30 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
       user.scheduleColor = parsed.data.scheduleColor;
     }
 
+    const nextInitials =
+      parsed.data.initials !== undefined
+        ? parsed.data.initials || null
+        : user.initials || null;
+    if (nextInitials && nextIsTech) {
+      const taken = await User.findOne({
+        _id: { $ne: user._id },
+        initials: nextInitials,
+        schedulable: true,
+        ...activeUserFilter,
+      })
+        .select("_id")
+        .lean();
+      if (taken) {
+        res.status(409).json({
+          message: "Initials are already assigned to another technician",
+        });
+        return;
+      }
+    }
+    if (parsed.data.initials !== undefined) {
+      user.initials = nextInitials;
+    }
+
     await user.save();
 
     if (email !== undefined && previousEmail !== user.email) {
@@ -787,9 +813,23 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
 
     res.status(200).json({ user: (await presentUsers([fresh ?? user]))[0] });
   } catch (err) {
+    if (isInitialsConflict(err)) {
+      res.status(409).json({
+        message: "Initials are already assigned to another technician",
+      });
+      return;
+    }
     console.error("PATCH /users/:id error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
+}
+
+function isInitialsConflict(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const code = (err as { code?: number }).code;
+  if (code !== 11000) return false;
+  const keyPattern = (err as { keyPattern?: Record<string, unknown> }).keyPattern;
+  return Boolean(keyPattern && "initials" in keyPattern);
 }
 
 export async function updateUserRole(

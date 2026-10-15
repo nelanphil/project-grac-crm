@@ -929,6 +929,7 @@ function StaffColumn({
   });
 
   const initials =
+    staff.initials?.trim() ||
     `${staff.first_name?.[0] ?? ""}${staff.last_name?.[0] ?? ""}`.toUpperCase() ||
     "?";
   const boardHeight = HOURS.length * HOUR_PX;
@@ -960,7 +961,7 @@ function StaffColumn({
         ) : null}
         <span
           aria-hidden
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-[10px] font-semibold text-neutral-600 ring-1 ring-neutral-200"
+          className="flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-neutral-100 px-1 text-[10px] font-semibold text-neutral-600 ring-1 ring-neutral-200"
         >
           {initials}
         </span>

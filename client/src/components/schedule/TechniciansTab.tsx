@@ -31,6 +31,97 @@ function phoneDigits(phone: string): string {
   return phone.replace(/\D/g, "");
 }
 
+function initialsSaveError(err: unknown): string {
+  if (err instanceof ApiError) {
+    return err.errors?.initials?.[0] || err.message;
+  }
+  return "Failed to save initials.";
+}
+
+function InlineInitialsEditor({
+  userId,
+  savedInitials,
+  token,
+  onSaved,
+}: {
+  userId: string;
+  savedInitials: string;
+  token: string | null;
+  onSaved: (user: UserListItem) => void;
+}) {
+  const [value, setValue] = useState(savedInitials);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const skipBlurSave = useRef(false);
+
+  useEffect(() => {
+    setValue(savedInitials);
+  }, [savedInitials]);
+
+  async function save(next: string) {
+    if (!token || saving) return;
+    const trimmed = next.trim().toUpperCase();
+    if (trimmed === savedInitials.trim().toUpperCase()) {
+      setValue(savedInitials);
+      setError(null);
+      return;
+    }
+    if (trimmed && !/^[A-Z]{1,4}$/.test(trimmed)) {
+      setError("Initials must be 1–4 letters.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const { user } = await updateUser(token, userId, { initials: trimmed });
+      onSaved(user);
+      setValue(user.initials ?? "");
+    } catch (err) {
+      setValue(savedInitials);
+      setError(initialsSaveError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="min-w-16">
+      <input
+        value={value}
+        disabled={saving}
+        aria-label="Initials"
+        placeholder="—"
+        maxLength={4}
+        onChange={(e) => {
+          setValue(e.target.value.toUpperCase().replace(/[^A-Z]/g, ""));
+          if (error) setError(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            skipBlurSave.current = true;
+            setValue(savedInitials);
+            setError(null);
+            e.currentTarget.blur();
+          }
+        }}
+        onBlur={(e) => {
+          if (skipBlurSave.current) {
+            skipBlurSave.current = false;
+            return;
+          }
+          void save(e.currentTarget.value);
+        }}
+        className="w-16 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-sm font-medium uppercase tracking-wide text-neutral-700 outline-none placeholder:text-neutral-400 hover:border-neutral-200 focus:border-brand-orange focus:bg-[var(--staff-cream)] disabled:opacity-60"
+      />
+      {error ? <p className="mt-1 text-xs text-red-600">{error}</p> : null}
+    </div>
+  );
+}
+
 function phoneSaveError(err: unknown): string {
   if (err instanceof ApiError) {
     return err.errors?.phone?.[0] || err.message;
@@ -275,6 +366,17 @@ export default function TechniciansTab() {
               fields={
                 <>
                   <DataField
+                    label="Initials"
+                    value={
+                      <InlineInitialsEditor
+                        userId={user._id}
+                        savedInitials={user.initials ?? ""}
+                        token={token}
+                        onSaved={replaceUser}
+                      />
+                    }
+                  />
+                  <DataField
                     label="Phone"
                     value={
                       <InlinePhoneEditor
@@ -337,6 +439,9 @@ export default function TechniciansTab() {
                       Name
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Initials
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Role
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
@@ -368,6 +473,14 @@ export default function TechniciansTab() {
                             usernameNumber={user.usernameNumber}
                           />
                         </div>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <InlineInitialsEditor
+                          userId={user._id}
+                          savedInitials={user.initials ?? ""}
+                          token={token}
+                          onSaved={replaceUser}
+                        />
                       </td>
                       <td className="px-6 py-4 text-neutral-700 whitespace-nowrap">
                         {formatUserRoles(user)}

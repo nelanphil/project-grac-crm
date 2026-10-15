@@ -1,12 +1,15 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuthStore } from "@/store/useAuthStore";
 import { isDispatcherRole } from "@/lib/schedule";
-import CalendarTab from "@/components/schedule/CalendarTab";
+import CalendarTab, {
+  rememberScheduleTab,
+  storedScheduleTab,
+} from "@/components/schedule/CalendarTab";
 import TechniciansTab from "@/components/schedule/TechniciansTab";
 import Segmented from "@/components/schedule/Segmented";
 
@@ -23,6 +26,7 @@ function SchedulePageInner() {
       : "calendar";
 
   function selectTab(next: TabId) {
+    rememberScheduleTab(next);
     const params = new URLSearchParams(searchParams.toString());
     if (next === "technicians") params.set("tab", "technicians");
     else params.delete("tab");
@@ -31,6 +35,12 @@ function SchedulePageInner() {
       scroll: false,
     });
   }
+
+  useEffect(() => {
+    if (!dispatcher || searchParams.get("tab")) return;
+    if (storedScheduleTab() !== "technicians") return;
+    router.replace("/dashboard/schedule?tab=technicians", { scroll: false });
+  }, [dispatcher, router, searchParams]);
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "calendar", label: "Schedule Wizard" },

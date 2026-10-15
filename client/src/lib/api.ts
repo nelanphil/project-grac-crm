@@ -741,6 +741,7 @@ export interface UserListItem {
   serviceCities: ServiceCity[];
   scheduleExceptions: ScheduleException[];
   phone: string;
+  initials?: string;
   scheduleColor?: string;
   lastLoginAt?: string | null;
   lastLoginLocation?: UserLoginLocation | null;
@@ -807,6 +808,7 @@ export async function updateUser(
     serviceCities?: ServiceCity[];
     scheduleExceptions?: ScheduleException[];
     phone?: string;
+    initials?: string;
     scheduleColor?: string;
   },
 ): Promise<{ user: UserListItem }> {
@@ -2336,6 +2338,7 @@ export interface ScheduleStaffMember {
   scheduleExceptions: ScheduleException[];
   serviceCities?: ServiceCity[];
   scheduleColor?: string;
+  initials?: string;
 }
 
 export interface TechnicianListItem {

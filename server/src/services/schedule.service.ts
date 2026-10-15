@@ -99,6 +99,7 @@ type LeanUser = {
     lng?: number | null;
   }> | null;
   scheduleColor?: string | null;
+  initials?: string | null;
 };
 
 export type PublicStaff = {
@@ -120,6 +121,7 @@ export type PublicStaff = {
     lng: number | null;
   }>;
   scheduleColor: string;
+  initials: string;
 };
 
 export function toPublicStaff(user: LeanUser): PublicStaff {
@@ -142,6 +144,7 @@ export function toPublicStaff(user: LeanUser): PublicStaff {
     weeklyHours: user.weeklyHours ?? defaultWeeklyHours(Boolean(user.schedulable)),
     scheduleExceptions: user.scheduleExceptions ?? [],
     scheduleColor: (user.scheduleColor ?? "").trim(),
+    initials: (user.initials ?? "").trim(),
     serviceCities: (user.serviceCities ?? []).flatMap((city) => {
       const name = (city.city ?? "").trim();
       const state = (city.state ?? "").trim();
@@ -417,7 +420,7 @@ export async function listSchedulableStaff(): Promise<LeanUser[]> {
     schedulable: true,
   })
     .select(
-      "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions serviceCities scheduleColor",
+      "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions serviceCities scheduleColor initials",
     )
     .sort({ last_name: 1, first_name: 1 })
     .lean();
@@ -1736,7 +1739,7 @@ export async function dayRouteForUser(opts: {
     ...activeUserFilter,
   })
     .select(
-      "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions serviceCities scheduleColor",
+      "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions serviceCities scheduleColor initials",
     )
     .lean();
   if (!user) {

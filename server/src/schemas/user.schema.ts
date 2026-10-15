@@ -69,6 +69,22 @@ const homeLocationSchema = z
   })
   .optional();
 
+const initialsField = z
+  .string()
+  .trim()
+  .max(4)
+  .optional()
+  .superRefine((value, ctx) => {
+    if (!value) return;
+    if (!/^[A-Za-z]{1,4}$/.test(value)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Initials must be 1–4 letters",
+      });
+    }
+  })
+  .transform((value) => (value ? value.toUpperCase() : value));
+
 const phoneField = z
   .string()
   .trim()
@@ -193,6 +209,7 @@ export const updateUserSchema = z.object({
   serviceCities: serviceCitiesSchema,
   scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
   phone: phoneField,
+  initials: initialsField,
   scheduleColor: z
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, "Color must be a hex value like #336699")

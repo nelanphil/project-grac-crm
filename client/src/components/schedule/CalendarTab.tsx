@@ -214,6 +214,61 @@ function writeRailWidth(value: number) {
 }
 
 const STAFF_ORDER_KEY = "schedule-wizard-staff-order";
+const SCHEDULE_VIEW_KEY = "schedule-wizard-view";
+const SCHEDULE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+type ScheduleViewPrefs = {
+  view?: ViewMode;
+  layout?: MonthMode;
+  surface?: SurfaceMode;
+  date?: string;
+  tab?: "calendar" | "technicians";
+};
+
+function readScheduleView(): ScheduleViewPrefs | null {
+  try {
+    const raw = window.localStorage.getItem(SCHEDULE_VIEW_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as ScheduleViewPrefs;
+  } catch {
+    return null;
+  }
+}
+
+function rememberScheduleView(patch: ScheduleViewPrefs) {
+  try {
+    const current = readScheduleView() ?? {};
+    window.localStorage.setItem(
+      SCHEDULE_VIEW_KEY,
+      JSON.stringify({ ...current, ...patch }),
+    );
+  } catch {
+    /* ignore private-mode storage failures */
+  }
+}
+
+function storedViewChoice(value: unknown): ViewMode | null {
+  return value === "week" || value === "month" ? value : null;
+}
+
+function storedLayoutChoice(value: unknown): MonthMode | null {
+  return value === "calendar" || value === "table" ? value : null;
+}
+
+function storedSurfaceChoice(value: unknown): SurfaceMode | null {
+  return value === "calendar" || value === "map" ? value : null;
+}
+
+export function storedScheduleTab(): "technicians" | null {
+  if (typeof window === "undefined") return null;
+  return readScheduleView()?.tab === "technicians" ? "technicians" : null;
+}
+
+export function rememberScheduleTab(tab: "calendar" | "technicians") {
+  rememberScheduleView({ tab });
+}
 
 function readStaffOrder(): string[] {
   try {
@@ -772,11 +827,40 @@ export default function CalendarTab({
   const [view, setView] = useState<ViewMode>("week");
   const [monthMode, setMonthMode] = useState<MonthMode>("calendar");
   const [surface, setSurface] = useState<SurfaceMode>("calendar");
+  const [viewReady, setViewReady] = useState(false);
   const [staff, setStaff] = useState<ScheduleStaffMember[]>([]);
   const [staffOrder, setStaffOrder] = useState<string[]>([]);
   useEffect(() => {
     setStaffOrder(readStaffOrder());
   }, []);
+
+  useEffect(() => {
+    const stored = readScheduleView();
+    const viewChoice = storedViewChoice(stored?.view);
+    const layoutChoice = storedLayoutChoice(stored?.layout);
+    const surfaceChoice = storedSurfaceChoice(stored?.surface);
+    const date =
+      initialDate ??
+      (stored?.date && SCHEDULE_DATE_RE.test(stored.date) ? stored.date : null);
+    if (viewChoice) setView(viewChoice);
+    if (layoutChoice) setMonthMode(layoutChoice);
+    if (surfaceChoice) setSurface(surfaceChoice);
+    if (date) {
+      setAnchorDate(date);
+      setSelectedDate(date);
+    }
+    setViewReady(true);
+  }, [initialDate]);
+
+  useEffect(() => {
+    if (!viewReady) return;
+    rememberScheduleView({
+      view,
+      layout: monthMode,
+      surface,
+      date: selectedDate,
+    });
+  }, [viewReady, view, monthMode, surface, selectedDate]);
   const orderedStaff = useMemo(
     () => applyStaffOrder(staff, staffOrder),
     [staff, staffOrder],
@@ -1225,6 +1309,7 @@ export default function CalendarTab({
   }, [token, range.from, range.to, dispatcher, selectedDate]);
 
   useEffect(() => {
+    if (!viewReady) return;
     let cancelled = false;
     if (!token) return;
     void (async () => {
@@ -1252,9 +1337,10 @@ export default function CalendarTab({
     return () => {
       cancelled = true;
     };
-  }, [token, range.from, range.to, dispatcher]);
+  }, [viewReady, token, range.from, range.to, dispatcher]);
 
   useEffect(() => {
+    if (!viewReady) return;
     if (!token || !dispatcher) {
       setRailJobs([]);
       setRailScheduled([]);
@@ -1282,7 +1368,7 @@ export default function CalendarTab({
     return () => {
       cancelled = true;
     };
-  }, [token, dispatcher, selectedDate]);
+  }, [viewReady, token, dispatcher, selectedDate]);
 
   useEffect(() => {
     if (surface !== "map" || !token || !dispatcher) return;
@@ -2172,6 +2258,10 @@ export default function CalendarTab({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
+      {!viewReady ? (
+        <p className="text-sm text-neutral-500">Loading schedule…</p>
+      ) : (
+      <>
       <ScheduleHeader
         view={view}
         surface={surface}
@@ -2544,6 +2634,8 @@ export default function CalendarTab({
         </div>
       )}
 
+      </>
+      )}
     </div>
   );
 }
