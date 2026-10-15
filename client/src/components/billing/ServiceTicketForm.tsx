@@ -124,22 +124,26 @@ function stopSummary(stop: WorkOrderListItem): string {
 }
 
 function technicianDayRows(stops: WorkOrderListItem[], selfId?: string) {
-  const currentIndex = selfId ? stops.findIndex((stop) => stop._id === selfId) : -1;
+  const selfIndex = selfId ? stops.findIndex((stop) => stop._id === selfId) : -1;
+  const self = selfIndex >= 0 ? stops[selfIndex] : undefined;
+  const others = selfId ? stops.filter((stop) => stop._id !== selfId) : stops;
   const currentInsert =
-    currentIndex >= 0
-      ? stops.slice(0, currentIndex).filter((stop) => stop._id !== selfId).length
+    selfIndex >= 0
+      ? stops.slice(0, selfIndex).filter((stop) => stop._id !== selfId).length
       : null;
   const items: Array<
     { kind: "slot"; insertIndex: number } | { kind: "stop"; stop: WorkOrderListItem }
   > = [];
-  let otherIndex = 0;
-  if (currentInsert !== 0) items.push({ kind: "slot", insertIndex: 0 });
-  for (const stop of stops) {
-    items.push({ kind: "stop", stop });
-    if (selfId && stop._id === selfId) continue;
-    otherIndex += 1;
-    if (otherIndex !== currentInsert) {
-      items.push({ kind: "slot", insertIndex: otherIndex });
+
+  for (let index = 0; index <= others.length; index += 1) {
+    if (currentInsert === index && self) {
+      items.push({ kind: "stop", stop: self });
+    } else {
+      items.push({ kind: "slot", insertIndex: index });
+    }
+    if (index < others.length) {
+      const other = others[index];
+      if (other) items.push({ kind: "stop", stop: other });
     }
   }
   return items;
