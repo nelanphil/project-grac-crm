@@ -1775,25 +1775,27 @@ export async function dayRouteForUser(opts: {
     scheduledStart?: string | null;
   }> = [];
 
-  stops.push({
-    kind: "home",
-    label: "Home",
-    lat: home?.lat ?? null,
-    lng: home?.lng ?? null,
-  });
-  for (const row of jobPoints) {
+  const jobStops = jobPoints.map((row) => ({
+    kind: "job" as const,
+    label: row.wo.customerName || "Work order",
+    lat: row.coords!.lat,
+    lng: row.coords!.lng,
+    workOrderId: String(row.wo._id),
+    scheduledStart:
+      row.wo.scheduledStart instanceof Date
+        ? row.wo.scheduledStart.toISOString()
+        : ((row.wo.scheduledStart as string | null) ?? null),
+  }));
+
+  if (home) {
     stops.push({
-      kind: "job",
-      label: row.wo.customerName || "Work order",
-      lat: row.coords!.lat,
-      lng: row.coords!.lng,
-      workOrderId: String(row.wo._id),
-      scheduledStart:
-        row.wo.scheduledStart instanceof Date
-          ? row.wo.scheduledStart.toISOString()
-          : ((row.wo.scheduledStart as string | null) ?? null),
+      kind: "home",
+      label: "Home",
+      lat: home.lat,
+      lng: home.lng,
     });
   }
+  stops.push(...jobStops);
   if (home) {
     stops.push({
       kind: "home",
@@ -1804,10 +1806,14 @@ export async function dayRouteForUser(opts: {
   }
 
   const intermediates = jobPoints.map((row) => row.coords!);
-  const route =
-    home && intermediates.length > 0
-      ? await computeDayRoute(home, home, intermediates)
-      : null;
+  let route: Awaited<ReturnType<typeof computeDayRoute>> = null;
+  if (home && intermediates.length > 0) {
+    route = await computeDayRoute(home, home, intermediates);
+  } else if (!home && intermediates.length >= 2) {
+    const origin = intermediates[0]!;
+    const destination = intermediates[intermediates.length - 1]!;
+    route = await computeDayRoute(origin, destination, intermediates.slice(1, -1));
+  }
 
   return {
     user: toPublicStaff(user),

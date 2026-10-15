@@ -320,6 +320,7 @@ function ScheduleRail({
   pane,
   onPane,
   technicianPane,
+  technicianColors,
 }: {
   dayLabel: string;
   dayJobs: WorkOrderListItem[];
@@ -340,6 +341,7 @@ function ScheduleRail({
   pane?: MapRailPane;
   onPane?: (pane: MapRailPane) => void;
   technicianPane?: ReactNode;
+  technicianColors: Record<string, string>;
 }) {
   const empty = dayJobs.length === 0 && undatedJobs.length === 0;
   const showTechnicians = pane === "technicians" && technicianPane;
@@ -393,6 +395,7 @@ function ScheduleRail({
                     recommendations[order._id],
                   )}
                   technicians={recommendations[order._id] ?? []}
+                  technicianColors={technicianColors}
                   dayLabel={dayLabel}
                   onAssignTechnician={
                     onAssignTechnician
@@ -429,6 +432,7 @@ function ScheduleRail({
                     recommendations[order._id],
                   )}
                   technicians={recommendations[order._id] ?? []}
+                  technicianColors={technicianColors}
                   dayLabel={dayLabel}
                   onAssignTechnician={
                     onAssignTechnician
@@ -792,6 +796,12 @@ export default function CalendarTab({
   }
   const [recommendations, setRecommendations] = useState<
     Record<string, ScheduleRecommendation[]>
+  >({});
+  const [monthRecommendedByJobId, setMonthRecommendedByJobId] = useState<
+    Record<string, string>
+  >({});
+  const [monthRecommendedNames, setMonthRecommendedNames] = useState<
+    Record<string, string>
   >({});
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -1821,6 +1831,80 @@ export default function CalendarTab({
   }
 
   const rangeJobs = uniqueJobs(jobs, calendarUnscheduled);
+  const monthRecommendationKey = useMemo(() => {
+    if (
+      view !== "month" ||
+      surface !== "calendar" ||
+      monthMode !== "calendar"
+    ) {
+      return "";
+    }
+    const groups = new Map<string, string[]>();
+    for (const job of rangeJobs) {
+      if (job.assignedUserRef || job.assignee?._id) continue;
+      const date = workOrderLocalDate(job);
+      if (!date || date < range.from || date > range.to) continue;
+      const ids = groups.get(date) ?? [];
+      ids.push(job._id);
+      groups.set(date, ids);
+    }
+    return [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, ids]) => `${date}=${[...ids].sort().join(",")}`)
+      .join("|");
+  }, [view, surface, monthMode, rangeJobs, range.from, range.to]);
+
+  useEffect(() => {
+    if (!token || !dispatcher || !canWrite || !monthRecommendationKey) {
+      setMonthRecommendedByJobId({});
+      setMonthRecommendedNames({});
+      return;
+    }
+    let cancelled = false;
+    const groups = monthRecommendationKey.split("|").map((row) => {
+      const splitAt = row.indexOf("=");
+      const date = row.slice(0, splitAt);
+      const ids = row
+        .slice(splitAt + 1)
+        .split(",")
+        .filter(Boolean)
+        .slice(0, 200);
+      return { date, ids };
+    });
+    void Promise.all(
+      groups.map((group) =>
+        getScheduleRecommendations(token, {
+          date: group.date,
+          workOrderIds: group.ids,
+        }).catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      const next: Record<string, string> = {};
+      const names: Record<string, string> = {};
+      for (const result of results) {
+        if (!result) continue;
+        for (const row of result.recommendations) {
+          const list = row.technicians?.length
+            ? row.technicians
+            : row.recommendation
+              ? [row.recommendation]
+              : [];
+          const pick = list.find((tech) => tech.available);
+          if (!pick) continue;
+          next[row.workOrderId] = pick.userId;
+          const name = `${pick.first_name} ${pick.last_name}`.trim();
+          if (name) names[pick.userId] = name;
+        }
+      }
+      setMonthRecommendedByJobId(next);
+      setMonthRecommendedNames(names);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, dispatcher, canWrite, monthRecommendationKey]);
+
   const technicianLegend = useMemo(() => {
     const staffNames = new Map(
       orderedStaff.map((person) => [
@@ -1866,6 +1950,30 @@ export default function CalendarTab({
     }
     return colors;
   }, [orderedStaff]);
+
+  const recommendedByJobId = useMemo(() => {
+    const map = { ...monthRecommendedByJobId };
+    for (const [jobId, list] of Object.entries(recommendations)) {
+      const pick = list.find((tech) => tech.available);
+      if (pick) map[jobId] = pick.userId;
+    }
+    return map;
+  }, [monthRecommendedByJobId, recommendations]);
+
+  const technicianNames = useMemo(() => {
+    const names = { ...monthRecommendedNames };
+    for (const list of Object.values(recommendations)) {
+      for (const tech of list) {
+        const name = `${tech.first_name} ${tech.last_name}`.trim();
+        if (name) names[tech.userId] = name;
+      }
+    }
+    for (const person of orderedStaff) {
+      const name = `${person.first_name} ${person.last_name}`.trim();
+      if (name) names[person._id] = name;
+    }
+    return names;
+  }, [monthRecommendedNames, recommendations, orderedStaff]);
 
   function openWorkOrder(job: WorkOrderListItem) {
     setEditingJob(null);
@@ -2043,6 +2151,7 @@ export default function CalendarTab({
       pane={mapRailPane}
       onPane={setMapRailPane}
       technicianPane={technicianPane}
+      technicianColors={technicianColors}
     />
   ) : null;
 
@@ -2165,6 +2274,7 @@ export default function CalendarTab({
                   selected={false}
                   onSelect={() => {}}
                   draggable={false}
+                  technicianColors={technicianColors}
                   recommendation={
                     recommendationsEnabled
                       ? recommendedTechnician(recommendations[draggingJob._id])
@@ -2236,6 +2346,8 @@ export default function CalendarTab({
                     jobs={rangeJobs}
                     selectedDate={selectedDate}
                     technicianColors={technicianColors}
+                    recommendedByJobId={recommendedByJobId}
+                    technicianNames={technicianNames}
                     onSelectDate={(date) => {
                       setSelectedDate(date);
                     }}

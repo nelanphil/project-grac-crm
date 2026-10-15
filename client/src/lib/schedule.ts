@@ -514,6 +514,16 @@ export function blendColors(hexes: string[]): string {
   return `#${channel(red)}${channel(green)}${channel(blue)}`;
 }
 
+/** Opaque wash of a color: about 18% of the source mixed toward white. */
+export function opaqueTechnicianTint(hex: string, mix = 0.18): string {
+  const { r, g, b } = hexToRgb(hex);
+  const channel = (value: number) =>
+    Math.round(value * mix + 255 * (1 - mix))
+      .toString(16)
+      .padStart(2, "0");
+  return `#${channel(r)}${channel(g)}${channel(b)}`;
+}
+
 /** White on darker blends, near-black on lighter ones. */
 export function contrastTextColor(hex: string): string {
   const { r, g, b } = hexToRgb(hex);

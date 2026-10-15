@@ -13,11 +13,15 @@ import { createPortal } from "react-dom";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { Check, GripVertical, MapPin } from "lucide-react";
-import type {
-  ScheduleRecommendation,
-  ScheduleStaffMember,
-  WorkOrderListItem,
+import {
+  getScheduleRoute,
+  type ScheduleRecommendation,
+  type ScheduleRouteLeg,
+  type ScheduleRouteStop,
+  type ScheduleStaffMember,
+  type WorkOrderListItem,
 } from "@/lib/api";
+import { useAuthStore } from "@/store/useAuthStore";
 import {
   BOARD_HOUR_END,
   BOARD_HOUR_START,
@@ -29,6 +33,9 @@ import {
   jobAccent,
   minutesToLabel,
   nyDateParts,
+  opaqueTechnicianTint,
+  properCaseCity,
+  technicianColor,
 } from "@/lib/schedule";
 
 const NARROW_SCHEDULE_QUERY = "(max-width: 1023px)";
@@ -52,7 +59,16 @@ const HOURS = Array.from(
   { length: BOARD_HOUR_END - BOARD_HOUR_START },
   (_, i) => BOARD_HOUR_START + i,
 );
-const HOUR_PX = 72;
+const HOUR_PX = 112;
+const DRIVE_LABEL_MIN_PX = 14;
+
+function formatDriveMiles(meters: number): string {
+  return `${(meters / 1609.344).toFixed(1)} mi`;
+}
+
+function formatDriveLeg(minutes: number, meters: number): string {
+  return `${minutes} min · ${formatDriveMiles(meters)}`;
+}
 
 function hourLabel(hour: number): string {
   if (hour === 12) return "12 PM";
@@ -254,6 +270,7 @@ function UnscheduledCardShell({
   setNodeRef,
   style,
   dragHandle,
+  technicianColors = {},
 }: {
   order: WorkOrderListItem;
   selected: boolean;
@@ -272,14 +289,22 @@ function UnscheduledCardShell({
     attributes: ReturnType<typeof useDraggable>["attributes"];
     listeners: ReturnType<typeof useDraggable>["listeners"];
   };
+  technicianColors?: Record<string, string>;
 }) {
   const windowLabel = formatTimeWindow(order.startTime, order.endTime);
   const [movingDate, setMovingDate] = useState(false);
   const moveDateRef = useRef<HTMLInputElement>(null);
-  const accent = jobAccent(order);
   const assignedName = personName(order.assignee);
   const recommendedName = recommendation ? personName(recommendation) : "";
   const assignedId = order.assignee?._id ?? order.assignedUserRef ?? "";
+  const techId = assignedId || recommendation?.userId || "";
+  const techColor = techId
+    ? (technicianColors[techId] ?? technicianColor(techId))
+    : "";
+  const accent = techColor || jobAccent(order);
+  const cityLabel = properCaseCity(
+    order.address?.city?.trim() || order.customerCity?.trim() || "",
+  );
   const recommendedMatches = Boolean(
     recommendation && assignedId === recommendation.userId,
   );
@@ -321,7 +346,11 @@ function UnscheduledCardShell({
   return (
     <div
       ref={setNodeRef}
-      style={{ ...style, touchAction: narrow ? "pan-y" : style?.touchAction }}
+      style={{
+        ...style,
+        touchAction: narrow ? "pan-y" : style?.touchAction,
+        backgroundColor: techColor ? opaqueTechnicianTint(techColor) : undefined,
+      }}
       onPointerDown={onSwipePointerDown}
       onPointerUp={onSwipePointerUp}
       onPointerCancel={() => {
@@ -339,7 +368,9 @@ function UnscheduledCardShell({
         event.stopPropagation();
         setMenu({ x: event.clientX, y: event.clientY });
       }}
-      className={`flex w-full gap-2.5 rounded-xl border bg-neutral-50 px-3 py-2.5 text-left text-xs transition-colors hover:border-neutral-300 ${
+      className={`flex w-full gap-2.5 rounded-xl border px-3 py-2.5 text-left text-xs transition-colors hover:border-neutral-300 ${
+        techColor ? "theme-light" : "bg-neutral-50"
+      } ${
         selected
           ? "border-brand-orange ring-1 ring-brand-orange"
           : "border-neutral-200"
@@ -364,7 +395,7 @@ function UnscheduledCardShell({
             </div>
             <div className="mt-0.5 truncate text-neutral-500">
               {[
-                order.address?.city?.trim() || order.customerCity?.trim() || "—",
+                cityLabel || "—",
                 order.workOrderType?.label,
                 minutesToLabel(order.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES),
               ]
@@ -406,10 +437,10 @@ function UnscheduledCardShell({
           </button>
           <div className="flex shrink-0 flex-col items-end gap-1">
             <span
-              className={`rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide ${
+              className={`rounded-full px-1.5 py-px text-[10px] font-bold uppercase tracking-wide ${
                 order.scheduledStart
-                  ? "bg-blue-500/15 text-blue-500"
-                  : "bg-brand-orange/15 text-brand-orange"
+                  ? "bg-blue-500/15 text-blue-700"
+                  : "unscheduled-badge bg-[#c2410c] text-white"
               }`}
             >
               {order.scheduledStart ? "Scheduled" : "Unscheduled"}
@@ -517,6 +548,7 @@ function DraggableUnscheduledCard({
   onView,
   onMoveDate,
   lift = false,
+  technicianColors,
 }: {
   order: WorkOrderListItem;
   selected: boolean;
@@ -529,6 +561,7 @@ function DraggableUnscheduledCard({
   onView?: (order: WorkOrderListItem) => void;
   onMoveDate?: (date: string) => void;
   lift?: boolean;
+  technicianColors?: Record<string, string>;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({ id: `job:${order._id}` });
@@ -553,6 +586,7 @@ function DraggableUnscheduledCard({
       setNodeRef={setNodeRef}
       style={style}
       dragHandle={{ attributes, listeners }}
+      technicianColors={technicianColors}
     />
   );
 }
@@ -570,6 +604,7 @@ export function UnscheduledCard({
   onUnschedule,
   onView,
   onMoveDate,
+  technicianColors,
 }: {
   order: WorkOrderListItem;
   selected: boolean;
@@ -583,6 +618,7 @@ export function UnscheduledCard({
   onUnschedule?: () => void;
   onView?: (order: WorkOrderListItem) => void;
   onMoveDate?: (date: string) => void;
+  technicianColors?: Record<string, string>;
 }) {
   const narrow = useNarrowSchedule();
   if (!draggable || narrow || Boolean(order.scheduledStart)) {
@@ -598,6 +634,7 @@ export function UnscheduledCard({
         onUnschedule={onUnschedule}
         onView={onView}
         onMoveDate={onMoveDate}
+        technicianColors={technicianColors}
       />
     );
   }
@@ -614,6 +651,7 @@ export function UnscheduledCard({
       onView={onView}
       onMoveDate={onMoveDate}
       lift={lift}
+      technicianColors={technicianColors}
     />
   );
 }
@@ -647,13 +685,15 @@ function JobBlock({
   const topPct =
     ((Math.max(startMin, boardStart) - boardStart) / span) * 100;
   const heightPct = Math.max(3, (duration / span) * 100);
-  const city =
-    order.address?.city?.trim() || order.customerCity?.trim() || "";
+  const city = properCaseCity(
+    order.address?.city?.trim() || order.customerCity?.trim() || "",
+  );
   const typeLabel = order.workOrderType?.label?.trim() || "";
+  const customerName = properCaseCity(order.customerName?.trim() || "") || "Job";
+  const timeLabel = `${formatLocalClock(start)} – ${formatLocalClock(end)}`;
   const detail = [city, typeLabel, minutesToLabel(duration)]
     .filter(Boolean)
     .join(" · ");
-  const showDetail = duration >= 60 && detail.length > 0;
 
   const accent = jobAccent(order);
   const style: CSSProperties = {
@@ -672,39 +712,199 @@ function JobBlock({
       {...(dispatcher ? listeners : {})}
       {...(dispatcher ? attributes : {})}
       onClick={onClick}
-      title={[
-        order.customerName || "Job",
-        `${formatLocalClock(start)} – ${formatLocalClock(end)}`,
-        detail,
-      ]
-        .filter(Boolean)
-        .join(" · ")}
-      className={`absolute inset-x-1 overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight text-brand-dark transition-shadow hover:shadow-md ${
-        isDragging ? "opacity-40" : ""
+      title={[customerName, timeLabel, detail].filter(Boolean).join(" · ")}
+      className={`absolute inset-x-1 z-10 overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight text-brand-dark transition-shadow hover:shadow-md ${
+        isDragging ? "z-20 opacity-40" : ""
       }`}
     >
-      <div className="font-semibold break-words">
-        {order.customerName || "Job"}
-      </div>
-      <div className="text-neutral-500">
-        {formatLocalClock(start)} – {formatLocalClock(end)}
-      </div>
-      {showDetail ? (
-        <div className="mt-0.5 text-neutral-600 break-words">{detail}</div>
+      <div className="truncate font-semibold">{customerName}</div>
+      <div className="truncate text-neutral-500">{timeLabel}</div>
+      {detail ? (
+        <div className="mt-0.5 truncate text-neutral-600">{detail}</div>
       ) : null}
     </button>
+  );
+}
+
+type DriveGap = {
+  key: string;
+  startMin: number;
+  endMin: number;
+  label: string;
+  tight: boolean;
+};
+
+function jobWindowMinutes(job: WorkOrderListItem): {
+  startMin: number;
+  endMin: number;
+} | null {
+  if (!job.scheduledStart) return null;
+  const start = new Date(job.scheduledStart);
+  const duration = job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES;
+  const end = job.scheduledEnd
+    ? new Date(job.scheduledEnd)
+    : new Date(start.getTime() + duration * 60_000);
+  const startParts = nyDateParts(start);
+  const endParts = nyDateParts(end);
+  return {
+    startMin: startParts.hour * 60 + startParts.minute,
+    endMin: endParts.hour * 60 + endParts.minute,
+  };
+}
+
+function stopKey(stop: ScheduleRouteStop): string {
+  return stop.kind === "home" ? "home" : `job:${stop.workOrderId ?? ""}`;
+}
+
+function legsByHop(
+  stops: ScheduleRouteStop[],
+  legs: ScheduleRouteLeg[],
+): Map<string, ScheduleRouteLeg> {
+  const hops = new Map<string, ScheduleRouteLeg>();
+  for (let i = 0; i < legs.length; i += 1) {
+    const from = stops[i];
+    const to = stops[i + 1];
+    const leg = legs[i];
+    if (!from || !to || !leg) continue;
+    hops.set(`${stopKey(from)}>${stopKey(to)}`, leg);
+  }
+  return hops;
+}
+
+function buildDriveGaps(
+  jobs: WorkOrderListItem[],
+  stops: ScheduleRouteStop[],
+  legs: ScheduleRouteLeg[],
+): DriveGap[] {
+  const windows = jobs
+    .map((job) => ({ job, window: jobWindowMinutes(job) }))
+    .filter(
+      (
+        row,
+      ): row is {
+        job: WorkOrderListItem;
+        window: { startMin: number; endMin: number };
+      } => row.window != null,
+    )
+    .sort((a, b) => a.window.startMin - b.window.startMin);
+  if (windows.length === 0) return [];
+
+  const hops = legsByHop(stops, legs);
+  const located = new Set(
+    stops
+      .filter((stop) => stop.kind === "job" && stop.workOrderId)
+      .map((stop) => stop.workOrderId as string),
+  );
+  const hasHome = stops.some(
+    (stop) => stop.kind === "home" && stop.lat != null && stop.lng != null,
+  );
+  const gaps: DriveGap[] = [];
+
+  const first = windows[0]!;
+  if (hasHome) {
+    const leg = hops.get(`home>job:${first.job._id}`);
+    if (leg && located.has(first.job._id)) {
+      gaps.push({
+        key: `home-${first.job._id}`,
+        startMin: first.window.startMin - leg.durationMinutes,
+        endMin: first.window.startMin,
+        label: `Home · ${formatDriveLeg(leg.durationMinutes, leg.distanceMeters)}`,
+        tight: false,
+      });
+    } else {
+      gaps.push({
+        key: `home-${first.job._id}`,
+        startMin: first.window.startMin - 28,
+        endMin: first.window.startMin,
+        label: "Drive unknown",
+        tight: false,
+      });
+    }
+  }
+
+  for (let i = 0; i < windows.length - 1; i += 1) {
+    const prev = windows[i]!;
+    const next = windows[i + 1]!;
+    if (next.window.startMin <= prev.window.endMin) continue;
+    const leg = hops.get(`job:${prev.job._id}>job:${next.job._id}`);
+    const known = Boolean(
+      leg && located.has(prev.job._id) && located.has(next.job._id),
+    );
+    const gapMin = next.window.startMin - prev.window.endMin;
+    const tight = Boolean(known && leg && leg.durationMinutes > gapMin);
+    gaps.push({
+      key: `${prev.job._id}-${next.job._id}`,
+      startMin: prev.window.endMin,
+      endMin: next.window.startMin,
+      label:
+        known && leg
+          ? formatDriveLeg(leg.durationMinutes, leg.distanceMeters)
+          : "Drive unknown",
+      tight,
+    });
+  }
+
+  const last = windows[windows.length - 1]!;
+  if (hasHome) {
+    const leg = hops.get(`job:${last.job._id}>home`);
+    if (leg && located.has(last.job._id)) {
+      gaps.push({
+        key: `${last.job._id}-home`,
+        startMin: last.window.endMin,
+        endMin: last.window.endMin + leg.durationMinutes,
+        label: `Home · ${formatDriveLeg(leg.durationMinutes, leg.distanceMeters)}`,
+        tight: false,
+      });
+    } else {
+      gaps.push({
+        key: `${last.job._id}-home`,
+        startMin: last.window.endMin,
+        endMin: last.window.endMin + 28,
+        label: "Drive unknown",
+        tight: false,
+      });
+    }
+  }
+
+  return gaps;
+}
+
+function DriveGapBand({ gap }: { gap: DriveGap }) {
+  const boardStart = BOARD_HOUR_START * 60;
+  const boardEnd = BOARD_HOUR_END * 60;
+  const start = Math.max(gap.startMin, boardStart);
+  const end = Math.min(gap.endMin, boardEnd);
+  if (end - start < 1) return null;
+  const span = boardEnd - boardStart;
+  const top = ((start - boardStart) / span) * 100;
+  const height = ((end - start) / span) * 100;
+  const pixelHeight = (height / 100) * HOURS.length * HOUR_PX;
+  return (
+    <div
+      title={gap.label}
+      className={`drive-gap pointer-events-none absolute inset-x-1 z-0 flex items-center overflow-hidden rounded-md px-2.5 text-[10px] font-medium leading-none ${
+        gap.tight ? "drive-gap-tight" : ""
+      }`}
+      style={{ top: `${top}%`, height: `${height}%` }}
+    >
+      {pixelHeight >= DRIVE_LABEL_MIN_PX ? (
+        <span className="min-w-0 truncate">{gap.label}</span>
+      ) : null}
+    </div>
   );
 }
 
 function StaffColumn({
   staff,
   jobs,
+  gaps,
   onJobClick,
   onMap,
   dispatcher,
 }: {
   staff: ScheduleStaffMember;
   jobs: WorkOrderListItem[];
+  gaps: DriveGap[];
   onJobClick: (job: WorkOrderListItem) => void;
   onMap: () => void;
   dispatcher: boolean;
@@ -798,6 +998,9 @@ function StaffColumn({
             />
           ))}
         </div>
+        {gaps.map((gap) => (
+          <DriveGapBand key={gap.key} gap={gap} />
+        ))}
         {jobs.map((job) => (
           <JobBlock
             key={job._id}
@@ -826,6 +1029,7 @@ export default function WeekBoard({
   onJobClick: (job: WorkOrderListItem) => void;
   onMap: (userId: string) => void;
 }) {
+  const token = useAuthStore((s) => s.token);
   const jobsByUser = new Map<string, WorkOrderListItem[]>();
   for (const job of jobs) {
     if (!isScheduledOnDate(job, selectedDate)) continue;
@@ -836,6 +1040,65 @@ export default function WeekBoard({
     jobsByUser.set(uid, list);
   }
 
+  const routeKey = [
+    selectedDate,
+    ...staff.map((person) => {
+      const list = jobsByUser.get(person._id) ?? [];
+      const sig = list
+        .map((job) => `${job._id}:${job.scheduledStart ?? ""}`)
+        .sort()
+        .join(",");
+      return `${person._id}=${sig}`;
+    }),
+  ].join("|");
+
+  const [routes, setRoutes] = useState<
+    Record<string, { stops: ScheduleRouteStop[]; legs: ScheduleRouteLeg[] }>
+  >({});
+  const [loadedKey, setLoadedKey] = useState("");
+
+  useEffect(() => {
+    const ids = routeKey
+      .split("|")
+      .slice(1)
+      .filter((part) => part.includes("=") && !part.endsWith("="))
+      .map((part) => part.slice(0, part.indexOf("=")))
+      .filter(Boolean);
+    if (!token || ids.length === 0) {
+      setRoutes({});
+      setLoadedKey(routeKey);
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      ids.map((id) =>
+        getScheduleRoute(token, id, selectedDate)
+          .then((result) => ({
+            id,
+            stops: result.stops,
+            legs: result.route?.legs ?? [],
+          }))
+          .catch(() => null),
+      ),
+    ).then((rows) => {
+      if (cancelled) return;
+      const next: Record<
+        string,
+        { stops: ScheduleRouteStop[]; legs: ScheduleRouteLeg[] }
+      > = {};
+      for (const row of rows) {
+        if (!row) continue;
+        next[row.id] = { stops: row.stops, legs: row.legs };
+      }
+      setRoutes(next);
+      setLoadedKey(routeKey);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, routeKey, selectedDate]);
+
+  const routesReady = loadedKey === routeKey;
   const boardHeight = HOURS.length * HOUR_PX;
 
   return (
@@ -866,6 +1129,15 @@ export default function WeekBoard({
               key={person._id}
               staff={person}
               jobs={jobsByUser.get(person._id) ?? []}
+              gaps={
+                routesReady
+                  ? buildDriveGaps(
+                      jobsByUser.get(person._id) ?? [],
+                      routes[person._id]?.stops ?? [],
+                      routes[person._id]?.legs ?? [],
+                    )
+                  : []
+              }
               dispatcher={dispatcher}
               onJobClick={onJobClick}
               onMap={() => onMap(person._id)}

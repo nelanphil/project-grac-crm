@@ -4,10 +4,10 @@ import type { WorkOrderListItem } from "@/lib/api";
 import {
   addDays,
   blendColors,
-  contrastTextColor,
   daysInMonth,
   formatLocalDate,
   nyDateParts,
+  opaqueTechnicianTint,
   properCaseCity,
   startOfMonth,
   localDateTimeToIso,
@@ -20,7 +20,6 @@ const MAX_CHIPS = 4;
 type CityChip = {
   city: string;
   color: string;
-  textColor: string;
   technicians: string[];
 };
 
@@ -48,6 +47,8 @@ function jobAssigneeName(job: WorkOrderListItem): string {
 function citiesForDay(
   jobs: WorkOrderListItem[],
   colors: Record<string, string>,
+  recommendedByJobId: Record<string, string>,
+  technicianNames: Record<string, string>,
 ): CityChip[] {
   const byCity = new Map<
     string,
@@ -55,12 +56,16 @@ function citiesForDay(
   >();
   for (const job of jobs) {
     const city = jobCity(job);
-    const assigneeId = jobAssigneeId(job);
-    if (!city || !assigneeId) continue;
+    const assignedId = jobAssigneeId(job);
+    const techId = assignedId || recommendedByJobId[job._id] || "";
+    if (!city || !techId) continue;
     const key = city.toLowerCase();
     const entry = byCity.get(key) ?? { label: city, techs: new Map() };
-    if (!entry.techs.has(assigneeId)) {
-      entry.techs.set(assigneeId, jobAssigneeName(job));
+    if (!entry.techs.has(techId)) {
+      const name = assignedId
+        ? jobAssigneeName(job)
+        : technicianNames[techId] || "Technician";
+      entry.techs.set(techId, name);
     }
     byCity.set(key, entry);
   }
@@ -74,7 +79,6 @@ function citiesForDay(
       return {
         city: properCaseCity(entry.label),
         color,
-        textColor: contrastTextColor(color),
         technicians: [...entry.techs.values()].sort((a, b) =>
           a.localeCompare(b),
         ),
@@ -88,12 +92,16 @@ export default function MonthCalendar({
   jobs,
   selectedDate,
   technicianColors,
+  recommendedByJobId = {},
+  technicianNames = {},
   onSelectDate,
 }: {
   monthDate: string;
   jobs: WorkOrderListItem[];
   selectedDate: string;
   technicianColors: Record<string, string>;
+  recommendedByJobId?: Record<string, string>;
+  technicianNames?: Record<string, string>;
   onSelectDate: (date: string) => void;
 }) {
   const start = startOfMonth(monthDate);
@@ -138,7 +146,12 @@ export default function MonthCalendar({
         {cells.map((date, index) => {
           const inMonth = date.slice(0, 7) === monthKey;
           const dayCities = inMonth
-            ? citiesForDay(byDate.get(date) ?? [], technicianColors)
+            ? citiesForDay(
+                byDate.get(date) ?? [],
+                technicianColors,
+                recommendedByJobId,
+                technicianNames,
+              )
             : [];
           const shown = dayCities.slice(0, MAX_CHIPS);
           const hidden = dayCities.length - shown.length;
@@ -161,10 +174,11 @@ export default function MonthCalendar({
                   <div
                     key={chip.city}
                     title={chip.technicians.join(", ")}
-                    className="truncate rounded px-1 text-[10px] font-medium leading-4 sm:text-[11px]"
+                    className="truncate rounded border-l-[3px] px-1 text-[10px] font-medium leading-4 sm:text-[11px]"
                     style={{
-                      backgroundColor: chip.color,
-                      color: chip.textColor,
+                      backgroundColor: opaqueTechnicianTint(chip.color),
+                      borderLeftColor: chip.color,
+                      color: "#231f20",
                     }}
                   >
                     {chip.city}
