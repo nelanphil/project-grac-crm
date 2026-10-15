@@ -42,24 +42,44 @@ export const MERGE_FIELDS: MergeFieldDef[] = [
     description:
       "Short pay link in a text, or a Pay securely button in email, covering every open invoice and unpaid work order. Included only when the customer has something to pay.",
   },
+  {
+    key: "invoice",
+    label: "Invoice",
+    description:
+      "Styled invoice from the default invoice template. Renders when the email is previewed or sent for an invoice.",
+    templateTypes: ["email"],
+  },
 ];
 
 export type MessageTemplateContext = Record<string, string>;
 
 const TOKEN_RE = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
 const PAYMENT_LINK_TOKEN_RE = /\{\{\s*payment_link\s*\}\}/;
+const INVOICE_TOKEN_RE = /\{\{\s*invoice\s*\}\}/;
+/** Tokens resolved after HTML sanitization, not by string replacement. */
+const PRESERVED_TOKEN_KEYS = new Set(["invoice"]);
 
 /** True when any part includes {{payment_link}}. */
 export function templateUsesPaymentLink(...parts: Array<string | undefined>): boolean {
   return parts.some((part) => Boolean(part && PAYMENT_LINK_TOKEN_RE.test(part)));
 }
 
-/** Replace {{key}} tokens. Unknown keys become empty strings. */
+/** True when any part includes {{invoice}}. */
+export function templateUsesInvoice(...parts: Array<string | undefined>): boolean {
+  return parts.some((part) => Boolean(part && INVOICE_TOKEN_RE.test(part)));
+}
+
+export function stripInvoiceToken(value: string): string {
+  return value.replace(/\{\{\s*invoice\s*\}\}/g, "");
+}
+
+/** Replace {{key}} tokens. Unknown keys become empty strings. {{invoice}} is left in place. */
 export function renderMessageTemplate(
   body: string,
   context: MessageTemplateContext,
 ): string {
-  return body.replace(TOKEN_RE, (_match, key: string) => {
+  return body.replace(TOKEN_RE, (match, key: string) => {
+    if (PRESERVED_TOKEN_KEYS.has(key)) return match;
     const value = context[key];
     return value == null ? "" : value;
   });

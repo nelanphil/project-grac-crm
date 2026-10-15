@@ -55,7 +55,7 @@ import {
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 
 const SCHEDULE_USER_SELECT =
-  "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions serviceCities";
+  "first_name last_name email role roles schedulable homeLocation weeklyHours scheduleExceptions serviceCities scheduleColor";
 
 /** Self, or an active schedulable technician. */
 async function scheduleUserForViewer(viewerId: string, userId: string) {

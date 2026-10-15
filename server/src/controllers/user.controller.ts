@@ -182,6 +182,7 @@ function formatUser(
     serviceCities?: IServiceCity[] | null;
     scheduleExceptions?: IScheduleException[] | null;
     phone?: string | null;
+    scheduleColor?: string | null;
     lastLoginAt?: Date | null;
     lastLoginLocation?: IUserLoginLocation | null;
     createdAt: Date;
@@ -213,6 +214,7 @@ function formatUser(
     serviceCities: formatServiceCities(user.serviceCities),
     scheduleExceptions: user.scheduleExceptions ?? [],
     phone: formatUsPhone(user.phone),
+    scheduleColor: user.scheduleColor ?? "",
     lastLoginAt: user.lastLoginAt ?? null,
     lastLoginLocation: user.lastLoginLocation ?? null,
     createdAt: user.createdAt,
@@ -746,6 +748,10 @@ export async function updateUser(req: AuthRequest, res: Response): Promise<void>
 
     if (parsed.data.phone !== undefined) {
       user.phone = parsed.data.phone;
+    }
+
+    if (parsed.data.scheduleColor !== undefined) {
+      user.scheduleColor = parsed.data.scheduleColor;
     }
 
     await user.save();

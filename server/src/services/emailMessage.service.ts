@@ -17,8 +17,10 @@ import {
 } from "../utils/unsubscribeToken";
 import {
   renderMessageTemplate,
+  templateUsesInvoice,
   templateUsesPaymentLink,
 } from "../utils/messageTemplate";
+import { resolveInvoiceWidget } from "./invoiceWidget.service";
 import {
   buildTemplateContextForContact,
   contactHasValidEmail,
@@ -57,6 +59,8 @@ export type DispatchStaffEmailBatchInput = {
   renewalYear?: number | null;
   renewalMonth?: number | null;
   includePaymentLink?: boolean;
+  /** Invoice embedded by {{invoice}}. Omitted when the token is sent with no invoice. */
+  invoiceId?: string | null;
   offerContractTemplateId?: string | null;
   offerContractOverrides?: OfferContractOverride[] | null;
   createdByUserId?: string | null;
@@ -222,6 +226,18 @@ export async function dispatchStaffEmailBatch(
     input.createdByUserId && Types.ObjectId.isValid(input.createdByUserId)
       ? new Types.ObjectId(input.createdByUserId)
       : null;
+  const invoiceWidget = templateUsesInvoice(
+    subjectTemplate,
+    bodyTemplate,
+    sendChrome.headerHtml,
+    sendChrome.footerHtml,
+  )
+    ? await resolveInvoiceWidget({
+        invoiceId: input.invoiceId,
+        sampleFallback: false,
+      })
+    : undefined;
+
   const wantsPayLink =
     input.includePaymentLink === true ||
     templateUsesPaymentLink(
@@ -332,6 +348,7 @@ export async function dispatchStaffEmailBatch(
         paymentUrl,
         chrome: renderedChrome,
         unsubscribeUrl,
+        invoiceWidget,
       });
 
       const contactRef = new Types.ObjectId(built.contact._id);

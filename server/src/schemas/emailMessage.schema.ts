@@ -21,6 +21,7 @@ export const emailMessagePreviewSchema = z
     renewalMonth: z.number().int().min(1).max(12).optional(),
     includePaymentLink: z.boolean().optional(),
     offerContractTemplateId: offerContractTemplateIdSchema.optional(),
+    invoiceId: z.string().trim().min(1).optional(),
   })
   .refine(
     (data) =>
@@ -49,6 +50,7 @@ const emailMessageSendFields = z.object({
   renewalMonth: z.number().int().min(1).max(12).optional(),
   includePaymentLink: z.boolean().optional(),
   offerContractTemplateId: offerContractTemplateIdSchema.optional(),
+  invoiceId: z.string().trim().min(1).optional(),
   offerContractOverrides: z
     .array(offerContractOverrideSchema)
     .max(200)

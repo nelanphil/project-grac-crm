@@ -411,6 +411,116 @@ export function jobAccent(job: {
   return JOB_ACCENTS[Math.abs(hash) % JOB_ACCENTS.length] ?? fallback;
 }
 
+/** Spread technician ids around the hue wheel so nearby hashes stay apart. */
+const GOLDEN_ANGLE = 137.508;
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number): string {
+  const sat = saturation / 100;
+  const light = lightness / 100;
+  const chroma = (1 - Math.abs(2 * light - 1)) * sat;
+  const sector = hue / 60;
+  const x = chroma * (1 - Math.abs((sector % 2) - 1));
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  if (sector < 1) [red, green, blue] = [chroma, x, 0];
+  else if (sector < 2) [red, green, blue] = [x, chroma, 0];
+  else if (sector < 3) [red, green, blue] = [0, chroma, x];
+  else if (sector < 4) [red, green, blue] = [0, x, chroma];
+  else if (sector < 5) [red, green, blue] = [x, 0, chroma];
+  else [red, green, blue] = [chroma, 0, x];
+  const match = light - chroma / 2;
+  const channel = (value: number) =>
+    Math.round((value + match) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${channel(red)}${channel(green)}${channel(blue)}`;
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const normalized = hex.replace("#", "");
+  const value = Number.parseInt(normalized, 16);
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255,
+  };
+}
+
+/** Stable swatch for a technician. The same id always maps to the same color. */
+export function technicianColor(userId: string): string {
+  const hue = (hashString(userId) * GOLDEN_ANGLE) % 360;
+  return hslToHex(hue, 62, 46);
+}
+
+const SAVED_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+/** Saved technician swatch, or the generated color when none is set. */
+export function resolvedTechnicianColor(
+  userId: string,
+  saved?: string | null,
+): string {
+  const color = saved?.trim() ?? "";
+  if (SAVED_COLOR.test(color)) return color.toLowerCase();
+  return technicianColor(userId);
+}
+
+/** Title-case all-lower and all-upper words. Mixed-case words stay as stored. */
+export function properCaseCity(city: string): string {
+  return city
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const letters = word.replace(/[^A-Za-z]/g, "");
+      if (!letters) return word;
+      const allLower = letters === letters.toLowerCase();
+      const allUpper = letters === letters.toUpperCase();
+      if (allLower || allUpper) {
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
+}
+
+/** Equal mix of colors in sRGB. A single color is returned unchanged. */
+export function blendColors(hexes: string[]): string {
+  const unique = [...new Set(hexes.filter(Boolean))];
+  if (unique.length === 0) return "#737373";
+  if (unique.length === 1) return unique[0]!;
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  for (const hex of unique) {
+    const rgb = hexToRgb(hex);
+    red += rgb.r;
+    green += rgb.g;
+    blue += rgb.b;
+  }
+  const count = unique.length;
+  const channel = (value: number) =>
+    Math.round(value / count)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${channel(red)}${channel(green)}${channel(blue)}`;
+}
+
+/** White on darker blends, near-black on lighter ones. */
+export function contrastTextColor(hex: string): string {
+  const { r, g, b } = hexToRgb(hex);
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luminance < 0.55 ? "#ffffff" : "#171717";
+}
+
 export function workOrderViewHref(job: {
   _id?: string;
   customerRef?: string | null;

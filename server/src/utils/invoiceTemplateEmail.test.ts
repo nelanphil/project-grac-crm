@@ -7,6 +7,7 @@ import {
 import { defaultInvoiceBlocks } from "./defaultInvoiceBlocks";
 import {
   renderInvoiceTemplateEmail,
+  renderInvoiceTemplateFragment,
   type InvoiceTemplateEmailDocument,
 } from "./invoiceTemplateEmail";
 
@@ -148,6 +149,22 @@ describe("renderInvoiceTemplateEmail", () => {
     assert.match(rendered.html, /SAVE10/);
     assert.match(rendered.html, /−\$10\.00/);
     assert.match(rendered.text, /Replaced the battery\./);
+  });
+
+  it("embeds a styled invoice card without the email shell", () => {
+    const rendered = renderInvoiceTemplateFragment({
+      blocks,
+      invoice: paidInvoice({
+        lineItems: [{ description: "Filter <special>", amountCents: 1500 }],
+      }),
+    });
+
+    assert.match(rendered.html, /<table/);
+    assert.match(rendered.html, /Filter &lt;special&gt;/);
+    assert.match(rendered.html, /Generator Maintenance of Florida/);
+    assert.doesNotMatch(rendered.html, /<!DOCTYPE/i);
+    assert.doesNotMatch(rendered.html, /Unsubscribe/);
+    assert.match(rendered.text, /Filter <special>/);
   });
 
   it("strips unsafe markup from text blocks", () => {

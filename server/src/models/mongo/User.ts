@@ -73,6 +73,8 @@ export interface IUser extends Document {
   smsOptInAt: Date | null;
   /** Mobile number collected at signup or legal consent. */
   phone: string;
+  /** Dispatcher-chosen swatch for the schedule month grid. Empty uses a generated color. */
+  scheduleColor: string;
   /** Version string of the legal docs accepted (e.g. "2026-08-03"). */
   legalDocsVersion: string | null;
   /** Most recent successful sign-in. Null until the user logs in after this was added. */
@@ -259,6 +261,7 @@ const userSchema = new Schema<IUser>(
     smsOptIn: { type: Boolean, default: false },
     smsOptInAt: { type: Date, default: null },
     phone: { type: String, default: "" },
+    scheduleColor: { type: String, default: "" },
     legalDocsVersion: { type: String, default: null },
     lastLoginAt: { type: Date, default: null },
     lastLoginLocation: { type: loginLocationSchema, default: null },

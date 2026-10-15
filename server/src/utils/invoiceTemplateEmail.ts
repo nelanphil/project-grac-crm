@@ -545,21 +545,38 @@ function unsubscribePiece(url: string | undefined, note: string | undefined): Pi
   return { html, text };
 }
 
+function renderInvoiceDocument(
+  blocks: InvoiceBlock[],
+  invoice: InvoiceTemplateEmailDocument,
+): Piece {
+  const body = joinPieces(blocks.map((block) => renderBlock(block, invoice)));
+  const html =
+    body.html ||
+    paragraph(
+      escapeHtml(`Payment received for invoice ${invoice.number}.`),
+      "font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#231f20;",
+    );
+  return { html, text: body.text };
+}
+
+/** Invoice card for embedding in another email. No document shell or unsubscribe link. */
+export function renderInvoiceTemplateFragment(input: {
+  blocks: InvoiceBlock[];
+  invoice: InvoiceTemplateEmailDocument;
+}): { html: string; text: string } {
+  const document = renderInvoiceDocument(input.blocks, input.invoice);
+  const html = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:16px 0;background:#ffffff;border:1px solid #e5e5e5;border-radius:12px;"><tr><td style="padding:20px 16px;text-transform:uppercase;">${document.html}</td></tr></table>`;
+  return { html, text: document.text };
+}
+
 export function renderInvoiceTemplateEmail(input: {
   blocks: InvoiceBlock[];
   invoice: InvoiceTemplateEmailDocument;
   unsubscribeUrl?: string;
   unsubscribeNote?: string;
 }): { html: string; text: string } {
-  const body = joinPieces(
-    input.blocks.map((block) => renderBlock(block, input.invoice)),
-  );
-  const documentHtml =
-    body.html ||
-    paragraph(
-      escapeHtml(`Payment received for invoice ${input.invoice.number}.`),
-      "font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#231f20;",
-    );
+  const document = renderInvoiceDocument(input.blocks, input.invoice);
+  const documentHtml = document.html;
   const unsubscribe = unsubscribePiece(input.unsubscribeUrl, input.unsubscribeNote);
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -578,6 +595,6 @@ export function renderInvoiceTemplateEmail(input: {
   </table>
 </body>
 </html>`;
-  const text = [body.text, unsubscribe.text].filter(Boolean).join("\n\n");
+  const text = [document.text, unsubscribe.text].filter(Boolean).join("\n\n");
   return { html, text };
 }

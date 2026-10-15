@@ -193,6 +193,10 @@ export const updateUserSchema = z.object({
   serviceCities: serviceCitiesSchema,
   scheduleExceptions: z.array(scheduleExceptionSchema).optional(),
   phone: phoneField,
+  scheduleColor: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, "Color must be a hex value like #336699")
+    .optional(),
 });
 
 export const forgotPasswordSchema = z.object({

@@ -768,6 +768,7 @@ export default function MessagingHub() {
         renewalMonth: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
         includePaymentLink,
         offerContractTemplateId: previewOffer,
+        invoiceId: initialInvoiceId ?? undefined,
       })
         .then((res) => {
           if (cancelled) return;
@@ -813,6 +814,7 @@ export default function MessagingHub() {
     includePaymentLink,
     offerContractTemplateId,
     offerContractOverrides,
+    initialInvoiceId,
   ]);
 
   useEffect(() => {
@@ -1314,6 +1316,7 @@ export default function MessagingHub() {
         renewalMonth: emailUseRenewalsFilter ? emailViewMonth + 1 : undefined,
         includePaymentLink,
         offerContractTemplateId,
+        invoiceId: initialInvoiceId ?? undefined,
         offerContractOverrides: Object.entries(offerContractOverrides).map(
           ([contactId, contractTemplateId]) => ({
             contactId,

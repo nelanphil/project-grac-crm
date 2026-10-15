@@ -21,6 +21,7 @@ import {
   resolveEmailContent,
   StaffEmailBatchError,
 } from "../services/emailMessage.service";
+import { InvoiceWidgetError, resolveInvoiceWidget } from "../services/invoiceWidget.service";
 import {
   DEFAULT_EMAIL_CHROME,
   mergeEmailChrome,
@@ -30,6 +31,7 @@ import { buildStaffOutboundEmail } from "../utils/emailTemplates";
 import { buildUnsubscribeUrl } from "../utils/unsubscribeToken";
 import {
   renderMessageTemplate,
+  templateUsesInvoice,
   templateUsesPaymentLink,
 } from "../utils/messageTemplate";
 import {
@@ -160,7 +162,11 @@ function toPublicScheduledEmail(
 }
 
 function staffEmailErrorResponse(err: unknown, res: Response): boolean {
-  if (err instanceof StaffEmailBatchError || err instanceof ScheduledAtError) {
+  if (
+    err instanceof StaffEmailBatchError ||
+    err instanceof ScheduledAtError ||
+    err instanceof InvoiceWidgetError
+  ) {
     res.status(err.status).json({ message: err.message });
     return true;
   }
@@ -306,6 +312,17 @@ export async function previewEmailMessage(
     const renderedChrome = renderEmailChrome(chrome, (value) =>
       renderMessageTemplate(value, context),
     );
+    const invoiceWidget = templateUsesInvoice(
+      subject,
+      body,
+      chrome.headerHtml,
+      chrome.footerHtml,
+    )
+      ? await resolveInvoiceWidget({
+          invoiceId: parsed.data.invoiceId,
+          sampleFallback: !parsed.data.invoiceId,
+        })
+      : undefined;
     const previewEmail = (context.email || "jordan.lee@example.com").trim();
     const wrapped = buildStaffOutboundEmail({
       subject: renderedSubject,
@@ -313,6 +330,7 @@ export async function previewEmailMessage(
       paymentUrl,
       chrome: renderedChrome,
       unsubscribeUrl: buildUnsubscribeUrl(previewEmail, "general"),
+      invoiceWidget,
     });
 
     res.json({
@@ -323,6 +341,7 @@ export async function previewEmailMessage(
       sample,
     });
   } catch (err) {
+    if (staffEmailErrorResponse(err, res)) return;
     console.error("POST /email-messages/preview error:", err);
     res.status(500).json({ message: "Failed to preview email" });
   }
@@ -358,6 +377,7 @@ export async function sendEmailMessages(
       renewalYear: data.renewalYear,
       renewalMonth: data.renewalMonth,
       includePaymentLink: data.includePaymentLink,
+      invoiceId: data.invoiceId,
       offerContractTemplateId:
         data.offerContractTemplateId !== undefined
           ? data.offerContractTemplateId
@@ -392,6 +412,19 @@ export async function scheduleEmailMessages(
     const data = parsed.data;
     const scheduledAt = parseFutureScheduledAt(data.scheduledAt);
     const content = await resolveEmailContent(data);
+    if (
+      templateUsesInvoice(
+        content.subject,
+        content.body,
+        content.chrome?.headerHtml,
+        content.chrome?.footerHtml,
+      )
+    ) {
+      await resolveInvoiceWidget({
+        invoiceId: data.invoiceId,
+        sampleFallback: false,
+      });
+    }
     const account = await loadActiveEmailAccount(data.emailAccountId);
     const uniqueContactIds = [...new Set(data.contactIds)];
     const userId = req.user?.id
@@ -411,6 +444,10 @@ export async function scheduleEmailMessages(
       renewalYear: data.renewalYear ?? null,
       renewalMonth: data.renewalMonth ?? null,
       includePaymentLink: data.includePaymentLink === true,
+      invoiceRef:
+        data.invoiceId && Types.ObjectId.isValid(data.invoiceId)
+          ? new Types.ObjectId(data.invoiceId)
+          : null,
       offerContractTemplateId:
         data.offerContractTemplateId !== undefined
           ? data.offerContractTemplateId

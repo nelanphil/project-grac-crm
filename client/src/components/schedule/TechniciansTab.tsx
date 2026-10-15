@@ -19,7 +19,13 @@ import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import { normalizeRoles, userHasCapability } from "@/lib/dashboard-role";
 import { isValidUsPhone } from "@/lib/formatPhone";
-import { formatLocalDate, serviceTerritorySummary, weeklyHoursSummary } from "@/lib/schedule";
+import {
+  formatLocalDate,
+  resolvedTechnicianColor,
+  serviceTerritorySummary,
+  technicianColor,
+  weeklyHoursSummary,
+} from "@/lib/schedule";
 
 function phoneDigits(phone: string): string {
   return phone.replace(/\D/g, "");
@@ -109,6 +115,77 @@ function InlinePhoneEditor({
           void save(e.currentTarget.value);
         }}
         className="w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-sm text-neutral-700 outline-none placeholder:text-neutral-400 hover:border-neutral-200 focus:border-brand-orange focus:bg-[var(--staff-cream)] disabled:opacity-60"
+      />
+      {error ? <p className="mt-1 text-xs text-red-600">{error}</p> : null}
+    </div>
+  );
+}
+
+function ColorPicker({
+  userId,
+  savedColor,
+  token,
+  onSaved,
+}: {
+  userId: string;
+  savedColor: string;
+  token: string | null;
+  onSaved: (user: UserListItem) => void;
+}) {
+  const [value, setValue] = useState(
+    resolvedTechnicianColor(userId, savedColor),
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const saveTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    setValue(resolvedTechnicianColor(userId, savedColor));
+  }, [savedColor, userId]);
+
+  useEffect(
+    () => () => {
+      if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    },
+    [],
+  );
+
+  async function save(next: string) {
+    if (!token || saving) return;
+    const saved = savedColor.trim().toLowerCase();
+    if (saved && next.toLowerCase() === saved) return;
+    if (!saved && next.toLowerCase() === technicianColor(userId)) return;
+    const previous = resolvedTechnicianColor(userId, savedColor);
+    setSaving(true);
+    setError(null);
+    try {
+      const { user } = await updateUser(token, userId, { scheduleColor: next });
+      onSaved(user);
+      setValue(resolvedTechnicianColor(userId, user.scheduleColor));
+    } catch (err) {
+      setValue(previous);
+      setError(err instanceof ApiError ? err.message : "Failed to save color.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <input
+        type="color"
+        aria-label="Schedule color"
+        value={value}
+        disabled={saving || !token}
+        onChange={(event) => {
+          const next = event.target.value;
+          setValue(next);
+          if (saveTimer.current) window.clearTimeout(saveTimer.current);
+          saveTimer.current = window.setTimeout(() => {
+            void save(next);
+          }, 400);
+        }}
+        className="h-7 w-9 cursor-pointer rounded border border-neutral-200 bg-transparent p-0.5 disabled:cursor-wait"
       />
       {error ? <p className="mt-1 text-xs text-red-600">{error}</p> : null}
     </div>
@@ -217,6 +294,17 @@ export default function TechniciansTab() {
                     value={user.homeLocation?.city || "—"}
                   />
                   <DataField
+                    label="Color"
+                    value={
+                      <ColorPicker
+                        userId={user._id}
+                        savedColor={user.scheduleColor ?? ""}
+                        token={token}
+                        onSaved={replaceUser}
+                      />
+                    }
+                  />
+                  <DataField
                     label="Territory"
                     value={serviceTerritorySummary(user.serviceCities)}
                   />
@@ -263,6 +351,9 @@ export default function TechniciansTab() {
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Territory
                     </th>
+                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Color
+                    </th>
                     <th className="px-6 py-3" />
                   </tr>
                 </thead>
@@ -297,6 +388,14 @@ export default function TechniciansTab() {
                       </td>
                       <td className="px-6 py-4 text-neutral-600 whitespace-nowrap">
                         {serviceTerritorySummary(user.serviceCities)}
+                      </td>
+                      <td className="px-6 py-4">
+                        <ColorPicker
+                          userId={user._id}
+                          savedColor={user.scheduleColor ?? ""}
+                          token={token}
+                          onSaved={replaceUser}
+                        />
                       </td>
                       <td className="px-6 py-4 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1">

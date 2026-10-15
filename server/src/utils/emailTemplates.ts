@@ -295,6 +295,24 @@ export function buildContactFormEmail(opts: {
   return { subject, text, html };
 }
 
+function injectInvoiceWidgetHtml(html: string, widgetHtml: string): string {
+  const unwrapped = html.replace(
+    /<p\b[^>]*>\s*\{\{\s*invoice\s*\}\}\s*<\/p>/gi,
+    widgetHtml,
+  );
+  return unwrapped.replace(/\{\{\s*invoice\s*\}\}/g, widgetHtml);
+}
+
+function injectInvoiceWidgetText(text: string, widgetText: string): string {
+  if (!/\{\{\s*invoice\s*\}\}/.test(text)) return text;
+  const replacement = widgetText ? `\n${widgetText}\n` : "";
+  return text
+    .replace(/\{\{\s*invoice\s*\}\}/g, replacement)
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function stripPaymentLinkFromText(text: string, paymentUrl: string): string {
   return text
     .split(paymentUrl)
@@ -312,19 +330,23 @@ export function buildStaffOutboundEmail(opts: {
   paymentUrl?: string;
   chrome?: EmailChrome;
   unsubscribeUrl?: string;
+  /** Trusted HTML inserted where {{invoice}} sits, after body sanitization. */
+  invoiceWidget?: { html: string; text: string } | null;
 }): { subject: string; text: string; html: string } {
   const paymentUrl = opts.paymentUrl?.trim();
   const unsubscribeUrl = opts.unsubscribeUrl?.trim();
   const chrome = mergeEmailChrome(opts.chrome);
+  const widgetHtml = opts.invoiceWidget?.html ?? "";
+  const widgetText = opts.invoiceWidget?.text ?? "";
   const subjectRaw = paymentUrl
     ? stripPaymentLinkFromText(opts.subject, paymentUrl)
     : opts.subject;
-  const subject = subjectRaw.trim() || "Message";
+  const subject = injectInvoiceWidgetText(subjectRaw, "").trim() || "Message";
   const bodyForHtml = paymentUrl
     ? stripPaymentLinkFromText(opts.bodyText, paymentUrl)
     : opts.bodyText;
   const isHtml = looksLikeHtml(bodyForHtml);
-  const bodyHtml = isHtml
+  const sanitizedBody = isHtml
     ? sanitizeEmailBodyHtml(bodyForHtml)
     : escapeHtml(bodyForHtml)
         .split(/\n{2,}/)
@@ -333,7 +355,9 @@ export function buildStaffOutboundEmail(opts: {
             `<p style="margin:0 0 12px;">${block.replace(/\n/g, "<br />")}</p>`,
         )
         .join("");
-  const plainBody = isHtml ? htmlToPlainText(bodyForHtml) : bodyForHtml;
+  const bodyHtml = injectInvoiceWidgetHtml(sanitizedBody, widgetHtml);
+  const plainSource = isHtml ? htmlToPlainText(bodyForHtml) : bodyForHtml;
+  const plainBody = injectInvoiceWidgetText(plainSource, widgetText);
   const previewText = plainBody.replace(/\s+/g, " ").trim().slice(0, 140);
 
   const html = renderBrandedEmail({
@@ -357,9 +381,7 @@ export function buildStaffOutboundEmail(opts: {
   const textParts = [
     paymentUrl
       ? [plainBody, "", `Pay securely: ${paymentUrl}`].filter(Boolean).join("\n")
-      : isHtml
-        ? htmlToPlainText(opts.bodyText)
-        : opts.bodyText,
+      : plainBody,
   ];
   if (unsubscribeUrl) {
     const note = chrome.unsubscribeNote.trim();

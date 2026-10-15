@@ -25,7 +25,10 @@ export function composeSmsPaymentBody(input: {
     ...input.context,
     payment_link: input.paymentUrl ?? "",
   };
-  let body = renderMessageTemplate(input.bodyTemplate, context);
+  let body = renderMessageTemplate(input.bodyTemplate, context).replace(
+    /\{\{\s*invoice\s*\}\}/g,
+    "",
+  );
   if (input.includePaymentLink && !usesToken && input.paymentUrl) {
     const line = `Pay: ${input.paymentUrl}`;
     body = body.trim() ? `${body.replace(/\s+$/, "")}\n${line}` : line;

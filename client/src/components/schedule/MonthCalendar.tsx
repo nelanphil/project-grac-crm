@@ -3,41 +3,98 @@
 import type { WorkOrderListItem } from "@/lib/api";
 import {
   addDays,
+  blendColors,
+  contrastTextColor,
   daysInMonth,
-  formatLocalClock,
   formatLocalDate,
-  jobAccent,
   nyDateParts,
+  properCaseCity,
   startOfMonth,
   localDateTimeToIso,
+  technicianColor,
 } from "@/lib/schedule";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MAX_CHIPS = 3;
+const MAX_CHIPS = 4;
+
+type CityChip = {
+  city: string;
+  color: string;
+  textColor: string;
+  technicians: string[];
+};
 
 function jobDateKey(job: WorkOrderListItem): string {
   if (job.scheduledStart) return formatLocalDate(new Date(job.scheduledStart));
   return job.date ? String(job.date).slice(0, 10) : "";
 }
 
-function chipLabel(job: WorkOrderListItem): string {
-  return [job.customerName || "Work order", job.workOrderType?.label]
+function jobCity(job: WorkOrderListItem): string {
+  return (job.address?.city || job.customerCity || "").trim();
+}
+
+function jobAssigneeId(job: WorkOrderListItem): string {
+  return job.assignedUserRef || job.assignee?._id || "";
+}
+
+function jobAssigneeName(job: WorkOrderListItem): string {
+  const name = [job.assignee?.first_name, job.assignee?.last_name]
     .filter(Boolean)
-    .join(" – ");
+    .join(" ")
+    .trim();
+  return name || job.tech.trim() || "Technician";
+}
+
+function citiesForDay(
+  jobs: WorkOrderListItem[],
+  colors: Record<string, string>,
+): CityChip[] {
+  const byCity = new Map<
+    string,
+    { label: string; techs: Map<string, string> }
+  >();
+  for (const job of jobs) {
+    const city = jobCity(job);
+    const assigneeId = jobAssigneeId(job);
+    if (!city || !assigneeId) continue;
+    const key = city.toLowerCase();
+    const entry = byCity.get(key) ?? { label: city, techs: new Map() };
+    if (!entry.techs.has(assigneeId)) {
+      entry.techs.set(assigneeId, jobAssigneeName(job));
+    }
+    byCity.set(key, entry);
+  }
+  return [...byCity.values()]
+    .map((entry) => {
+      const color = blendColors(
+        [...entry.techs.keys()].map(
+          (id) => colors[id] || technicianColor(id),
+        ),
+      );
+      return {
+        city: properCaseCity(entry.label),
+        color,
+        textColor: contrastTextColor(color),
+        technicians: [...entry.techs.values()].sort((a, b) =>
+          a.localeCompare(b),
+        ),
+      };
+    })
+    .sort((a, b) => a.city.localeCompare(b.city));
 }
 
 export default function MonthCalendar({
   monthDate,
   jobs,
   selectedDate,
+  technicianColors,
   onSelectDate,
-  onJobClick,
 }: {
   monthDate: string;
   jobs: WorkOrderListItem[];
   selectedDate: string;
+  technicianColors: Record<string, string>;
   onSelectDate: (date: string) => void;
-  onJobClick?: (job: WorkOrderListItem) => void;
 }) {
   const start = startOfMonth(monthDate);
   const count = daysInMonth(start);
@@ -53,11 +110,6 @@ export default function MonthCalendar({
     const list = byDate.get(key) ?? [];
     list.push(job);
     byDate.set(key, list);
-  }
-  for (const list of byDate.values()) {
-    list.sort((a, b) =>
-      (a.scheduledStart ?? "~").localeCompare(b.scheduledStart ?? "~"),
-    );
   }
 
   const gridStart = addDays(start, -firstWeekday);
@@ -85,9 +137,11 @@ export default function MonthCalendar({
       >
         {cells.map((date, index) => {
           const inMonth = date.slice(0, 7) === monthKey;
-          const dayJobs = inMonth ? (byDate.get(date) ?? []) : [];
-          const shown = dayJobs.slice(0, MAX_CHIPS);
-          const hidden = dayJobs.length - shown.length;
+          const dayCities = inMonth
+            ? citiesForDay(byDate.get(date) ?? [], technicianColors)
+            : [];
+          const shown = dayCities.slice(0, MAX_CHIPS);
+          const hidden = dayCities.length - shown.length;
           const selected = date === selectedDate;
           const isToday = date === today;
           const lastCol = index % 7 === 6;
@@ -103,30 +157,18 @@ export default function MonthCalendar({
               } ${inMonth ? "" : "opacity-40"}`}
             >
               <div className="min-w-0 flex-1 space-y-0.5">
-                {shown.map((job) => (
-                  <button
-                    key={job._id}
-                    type="button"
-                    title={chipLabel(job)}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (onJobClick) onJobClick(job);
-                      else onSelectDate(date);
+                {shown.map((chip) => (
+                  <div
+                    key={chip.city}
+                    title={chip.technicians.join(", ")}
+                    className="truncate rounded px-1 text-[10px] font-medium leading-4 sm:text-[11px]"
+                    style={{
+                      backgroundColor: chip.color,
+                      color: chip.textColor,
                     }}
-                    className="flex w-full min-w-0 items-center gap-1 rounded px-0.5 text-left text-[10px] leading-4 text-neutral-600 hover:bg-neutral-100 hover:text-brand-dark sm:text-[11px]"
                   >
-                    <span
-                      aria-hidden
-                      className="h-3 w-[3px] shrink-0 rounded-full"
-                      style={{ backgroundColor: jobAccent(job) }}
-                    />
-                    <span className="hidden truncate sm:inline">
-                      {job.scheduledStart
-                        ? `${formatLocalClock(new Date(job.scheduledStart))} `
-                        : ""}
-                      {chipLabel(job)}
-                    </span>
-                  </button>
+                    {chip.city}
+                  </div>
                 ))}
                 {hidden > 0 && (
                   <div className="px-1 text-[10px] font-medium text-neutral-400">
@@ -137,8 +179,8 @@ export default function MonthCalendar({
               <button
                 type="button"
                 aria-label={`Show ${date} in the job list${
-                  dayJobs.length
-                    ? `, ${dayJobs.length} job${dayJobs.length === 1 ? "" : "s"}`
+                  dayCities.length
+                    ? `, ${dayCities.length} ${dayCities.length === 1 ? "city" : "cities"}`
                     : ""
                 }`}
                 aria-pressed={selected}

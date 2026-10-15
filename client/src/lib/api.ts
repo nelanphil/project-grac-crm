@@ -741,6 +741,7 @@ export interface UserListItem {
   serviceCities: ServiceCity[];
   scheduleExceptions: ScheduleException[];
   phone: string;
+  scheduleColor?: string;
   lastLoginAt?: string | null;
   lastLoginLocation?: UserLoginLocation | null;
   createdAt: string;
@@ -806,6 +807,7 @@ export async function updateUser(
     serviceCities?: ServiceCity[];
     scheduleExceptions?: ScheduleException[];
     phone?: string;
+    scheduleColor?: string;
   },
 ): Promise<{ user: UserListItem }> {
   return authRequest<{ user: UserListItem }>(`/users/${id}`, {
@@ -2333,6 +2335,7 @@ export interface ScheduleStaffMember {
   weeklyHours: UserWeeklyHours;
   scheduleExceptions: ScheduleException[];
   serviceCities?: ServiceCity[];
+  scheduleColor?: string;
 }
 
 export interface TechnicianListItem {
@@ -6381,6 +6384,7 @@ export async function previewEmailMessage(
     renewalMonth?: number;
     includePaymentLink?: boolean;
     offerContractTemplateId?: string | null;
+    invoiceId?: string;
   },
 ): Promise<EmailPreviewResult> {
   return authRequest<EmailPreviewResult>("/email-messages/preview", {
@@ -6412,6 +6416,7 @@ export async function sendEmailMessages(
     }[];
     /** Replaces the contact's email for a single-contact send. */
     toOverride?: string;
+    invoiceId?: string;
   },
 ): Promise<EmailSendResponse> {
   return authRequest<EmailSendResponse>("/email-messages/send", {
@@ -6475,6 +6480,7 @@ export async function scheduleEmailMessages(
       contractTemplateId: string | null;
     }[];
     scheduledAt: string;
+    invoiceId?: string;
   },
 ): Promise<{ scheduled: ScheduledEmailItem }> {
   return authRequest<{ scheduled: ScheduledEmailItem }>(

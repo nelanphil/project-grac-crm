@@ -64,6 +64,7 @@ import {
   shiftMonth,
   startOfMonth,
   startOfWeekSunday,
+  resolvedTechnicianColor,
   workOrderLocalDate,
 } from "@/lib/schedule";
 import WeekBoard, {
@@ -455,6 +456,12 @@ function ScheduleRail({
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+type TechnicianLegendItem = {
+  id: string;
+  name: string;
+  color: string;
+};
+
 function ScheduleHeader({
   view,
   surface,
@@ -462,6 +469,7 @@ function ScheduleHeader({
   today,
   selectedDate,
   weekDays,
+  technicianLegend,
   onToday,
   onView,
   onSurface,
@@ -476,6 +484,7 @@ function ScheduleHeader({
   today: string;
   selectedDate: string;
   weekDays: string[];
+  technicianLegend: TechnicianLegendItem[];
   onToday: () => void;
   onView: (view: ViewMode) => void;
   onSurface: (surface: SurfaceMode) => void;
@@ -486,6 +495,8 @@ function ScheduleHeader({
 }) {
   const showDays = view === "week" || surface === "map";
   const showLayout = surface === "calendar";
+  const showLegend =
+    view === "month" && surface === "calendar" && monthMode === "calendar";
   const rangeLabel =
     weekDays.length > 0
       ? `${formatPrettyDate(weekDays[0]!)} – ${formatPrettyDate(weekDays[weekDays.length - 1]!)}`
@@ -573,8 +584,25 @@ function ScheduleHeader({
             </button>
           </div>
         ) : (
-          <div className="min-w-0 flex-1 px-2 text-sm text-neutral-500">
-            Pick a day to open its technician board.
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 px-2 text-sm text-neutral-500">
+            <span>Pick a day to open its technician board.</span>
+            {showLegend && technicianLegend.length > 0 ? (
+              <ul className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                {technicianLegend.map((tech) => (
+                  <li
+                    key={tech.id}
+                    className="flex items-center gap-1.5 text-xs text-brand-dark"
+                  >
+                    <span
+                      aria-hidden
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: tech.color }}
+                    />
+                    {tech.name}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -1793,6 +1821,51 @@ export default function CalendarTab({
   }
 
   const rangeJobs = uniqueJobs(jobs, calendarUnscheduled);
+  const technicianLegend = useMemo(() => {
+    const staffNames = new Map(
+      orderedStaff.map((person) => [
+        person._id,
+        `${person.first_name} ${person.last_name}`.trim(),
+      ]),
+    );
+    const seen = new Map<string, string>();
+    for (const job of rangeJobs) {
+      const id = job.assignedUserRef || job.assignee?._id || "";
+      const city = (job.address?.city || job.customerCity || "").trim();
+      const date = workOrderLocalDate(job);
+      if (!id || !city || !date || date < range.from || date > range.to || seen.has(id)) {
+        continue;
+      }
+      const fromAssignee = [job.assignee?.first_name, job.assignee?.last_name]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      seen.set(
+        id,
+        staffNames.get(id) || fromAssignee || job.tech.trim() || "Technician",
+      );
+    }
+    return [...seen.entries()]
+      .map(([id, name]) => ({
+        id,
+        name,
+        color: resolvedTechnicianColor(
+          id,
+          orderedStaff.find((person) => person._id === id)?.scheduleColor,
+        ),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [orderedStaff, range.from, range.to, rangeJobs]);
+  const technicianColors = useMemo(() => {
+    const colors: Record<string, string> = {};
+    for (const person of orderedStaff) {
+      colors[person._id] = resolvedTechnicianColor(
+        person._id,
+        person.scheduleColor,
+      );
+    }
+    return colors;
+  }, [orderedStaff]);
 
   function openWorkOrder(job: WorkOrderListItem) {
     setEditingJob(null);
@@ -1997,6 +2070,7 @@ export default function CalendarTab({
         today={today}
         selectedDate={selectedDate}
         weekDays={weekDays}
+        technicianLegend={technicianLegend}
         onToday={() => {
           setAnchorDate(today);
           setSelectedDate(today);
@@ -2161,14 +2235,9 @@ export default function CalendarTab({
                     monthDate={anchorDate}
                     jobs={rangeJobs}
                     selectedDate={selectedDate}
+                    technicianColors={technicianColors}
                     onSelectDate={(date) => {
                       setSelectedDate(date);
-                    }}
-                    onJobClick={(job) => {
-                      setEditingJob(job);
-                      setDurationDraft(
-                        job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
-                      );
                     }}
                   />
                 </div>

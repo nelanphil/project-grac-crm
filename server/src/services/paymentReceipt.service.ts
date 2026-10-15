@@ -43,7 +43,7 @@ function pickRecipient(primaryEmail: string, accountEmail: string): string {
   return "";
 }
 
-async function loadInvoiceDocument(invoice: IInvoice): Promise<{
+export async function loadInvoiceEmailContext(invoice: IInvoice): Promise<{
   document: InvoiceTemplateEmailDocument;
   recipient: string;
 }> {
@@ -157,7 +157,7 @@ async function deliverPaymentReceipt(invoice: IInvoice): Promise<void> {
     return;
   }
 
-  const { document, recipient } = await loadInvoiceDocument(fresh);
+  const { document, recipient } = await loadInvoiceEmailContext(fresh);
   if (!recipient) {
     console.info(`[payment-receipt] No billing email for invoice ${fresh.number}`);
     return;

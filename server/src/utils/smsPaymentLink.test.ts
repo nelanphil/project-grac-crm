@@ -71,6 +71,17 @@ describe("composeSmsPaymentBody", () => {
     assert.equal(result.error, undefined);
   });
 
+  it("drops the invoice widget token from texts", () => {
+    const result = composeSmsPaymentBody({
+      bodyTemplate: "Hi {{first_name}} {{invoice}}",
+      context: { first_name: "Ada", payment_link: "" },
+      includePaymentLink: false,
+      paymentUrl: null,
+    });
+    assert.equal(result.body, "Hi Ada ");
+    assert.equal(result.error, undefined);
+  });
+
   it("fails when the rendered message exceeds the SMS limit", () => {
     const result = composeSmsPaymentBody({
       bodyTemplate: "x".repeat(SMS_BODY_MAX),

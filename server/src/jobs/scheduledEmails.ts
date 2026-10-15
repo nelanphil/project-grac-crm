@@ -46,6 +46,7 @@ export async function runScheduledEmailJob(): Promise<{
           renewalYear: row.renewalYear,
           renewalMonth: row.renewalMonth,
           includePaymentLink: row.includePaymentLink,
+          invoiceId: row.invoiceRef ? String(row.invoiceRef) : null,
           offerContractTemplateId: row.offerContractTemplateId
             ? String(row.offerContractTemplateId)
             : null,

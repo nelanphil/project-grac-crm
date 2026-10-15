@@ -99,22 +99,10 @@ describe("invoiceEmailHtml", () => {
     assert.equal(pickInvoicePhoneContact(contacts, "c2")?._id, "c2");
   });
 
-  it("embeds invoice details without tables and escapes HTML", () => {
-    const html = invoiceEmailBodyHtml(invoice);
-    assert.match(html, /Hi \{\{first_name\}\}/);
-    assert.match(html, /<h2>Invoice INV-100<\/h2>/);
-    assert.match(html, /Annual service/);
-    assert.match(html, /Filter &lt;special&gt;/);
-    assert.doesNotMatch(html, /<table/);
-    assert.match(html, /Total due:/);
-    assert.match(html, /Discount SAVE/);
-    assert.match(html, /Tax/);
-    assert.match(html, /Subtotal:/);
-  });
-
-  it("includes visible work order notes without HTML injection", () => {
+  it("keeps the message short and leaves invoice layout to the widget", () => {
     const html = invoiceEmailBodyHtml({
       ...invoice,
+      number: "INV-100 <draft>",
       workOrderNotes: [
         {
           _id: "n1",
@@ -126,8 +114,13 @@ describe("invoiceEmailHtml", () => {
         },
       ],
     });
-    assert.match(html, /<p><strong>Notes<\/strong><\/p>/);
-    assert.match(html, /Replaced filter &lt;script&gt;/);
+    assert.match(html, /Hi \{\{first_name\}\}/);
+    assert.match(html, /\{\{invoice\}\}/);
+    assert.match(html, /INV-100 &lt;draft&gt;/);
+    assert.doesNotMatch(html, /Annual service/);
+    assert.doesNotMatch(html, /<table/);
+    assert.doesNotMatch(html, /<script/i);
+    assert.doesNotMatch(html, /Notes/);
   });
 
   it("treats open and failed invoices as payable", () => {

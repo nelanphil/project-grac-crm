@@ -334,6 +334,7 @@ export function useInvoiceCustomerSend(
               emailChrome: chrome ?? undefined,
               contactId,
               includePaymentLink: withPayLink,
+              invoiceId: invoiceId || undefined,
             }).then((result) => {
               if (cancelled) return;
               setEmailPreview(result);
@@ -493,6 +494,7 @@ export function useInvoiceCustomerSend(
           fromName: emailAccount.fromName,
           includePaymentLink: payLink,
           toOverride: emailOverride,
+          invoiceId: invoice._id,
         });
         const failed = result.results.find((item) => item.status !== "sent");
         if (failed || result.summary.failed > 0) {
