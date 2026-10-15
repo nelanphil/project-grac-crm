@@ -843,8 +843,16 @@ export default function CalendarTab({
   const [monthMode, setMonthMode] = useState<MonthMode>("calendar");
   const [surface, setSurface] = useState<SurfaceMode>("calendar");
   const [viewReady, setViewReady] = useState(false);
+  const [isMonthExpanded, setIsMonthExpanded] = useState(false);
   const [staff, setStaff] = useState<ScheduleStaffMember[]>([]);
   const [staffOrder, setStaffOrder] = useState<string[]>([]);
+
+  const effectiveMonthExpanded =
+    isMonthExpanded &&
+    view === "month" &&
+    monthMode === "calendar" &&
+    surface === "calendar";
+
   useEffect(() => {
     setStaffOrder(readStaffOrder());
   }, []);
@@ -2501,6 +2509,30 @@ export default function CalendarTab({
                     onSelectDate={(date) => {
                       setSelectedDate(date);
                     }}
+                    isExpanded={effectiveMonthExpanded}
+                    onToggleExpand={() => setIsMonthExpanded((prev) => !prev)}
+                    onStepMonth={(direction) => {
+                      const month = shiftMonth(selectedDate.slice(0, 7), direction);
+                      const day = Math.min(
+                        Number(selectedDate.slice(8)),
+                        daysInMonth(`${month}-01`),
+                      );
+                      const next = `${month}-${String(day).padStart(2, "0")}`;
+                      setAnchorDate(next);
+                      setSelectedDate(next);
+                    }}
+                    onToday={() => {
+                      setAnchorDate(today);
+                      setSelectedDate(today);
+                    }}
+                    today={today}
+                    technicianLegend={technicianLegend}
+                    onJobClick={(job) => {
+                      setEditingJob(job);
+                      setDurationDraft(
+                        job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
+                      );
+                    }}
                   />
                 </div>
               ) : (
@@ -2526,7 +2558,7 @@ export default function CalendarTab({
 
       {territoryPrompt ? (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+          className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 p-4 sm:items-center"
           onClick={() => {
             territoryPrompt.resolve(false);
             setTerritoryPrompt(null);
@@ -2590,7 +2622,7 @@ export default function CalendarTab({
       )}
 
       {editingJob && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 p-4 sm:items-center">
           <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
             <h3 className="text-lg font-semibold text-brand-dark">
               {editingJob.customerName || "Work order"}
