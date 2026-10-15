@@ -1481,15 +1481,16 @@ export default function CalendarTab({
   async function assignRailTechnician(
     job: WorkOrderListItem,
     userId: string,
-  ) {
-    if (!token || !canWrite) return;
+    insertIndex?: number,
+  ): Promise<boolean> {
+    if (!token || !canWrite) return false;
     const crew = workOrderCrewIds(job);
     const alreadyScheduled =
       Boolean(job.scheduledStart) &&
       crew.includes(userId) &&
       workOrderLocalDate(job) === selectedDate;
-    if (alreadyScheduled) return;
-    if (!(await confirmTerritory(job, userId))) return;
+    if (alreadyScheduled) return false;
+    if (!(await confirmTerritory(job, userId))) return false;
     setSaving(true);
     setWarning(null);
     setError(null);
@@ -1500,15 +1501,15 @@ export default function CalendarTab({
         estimatedMinutes: job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
       });
       const suggestion = result.suggestions.find((item) => item.userId === userId);
-      if (!suggestion?.proposedStart) {
+      if (!suggestion?.proposedStart && insertIndex === undefined) {
         setError(
           suggestion?.reason || "This technician is not available that day.",
         );
-        return;
+        return false;
       }
-      let scheduledStart = suggestion.proposedStart;
+      let scheduledStart = suggestion?.proposedStart;
       const windowStart = normalizeTimeOfDay(job.startTime);
-      if (windowStart) {
+      if (windowStart && scheduledStart) {
         const windowIso = localDateTimeToIso(selectedDate, windowStart);
         if (new Date(windowIso).getTime() > new Date(scheduledStart).getTime()) {
           scheduledStart = windowIso;
@@ -1521,6 +1522,7 @@ export default function CalendarTab({
         assignedUserRefs: nextCrew,
         date: selectedDate,
         scheduledStart,
+        insertIndex,
         estimatedMinutes: job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
         requirePreferred: nextCrew.length > 1,
       });
@@ -1536,12 +1538,14 @@ export default function CalendarTab({
       setSuggestions(null);
       setRouteTechId(userId);
       await load();
+      return true;
     } catch (err) {
       setError(
         err instanceof ApiError
           ? err.message
           : "Failed to assign technician.",
       );
+      return false;
     } finally {
       setSaving(false);
     }
@@ -2527,6 +2531,11 @@ export default function CalendarTab({
                     }}
                     today={today}
                     technicianLegend={technicianLegend}
+                    recommendations={recommendationsEnabled ? recommendations : {}}
+                    staff={orderedStaff}
+                    onAssignTechnician={(job, userId, insertIndex) =>
+                      assignRailTechnician(job, userId, insertIndex)
+                    }
                     onJobClick={(job) => {
                       setEditingJob(job);
                       setDurationDraft(
