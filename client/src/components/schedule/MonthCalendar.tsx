@@ -40,10 +40,10 @@ import {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MAX_CHIPS = 4;
 
-const DEFAULT_ASSIGN_MODAL_WIDTH = 540;
-const DEFAULT_ASSIGN_MODAL_HEIGHT = 640;
-const MIN_ASSIGN_MODAL_WIDTH = 420;
-const MIN_ASSIGN_MODAL_HEIGHT = 420;
+const DEFAULT_ASSIGN_MODAL_WIDTH = 760;
+const DEFAULT_ASSIGN_MODAL_HEIGHT = 680;
+const MIN_ASSIGN_MODAL_WIDTH = 560;
+const MIN_ASSIGN_MODAL_HEIGHT = 480;
 const STORAGE_KEY_ASSIGN_MODAL = "grac_assign_modal_dimensions";
 
 function readModalDimensions(): { width: number; height: number } {
@@ -56,8 +56,8 @@ function readModalDimensions(): { width: number; height: number } {
       const parsed = JSON.parse(raw);
       if (typeof parsed?.width === "number" && typeof parsed?.height === "number") {
         return {
-          width: Math.max(MIN_ASSIGN_MODAL_WIDTH, Math.min(window.innerWidth - 32, parsed.width)),
-          height: Math.max(MIN_ASSIGN_MODAL_HEIGHT, Math.min(window.innerHeight - 32, parsed.height)),
+          width: Math.max(DEFAULT_ASSIGN_MODAL_WIDTH, Math.min(window.innerWidth - 32, parsed.width)),
+          height: Math.max(DEFAULT_ASSIGN_MODAL_HEIGHT, Math.min(window.innerHeight - 32, parsed.height)),
         };
       }
     }
@@ -935,9 +935,9 @@ export default function MonthCalendar({
 
   const renderGrid = () => (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
-      <div className="grid shrink-0 grid-cols-7 border-b border-neutral-200 text-center text-[11px] font-medium text-neutral-400">
+      <div className="grid shrink-0 grid-cols-7 border-b border-neutral-200 text-center text-xs sm:text-sm font-bold text-neutral-600 dark:text-neutral-300">
         {WEEKDAYS.map((d) => (
-          <div key={d} className="py-2.5">
+          <div key={d} className="py-2.5 sm:py-3">
             <span className="sm:hidden">{d.slice(0, 1)}</span>
             <span className="hidden sm:inline">{d}</span>
           </div>
@@ -974,7 +974,7 @@ export default function MonthCalendar({
                   setDrawerOpen(true);
                 }
               }}
-              className={`group relative z-0 flex h-full min-h-0 cursor-pointer flex-col gap-1 overflow-visible p-1 transition-colors hover:z-20 sm:p-1.5 ${
+              className={`group relative z-0 flex h-full min-h-0 cursor-pointer flex-col gap-1 overflow-visible p-1.5 transition-colors hover:z-20 sm:p-2 ${
                 lastCol ? "" : "border-r"
               } ${lastRow ? "" : "border-b"} border-neutral-200/70 ${
                 selected
@@ -982,7 +982,7 @@ export default function MonthCalendar({
                   : "hover:bg-neutral-50"
               } ${inMonth ? "" : "opacity-40"}`}
             >
-              <div className="min-h-0 min-w-0 flex-1 space-y-0.5 overflow-hidden">
+              <div className="min-h-0 min-w-0 flex-1 space-y-1 overflow-hidden">
                 {shown.map((chip) => (
                   <div
                     key={chip.city}
@@ -993,7 +993,11 @@ export default function MonthCalendar({
                         ? ` · ${chip.technicians.map((tech) => tech.name).join(", ")}`
                         : ""
                     }`}
-                    className="flex items-center gap-1 rounded border-l-[3px] px-1 text-[10px] font-medium leading-4 sm:text-[11px]"
+                    className={`flex items-center gap-1.5 rounded transition-all ${
+                      isExpanded
+                        ? "border-l-4 px-2 py-0.5 text-xs sm:text-sm font-semibold leading-5 shadow-2xs"
+                        : "border-l-[3px] px-1.5 py-0.2 text-[11px] sm:text-xs font-medium leading-4"
+                    }`}
                     style={{
                       backgroundColor: opaqueTechnicianTint(chip.color),
                       borderLeftColor: chip.color,
@@ -1001,7 +1005,7 @@ export default function MonthCalendar({
                     }}
                   >
                     <span className="min-w-0 truncate">{chip.city}</span>
-                    <span className="shrink-0 tabular-nums">{chip.count}</span>
+                    <span className="shrink-0 tabular-nums font-bold">{chip.count}</span>
                   </div>
                 ))}
               </div>
@@ -1010,7 +1014,7 @@ export default function MonthCalendar({
                   className="group/more relative z-10 hover:z-30"
                   onClick={(event) => event.stopPropagation()}
                 >
-                  <div className="px-1 text-[10px] font-medium text-neutral-400 hover:text-brand-orange transition-colors">
+                  <div className="px-1 text-xs font-bold text-neutral-500 hover:text-brand-orange transition-colors">
                     +{extra.length} more
                   </div>
                   <div
@@ -1022,7 +1026,7 @@ export default function MonthCalendar({
                       {extra.map((chip) => (
                         <li
                           key={chip.city}
-                          className="flex items-center justify-between gap-3 text-[11px] leading-tight"
+                          className="flex items-center justify-between gap-3 text-xs font-medium leading-tight"
                         >
                           <span className="flex min-w-0 items-center gap-1.5">
                             {chip.technicians.length > 0 ? (
@@ -1038,11 +1042,11 @@ export default function MonthCalendar({
                                 ))}
                               </span>
                             ) : null}
-                            <span className="min-w-0 truncate text-brand-dark">
+                            <span className="min-w-0 truncate text-brand-dark font-medium">
                               {chip.city}
                             </span>
                           </span>
-                          <span className="shrink-0 tabular-nums text-neutral-500">
+                          <span className="shrink-0 tabular-nums font-bold text-neutral-600">
                             {chip.count}
                           </span>
                         </li>
@@ -1066,7 +1070,7 @@ export default function MonthCalendar({
                     setDrawerOpen(true);
                   }
                 }}
-                className={`self-end rounded-md px-1.5 text-xs font-semibold tabular-nums sm:text-sm ${
+                className={`self-end rounded-md px-2 py-0.5 text-xs font-bold tabular-nums sm:text-base ${
                   isToday
                     ? "bg-brand-orange text-white shadow-2xs"
                     : "text-brand-dark group-hover:text-brand-orange"
@@ -1271,15 +1275,15 @@ export default function MonthCalendar({
               isDraggingDrawer ? "select-none" : "transition-[width] duration-75"
             }`}
           >
-            <div className="flex items-center justify-between border-b border-neutral-200 bg-white px-4 py-3">
+            <div className="flex items-center justify-between border-b border-neutral-200 bg-white px-5 py-4">
               <div>
-                <h3 className="text-sm font-semibold text-brand-dark">
+                <h3 className="text-base sm:text-lg font-bold text-brand-dark">
                   {formatPrettyDate(selectedDate)}
                 </h3>
-                <p className="text-xs text-neutral-500">
+                <p className="text-xs sm:text-sm font-medium text-neutral-600 dark:text-neutral-300">
                   {groupedDayJobs.totalCount} {groupedDayJobs.totalCount === 1 ? "appointment" : "appointments"}
                   {groupedDayJobs.unscheduled.length > 0 && (
-                    <span className="ml-1 text-[#c2410c] font-semibold">
+                    <span className="ml-1 text-[#c2410c] font-bold">
                       ({groupedDayJobs.unscheduled.length} unscheduled)
                     </span>
                   )}
@@ -1288,35 +1292,35 @@ export default function MonthCalendar({
               <button
                 type="button"
                 onClick={() => setDrawerOpen(false)}
-                className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
+                className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
                 aria-label="Close drawer"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-3 space-y-3.5">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {groupedDayJobs.totalCount === 0 ? (
-                <div className="py-12 text-center text-xs text-neutral-400">
+                <div className="py-16 text-center text-sm font-medium text-neutral-400">
                   No appointments scheduled on this date.
                 </div>
               ) : (
                 <>
                   {/* Unscheduled Appointments at Top */}
                   {groupedDayJobs.unscheduled.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="sticky top-0 z-10 flex items-center justify-between rounded-lg bg-orange-500/10 border border-orange-500/25 px-3 py-1.5 backdrop-blur-xs">
-                        <div className="flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-[#c2410c] animate-pulse" />
-                          <span className="text-xs font-bold uppercase tracking-wider text-[#c2410c] dark:text-orange-400">
+                    <div className="space-y-2.5">
+                      <div className="sticky top-0 z-10 flex items-center justify-between rounded-lg bg-orange-500/10 border border-orange-500/25 px-3.5 py-2 backdrop-blur-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 rounded-full bg-[#c2410c] animate-pulse" />
+                          <span className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#c2410c] dark:text-orange-400">
                             Unscheduled Appointments
                           </span>
                         </div>
-                        <span className="rounded-full bg-[#c2410c] text-white px-2 py-0.5 text-[10px] font-bold">
+                        <span className="rounded-full bg-[#c2410c] text-white px-2.5 py-0.5 text-xs font-bold shadow-2xs">
                           {groupedDayJobs.unscheduled.length}
                         </span>
                       </div>
-                      <div className="space-y-2">
+                      <div className="space-y-2.5">
                         {groupedDayJobs.unscheduled.map((job) => {
                           const techColor =
                             technicianColors[job.assignee?._id || ""] ||
@@ -1350,20 +1354,20 @@ export default function MonthCalendar({
                                   openAssignMenu(job);
                                 }
                               }}
-                              className="group relative cursor-pointer rounded-xl border border-neutral-300 bg-white p-3 text-xs shadow-2xs transition-all hover:border-brand-orange hover:shadow-xs"
+                              className="group relative cursor-pointer rounded-xl border border-neutral-300 bg-white p-3.5 text-xs shadow-2xs transition-all hover:border-brand-orange hover:shadow-xs"
                               style={{ borderLeftWidth: "4px", borderLeftColor: recColor || "#c2410c" }}
                             >
                               <div className="flex items-start justify-between gap-2">
-                                <span className="font-semibold text-brand-dark uppercase tracking-tight truncate">
+                                <span className="font-bold text-sm sm:text-base text-brand-dark uppercase tracking-tight truncate">
                                   {job.customerName || "Customer"}
                                 </span>
                                 <div className="flex shrink-0 flex-col items-end">
-                                  <span className="rounded-full bg-[#c2410c] px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-white">
+                                  <span className="rounded-full bg-[#c2410c] px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-white shadow-2xs">
                                     Unscheduled
                                   </span>
                                   {recInitials && (
                                     <span
-                                      className="mt-0.5 text-[11px] font-bold"
+                                      className="mt-0.5 text-xs font-bold"
                                       style={{ color: recColor }}
                                       title={`Recommended: ${recTechName}`}
                                     >
@@ -1373,24 +1377,24 @@ export default function MonthCalendar({
                                 </div>
                               </div>
 
-                              <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-500">
+                              <div className="mt-1 flex items-center justify-between text-xs sm:text-sm text-neutral-600 dark:text-neutral-300 font-medium">
                                 <span className="truncate">{jobCity(job) || "No address"}</span>
                               </div>
 
                               {job.descPerform && (
-                                <p className="mt-1.5 text-[11px] uppercase text-neutral-400 line-clamp-2">
+                                <p className="mt-1.5 text-xs sm:text-sm text-neutral-500 dark:text-neutral-300 line-clamp-2 leading-relaxed">
                                   {job.descPerform}
                                 </p>
                               )}
 
-                              <div className="mt-2 flex items-center justify-between pt-1 border-t border-neutral-100 dark:border-neutral-800">
+                              <div className="mt-2.5 flex items-center justify-between pt-1.5 border-t border-neutral-100 dark:border-neutral-800">
                                 {onAssignTechnician ? (
-                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-orange group-hover:underline">
-                                    <Sparkles className="h-3 w-3" />
+                                  <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-brand-orange group-hover:underline">
+                                    <Sparkles className="h-3.5 w-3.5" />
                                     <span>Assign Technician ▾</span>
                                   </span>
                                 ) : (
-                                  <span className="text-[11px] text-neutral-400">Unscheduled</span>
+                                  <span className="text-xs text-neutral-400 font-medium">Unscheduled</span>
                                 )}
 
                                 {onJobClick && (
@@ -1400,7 +1404,7 @@ export default function MonthCalendar({
                                       e.stopPropagation();
                                       onJobClick(job);
                                     }}
-                                    className="text-[11px] text-neutral-400 hover:text-brand-orange hover:underline"
+                                    className="text-xs sm:text-sm font-semibold text-neutral-500 hover:text-brand-orange hover:underline"
                                   >
                                     View
                                   </button>
@@ -1418,35 +1422,35 @@ export default function MonthCalendar({
                     const isCollapsed = collapsedTechGroups.has(group.technicianId);
 
                     return (
-                      <div key={group.technicianId} className="space-y-2">
+                      <div key={group.technicianId} className="space-y-2.5">
                         {/* Technician Header */}
                         <div
                           onClick={() => toggleCollapseGroup(group.technicianId)}
-                          className="sticky top-0 z-10 flex cursor-pointer select-none items-center justify-between rounded-lg border border-neutral-200/90 bg-neutral-100/90 dark:bg-neutral-800/90 dark:border-neutral-700/80 px-3 py-2 backdrop-blur-xs transition-colors hover:bg-neutral-200/70"
+                          className="sticky top-0 z-10 flex cursor-pointer select-none items-center justify-between rounded-lg border border-neutral-200/90 bg-neutral-100/90 dark:bg-neutral-800/90 dark:border-neutral-700/80 px-3.5 py-2.5 backdrop-blur-xs transition-colors hover:bg-neutral-200/70"
                           title={isCollapsed ? "Click to expand" : "Click to collapse"}
                         >
-                          <div className="flex items-center gap-2 min-w-0">
+                          <div className="flex items-center gap-2.5 min-w-0">
                             <span
                               aria-hidden
-                              className="h-3 w-3 shrink-0 rounded-full shadow-2xs"
+                              className="h-3.5 w-3.5 shrink-0 rounded-full shadow-2xs"
                               style={{ backgroundColor: group.technicianColor }}
                             />
-                            <span className="text-xs font-bold text-brand-dark dark:text-neutral-100 truncate">
+                            <span className="text-sm sm:text-base font-bold text-brand-dark dark:text-neutral-100 truncate">
                               {group.technicianName}
                             </span>
                           </div>
 
-                          <div className="flex shrink-0 items-center gap-2 pl-2">
+                          <div className="flex shrink-0 items-center gap-2.5 pl-2">
                             {group.timeSpan && (
-                              <span className="text-[11px] font-medium text-neutral-500 tabular-nums">
+                              <span className="text-xs sm:text-sm font-semibold text-neutral-600 dark:text-neutral-300 tabular-nums">
                                 {group.timeSpan}
                               </span>
                             )}
-                            <span className="rounded-full bg-white dark:bg-neutral-700 border border-neutral-200 dark:border-neutral-600 px-2 py-0.5 text-[10px] font-bold text-neutral-600 dark:text-neutral-300">
+                            <span className="rounded-full bg-white dark:bg-neutral-700 border border-neutral-200 dark:border-neutral-600 px-2.5 py-0.5 text-xs font-bold text-neutral-700 dark:text-neutral-200">
                               {group.jobs.length} {group.jobs.length === 1 ? "stop" : "stops"}
                             </span>
                             <ChevronDown
-                              className={`h-3.5 w-3.5 text-neutral-400 transition-transform duration-200 ${
+                              className={`h-4 w-4 text-neutral-400 transition-transform duration-200 ${
                                 isCollapsed ? "-rotate-90" : "rotate-0"
                               }`}
                             />
@@ -1455,7 +1459,7 @@ export default function MonthCalendar({
 
                         {/* Chronological Job Cards (Earliest to Latest) */}
                         {!isCollapsed && (
-                          <div className="space-y-2">
+                          <div className="space-y-2.5">
                             {group.jobs.map((job, idx) => {
                               const stopNumber = idx + 1;
                               const time = job.scheduledStart
@@ -1466,7 +1470,7 @@ export default function MonthCalendar({
                                 <div
                                   key={job._id}
                                   onClick={() => onJobClick?.(job)}
-                                  className={`group relative rounded-xl border p-3 text-xs shadow-2xs transition-all ${
+                                  className={`group relative rounded-xl border p-3.5 text-xs shadow-2xs transition-all ${
                                     onJobClick
                                       ? "cursor-pointer border-neutral-200 bg-white hover:border-brand-orange hover:shadow-xs"
                                       : "border-neutral-200 bg-white"
@@ -1476,26 +1480,26 @@ export default function MonthCalendar({
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="flex items-center gap-2 min-w-0">
                                       <span
-                                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-2xs"
+                                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-2xs"
                                         style={{ backgroundColor: group.technicianColor }}
                                         title={`Stop #${stopNumber}`}
                                       >
                                         {stopNumber}
                                       </span>
-                                      <span className="font-semibold text-brand-dark uppercase tracking-tight truncate">
+                                      <span className="font-bold text-sm sm:text-base text-brand-dark uppercase tracking-tight truncate">
                                         {job.customerName || "Customer"}
                                       </span>
                                     </div>
 
-                                    <span className="shrink-0 rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-700">
+                                    <span className="shrink-0 rounded-full bg-blue-500/15 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-blue-700">
                                       {time}
                                     </span>
                                   </div>
 
-                                  <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-500">
+                                  <div className="mt-1 flex items-center justify-between text-xs sm:text-sm text-neutral-600 dark:text-neutral-300 font-medium">
                                     <span className="truncate">{jobCity(job) || "No address"}</span>
                                     <span
-                                      className="truncate max-w-[130px] font-medium"
+                                      className="truncate max-w-[140px] font-semibold"
                                       style={{ color: group.technicianColor }}
                                     >
                                       {group.technicianName}
@@ -1503,13 +1507,13 @@ export default function MonthCalendar({
                                   </div>
 
                                   {job.descPerform && (
-                                    <p className="mt-1.5 text-[11px] uppercase text-neutral-400 line-clamp-2">
+                                    <p className="mt-1.5 text-xs sm:text-sm uppercase text-neutral-500 dark:text-neutral-300 line-clamp-2 leading-relaxed">
                                       {job.descPerform}
                                     </p>
                                   )}
 
-                                  <div className="mt-2 flex items-center justify-between pt-1 border-t border-neutral-100 dark:border-neutral-800">
-                                    <span className="text-[11px] text-neutral-400">
+                                  <div className="mt-2.5 flex items-center justify-between pt-1.5 border-t border-neutral-100 dark:border-neutral-800">
+                                    <span className="text-xs sm:text-sm font-semibold text-neutral-500 dark:text-neutral-400">
                                       Stop #{stopNumber}
                                     </span>
 
@@ -1520,7 +1524,7 @@ export default function MonthCalendar({
                                           e.stopPropagation();
                                           onJobClick(job);
                                         }}
-                                        className="text-[11px] text-neutral-400 hover:text-brand-orange hover:underline"
+                                        className="text-xs sm:text-sm font-semibold text-neutral-500 hover:text-brand-orange hover:underline"
                                       >
                                         View
                                       </button>
@@ -1557,46 +1561,46 @@ export default function MonthCalendar({
               key={tech.id}
               type="button"
               onClick={() => handleSelectTech(tech.id)}
-              className={`flex w-full items-center justify-between rounded-xl border p-2.5 text-left transition-all ${
+              className={`flex w-full items-center justify-between rounded-xl border p-3.5 text-left transition-all ${
                 isSelected
                   ? "border-brand-orange bg-brand-orange/10 ring-1 ring-brand-orange"
                   : "border-neutral-200 bg-white hover:bg-neutral-50"
               }`}
             >
-              <div className="flex min-w-0 items-center gap-2.5">
+              <div className="flex min-w-0 items-center gap-3">
                 <span
                   aria-hidden
-                  className="h-3 w-3 shrink-0 rounded-full"
+                  className="h-3.5 w-3.5 shrink-0 rounded-full"
                   style={{ backgroundColor: tech.color }}
                 />
                 <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`text-xs font-semibold ${isSelected ? "text-brand-orange" : "text-brand-dark"} truncate`}>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm sm:text-base font-bold ${isSelected ? "text-brand-orange" : "text-brand-dark"} truncate`}>
                       {tech.name}
                     </span>
                     {isRecommended && (
-                      <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.2 text-[10px] font-bold text-emerald-700">
-                        <Sparkles className="h-2.5 w-2.5" />
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-bold text-emerald-700">
+                        <Sparkles className="h-3 w-3" />
                         Recommended
                       </span>
                     )}
                   </div>
                   {rec?.reason && (
-                    <p className="text-[11px] text-neutral-500 truncate">
+                    <p className="text-xs sm:text-sm text-neutral-600 dark:text-neutral-300 font-medium truncate mt-0.5">
                       {rec.reason}
                     </p>
                   )}
                 </div>
               </div>
 
-              <div className="flex shrink-0 items-center gap-2 pl-2">
-                <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-600">
+              <div className="flex shrink-0 items-center gap-2.5 pl-2">
+                <span className="rounded-lg bg-neutral-100 px-2.5 py-1 text-xs sm:text-sm font-semibold text-neutral-700">
                   {existingCount} {existingCount === 1 ? "job" : "jobs"}
                 </span>
-                <div className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
                   isSelected ? "border-brand-orange bg-brand-orange text-white" : "border-neutral-300"
                 }`}>
-                  {isSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                  {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
                 </div>
               </div>
             </button>
@@ -1606,23 +1610,23 @@ export default function MonthCalendar({
         const selectedStopCalc = calculatedStops[selectedOrderIndex];
 
         const durationSelector = (
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-neutral-100">
-            <div className="flex items-center gap-1.5">
-              <Timer className="h-3.5 w-3.5 text-neutral-400" />
-              <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-500">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-neutral-100">
+            <div className="flex items-center gap-2">
+              <Timer className="h-4 w-4 text-neutral-500" />
+              <span className="text-xs sm:text-sm font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-200">
                 Appointment Length:
               </span>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               {[15, 30, 45, 60, 90, 120].map((mins) => (
                 <button
                   key={mins}
                   type="button"
                   onClick={() => setJobDuration(mins)}
-                  className={`rounded-md px-2 py-0.5 text-[11px] font-semibold transition-all ${
+                  className={`rounded-lg px-2.5 sm:px-3 py-1 text-xs sm:text-sm font-bold transition-all ${
                     jobDuration === mins
                       ? "bg-brand-orange text-white shadow-xs"
-                      : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+                      : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200"
                   }`}
                 >
                   {mins < 60 ? `${mins}m` : `${mins / 60}h`}
@@ -1633,27 +1637,27 @@ export default function MonthCalendar({
         );
 
         const routeOrderContent = (
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {durationSelector}
 
             {techDayAppointments.length === 0 ? (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3.5 text-xs text-emerald-900">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 text-xs sm:text-sm text-emerald-900">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 font-bold text-emerald-800">
+                  <div className="flex items-center gap-2 font-bold text-emerald-800 text-sm sm:text-base">
                     <Check className="h-4 w-4" />
                     <span>1st Stop · First appointment of the day</span>
                   </div>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600/15 border border-emerald-600/30 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
-                    <Clock className="h-3 w-3 text-emerald-700" />
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600/15 border border-emerald-600/30 px-3 py-1 text-xs sm:text-sm font-bold text-emerald-800">
+                    <Clock className="h-3.5 w-3.5 text-emerald-700" />
                     ETA ~8:00 AM
                   </span>
                 </div>
-                <p className="mt-1.5 text-[11px] text-emerald-700">
+                <p className="mt-2 text-xs sm:text-sm text-emerald-700 font-medium">
                   This technician has no other scheduled work orders on {formatPrettyDate(selectedDate)}.
                 </p>
-                <div className="mt-2.5 flex items-center gap-3 text-[11px] text-emerald-800 pt-2 border-t border-emerald-200/60">
-                  <span className="inline-flex items-center gap-1">
-                    <Timer className="h-3 w-3 text-emerald-600" />
+                <div className="mt-3 flex items-center gap-3 text-xs sm:text-sm text-emerald-800 font-medium pt-2 border-t border-emerald-200/60">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Timer className="h-4 w-4 text-emerald-600" />
                     <span>
                       {jobDuration}m visit (8:00 AM –{" "}
                       {formatLocalClock(
@@ -1668,7 +1672,7 @@ export default function MonthCalendar({
                 </div>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {calculatedStops.map((item) => {
                   const isPositionSelected = selectedOrderIndex === item.index;
 
@@ -1677,7 +1681,7 @@ export default function MonthCalendar({
                       key={item.index}
                       type="button"
                       onClick={() => setSelectedOrderIndex(item.index)}
-                      className={`flex w-full flex-col rounded-xl border p-3 text-left transition-all ${
+                      className={`flex w-full flex-col rounded-xl border p-3.5 sm:p-4 text-left transition-all ${
                         isPositionSelected
                           ? "border-brand-orange bg-brand-orange/10 ring-1 ring-brand-orange shadow-xs"
                           : "border-neutral-200 bg-white hover:bg-neutral-50/80 hover:border-neutral-300"
@@ -1685,18 +1689,18 @@ export default function MonthCalendar({
                     >
                       {/* Top Row: Stop Badge, Title, and ETA Badge */}
                       <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex items-center gap-3 min-w-0">
                           <div
-                            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-sm font-bold ${
                               isPositionSelected
                                 ? "border-brand-orange bg-brand-orange text-white"
-                                : "border-neutral-300 text-neutral-600 bg-neutral-100"
+                                : "border-neutral-300 text-neutral-700 bg-neutral-100"
                             }`}
                           >
                             {item.index + 1}
                           </div>
                           <span
-                            className={`text-xs font-bold ${
+                            className={`text-sm sm:text-base font-bold ${
                               isPositionSelected ? "text-brand-orange" : "text-brand-dark"
                             } truncate`}
                           >
@@ -1705,13 +1709,13 @@ export default function MonthCalendar({
                         </div>
 
                         {/* ETA Pill */}
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 text-xs font-bold text-amber-800 dark:text-amber-300 shadow-2xs">
-                            <Clock className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 px-3 py-1 text-xs sm:text-sm font-bold text-amber-900 dark:text-amber-200 shadow-2xs">
+                            <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
                             ETA ~{formatLocalClock(item.eta)}
                           </span>
                           {isPositionSelected && (
-                            <span className="hidden sm:inline-block rounded-md bg-brand-orange px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
+                            <span className="hidden sm:inline-block rounded-md bg-brand-orange px-2 py-0.5 text-xs font-bold uppercase text-white">
                               Selected
                             </span>
                           )}
@@ -1719,19 +1723,19 @@ export default function MonthCalendar({
                       </div>
 
                       {/* Second Row: Placement Context (Before / Between / After) */}
-                      <p className="mt-1.5 text-xs text-neutral-600 font-medium">
+                      <p className="mt-2 text-xs sm:text-sm text-neutral-700 dark:text-neutral-200 font-medium">
                         {item.positionDetail}
                       </p>
 
                       {/* Third Row: Drive Time and Visit Window Metrics */}
-                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-500 pt-1.5 border-t border-neutral-100">
-                        <span className="inline-flex items-center gap-1">
-                          <Car className="h-3 w-3 text-neutral-400" />
+                      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs sm:text-sm text-neutral-600 dark:text-neutral-300 font-medium pt-2 border-t border-neutral-100">
+                        <span className="inline-flex items-center gap-1.5">
+                          <Car className="h-3.5 w-3.5 text-neutral-400" />
                           <span>{item.driveFromPrevLabel}</span>
                         </span>
 
-                        <span className="inline-flex items-center gap-1">
-                          <Timer className="h-3 w-3 text-neutral-400" />
+                        <span className="inline-flex items-center gap-1.5">
+                          <Timer className="h-3.5 w-3.5 text-neutral-400" />
                           <span>
                             {jobDuration}m appointment ({formatLocalClock(item.eta)} –{" "}
                             {formatLocalClock(item.departure)})
@@ -1739,11 +1743,11 @@ export default function MonthCalendar({
                         </span>
 
                         {item.driveToNextLabel && (
-                          <span className="inline-flex items-center gap-1 text-neutral-500">
-                            <ArrowRight className="h-3 w-3 text-neutral-400" />
+                          <span className="inline-flex items-center gap-1.5 text-neutral-600 dark:text-neutral-300">
+                            <ArrowRight className="h-3.5 w-3.5 text-neutral-400" />
                             <span>{item.driveToNextLabel}</span>
                             {item.nextJobDelayMinutes > 0 && (
-                              <span className="text-amber-600 font-medium">
+                              <span className="text-amber-600 font-bold">
                                 (shifts +{item.nextJobDelayMinutes}m)
                               </span>
                             )}
@@ -1753,27 +1757,27 @@ export default function MonthCalendar({
 
                       {/* Expanded Route Timeline Preview when Selected */}
                       {isPositionSelected && techDayAppointments.length > 0 && (
-                        <div className="mt-3 rounded-lg bg-neutral-50 p-2.5 border border-neutral-200/80 text-[11px]">
-                          <div className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1.5">
+                        <div className="mt-3.5 rounded-lg bg-neutral-100/70 dark:bg-neutral-800/70 p-3 border border-neutral-200/80 dark:border-neutral-700/80 text-xs sm:text-sm">
+                          <div className="text-xs font-bold uppercase tracking-wider text-neutral-600 dark:text-neutral-300 mb-2">
                             Projected Route Schedule:
                           </div>
-                          <div className="space-y-1.5 pl-1 font-mono text-[11px]">
+                          <div className="space-y-2 pl-1 font-mono text-xs sm:text-sm">
                             {/* Prior jobs */}
                             {techDayAppointments.slice(0, item.index).map((j, idx) => (
-                              <div key={j._id} className="flex items-center justify-between text-neutral-600">
+                              <div key={j._id} className="flex items-center justify-between text-neutral-700 dark:text-neutral-300">
                                 <span className="truncate">
                                   Stop #{idx + 1}: {j.customerName || "Customer"}
                                 </span>
-                                <span className="shrink-0 tabular-nums text-neutral-500">
+                                <span className="shrink-0 tabular-nums font-semibold text-neutral-600 dark:text-neutral-300">
                                   {j.scheduledStart ? formatLocalClock(new Date(j.scheduledStart)) : ""}
                                 </span>
                               </div>
                             ))}
 
                             {/* This job */}
-                            <div className="flex items-center justify-between font-bold text-brand-orange bg-brand-orange/10 px-1.5 py-0.5 rounded">
-                              <span className="truncate flex items-center gap-1">
-                                <span className="h-1.5 w-1.5 rounded-full bg-brand-orange" />
+                            <div className="flex items-center justify-between font-bold text-brand-orange bg-brand-orange/15 px-2 py-1 rounded">
+                              <span className="truncate flex items-center gap-1.5">
+                                <span className="h-2 w-2 rounded-full bg-brand-orange" />
                                 Stop #{item.index + 1}: {assigningJob.customerName || "Customer"} (New)
                               </span>
                               <span className="shrink-0 tabular-nums">
@@ -1790,11 +1794,11 @@ export default function MonthCalendar({
                                   ? new Date(origTime.getTime() + item.nextJobDelayMinutes * 60_000)
                                   : origTime;
                               return (
-                                <div key={j._id} className="flex items-center justify-between text-neutral-600">
+                                <div key={j._id} className="flex items-center justify-between text-neutral-700 dark:text-neutral-300">
                                   <span className="truncate">
                                     Stop #{subsequentIndex + 1}: {j.customerName || "Customer"}
                                   </span>
-                                  <span className="shrink-0 tabular-nums text-neutral-500">
+                                  <span className="shrink-0 tabular-nums font-semibold text-neutral-600 dark:text-neutral-300">
                                     {adjustedTime ? formatLocalClock(adjustedTime) : ""}
                                   </span>
                                 </div>
@@ -1913,55 +1917,55 @@ export default function MonthCalendar({
                   if ((e.target as HTMLElement).closest("button")) return;
                   setIsModalMaximized((prev) => !prev);
                 }}
-                className="flex shrink-0 select-none items-start justify-between border-b border-neutral-200 px-5 py-4 bg-neutral-50/70 cursor-default"
+                className="flex shrink-0 select-none items-start justify-between border-b border-neutral-200 px-6 py-5 bg-neutral-50/70 cursor-default"
                 title="Double-click header to maximize or restore"
               >
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-[#c2410c] px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                    <span className="rounded-full bg-[#c2410c] px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider text-white shadow-2xs">
                       Unscheduled
                     </span>
-                    <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
+                    <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
                       Assign & Place
                     </span>
                   </div>
-                  <h3 className="mt-1 text-base font-bold text-brand-dark">
+                  <h3 className="mt-1.5 text-xl sm:text-2xl font-extrabold text-brand-dark dark:text-white tracking-tight">
                     {assigningJob.customerName || "Customer"}
                   </h3>
-                  <p className="text-xs text-neutral-500">
+                  <p className="mt-0.5 text-sm font-medium text-neutral-600 dark:text-neutral-300">
                     {[jobCity(assigningJob), assigningJob.workOrderType?.label, formatPrettyDate(selectedDate)]
                       .filter(Boolean)
                       .join(" · ")}
                   </p>
                 </div>
-                <div className="relative z-30 flex items-center gap-1">
+                <div className="relative z-30 flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={() => setIsModalMaximized((prev) => !prev)}
-                    className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
+                    className="rounded-lg p-2 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
                     title={isModalMaximized ? "Restore size" : "Maximize dialog"}
                     aria-label={isModalMaximized ? "Restore size" : "Maximize dialog"}
                   >
                     {isModalMaximized ? (
-                      <Minimize2 className="h-4 w-4" />
+                      <Minimize2 className="h-5 w-5" />
                     ) : (
-                      <Maximize2 className="h-4 w-4" />
+                      <Maximize2 className="h-5 w-5" />
                     )}
                   </button>
                   <button
                     type="button"
                     onClick={closeAssignMenu}
-                    className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
+                    className="rounded-lg p-2 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
                     aria-label="Close dialog"
                     title="Close (Esc)"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-5 w-5" />
                   </button>
                 </div>
               </div>
 
               {/* Popup Body */}
-              <div className="flex-1 min-h-0 overflow-hidden px-5 py-4 flex flex-col">
+              <div className="flex-1 min-h-0 overflow-hidden px-6 py-5 flex flex-col">
                 {assignError && (
                   <div className="shrink-0 mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
                     {assignError}
@@ -1972,15 +1976,15 @@ export default function MonthCalendar({
                   <div className="grid grid-cols-2 gap-6 flex-1 min-h-0">
                     {/* Col 1: Technician Selection */}
                     <div className="flex flex-col min-h-0">
-                      <div className="flex items-center justify-between mb-2 shrink-0">
-                        <label className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                      <div className="flex items-center justify-between mb-2.5 shrink-0">
+                        <label className="text-sm font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-200">
                           1. Select Technician
                         </label>
-                        <span className="text-[11px] text-neutral-400 font-medium">
+                        <span className="text-xs text-neutral-500 dark:text-neutral-400 font-semibold">
                           {technicianList.length} technicians
                         </span>
                       </div>
-                      <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1.5">
+                      <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1.5">
                         {technicianItems}
                       </div>
                     </div>
@@ -1989,23 +1993,23 @@ export default function MonthCalendar({
                     <div className="flex flex-col min-h-0 border-l border-neutral-100 pl-6">
                       {selectedTechId ? (
                         <>
-                          <div className="flex items-center justify-between mb-2 shrink-0">
-                            <label className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                          <div className="flex items-center justify-between mb-2.5 shrink-0">
+                            <label className="text-sm font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-200">
                               2. Route Landing Order
                             </label>
-                            <span className="text-[11px] text-neutral-400 font-medium">
+                            <span className="text-xs text-neutral-500 dark:text-neutral-400 font-semibold">
                               {techDayAppointments.length === 0
                                 ? "1st stop (No existing jobs)"
                                 : `Landing position ${selectedOrderIndex + 1} of ${techDayAppointments.length + 1}`}
                             </span>
                           </div>
-                          <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1.5">
+                          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1.5">
                             {routeOrderContent}
                           </div>
                         </>
                       ) : (
-                        <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-neutral-200 p-6 text-center text-neutral-400">
-                          <p className="text-xs font-medium">Select a technician to configure route order</p>
+                        <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 p-8 text-center text-neutral-500">
+                          <p className="text-sm font-semibold">Select a technician to configure route order</p>
                         </div>
                       )}
                     </div>
@@ -2014,28 +2018,28 @@ export default function MonthCalendar({
                   <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
                     {/* 1. Technician Selection */}
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-neutral-500 mb-2">
+                      <label className="block text-sm font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-200 mb-2">
                         1. Select Technician
                       </label>
-                      <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                      <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                         {technicianItems}
                       </div>
                     </div>
 
                     {/* 2. Route Landing Order */}
                     {selectedTechId && (
-                      <div className="pt-2 border-t border-neutral-100">
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                      <div className="pt-3 border-t border-neutral-100">
+                        <div className="flex items-center justify-between mb-2.5">
+                          <label className="text-sm font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-200">
                             2. Route Landing Order
                           </label>
-                          <span className="text-[11px] text-neutral-400 font-medium">
+                          <span className="text-xs text-neutral-500 dark:text-neutral-400 font-semibold">
                             {techDayAppointments.length === 0
                               ? "1st stop (No existing jobs)"
                               : `Landing position ${selectedOrderIndex + 1} of ${techDayAppointments.length + 1}`}
                           </span>
                         </div>
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                           {routeOrderContent}
                         </div>
                       </div>
@@ -2045,12 +2049,12 @@ export default function MonthCalendar({
               </div>
 
               {/* Popup Action Buttons */}
-              <div className="flex shrink-0 items-center justify-end gap-2 border-t border-neutral-200 bg-neutral-50 px-5 py-3">
+              <div className="flex shrink-0 items-center justify-end gap-3 border-t border-neutral-200 bg-neutral-50 px-6 py-4">
                 <button
                   type="button"
                   onClick={closeAssignMenu}
                   disabled={isAssigning}
-                  className="rounded-lg border border-neutral-200 px-3.5 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
+                  className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-100 hover:text-brand-dark transition-colors"
                 >
                   Cancel
                 </button>
@@ -2077,16 +2081,16 @@ export default function MonthCalendar({
                       setIsAssigning(false);
                     }
                   }}
-                  className="btn-primary inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold shadow-xs"
+                  className="btn-primary inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold shadow-sm"
                 >
                   {isAssigning ? (
                     <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       <span>Assigning…</span>
                     </>
                   ) : (
                     <>
-                      <Check className="h-3.5 w-3.5" />
+                      <Check className="h-4 w-4" />
                       <span>
                         Assign as Stop #{selectedOrderIndex + 1}
                         {selectedStopCalc ? ` (ETA ~${formatLocalClock(selectedStopCalc.eta)})` : ""}
