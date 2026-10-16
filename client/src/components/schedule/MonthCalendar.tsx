@@ -7,6 +7,7 @@ import {
   CalendarDays,
   Car,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -333,6 +334,21 @@ export default function MonthCalendar({
   const expandedBodyRef = useRef<HTMLDivElement | null>(null);
   const drawerResizeCleanupRef = useRef<(() => void) | null>(null);
 
+  // Collapsed Technician Groups State for Expanded Drawer
+  const [collapsedTechGroups, setCollapsedTechGroups] = useState<Set<string>>(new Set());
+
+  function toggleCollapseGroup(techId: string) {
+    setCollapsedTechGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(techId)) {
+        next.delete(techId);
+      } else {
+        next.add(techId);
+      }
+      return next;
+    });
+  }
+
   useEffect(() => {
     drawerWidthRef.current = drawerWidth;
   }, [drawerWidth]);
@@ -596,6 +612,119 @@ export default function MonthCalendar({
       return { id, name: fullName, color };
     });
   }, [staff, technicianLegend, technicianColors]);
+
+  // Grouped Appointments for Selected Day (Unscheduled at top, then technicians earliest to latest)
+  const groupedDayJobs = useMemo(() => {
+    if (!selectedDate) {
+      return {
+        unscheduled: [] as WorkOrderListItem[],
+        technicianGroups: [] as Array<{
+          technicianId: string;
+          technicianName: string;
+          technicianColor: string;
+          earliestStart: string;
+          timeSpan?: string;
+          jobs: WorkOrderListItem[];
+        }>,
+        totalCount: 0,
+      };
+    }
+
+    const dayJobs = byDate.get(selectedDate) ?? [];
+    const unscheduled: WorkOrderListItem[] = [];
+    const techMap = new Map<string, WorkOrderListItem[]>();
+
+    for (const job of dayJobs) {
+      if (!job.scheduledStart) {
+        unscheduled.push(job);
+        continue;
+      }
+
+      const crew = workOrderCrewIds(job);
+      const techId = crew[0] || job.assignedUserRef || job.assignee?._id || "unassigned";
+
+      const list = techMap.get(techId) ?? [];
+      list.push(job);
+      techMap.set(techId, list);
+    }
+
+    // Sort unscheduled by customer name
+    unscheduled.sort((a, b) =>
+      (a.customerName || "").localeCompare(b.customerName || "")
+    );
+
+    // Build sorted technician groups
+    const technicianGroups: Array<{
+      technicianId: string;
+      technicianName: string;
+      technicianColor: string;
+      earliestStart: string;
+      timeSpan?: string;
+      jobs: WorkOrderListItem[];
+    }> = [];
+
+    const knownTechMap = new Map<string, { name: string; color: string }>();
+    for (const t of technicianList) {
+      knownTechMap.set(t.id, { name: t.name, color: t.color });
+    }
+
+    for (const [techId, jobs] of techMap.entries()) {
+      // Sort jobs ascending from earliest to latest
+      const sortedJobs = [...jobs].sort((a, b) => {
+        const aTime = a.scheduledStart ? new Date(a.scheduledStart).getTime() : 0;
+        const bTime = b.scheduledStart ? new Date(b.scheduledStart).getTime() : 0;
+        return aTime - bTime;
+      });
+
+      const meta = knownTechMap.get(techId);
+      const techName =
+        meta?.name ||
+        technicianNames[techId] ||
+        jobAssigneeName(sortedJobs[0]) ||
+        (techId === "unassigned" ? "Unassigned" : "Technician");
+
+      const color =
+        techId === "unassigned"
+          ? "#6b7280"
+          : meta?.color || technicianColors[techId] || technicianColor(techId);
+
+      const earliestStart = sortedJobs[0]?.scheduledStart ?? "";
+      const latestJob = sortedJobs[sortedJobs.length - 1];
+
+      let timeSpan = "";
+      if (sortedJobs.length > 0 && sortedJobs[0].scheduledStart) {
+        const firstTimeStr = formatLocalClock(new Date(sortedJobs[0].scheduledStart));
+        if (sortedJobs.length > 1 && latestJob?.scheduledStart) {
+          const lastTimeStr = formatLocalClock(new Date(latestJob.scheduledStart));
+          timeSpan = firstTimeStr === lastTimeStr ? firstTimeStr : `${firstTimeStr} – ${lastTimeStr}`;
+        } else {
+          timeSpan = firstTimeStr;
+        }
+      }
+
+      technicianGroups.push({
+        technicianId: techId,
+        technicianName: techName,
+        technicianColor: color,
+        earliestStart,
+        timeSpan,
+        jobs: sortedJobs,
+      });
+    }
+
+    // Sort technician groups by their earliest appointment time, then by technician name
+    technicianGroups.sort((a, b) => {
+      const cmp = a.earliestStart.localeCompare(b.earliestStart);
+      if (cmp !== 0) return cmp;
+      return a.technicianName.localeCompare(b.technicianName);
+    });
+
+    return {
+      unscheduled,
+      technicianGroups,
+      totalCount: dayJobs.length,
+    };
+  }, [byDate, selectedDate, technicianList, technicianNames, technicianColors]);
 
   // Existing appointments for selected technician on this date
   const techDayAppointments = useMemo(() => {
@@ -1148,7 +1277,12 @@ export default function MonthCalendar({
                   {formatPrettyDate(selectedDate)}
                 </h3>
                 <p className="text-xs text-neutral-500">
-                  {selectedDayJobs.length} {selectedDayJobs.length === 1 ? "appointment" : "appointments"}
+                  {groupedDayJobs.totalCount} {groupedDayJobs.totalCount === 1 ? "appointment" : "appointments"}
+                  {groupedDayJobs.unscheduled.length > 0 && (
+                    <span className="ml-1 text-[#c2410c] font-semibold">
+                      ({groupedDayJobs.unscheduled.length} unscheduled)
+                    </span>
+                  )}
                 </p>
               </div>
               <button
@@ -1161,128 +1295,246 @@ export default function MonthCalendar({
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
-              {selectedDayJobs.length === 0 ? (
+            <div className="flex-1 overflow-y-auto p-3 space-y-3.5">
+              {groupedDayJobs.totalCount === 0 ? (
                 <div className="py-12 text-center text-xs text-neutral-400">
                   No appointments scheduled on this date.
                 </div>
               ) : (
-                selectedDayJobs.map((job) => {
-                  const isUnscheduled = !job.scheduledStart;
-                  const techColor =
-                    technicianColors[job.assignee?._id || ""] ||
-                    technicianColor(job.assignee?._id || "");
-                  const time = job.scheduledStart
-                    ? formatLocalClock(new Date(job.scheduledStart))
-                    : job.startTime || "Unscheduled";
-
-                  const jobRecs = recommendations[job._id] ?? [];
-                  const recTechId = jobRecs.find((r) => r.available)?.userId || recommendedByJobId[job._id];
-                  const recTechName = recTechId ? technicianNames[recTechId] || "" : "";
-                  const recInitials = recTechName
-                    ? recTechName
-                        .split(" ")
-                        .map((w) => w[0])
-                        .join("")
-                        .toUpperCase()
-                    : "";
-                  const recColor = recTechId ? technicianColors[recTechId] || technicianColor(recTechId) : techColor;
-
-                  return (
-                    <div
-                      key={job._id}
-                      onClick={() => {
-                        if (isUnscheduled && onAssignTechnician) {
-                          openAssignMenu(job);
-                        } else {
-                          onJobClick?.(job);
-                        }
-                      }}
-                      onContextMenu={(e) => {
-                        if (isUnscheduled && onAssignTechnician) {
-                          e.preventDefault();
-                          openAssignMenu(job);
-                        }
-                      }}
-                      className={`group relative rounded-xl border p-3 text-xs shadow-2xs transition-all ${
-                        isUnscheduled
-                          ? "cursor-pointer border-neutral-300 bg-white hover:border-brand-orange hover:shadow-xs"
-                          : onJobClick
-                            ? "cursor-pointer border-neutral-200 bg-white hover:border-brand-orange hover:shadow-xs"
-                            : "border-neutral-200 bg-white"
-                      }`}
-                      style={{ borderLeftWidth: "4px", borderLeftColor: isUnscheduled ? (recColor || "#c2410c") : techColor }}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="font-semibold text-brand-dark uppercase tracking-tight truncate">
-                          {job.customerName || "Customer"}
-                        </span>
-                        <div className="flex shrink-0 flex-col items-end">
-                          <span
-                            className={`rounded-full px-1.5 py-px text-[10px] font-bold uppercase tracking-wide ${
-                              isUnscheduled
-                                ? "bg-[#c2410c] text-white"
-                                : "bg-blue-500/15 text-blue-700"
-                            }`}
-                          >
-                            {isUnscheduled ? "Unscheduled" : time}
+                <>
+                  {/* Unscheduled Appointments at Top */}
+                  {groupedDayJobs.unscheduled.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="sticky top-0 z-10 flex items-center justify-between rounded-lg bg-orange-500/10 border border-orange-500/25 px-3 py-1.5 backdrop-blur-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-[#c2410c] animate-pulse" />
+                          <span className="text-xs font-bold uppercase tracking-wider text-[#c2410c] dark:text-orange-400">
+                            Unscheduled Appointments
                           </span>
-                          {isUnscheduled && recInitials && (
-                            <span
-                              className="mt-0.5 text-[11px] font-bold"
-                              style={{ color: recColor }}
-                              title={`Recommended: ${recTechName}`}
-                            >
-                              {recInitials}
-                            </span>
-                          )}
                         </div>
+                        <span className="rounded-full bg-[#c2410c] text-white px-2 py-0.5 text-[10px] font-bold">
+                          {groupedDayJobs.unscheduled.length}
+                        </span>
                       </div>
+                      <div className="space-y-2">
+                        {groupedDayJobs.unscheduled.map((job) => {
+                          const techColor =
+                            technicianColors[job.assignee?._id || ""] ||
+                            technicianColor(job.assignee?._id || "");
 
-                      <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-500">
-                        <span className="truncate">{jobCity(job) || "No address"}</span>
-                        {!isUnscheduled && (
-                          <span
-                            className="truncate max-w-[120px] font-medium"
-                            style={{ color: techColor }}
-                          >
-                            {jobAssigneeName(job)}
-                          </span>
-                        )}
-                      </div>
+                          const jobRecs = recommendations[job._id] ?? [];
+                          const recTechId = jobRecs.find((r) => r.available)?.userId || recommendedByJobId[job._id];
+                          const recTechName = recTechId ? technicianNames[recTechId] || "" : "";
+                          const recInitials = recTechName
+                            ? recTechName
+                                .split(" ")
+                                .map((w) => w[0])
+                                .join("")
+                                .toUpperCase()
+                            : "";
+                          const recColor = recTechId ? technicianColors[recTechId] || technicianColor(recTechId) : techColor;
 
-                      {job.descPerform && (
-                        <p className="mt-1.5 text-[11px] uppercase text-neutral-400 line-clamp-2">
-                          {job.descPerform}
-                        </p>
-                      )}
+                          return (
+                            <div
+                              key={job._id}
+                              onClick={() => {
+                                if (onAssignTechnician) {
+                                  openAssignMenu(job);
+                                } else {
+                                  onJobClick?.(job);
+                                }
+                              }}
+                              onContextMenu={(e) => {
+                                if (onAssignTechnician) {
+                                  e.preventDefault();
+                                  openAssignMenu(job);
+                                }
+                              }}
+                              className="group relative cursor-pointer rounded-xl border border-neutral-300 bg-white p-3 text-xs shadow-2xs transition-all hover:border-brand-orange hover:shadow-xs"
+                              style={{ borderLeftWidth: "4px", borderLeftColor: recColor || "#c2410c" }}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="font-semibold text-brand-dark uppercase tracking-tight truncate">
+                                  {job.customerName || "Customer"}
+                                </span>
+                                <div className="flex shrink-0 flex-col items-end">
+                                  <span className="rounded-full bg-[#c2410c] px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-white">
+                                    Unscheduled
+                                  </span>
+                                  {recInitials && (
+                                    <span
+                                      className="mt-0.5 text-[11px] font-bold"
+                                      style={{ color: recColor }}
+                                      title={`Recommended: ${recTechName}`}
+                                    >
+                                      {recInitials}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
 
-                      <div className="mt-2 flex items-center justify-between pt-1 border-t border-neutral-100 dark:border-neutral-800">
-                        {isUnscheduled && onAssignTechnician ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-orange group-hover:underline">
-                            <Sparkles className="h-3 w-3" />
-                            <span>Assign Technician ▾</span>
-                          </span>
-                        ) : (
-                          <span className="text-[11px] text-neutral-400">Scheduled</span>
-                        )}
+                              <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-500">
+                                <span className="truncate">{jobCity(job) || "No address"}</span>
+                              </div>
 
-                        {onJobClick && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onJobClick(job);
-                            }}
-                            className="text-[11px] text-neutral-400 hover:text-brand-orange hover:underline"
-                          >
-                            View
-                          </button>
-                        )}
+                              {job.descPerform && (
+                                <p className="mt-1.5 text-[11px] uppercase text-neutral-400 line-clamp-2">
+                                  {job.descPerform}
+                                </p>
+                              )}
+
+                              <div className="mt-2 flex items-center justify-between pt-1 border-t border-neutral-100 dark:border-neutral-800">
+                                {onAssignTechnician ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-orange group-hover:underline">
+                                    <Sparkles className="h-3 w-3" />
+                                    <span>Assign Technician ▾</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-[11px] text-neutral-400">Unscheduled</span>
+                                )}
+
+                                {onJobClick && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onJobClick(job);
+                                    }}
+                                    className="text-[11px] text-neutral-400 hover:text-brand-orange hover:underline"
+                                  >
+                                    View
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  );
-                })
+                  )}
+
+                  {/* Technician Groups (Ascending Chronological Order) */}
+                  {groupedDayJobs.technicianGroups.map((group) => {
+                    const isCollapsed = collapsedTechGroups.has(group.technicianId);
+
+                    return (
+                      <div key={group.technicianId} className="space-y-2">
+                        {/* Technician Header */}
+                        <div
+                          onClick={() => toggleCollapseGroup(group.technicianId)}
+                          className="sticky top-0 z-10 flex cursor-pointer select-none items-center justify-between rounded-lg border border-neutral-200/90 bg-neutral-100/90 dark:bg-neutral-800/90 dark:border-neutral-700/80 px-3 py-2 backdrop-blur-xs transition-colors hover:bg-neutral-200/70"
+                          title={isCollapsed ? "Click to expand" : "Click to collapse"}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              aria-hidden
+                              className="h-3 w-3 shrink-0 rounded-full shadow-2xs"
+                              style={{ backgroundColor: group.technicianColor }}
+                            />
+                            <span className="text-xs font-bold text-brand-dark dark:text-neutral-100 truncate">
+                              {group.technicianName}
+                            </span>
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-2 pl-2">
+                            {group.timeSpan && (
+                              <span className="text-[11px] font-medium text-neutral-500 tabular-nums">
+                                {group.timeSpan}
+                              </span>
+                            )}
+                            <span className="rounded-full bg-white dark:bg-neutral-700 border border-neutral-200 dark:border-neutral-600 px-2 py-0.5 text-[10px] font-bold text-neutral-600 dark:text-neutral-300">
+                              {group.jobs.length} {group.jobs.length === 1 ? "stop" : "stops"}
+                            </span>
+                            <ChevronDown
+                              className={`h-3.5 w-3.5 text-neutral-400 transition-transform duration-200 ${
+                                isCollapsed ? "-rotate-90" : "rotate-0"
+                              }`}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Chronological Job Cards (Earliest to Latest) */}
+                        {!isCollapsed && (
+                          <div className="space-y-2">
+                            {group.jobs.map((job, idx) => {
+                              const stopNumber = idx + 1;
+                              const time = job.scheduledStart
+                                ? formatLocalClock(new Date(job.scheduledStart))
+                                : job.startTime || "";
+
+                              return (
+                                <div
+                                  key={job._id}
+                                  onClick={() => onJobClick?.(job)}
+                                  className={`group relative rounded-xl border p-3 text-xs shadow-2xs transition-all ${
+                                    onJobClick
+                                      ? "cursor-pointer border-neutral-200 bg-white hover:border-brand-orange hover:shadow-xs"
+                                      : "border-neutral-200 bg-white"
+                                  }`}
+                                  style={{ borderLeftWidth: "4px", borderLeftColor: group.technicianColor }}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span
+                                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-2xs"
+                                        style={{ backgroundColor: group.technicianColor }}
+                                        title={`Stop #${stopNumber}`}
+                                      >
+                                        {stopNumber}
+                                      </span>
+                                      <span className="font-semibold text-brand-dark uppercase tracking-tight truncate">
+                                        {job.customerName || "Customer"}
+                                      </span>
+                                    </div>
+
+                                    <span className="shrink-0 rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-700">
+                                      {time}
+                                    </span>
+                                  </div>
+
+                                  <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-500">
+                                    <span className="truncate">{jobCity(job) || "No address"}</span>
+                                    <span
+                                      className="truncate max-w-[130px] font-medium"
+                                      style={{ color: group.technicianColor }}
+                                    >
+                                      {group.technicianName}
+                                    </span>
+                                  </div>
+
+                                  {job.descPerform && (
+                                    <p className="mt-1.5 text-[11px] uppercase text-neutral-400 line-clamp-2">
+                                      {job.descPerform}
+                                    </p>
+                                  )}
+
+                                  <div className="mt-2 flex items-center justify-between pt-1 border-t border-neutral-100 dark:border-neutral-800">
+                                    <span className="text-[11px] text-neutral-400">
+                                      Stop #{stopNumber}
+                                    </span>
+
+                                    {onJobClick && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onJobClick(job);
+                                        }}
+                                        className="text-[11px] text-neutral-400 hover:text-brand-orange hover:underline"
+                                      >
+                                        View
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
               )}
             </div>
           </div>
