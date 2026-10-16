@@ -43,6 +43,7 @@ import {
   TicketFormState,
   TicketVariant,
   applyDiscountsToParts,
+  DEFAULT_TAX_RATE_PERCENT,
   emptyTicketForm,
   hasEquipmentProductLines,
   mergeSavedTicket,
@@ -282,25 +283,31 @@ export default function ServiceTicketForm({
   }, [initial, autoSaving, recordId]);
 
   useEffect(() => {
-    if (!token || recordId) return;
-    if (form.taxOverridden || form.taxRate !== "") return;
+    if (!token || form.taxOverridden) return;
     let cancelled = false;
     getTaxSettings(token)
       .then(({ settings }) => {
         if (cancelled) return;
+        const rate = String(settings.ratePercent ?? DEFAULT_TAX_RATE_PERCENT);
         setForm((prev) => {
-          if (prev.taxRate !== "" || prev.taxOverridden) return prev;
-          return {
-            ...prev,
-            taxRate: String(settings.ratePercent ?? 0),
-          };
+          if (prev.taxOverridden || prev.taxRate === rate) return prev;
+          return { ...prev, taxRate: rate };
         });
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (cancelled) return;
+        setForm((prev) => {
+          if (prev.taxOverridden) return prev;
+          const current = Number(prev.taxRate);
+          if (Number.isFinite(current) && current > 0) return prev;
+          if (prev.taxRate === String(DEFAULT_TAX_RATE_PERCENT)) return prev;
+          return { ...prev, taxRate: String(DEFAULT_TAX_RATE_PERCENT) };
+        });
+      });
     return () => {
       cancelled = true;
     };
-  }, [token, recordId, form.taxRate, form.taxOverridden]);
+  }, [token, form.taxRate, form.taxOverridden]);
 
   useEffect(() => {
     if (!token || !form.customerRef) return;

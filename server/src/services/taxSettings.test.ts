@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 import { computeTicketTotals } from "./serviceTicket";
 import {
   applyTaxToPreTaxCents,
+  companyTaxForUnpaidWorkOrder,
   computeTaxAmount,
+  DEFAULT_TAX_RATE_PERCENT,
   invoiceEligibleForCompanyTaxRate,
   normalizeTaxRatePercent,
   preTaxCents,
@@ -12,6 +14,10 @@ import {
 } from "./taxSettings";
 
 describe("taxSettings", () => {
+  it("defaults a missing company rate to 7%", () => {
+    assert.equal(DEFAULT_TAX_RATE_PERCENT, 7);
+  });
+
   it("normalizes rates into a 0–100 percent range", () => {
     assert.equal(normalizeTaxRatePercent(-1), 0);
     assert.equal(normalizeTaxRatePercent("7.5"), 7.5);
@@ -101,6 +107,48 @@ describe("taxSettings", () => {
         taxCents: 800,
         originalAmountCents: 10800,
         amountCents: 9800,
+      },
+    );
+  });
+
+  it("applies the company rate to a work order stored at 0%", () => {
+    assert.deepEqual(
+      companyTaxForUnpaidWorkOrder(
+        {
+          paid: false,
+          subtotal: 320,
+          shipping: 0,
+          taxRate: 0,
+          tax: 0,
+          total: 320,
+        },
+        DEFAULT_TAX_RATE_PERCENT,
+      ),
+      { taxRate: 7, tax: 22.4, total: 342.4 },
+    );
+    assert.deepEqual(
+      recomputeUnpaidInvoiceTax(
+        {
+          status: "open",
+          amountCents: 32000,
+          taxCents: 0,
+          taxRatePercent: 0,
+          workOrder: {
+            paid: false,
+            subtotal: 320,
+            shipping: 0,
+            taxRate: 0,
+            tax: 0,
+            total: 320,
+          },
+        },
+        7,
+      ),
+      {
+        taxRatePercent: 7,
+        taxCents: 2240,
+        amountCents: 34240,
+        workOrder: { taxRate: 7, tax: 22.4, total: 342.4 },
       },
     );
   });

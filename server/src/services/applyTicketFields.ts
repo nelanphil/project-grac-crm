@@ -11,7 +11,7 @@ import {
   normalizeParts,
   TicketPartInput,
 } from "./serviceTicket";
-import { normalizeTaxRatePercent } from "./taxSettings";
+import { getTaxRatePercent, normalizeTaxRatePercent } from "./taxSettings";
 import { localDateToUtc } from "../utils/scheduleTime";
 import {
   hasAnyDiscount,
@@ -198,17 +198,19 @@ export async function applyTicketMoney(
   }
   if (body.miscExp !== undefined) target.miscExp = body.miscExp;
   if (body.shipping !== undefined) target.shipping = body.shipping;
-  if (body.taxRate !== undefined) {
-    target.taxRate = normalizeTaxRatePercent(body.taxRate);
-  } else if (typeof target.taxRate !== "number") {
-    target.taxRate = 0;
-  }
   if (body.taxOverridden !== undefined) {
     target.taxOverridden = body.taxOverridden;
   } else if (body.tax !== undefined) {
     target.taxOverridden = true;
   } else if (target.taxOverridden == null) {
     target.taxOverridden = false;
+  }
+  if (!target.taxOverridden) {
+    target.taxRate = await getTaxRatePercent();
+  } else if (body.taxRate !== undefined) {
+    target.taxRate = normalizeTaxRatePercent(body.taxRate);
+  } else if (typeof target.taxRate !== "number") {
+    target.taxRate = 0;
   }
   if (body.contractRef !== undefined) {
     target.contractRef = asObjectId(body.contractRef);

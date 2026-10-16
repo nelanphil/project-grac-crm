@@ -27,6 +27,7 @@ import { seedInvoiceTemplates } from "./models/mongo/InvoiceTemplate";
 import { seedServiceAreas } from "./models/mongo/ServiceArea";
 import { ensureTwilioPhoneLineShape } from "./models/mongo/TwilioAccount";
 import { startRenewalInvoiceScheduler } from "./jobs/scheduler";
+import { applyCompanyTaxRateToOpenDocuments } from "./services/taxSettings";
 
 async function bootstrap(): Promise<void> {
   await connectMongoDB();
@@ -50,6 +51,10 @@ async function bootstrap(): Promise<void> {
   await seedInvoiceTemplates();
   await seedServiceAreas();
   await ensureTwilioPhoneLineShape();
+  const taxUpdated = await applyCompanyTaxRateToOpenDocuments();
+  if (taxUpdated > 0) {
+    console.log(`Applied company tax rate to ${taxUpdated} open documents`);
+  }
 
   startRenewalInvoiceScheduler();
 

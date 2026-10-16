@@ -367,6 +367,8 @@ export function workOrderTypeSaveIssue(opts: {
   return { blocked: false, message: null };
 }
 
+export const DEFAULT_TAX_RATE_PERCENT = 7;
+
 export function normalizeTaxRatePercent(value: string | number | null | undefined): number {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n) || n < 0) return 0;

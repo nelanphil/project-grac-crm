@@ -72,9 +72,10 @@ export default function TaxSettingsCard() {
         <div>
           <h2 className="text-lg font-semibold text-brand-dark">Sales tax</h2>
           <p className="mt-1 text-sm text-neutral-500">
-            Default rate for new estimates, work orders, and invoices. Saving a
-            new rate updates unpaid invoices that use this rate. Paid invoices
-            and invoices with a manual tax amount stay unchanged.
+            Default rate for new estimates, work orders, and invoices. When no
+            rate is saved, tax defaults to 7%. Saving a new rate updates unpaid
+            invoices that use this rate. Paid invoices and invoices with a
+            manual tax amount stay unchanged.
           </p>
         </div>
       </div>

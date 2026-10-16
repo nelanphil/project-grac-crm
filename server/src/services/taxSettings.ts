@@ -8,7 +8,7 @@ import {
   WorkOrder,
 } from "../models/mongo/WorkOrder";
 
-export const DEFAULT_TAX_RATE_PERCENT = 0;
+export const DEFAULT_TAX_RATE_PERCENT = 7;
 
 function roundMoney(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -131,6 +131,38 @@ export function invoiceEligibleForCompanyTaxRate(
   return true;
 }
 
+/** Pre-tax base. Uses the stored subtotal, or derives it from a legacy total. */
+function taxableSubtotal(workOrder: CompanyTaxWorkOrderInput): number {
+  const subtotal = roundMoney(Number(workOrder.subtotal) || 0);
+  if (subtotal > 0) return subtotal;
+  const shipping = roundMoney(Number(workOrder.shipping) || 0);
+  const tax = roundMoney(Number(workOrder.tax) || 0);
+  const total = roundMoney(Number(workOrder.total) || 0);
+  const derived = roundMoney(total - shipping - tax);
+  return derived > 0 ? derived : subtotal;
+}
+
+/**
+ * Tax and total for an unpaid, non-overridden work order at a company rate.
+ * Returns null when the document is ineligible or already matches.
+ */
+export function companyTaxForUnpaidWorkOrder(
+  workOrder: CompanyTaxWorkOrderInput,
+  nextRatePercent: number,
+): { taxRate: number; tax: number; total: number } | null {
+  if (workOrder.paid || workOrder.taxOverridden) return null;
+  const rate = normalizeTaxRatePercent(nextRatePercent);
+  const subtotal = taxableSubtotal(workOrder);
+  const shipping = roundMoney(Number(workOrder.shipping) || 0);
+  const tax = computeTaxAmount(subtotal, rate);
+  const total = roundMoney(subtotal + shipping + tax);
+  const taxRateChanged = normalizeTaxRatePercent(workOrder.taxRate) !== rate;
+  const taxChanged = roundMoney(Number(workOrder.tax) || 0) !== tax;
+  const totalChanged = roundMoney(Number(workOrder.total) || 0) !== total;
+  if (!taxRateChanged && !taxChanged && !totalChanged) return null;
+  return { taxRate: rate, tax, total };
+}
+
 function applyDiscountToTotal(
   nextTotalCents: number,
   input: Pick<CompanyTaxInvoiceInput, "originalAmountCents" | "discountCents">,
@@ -164,18 +196,13 @@ export function recomputeUnpaidInvoiceTax(
   let workOrderUpdate: CompanyTaxInvoiceUpdate["workOrder"];
 
   if (workOrder) {
-    const subtotal = roundMoney(Number(workOrder.subtotal) || 0);
+    const subtotal = taxableSubtotal(workOrder);
     const shipping = roundMoney(Number(workOrder.shipping) || 0);
-    const tax = computeTaxAmount(subtotal, rate);
-    const total = roundMoney(subtotal + shipping + tax);
+    const aligned = companyTaxForUnpaidWorkOrder(workOrder, rate);
+    const tax = aligned?.tax ?? computeTaxAmount(subtotal, rate);
     taxCents = taxCentsFromDollars(tax);
     nextTotalCents = taxCentsFromDollars(subtotal + shipping) + taxCents;
-    const taxRateChanged = normalizeTaxRatePercent(workOrder.taxRate) !== rate;
-    const taxChanged = roundMoney(Number(workOrder.tax) || 0) !== tax;
-    const totalChanged = roundMoney(Number(workOrder.total) || 0) !== total;
-    if (taxRateChanged || taxChanged || totalChanged) {
-      workOrderUpdate = { taxRate: rate, tax, total };
-    }
+    if (aligned) workOrderUpdate = aligned;
   } else {
     const currentTotal =
       typeof input.originalAmountCents === "number"
@@ -302,4 +329,46 @@ export async function applyCompanyTaxRateToUnpaidInvoices(
   }
 
   return updated;
+}
+
+/** Rewrite unpaid work orders that follow the company rate, including ones with no invoice. */
+export async function applyCompanyTaxRateToUnpaidWorkOrders(
+  ratePercent: number,
+): Promise<number> {
+  const rate = normalizeTaxRatePercent(ratePercent);
+  const workOrders = await WorkOrder.find({
+    paid: { $ne: true },
+    taxOverridden: { $ne: true },
+  });
+  let updated = 0;
+  for (const workOrder of workOrders) {
+    const next = companyTaxForUnpaidWorkOrder(
+      {
+        paid: workOrder.paid,
+        taxOverridden: workOrder.taxOverridden,
+        subtotal: workOrder.subtotal,
+        shipping: workOrder.shipping,
+        taxRate: workOrder.taxRate,
+        tax: workOrder.tax,
+        total: workOrder.total,
+      },
+      rate,
+    );
+    if (!next) continue;
+    workOrder.taxRate = next.taxRate;
+    workOrder.tax = next.tax;
+    workOrder.total = next.total;
+    workOrder.taxOverridden = false;
+    await workOrder.save();
+    updated += 1;
+  }
+  return updated;
+}
+
+/** Apply the saved company rate to unpaid invoices and unpaid work orders. */
+export async function applyCompanyTaxRateToOpenDocuments(): Promise<number> {
+  const rate = await getTaxRatePercent();
+  const invoices = await applyCompanyTaxRateToUnpaidInvoices(rate);
+  const workOrders = await applyCompanyTaxRateToUnpaidWorkOrders(rate);
+  return invoices + workOrders;
 }

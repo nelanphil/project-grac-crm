@@ -10,9 +10,10 @@
  * traffic is not copied into development.
  *
  * Dry-run by default. Pass --yes to write. Pass --drop to replace each
- * development collection (true clone).
+ * development collection (true clone). The positional argument `p2d`
+ * means --yes --drop (prod into dev).
  *
- *   npm run copy-prod-to-dev
+ *   npm run clone p2d
  *
  *   Dry run (no writes):
  *     npx tsx src/scripts/copy-prod-to-dev.ts
@@ -95,9 +96,29 @@ async function copyCollection(
   return { name, copied, source: sourceCount };
 }
 
+const USAGE = "Usage: npm run clone p2d";
+
+function directionArgs(): { execute: boolean; drop: boolean } {
+  const positional = process.argv.slice(2).filter((arg) => !arg.startsWith("-"));
+  const unknown = positional.filter((arg) => arg !== "p2d");
+  if (unknown.length > 0) {
+    console.error(USAGE);
+    process.exit(1);
+  }
+
+  const p2d = positional.includes("p2d");
+  if (!p2d && !process.argv.includes("--yes") && !process.argv.includes("--drop")) {
+    console.log(USAGE);
+  }
+
+  return {
+    execute: process.argv.includes("--yes") || p2d,
+    drop: process.argv.includes("--drop") || p2d,
+  };
+}
+
 async function main() {
-  const execute = process.argv.includes("--yes");
-  const drop = process.argv.includes("--drop");
+  const { execute, drop } = directionArgs();
 
   const devRaw = process.env.MONGODB_URI_DEVELOPMENT;
   const prodRaw = process.env.MONGODB_URI_PRODUCTION;

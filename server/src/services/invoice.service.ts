@@ -14,6 +14,7 @@ import { SCHEDULE_TIMEZONE } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
 import { PaymentProviderName } from "../models/mongo/PaymentProviderAccount";
 import {
+  companyTaxForUnpaidWorkOrder,
   computeTaxAmount,
   getTaxRatePercent,
   snapshotDocumentTax,
@@ -326,6 +327,42 @@ function invoiceTaxFromWorkOrder(wo: WorkOrderInvoiceSource) {
   });
 }
 
+/** Persist the company rate onto an unpaid work order that is not tax-overridden. */
+async function alignUnpaidWorkOrderToCompanyTax(
+  wo: WorkOrderInvoiceSource,
+): Promise<void> {
+  if (wo.paid || wo.taxOverridden) return;
+  const rate = await getTaxRatePercent();
+  const next = companyTaxForUnpaidWorkOrder(
+    {
+      paid: wo.paid,
+      taxOverridden: wo.taxOverridden,
+      subtotal: wo.subtotal,
+      shipping: wo.shipping,
+      taxRate: wo.taxRate,
+      tax: wo.tax,
+      total: wo.total,
+    },
+    rate,
+  );
+  if (!next) return;
+  wo.taxRate = next.taxRate;
+  wo.tax = next.tax;
+  wo.total = next.total;
+  wo.taxOverridden = false;
+  await WorkOrder.updateOne(
+    { _id: wo._id },
+    {
+      $set: {
+        taxRate: next.taxRate,
+        tax: next.tax,
+        total: next.total,
+        taxOverridden: false,
+      },
+    },
+  );
+}
+
 export async function invoiceTaxFromCurrentRate(
   preTaxCents: number,
 ): Promise<{
@@ -492,12 +529,40 @@ export async function ensureOpenInvoiceForWorkOrder(
   const customerRef = await resolveCustomerRefForWorkOrder(wo);
   if (customerRef) await persistResolvedCustomerRef(wo, customerRef);
 
+  await alignUnpaidWorkOrderToCompanyTax(wo);
+
   const existing = await findOpenInvoiceForWorkOrder(wo._id);
   if (existing) {
     if (customerRef && !existing.customerRef) {
       existing.customerRef = customerRef;
-      await existing.save();
     }
+    if (!existing.taxOverridden && !wo.paid && !wo.taxOverridden) {
+      const tax = invoiceTaxFromWorkOrder(wo);
+      const nextAmount = dollarsToCents(wo.total || 0);
+      const currentTotal =
+        typeof existing.originalAmountCents === "number"
+          ? existing.originalAmountCents
+          : existing.amountCents;
+      if (
+        (existing.taxRatePercent ?? 0) !== tax.taxRatePercent ||
+        (existing.taxCents ?? 0) !== tax.taxCents ||
+        currentTotal !== nextAmount
+      ) {
+        if (typeof existing.originalAmountCents === "number") {
+          existing.originalAmountCents = nextAmount;
+          existing.amountCents = Math.max(
+            nextAmount - (Number(existing.discountCents) || 0),
+            0,
+          );
+        } else {
+          existing.amountCents = nextAmount;
+        }
+        existing.taxRatePercent = tax.taxRatePercent;
+        existing.taxCents = tax.taxCents;
+        existing.taxOverridden = tax.taxOverridden;
+      }
+    }
+    if (existing.isModified()) await existing.save();
     return { invoice: existing, created: false };
   }
 
@@ -625,6 +690,7 @@ export async function syncWorkOrderInvoice(
   wo: WorkOrderInvoiceSource,
   options?: { backfilled?: boolean },
 ): Promise<SyncWorkOrderInvoiceResult> {
+  await alignUnpaidWorkOrderToCompanyTax(wo);
   const amountCents = dollarsToCents(wo.total || 0);
 
   if (wo.paid) {
