@@ -66,6 +66,29 @@ function readModalDimensions(): { width: number; height: number } {
   return { width: DEFAULT_ASSIGN_MODAL_WIDTH, height: DEFAULT_ASSIGN_MODAL_HEIGHT };
 }
 
+const DEFAULT_EXPANDED_DRAWER_WIDTH = 384;
+const MIN_EXPANDED_DRAWER_WIDTH = 280;
+const MIN_CALENDAR_GRID_WIDTH = 480;
+const STORAGE_KEY_EXPANDED_DRAWER_WIDTH = "grac_month_calendar_drawer_width";
+
+function readExpandedDrawerWidth(): number {
+  if (typeof window === "undefined") {
+    return DEFAULT_EXPANDED_DRAWER_WIDTH;
+  }
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY_EXPANDED_DRAWER_WIDTH);
+    if (raw) {
+      const parsed = parseInt(raw, 10);
+      if (!isNaN(parsed) && parsed >= MIN_EXPANDED_DRAWER_WIDTH) {
+        return Math.min(parsed, Math.max(MIN_EXPANDED_DRAWER_WIDTH, window.innerWidth - MIN_CALENDAR_GRID_WIDTH));
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return DEFAULT_EXPANDED_DRAWER_WIDTH;
+}
+
 type CityTechnician = {
   name: string;
   color: string;
@@ -302,6 +325,136 @@ export default function MonthCalendar({
   const modalRef = useRef<HTMLDivElement | null>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const isResizingRef = useRef(false);
+
+  // Dynamically Resizable Expanded Drawer State
+  const [drawerWidth, setDrawerWidth] = useState<number>(readExpandedDrawerWidth);
+  const [isDraggingDrawer, setIsDraggingDrawer] = useState(false);
+  const drawerWidthRef = useRef(drawerWidth);
+  const expandedBodyRef = useRef<HTMLDivElement | null>(null);
+  const drawerResizeCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    drawerWidthRef.current = drawerWidth;
+  }, [drawerWidth]);
+
+  useEffect(() => () => drawerResizeCleanupRef.current?.(), []);
+
+  useEffect(() => {
+    function onWindowResize() {
+      if (!expandedBodyRef.current) return;
+      const containerWidth = expandedBodyRef.current.clientWidth;
+      const maxAllowed = Math.max(MIN_EXPANDED_DRAWER_WIDTH, containerWidth - MIN_CALENDAR_GRID_WIDTH - 12);
+      if (drawerWidthRef.current > maxAllowed) {
+        drawerWidthRef.current = maxAllowed;
+        setDrawerWidth(maxAllowed);
+      }
+    }
+    window.addEventListener("resize", onWindowResize);
+    return () => window.removeEventListener("resize", onWindowResize);
+  }, []);
+
+  function startDrawerResize(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    drawerResizeCleanupRef.current?.();
+
+    const startX = e.clientX;
+    const startWidth = drawerWidthRef.current;
+    const containerWidth = expandedBodyRef.current?.clientWidth ?? window.innerWidth;
+    const maxAllowedWidth = Math.max(MIN_EXPANDED_DRAWER_WIDTH, containerWidth - MIN_CALENDAR_GRID_WIDTH - 12);
+
+    setIsDraggingDrawer(true);
+    const prevCursor = document.body.style.cursor;
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function onPointerMove(moveEvent: PointerEvent) {
+      const deltaX = moveEvent.clientX - startX;
+      const targetWidth = startWidth - deltaX;
+      const clamped = Math.min(maxAllowedWidth, Math.max(MIN_EXPANDED_DRAWER_WIDTH, targetWidth));
+      drawerWidthRef.current = clamped;
+      setDrawerWidth(clamped);
+    }
+
+    function onPointerUp() {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevUserSelect;
+      setIsDraggingDrawer(false);
+      drawerResizeCleanupRef.current = null;
+
+      try {
+        window.localStorage.setItem(STORAGE_KEY_EXPANDED_DRAWER_WIDTH, String(drawerWidthRef.current));
+      } catch {
+        // ignore
+      }
+    }
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    drawerResizeCleanupRef.current = onPointerUp;
+  }
+
+  function resetDrawerWidth() {
+    drawerWidthRef.current = DEFAULT_EXPANDED_DRAWER_WIDTH;
+    setDrawerWidth(DEFAULT_EXPANDED_DRAWER_WIDTH);
+    try {
+      window.localStorage.removeItem(STORAGE_KEY_EXPANDED_DRAWER_WIDTH);
+    } catch {
+      // ignore
+    }
+  }
+
+  function onSplitterKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 40 : 16;
+    const containerWidth = expandedBodyRef.current?.clientWidth ?? window.innerWidth;
+    const maxAllowedWidth = Math.max(MIN_EXPANDED_DRAWER_WIDTH, containerWidth - MIN_CALENDAR_GRID_WIDTH - 12);
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      const next = Math.min(maxAllowedWidth, drawerWidthRef.current + step);
+      drawerWidthRef.current = next;
+      setDrawerWidth(next);
+      try {
+        window.localStorage.setItem(STORAGE_KEY_EXPANDED_DRAWER_WIDTH, String(next));
+      } catch {
+        // ignore
+      }
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      const next = Math.max(MIN_EXPANDED_DRAWER_WIDTH, drawerWidthRef.current - step);
+      drawerWidthRef.current = next;
+      setDrawerWidth(next);
+      try {
+        window.localStorage.setItem(STORAGE_KEY_EXPANDED_DRAWER_WIDTH, String(next));
+      } catch {
+        // ignore
+      }
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      resetDrawerWidth();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      drawerWidthRef.current = MIN_EXPANDED_DRAWER_WIDTH;
+      setDrawerWidth(MIN_EXPANDED_DRAWER_WIDTH);
+      try {
+        window.localStorage.setItem(STORAGE_KEY_EXPANDED_DRAWER_WIDTH, String(MIN_EXPANDED_DRAWER_WIDTH));
+      } catch {
+        // ignore
+      }
+    } else if (event.key === "End") {
+      event.preventDefault();
+      drawerWidthRef.current = maxAllowedWidth;
+      setDrawerWidth(maxAllowedWidth);
+      try {
+        window.localStorage.setItem(STORAGE_KEY_EXPANDED_DRAWER_WIDTH, String(maxAllowedWidth));
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   useEffect(() => () => resizeCleanupRef.current?.(), []);
 
@@ -943,16 +1096,52 @@ export default function MonthCalendar({
         </div>
       </div>
 
-      {/* Expanded Main Body: Grid + Drawer */}
-      <div className="flex min-h-0 flex-1 flex-row overflow-hidden pt-3 gap-3">
+      {/* Expanded Main Body: Grid + Splitter + Drawer */}
+      <div
+        ref={expandedBodyRef}
+        className="flex min-h-0 flex-1 flex-row overflow-hidden pt-3"
+      >
         {/* Calendar Grid Container */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white">
           {renderGrid()}
         </div>
 
+        {/* Resizable Splitter Divider (visible when drawer is open) */}
+        {isDrawerOpen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize appointments drawer"
+            aria-valuemin={MIN_EXPANDED_DRAWER_WIDTH}
+            aria-valuenow={drawerWidth}
+            tabIndex={0}
+            onPointerDown={startDrawerResize}
+            onDoubleClick={resetDrawerWidth}
+            onKeyDown={onSplitterKeyDown}
+            className={`group relative flex w-3 shrink-0 cursor-col-resize items-center justify-center focus:outline-none select-none transition-colors ${
+              isDraggingDrawer ? "z-30" : "z-10"
+            }`}
+            title="Drag to resize calendar and appointments drawer (Double-click to reset)"
+          >
+            {/* Splitter Accent Bar / Gripper Pill */}
+            <div
+              className={`h-16 w-1 rounded-full transition-all duration-150 ${
+                isDraggingDrawer
+                  ? "h-24 bg-brand-orange ring-4 ring-brand-orange/20 shadow-sm"
+                  : "bg-neutral-300 dark:bg-neutral-700 group-hover:bg-brand-orange group-focus:bg-brand-orange group-hover:h-24"
+              }`}
+            />
+          </div>
+        )}
+
         {/* Quick-view Side Drawer for Selected Day */}
         {isDrawerOpen && (
-          <div className="flex w-80 sm:w-96 shrink-0 flex-col rounded-xl border border-neutral-200 bg-neutral-50/70 overflow-hidden shadow-sm animate-in slide-in-from-right duration-200">
+          <div
+            style={{ width: `${drawerWidth}px` }}
+            className={`flex shrink-0 flex-col rounded-xl border border-neutral-200 bg-neutral-50/70 overflow-hidden shadow-sm ${
+              isDraggingDrawer ? "select-none" : "transition-[width] duration-75"
+            }`}
+          >
             <div className="flex items-center justify-between border-b border-neutral-200 bg-white px-4 py-3">
               <div>
                 <h3 className="text-sm font-semibold text-brand-dark">
