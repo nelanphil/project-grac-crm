@@ -25,6 +25,11 @@ import {
   sanitizeMentionUserIds,
   type NoteMention,
 } from "../services/noteAudience";
+import { syncDesiredStartWindow } from "../services/desiredStartWindow";
+import {
+  noteTimeTagMessage,
+  parseNoteTimeTags,
+} from "../utils/noteTimeTags";
 
 type PopulatedAuthor = {
   _id: mongoose.Types.ObjectId;
@@ -42,9 +47,24 @@ export type PublicWorkOrderNote = {
   isReminder?: boolean;
   mentionUserIds?: string[];
   mentions?: NoteMention[];
+  desiredStartTime?: string;
+  desiredStartBy?: string;
   createdAt: string;
   updatedAt: string;
 };
+
+function timeTagsForContent(
+  content: string,
+): { desiredStartTime: string; desiredStartBy: string } | string {
+  const parsed = parseNoteTimeTags(content);
+  if (!parsed.ok && parsed.reason !== "none") {
+    return noteTimeTagMessage(content) ?? "Invalid time tag";
+  }
+  return {
+    desiredStartTime: parsed.ok ? parsed.desiredStartTime : "",
+    desiredStartBy: parsed.ok ? parsed.desiredStartBy : "",
+  };
+}
 
 function hasJobsPermission(req: AuthRequest, permission: string): boolean {
   return Boolean(req.user?.permissions.includes(permission));
@@ -59,6 +79,8 @@ function formatNote(
     visibleToCustomer: boolean;
     isReminder?: boolean;
     mentionUserIds?: unknown;
+    desiredStartTime?: string;
+    desiredStartBy?: string;
     createdAt: Date;
     updatedAt: Date;
   },
@@ -88,6 +110,8 @@ function formatNote(
     publicNote.isReminder = Boolean(note.isReminder);
     publicNote.mentionUserIds = readMentionIds(note.mentionUserIds);
     publicNote.mentions = readMentions(note.mentionUserIds);
+    publicNote.desiredStartTime = note.desiredStartTime ?? "";
+    publicNote.desiredStartBy = note.desiredStartBy ?? "";
   }
 
   return publicNote;
@@ -106,6 +130,8 @@ function asFormatted(
       visibleToCustomer: Boolean(note.visibleToCustomer),
       isReminder: Boolean(note.isReminder),
       mentionUserIds: note.mentionUserIds,
+      desiredStartTime: typeof note.desiredStartTime === "string" ? note.desiredStartTime : "",
+      desiredStartBy: typeof note.desiredStartBy === "string" ? note.desiredStartBy : "",
       createdAt: note.createdAt as Date,
       updatedAt: note.updatedAt as Date,
     },
@@ -302,6 +328,12 @@ export async function createWorkOrderNote(
       }
     }
 
+    const tags = timeTagsForContent(content);
+    if (typeof tags === "string") {
+      res.status(400).json({ message: tags });
+      return;
+    }
+
     const mentionUserIds = await sanitizeMentionUserIds(parsed.data.mentionUserIds);
     const isReminder = parsed.data.isReminder ?? false;
 
@@ -309,10 +341,13 @@ export async function createWorkOrderNote(
       workOrderRef: workOrder._id,
       authorId: req.user!.id,
       content,
-      visibleToCustomer: parsed.data.visibleToCustomer ?? true,
+      visibleToCustomer: parsed.data.visibleToCustomer ?? false,
       isReminder,
       mentionUserIds,
+      desiredStartTime: tags.desiredStartTime,
+      desiredStartBy: tags.desiredStartBy,
     });
+    const warnings = await syncDesiredStartWindow(workOrder._id);
 
     if (note.visibleToCustomer) {
       await syncDescPerformedPreview(workOrder._id);
@@ -353,7 +388,7 @@ export async function createWorkOrderNote(
       ...actorFromRequest(req.user),
     });
 
-    res.status(201).json({ note: asFormatted(populated, true) });
+    res.status(201).json({ note: asFormatted(populated, true), warnings });
   } catch (err) {
     console.error("POST /work-orders/:id/notes error:", err);
     res.status(500).json({ message: "Internal server error" });
@@ -402,7 +437,16 @@ export async function updateWorkOrderNote(
     const prevMentionIds = (note.mentionUserIds ?? []).map((id) => String(id));
     const prevReminder = Boolean(note.isReminder);
 
-    if (parsed.data.content !== undefined) note.content = parsed.data.content;
+    if (parsed.data.content !== undefined) {
+      const tags = timeTagsForContent(parsed.data.content);
+      if (typeof tags === "string") {
+        res.status(400).json({ message: tags });
+        return;
+      }
+      note.content = parsed.data.content;
+      note.desiredStartTime = tags.desiredStartTime;
+      note.desiredStartBy = tags.desiredStartBy;
+    }
     if (parsed.data.visibleToCustomer !== undefined) {
       note.visibleToCustomer = parsed.data.visibleToCustomer;
     }
@@ -412,6 +456,7 @@ export async function updateWorkOrderNote(
     }
     await note.save();
     await syncDescPerformedPreview(workOrder._id);
+    const warnings = await syncDesiredStartWindow(workOrder._id);
 
     const populated = await WorkOrderNote.findById(note._id)
       .populate("authorId", "first_name last_name")
@@ -450,7 +495,7 @@ export async function updateWorkOrderNote(
       ...actorFromRequest(req.user),
     });
 
-    res.json({ note: asFormatted(populated, true) });
+    res.json({ note: asFormatted(populated, true), warnings });
   } catch (err) {
     console.error("PATCH /work-orders/:id/notes/:noteId error:", err);
     res.status(500).json({ message: "Internal server error" });
@@ -489,6 +534,7 @@ export async function deleteWorkOrderNote(
 
     await note.deleteOne();
     await syncDescPerformedPreview(workOrder._id);
+    const warnings = await syncDesiredStartWindow(workOrder._id);
 
     logNotificationAsync({
       entityType: "work_order_note",
@@ -500,7 +546,7 @@ export async function deleteWorkOrderNote(
       ...actorFromRequest(req.user),
     });
 
-    res.status(204).send();
+    res.json({ warnings });
   } catch (err) {
     console.error("DELETE /work-orders/:id/notes/:noteId error:", err);
     res.status(500).json({ message: "Internal server error" });

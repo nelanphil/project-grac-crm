@@ -284,6 +284,7 @@ export default function MonthCalendar({
   staff = [],
   onAssignTechnician,
   onJobClick,
+  onViewJob,
 }: {
   monthDate: string;
   jobs: WorkOrderListItem[];
@@ -307,6 +308,7 @@ export default function MonthCalendar({
     estimatedMinutes?: number,
   ) => Promise<boolean | void> | void;
   onJobClick?: (job: WorkOrderListItem) => void;
+  onViewJob?: (job: WorkOrderListItem) => void;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const isDrawerOpen = isExpanded && drawerOpen;
@@ -1397,12 +1399,16 @@ export default function MonthCalendar({
                                   <span className="text-xs text-neutral-400 font-medium">Unscheduled</span>
                                 )}
 
-                                {onJobClick && (
+                                {(onViewJob || onJobClick) && (
                                   <button
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      onJobClick(job);
+                                      if (onViewJob) {
+                                        onViewJob(job);
+                                      } else {
+                                        onJobClick?.(job);
+                                      }
                                     }}
                                     className="text-xs sm:text-sm font-semibold text-neutral-500 hover:text-brand-orange hover:underline"
                                   >
@@ -1517,12 +1523,16 @@ export default function MonthCalendar({
                                       Stop #{stopNumber}
                                     </span>
 
-                                    {onJobClick && (
+                                    {(onViewJob || onJobClick) && (
                                       <button
                                         type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          onJobClick(job);
+                                          if (onViewJob) {
+                                            onViewJob(job);
+                                          } else {
+                                            onJobClick?.(job);
+                                          }
                                         }}
                                         className="text-xs sm:text-sm font-semibold text-neutral-500 hover:text-brand-orange hover:underline"
                                       >

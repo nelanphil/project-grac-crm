@@ -27,9 +27,8 @@ import {
   estimatedMinutesForWorkOrder,
   findOverlappingJob,
   isDispatcherRole,
-  placementStartForAssignee,
-  placeWorkOrder,
   rangeUtc,
+  scheduleDesiredWindow,
 } from "../services/schedule.service";
 import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
@@ -496,26 +495,15 @@ export async function createWorkOrder(
     ) {
       try {
         const createdCrew = crewIdStrings(workOrder);
-        const placed =
-          createdCrew.length > 1
-            ? await placeWorkOrder({
-                workOrderId: String(workOrder._id),
-                assignedUserRef: createdCrew[0] ?? "",
-                assignedUserRefs: createdCrew,
-                date: createdDate,
-                estimatedMinutes: workOrder.estimatedMinutes,
-              })
-            : await placeWorkOrder({
-                workOrderId: String(workOrder._id),
-                assignedUserRef: String(workOrder.assignedUserRef),
-                date: createdDate,
-                scheduledStart: await placementStartForAssignee({
-                  assignedUserRef: String(workOrder.assignedUserRef),
-                  date: createdDate,
-                  startTime: workOrder.startTime,
-                }),
-                estimatedMinutes: workOrder.estimatedMinutes,
-              });
+        const placed = await scheduleDesiredWindow({
+          workOrderId: String(workOrder._id),
+          userIds: createdCrew,
+          date: createdDate,
+          desiredStartTime: workOrder.desiredStartTime,
+          desiredStartBy: workOrder.desiredStartBy,
+          fallbackStartTime: workOrder.startTime,
+          estimatedMinutes: workOrder.estimatedMinutes,
+        });
         placementWarnings.push(...placed.warnings);
         const fresh = await WorkOrder.findById(workOrder._id);
         if (fresh) {
@@ -811,27 +799,16 @@ export async function updateWorkOrder(
       if (shouldPlace && nextDate) {
         await workOrder.save();
         try {
-          const placed =
-            nextCrew.length > 1
-              ? await placeWorkOrder({
-                  workOrderId: String(workOrder._id),
-                  assignedUserRef: nextCrew[0] ?? "",
-                  assignedUserRefs: nextCrew,
-                  date: nextDate,
-                  estimatedMinutes: workOrder.estimatedMinutes,
-                })
-              : await placeWorkOrder({
-                  workOrderId: String(workOrder._id),
-                  assignedUserRef: nextCrew[0] ?? "",
-                  date: nextDate,
-                  scheduledStart: await placementStartForAssignee({
-                    assignedUserRef: nextCrew[0] ?? "",
-                    date: nextDate,
-                    startTime: workOrder.startTime,
-                    previousStart: prevScheduledStart,
-                  }),
-                  estimatedMinutes: workOrder.estimatedMinutes,
-                });
+          const placed = await scheduleDesiredWindow({
+            workOrderId: String(workOrder._id),
+            userIds: nextCrew,
+            date: nextDate,
+            desiredStartTime: workOrder.desiredStartTime,
+            desiredStartBy: workOrder.desiredStartBy,
+            fallbackStartTime: workOrder.startTime,
+            estimatedMinutes: workOrder.estimatedMinutes,
+            previousStart: prevScheduledStart,
+          });
           placementWarnings.push(...placed.warnings);
         } catch (err) {
           const status = (err as { status?: number }).status;

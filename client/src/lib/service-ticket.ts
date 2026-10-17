@@ -46,6 +46,8 @@ export interface TicketFormState {
   date: string;
   startTime: string;
   endTime: string;
+  desiredStartTime: string;
+  desiredStartBy: string;
   tech: string;
   assignedUserRef: string | null;
   assignedUserRefs: string[];
@@ -178,6 +180,8 @@ export function emptyTicketForm(): TicketFormState {
     date: new Date().toISOString().slice(0, 10),
     startTime: "",
     endTime: "",
+    desiredStartTime: "",
+    desiredStartBy: "",
     tech: "",
     assignedUserRef: null,
     assignedUserRefs: [],
@@ -548,8 +552,6 @@ export function ticketToPayload(form: TicketFormState) {
     equipmentRef: form.equipmentRef || null,
     descPerform: form.descPerform,
     date: form.date || null,
-    startTime: form.startTime.trim(),
-    endTime: form.endTime.trim(),
     tech: form.tech,
     assignedUserRef: form.assignedUserRefs[0] || form.assignedUserRef || null,
     assignedUserRefs: form.assignedUserRefs,
@@ -658,6 +660,8 @@ export function ticketFromRecord(record: {
   date?: string | null;
   startTime?: string | null;
   endTime?: string | null;
+  desiredStartTime?: string | null;
+  desiredStartBy?: string | null;
   tech?: string | null;
   assignedUserRef?: string | null;
   assignedUserRefs?: string[] | null;
@@ -750,6 +754,8 @@ export function ticketFromRecord(record: {
     endTime:
       record.endTime?.trim() ||
       (record.scheduledEnd ? formatLocalTime(new Date(record.scheduledEnd)) : ""),
+    desiredStartTime: record.desiredStartTime?.trim() || "",
+    desiredStartBy: record.desiredStartBy?.trim() || "",
     tech: record.tech ?? "",
     assignedUserRef: record.assignedUserRefs?.[0] || record.assignedUserRef || null,
     assignedUserRefs:

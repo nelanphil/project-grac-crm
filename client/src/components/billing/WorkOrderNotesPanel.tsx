@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { isAdminRole, type RoleLike } from "@/lib/dashboard-role";
 import MentionTextarea, { NoteBody } from "@/components/billing/MentionTextarea";
+import { noteTimeTagMessage, winningDesiredWindow } from "@/lib/noteTimeTags";
 
 function formatNoteDate(date: string): string {
   return new Date(date).toLocaleString(undefined, {
@@ -37,6 +38,7 @@ export default function WorkOrderNotesPanel({
   userRole,
   fallbackContent,
   visibilityLabel = "Show on work order & invoice",
+  onDesiredWindowChange,
 }: {
   token: string;
   recordId: string;
@@ -46,6 +48,10 @@ export default function WorkOrderNotesPanel({
   userRole?: RoleLike;
   fallbackContent?: string;
   visibilityLabel?: string;
+  onDesiredWindowChange?: (window: {
+    desiredStartTime: string;
+    desiredStartBy: string;
+  }) => void;
 }) {
   const isAdmin = isAdminRole(userRole);
   const [notes, setNotes] = useState<WorkOrderNote[]>([]);
@@ -53,7 +59,7 @@ export default function WorkOrderNotesPanel({
   const [error, setError] = useState<string | null>(null);
 
   const [content, setContent] = useState("");
-  const [visibleToCustomer, setVisibleToCustomer] = useState(true);
+  const [visibleToCustomer, setVisibleToCustomer] = useState(false);
   const [isReminder, setIsReminder] = useState(false);
   const [mentionIds, setMentionIds] = useState<string[]>([]);
   const [mentions, setMentions] = useState<NoteMention[]>([]);
@@ -68,7 +74,7 @@ export default function WorkOrderNotesPanel({
 
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
-  const [editVisible, setEditVisible] = useState(true);
+  const [editVisible, setEditVisible] = useState(false);
   const [editReminder, setEditReminder] = useState(false);
   const [editMentionIds, setEditMentionIds] = useState<string[]>([]);
   const [editMentions, setEditMentions] = useState<NoteMention[]>([]);
@@ -104,6 +110,11 @@ export default function WorkOrderNotesPanel({
     void loadTemplates();
   }, [loadNotes, loadTemplates]);
 
+  useEffect(() => {
+    if (source !== "work-order") return;
+    onDesiredWindowChange?.(winningDesiredWindow(notes));
+  }, [notes, onDesiredWindowChange, source]);
+
   const globalTemplates = useMemo(
     () => templates.filter((t) => t.scope === "global"),
     [templates],
@@ -125,13 +136,22 @@ export default function WorkOrderNotesPanel({
     }
   }
 
+  function showWarnings(warnings?: string[]) {
+    if (warnings && warnings.length > 0) setError(warnings.join(" "));
+  }
+
   async function handleAdd() {
     const text = content.trim();
     if (!text) return;
+    const timeError = noteTimeTagMessage(text);
+    if (timeError) {
+      setError(timeError);
+      return;
+    }
     setAdding(true);
     setError(null);
     try {
-      const { note } = await createWorkOrderNote(
+      const { note, warnings } = await createWorkOrderNote(
         token,
         recordId,
         {
@@ -146,12 +166,13 @@ export default function WorkOrderNotesPanel({
       setNotes((prev) => [...prev, note]);
       setContent("");
       setTemplateId("");
-      setVisibleToCustomer(true);
+      setVisibleToCustomer(false);
       setIsReminder(false);
       setMentionIds([]);
       setMentions([]);
       setShowSaveTemplate(false);
       setTemplateName("");
+      showWarnings(warnings);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to add note.");
     } finally {
@@ -213,10 +234,15 @@ export default function WorkOrderNotesPanel({
   async function handleSaveEdit(noteId: string) {
     const text = editContent.trim();
     if (!text) return;
+    const timeError = noteTimeTagMessage(text);
+    if (timeError) {
+      setError(timeError);
+      return;
+    }
     setSavingEdit(true);
     setError(null);
     try {
-      const { note } = await updateWorkOrderNote(
+      const { note, warnings } = await updateWorkOrderNote(
         token,
         recordId,
         noteId,
@@ -230,6 +256,7 @@ export default function WorkOrderNotesPanel({
       );
       setNotes((prev) => prev.map((item) => (item._id === noteId ? note : item)));
       setEditingNoteId(null);
+      showWarnings(warnings);
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : "Failed to update note.",
@@ -243,8 +270,9 @@ export default function WorkOrderNotesPanel({
     setDeletingNoteId(noteId);
     setError(null);
     try {
-      await deleteWorkOrderNote(token, recordId, noteId, source);
+      const { warnings } = await deleteWorkOrderNote(token, recordId, noteId, source);
       setNotes((prev) => prev.filter((item) => item._id !== noteId));
+      showWarnings(warnings);
       if (editingNoteId === noteId) setEditingNoteId(null);
       setConfirmingDeleteId(null);
     } catch (err) {
@@ -355,6 +383,9 @@ export default function WorkOrderNotesPanel({
                         setEditMentions(nextMentions);
                       }}
                     />
+                    {noteTimeTagMessage(editContent) ? (
+                      <p className="text-xs text-amber-700">{noteTimeTagMessage(editContent)}</p>
+                    ) : null}
                     <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
                       <input
                         type="checkbox"
@@ -482,13 +513,16 @@ export default function WorkOrderNotesPanel({
             value={content}
             mentionIds={mentionIds}
             knownMentions={mentions}
-            placeholder="Write a note… Use @ to tag staff"
+            placeholder="Write a note… Use @ to tag staff or a time like @8:00AM"
             onChange={(next, ids, nextMentions) => {
               setContent(next);
               setMentionIds(ids);
               setMentions(nextMentions);
             }}
           />
+          {noteTimeTagMessage(content) ? (
+            <p className="text-xs text-amber-700">{noteTimeTagMessage(content)}</p>
+          ) : null}
           <div className="flex flex-wrap gap-4">
             <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
               <input

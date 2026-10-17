@@ -42,6 +42,10 @@ export interface IWorkOrder extends Document {
   date: Date | null;
   startTime: string;
   endTime: string;
+  /** Earliest desired start from a note time tag, HH:mm. */
+  desiredStartTime: string;
+  /** Latest acceptable start from a second note time tag, HH:mm. */
+  desiredStartBy: string;
   tech: string;
   assignedUserRef?: Types.ObjectId | null;
   assignedUserRefs?: Types.ObjectId[];
@@ -162,6 +166,8 @@ const workOrderSchema = new Schema<IWorkOrder>(
     date: { type: Date, default: null },
     startTime: { type: String, default: "" },
     endTime: { type: String, default: "" },
+    desiredStartTime: { type: String, default: "" },
+    desiredStartBy: { type: String, default: "" },
     tech: { type: String, default: "" },
     assignedUserRef: {
       type: Schema.Types.ObjectId,

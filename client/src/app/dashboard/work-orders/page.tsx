@@ -15,10 +15,9 @@ import {
   ApiError,
   getWorkOrders,
   restoreWorkOrder,
-  updateWorkOrder,
   WorkOrderListItem,
 } from "@/lib/api";
-import { timeWindowError, workOrderLocalDate, formatMonthDayYear } from "@/lib/schedule";
+import { formatDesiredStart, workOrderLocalDate, formatMonthDayYear } from "@/lib/schedule";
 import {
   DEFAULT_PAGE_SIZE,
   paginationRange,
@@ -43,81 +42,8 @@ function displayNumber(order: WorkOrderListItem): string {
   return order.number || (order.legacyId ? String(order.legacyId) : order._id.slice(-6));
 }
 
-const timeInputClass =
-  "w-[7.25rem] rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue disabled:opacity-60";
-
-function WindowTimeInput({
-  label,
-  field,
-  order,
-  token,
-  onSaved,
-}: {
-  label: string;
-  field: "startTime" | "endTime";
-  order: WorkOrderListItem;
-  token: string | null;
-  onSaved: (order: WorkOrderListItem) => void;
-}) {
-  const stored = order[field] ?? "";
-  const [local, setLocal] = useState(stored);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setLocal(stored);
-    setError(null);
-  }, [stored]);
-
-  async function commit() {
-    const next = local.trim();
-    if (next === stored) {
-      setError(null);
-      return;
-    }
-    const startTime = field === "startTime" ? next : (order.startTime ?? "");
-    const endTime = field === "endTime" ? next : (order.endTime ?? "");
-    const message = timeWindowError(startTime, endTime);
-    if (message) {
-      setError(message);
-      return;
-    }
-    if (!token) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const updated = await updateWorkOrder(token, order._id, {
-        [field]: next,
-      });
-      onSaved(updated);
-    } catch (err) {
-      setLocal(stored);
-      setError(err instanceof ApiError ? err.message : "Could not save time");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-    >
-      <input
-        type="time"
-        aria-label={label}
-        value={local}
-        disabled={saving}
-        onChange={(event) => {
-          setLocal(event.target.value);
-          setError(null);
-        }}
-        onBlur={() => void commit()}
-        className={timeInputClass}
-      />
-      {error ? <p className="mt-1 max-w-[9rem] text-[11px] text-amber-700">{error}</p> : null}
-    </div>
-  );
+function desiredStartLabel(order: WorkOrderListItem): string {
+  return formatDesiredStart(order.desiredStartTime, order.desiredStartBy) || "—";
 }
 
 export default function WorkOrdersPage() {
@@ -196,20 +122,6 @@ function WorkOrdersContent() {
     pageSize,
     total,
   );
-
-  function saveOrderTimes(updated: WorkOrderListItem) {
-    setOrders((current) =>
-      current.map((order) =>
-        order._id === updated._id
-          ? {
-              ...order,
-              startTime: updated.startTime ?? "",
-              endTime: updated.endTime ?? "",
-            }
-          : order,
-      ),
-    );
-  }
 
   const paginationProps = {
     rangeStart,
@@ -377,38 +289,7 @@ function WorkOrdersContent() {
                         label="Date"
                         value={displayOrderDate(order)}
                       />
-                      <DataField
-                        label="Start"
-                        value={
-                          showingDeleted ? (
-                            order.startTime || "—"
-                          ) : (
-                          <WindowTimeInput
-                            label={`Start time for ${displayNumber(order)}`}
-                            field="startTime"
-                            order={order}
-                            token={token}
-                            onSaved={saveOrderTimes}
-                          />
-                          )
-                        }
-                      />
-                      <DataField
-                        label="End"
-                        value={
-                          showingDeleted ? (
-                            order.endTime || "—"
-                          ) : (
-                          <WindowTimeInput
-                            label={`End time for ${displayNumber(order)}`}
-                            field="endTime"
-                            order={order}
-                            token={token}
-                            onSaved={saveOrderTimes}
-                          />
-                          )
-                        }
-                      />
+                      <DataField label="Start" value={desiredStartLabel(order)} />
                       <DataField label="Total" value={formatMoney(order.total)} />
                     </>
                   }
@@ -436,9 +317,6 @@ function WorkOrdersContent() {
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Start
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      End
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Total
@@ -472,36 +350,7 @@ function WorkOrdersContent() {
                         {order.customerName || "—"}
                       </td>
                       <td className="px-6 py-4 text-neutral-600">{order.tech || "—"}</td>
-                      <td className="px-6 py-4">
-                        {showingDeleted ? (
-                          <span className="text-neutral-600">
-                            {order.startTime || "—"}
-                          </span>
-                        ) : (
-                        <WindowTimeInput
-                          label={`Start time for ${displayNumber(order)}`}
-                          field="startTime"
-                          order={order}
-                          token={token}
-                          onSaved={saveOrderTimes}
-                        />
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        {showingDeleted ? (
-                          <span className="text-neutral-600">
-                            {order.endTime || "—"}
-                          </span>
-                        ) : (
-                        <WindowTimeInput
-                          label={`End time for ${displayNumber(order)}`}
-                          field="endTime"
-                          order={order}
-                          token={token}
-                          onSaved={saveOrderTimes}
-                        />
-                        )}
-                      </td>
+                      <td className="px-6 py-4 text-neutral-600">{desiredStartLabel(order)}</td>
                       <td className="px-6 py-4">{formatMoney(order.total)}</td>
                       <td className="px-6 py-4 text-neutral-600">
                         {order.completed ? "Completed" : "Open"}

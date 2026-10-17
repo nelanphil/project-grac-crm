@@ -60,9 +60,7 @@ import {
   DEFAULT_ESTIMATED_MINUTES,
   formatLocalClock,
   formatWeekdayDate,
-  minutesToHhMm,
   normalizeTimeOfDay,
-  timeWindowError,
 } from "@/lib/schedule";
 import { isDispatcherRole } from "@/lib/dashboard-role";
 import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
@@ -179,16 +177,12 @@ function compareTechnicianNames(
   });
 }
 
-/** End time for ranking. A blank end uses a 30-minute window from the start. */
-function slotEndTime(start: string, end: string): string | null {
-  const startTime = normalizeTimeOfDay(start);
-  if (!startTime) return null;
-  const explicitEnd = normalizeTimeOfDay(end);
-  if (explicitEnd) {
-    return timeWindowError(startTime, explicitEnd) ? null : explicitEnd;
+function rankingMinutes(laborHours: string): number {
+  const hours = Number(laborHours);
+  if (Number.isFinite(hours) && hours > 0) {
+    return Math.max(15, Math.round(hours * 60));
   }
-  const [hour, minute] = startTime.split(":").map(Number);
-  return minutesToHhMm((hour ?? 0) * 60 + (minute ?? 0) + DEFAULT_ESTIMATED_MINUTES);
+  return DEFAULT_ESTIMATED_MINUTES;
 }
 
 function hasSavedEquipment(form: {
@@ -424,9 +418,9 @@ export default function ServiceTicketForm({
     if (!token || variant !== "work-order") return;
     const city = form.customerCity.trim();
     const hasSite = Boolean(form.addressRef || city);
-    const startTime = normalizeTimeOfDay(form.startTime);
-    const endTime = startTime ? slotEndTime(form.startTime, form.endTime) : null;
-    if (!form.date || !hasSite || (startTime && !endTime)) {
+    const startTime = normalizeTimeOfDay(form.desiredStartTime);
+    const startBy = normalizeTimeOfDay(form.desiredStartBy);
+    if (!form.date || !hasSite || (startTime && startBy && startBy <= startTime)) {
       setSlotRank(null);
       return;
     }
@@ -434,7 +428,13 @@ export default function ServiceTicketForm({
     const timer = setTimeout(() => {
       recommendTechnicianForSlot(token, {
         date: form.date,
-        ...(startTime && endTime ? { startTime, endTime } : {}),
+        ...(startTime
+          ? {
+              startTime,
+              estimatedMinutes: rankingMinutes(form.laborHours),
+              ...(startBy ? { startBy } : {}),
+            }
+          : {}),
         addressRef: form.addressRef || undefined,
         address: form.customerAddress.trim() || undefined,
         city: city || undefined,
@@ -458,8 +458,9 @@ export default function ServiceTicketForm({
     token,
     variant,
     form.date,
-    form.startTime,
-    form.endTime,
+    form.desiredStartTime,
+    form.desiredStartBy,
+    form.laborHours,
     form.addressRef,
     form.customerAddress,
     form.customerCity,
@@ -738,9 +739,6 @@ export default function ServiceTicketForm({
       return;
     }
     if (!form.customerId) return;
-    if (variant === "work-order" && timeWindowError(form.startTime, form.endTime)) {
-      return;
-    }
     if (
       workOrderTypeSaveIssue({
         variant,
@@ -769,8 +767,6 @@ export default function ServiceTicketForm({
       equipmentOptions.some((unit) => unit._id === form.equipmentRef),
   );
   const equipmentFieldsLocked = Boolean(customer && existingEquipmentSelected);
-  const windowError =
-    variant === "work-order" ? timeWindowError(form.startTime, form.endTime) : null;
   const hasEquipmentLines = hasEquipmentProductLines(form.parts);
   const typeSaveIssue = workOrderTypeSaveIssue({
     variant,
@@ -781,9 +777,7 @@ export default function ServiceTicketForm({
   });
   const autosaveBlockedReason = !form.customerId
     ? "choose a customer."
-    : windowError
-      ? windowError
-      : typeSaveIssue.blocked
+    : typeSaveIssue.blocked
         ? typeSaveIssue.message || "loading work order types…"
         : null;
 
@@ -993,11 +987,7 @@ export default function ServiceTicketForm({
           </p>
         </header>
 
-        <div
-          className={`mt-5 grid gap-3 sm:grid-cols-2 ${
-            variant === "work-order" ? "lg:grid-cols-5" : "lg:grid-cols-3"
-          }`}
-        >
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Field label={variant === "estimate" ? "Estimate No" : "Work Order No"}>
             <input value={form.number || "Assigned on save"} disabled className={inputClass} />
           </Field>
@@ -1009,29 +999,6 @@ export default function ServiceTicketForm({
               className={inputClass}
             />
           </Field>
-          {variant === "work-order" ? (
-            <>
-              <Field label="Start time">
-                <input
-                  type="time"
-                  value={form.startTime}
-                  onChange={(e) => patch({ startTime: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="End time">
-                <input
-                  type="time"
-                  value={form.endTime}
-                  onChange={(e) => patch({ endTime: e.target.value })}
-                  className={inputClass}
-                />
-                {windowError ? (
-                  <p className="mt-1 text-xs text-amber-700">{windowError}</p>
-                ) : null}
-              </Field>
-            </>
-          ) : null}
           {variant === "work-order" && !hasEquipmentLines ? (
             <Field label="Type">
               <select
@@ -1204,6 +1171,40 @@ export default function ServiceTicketForm({
                   className={inputClass}
                 />
               </Field>
+            </div>
+
+            <div className="mt-5 border-t border-neutral-200 pt-4">
+              {token && user && recordId ? (
+                <WorkOrderNotesPanel
+                  token={token}
+                  recordId={recordId}
+                  source={variant === "estimate" ? "estimate" : "work-order"}
+                  userId={user.id}
+                  canWrite={variant === "estimate" ? canWriteEstimates : canWriteJobs}
+                  userRole={user}
+                  onDesiredWindowChange={
+                    variant === "work-order"
+                      ? (window) =>
+                          setForm((prev) =>
+                            prev.desiredStartTime === window.desiredStartTime &&
+                            prev.desiredStartBy === window.desiredStartBy
+                              ? prev
+                              : { ...prev, ...window },
+                          )
+                      : undefined
+                  }
+                  fallbackContent={variant === "work-order" ? form.descPerformed : undefined}
+                  visibilityLabel={
+                    variant === "estimate"
+                      ? "Show on estimate"
+                      : "Show on work order & invoice"
+                  }
+                />
+              ) : (
+                <p className="text-sm text-neutral-500">
+                  Save this {variant === "estimate" ? "estimate" : "work order"} to add notes.
+                </p>
+              )}
             </div>
           </div>
 
@@ -1502,29 +1503,6 @@ export default function ServiceTicketForm({
             </Field>
           </div>
         ) : null}
-
-        {token && user && recordId ? (
-          <div className="mt-5">
-            <WorkOrderNotesPanel
-              token={token}
-              recordId={recordId}
-              source={variant === "estimate" ? "estimate" : "work-order"}
-              userId={user.id}
-              canWrite={variant === "estimate" ? canWriteEstimates : canWriteJobs}
-              userRole={user}
-              fallbackContent={variant === "work-order" ? form.descPerformed : undefined}
-              visibilityLabel={
-                variant === "estimate"
-                  ? "Show on estimate"
-                  : "Show on work order & invoice"
-              }
-            />
-          </div>
-        ) : (
-          <p className="mt-5 text-sm text-neutral-500">
-            Save this {variant === "estimate" ? "estimate" : "work order"} to add notes.
-          </p>
-        )}
 
         <div className="mt-5 flex flex-wrap items-end justify-between gap-4 border-t border-neutral-200 pt-5">
           {variant === "work-order" ? (

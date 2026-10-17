@@ -11,7 +11,7 @@ import {
 import { useDroppable } from "@dnd-kit/core";
 import { ArrowDown, ArrowUp, Lock, LockOpen, X } from "lucide-react";
 import type { RouteObjective, ScheduleRouteLeg, ScheduleRouteStop } from "@/lib/api";
-import { formatLocalClock, formatTimeWindow } from "@/lib/schedule";
+import { formatDesiredStart, formatLocalClock } from "@/lib/schedule";
 import Segmented from "@/components/schedule/Segmented";
 import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 
@@ -71,8 +71,8 @@ type RoutePlannerJob = {
   label: string;
   arrival?: string | null;
   departure?: string | null;
-  startTime?: string | null;
-  endTime?: string | null;
+  desiredStartTime?: string | null;
+  desiredStartBy?: string | null;
 };
 
 function formatStopWindow(arrival?: string | null, departure?: string | null): string | null {
@@ -391,7 +391,10 @@ export function TechnicianRoutePane({
               const leg = legById.get(job.id);
               const onRoute = !orderedWorkOrderIds.length || routed.has(job.id);
               const windowLabel = formatStopWindow(job.arrival, job.departure);
-              const preferredWindow = formatTimeWindow(job.startTime, job.endTime);
+              const preferredWindow = formatDesiredStart(
+                job.desiredStartTime,
+                job.desiredStartBy,
+              );
               const lockedTime = locks[job.id];
               const confirming = confirmingRemoveId === job.id;
               return (

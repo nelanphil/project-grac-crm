@@ -10,7 +10,7 @@ const mentionUserIdsSchema = z.array(z.string()).max(20).optional();
 
 export const createWorkOrderNoteSchema = z.object({
   content: noteContentSchema,
-  visibleToCustomer: z.boolean().optional().default(true),
+  visibleToCustomer: z.boolean().optional().default(false),
   templateId: z.string().optional(),
   isReminder: z.boolean().optional().default(false),
   mentionUserIds: mentionUserIdsSchema,

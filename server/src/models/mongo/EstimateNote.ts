@@ -23,7 +23,7 @@ const estimateNoteSchema = new Schema<IEstimateNote>(
     },
     authorId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     content: { type: String, required: true, trim: true },
-    visibleToCustomer: { type: Boolean, default: true, index: true },
+    visibleToCustomer: { type: Boolean, default: false, index: true },
     isReminder: { type: Boolean, default: false, index: true },
     mentionUserIds: {
       type: [{ type: Schema.Types.ObjectId, ref: "User" }],

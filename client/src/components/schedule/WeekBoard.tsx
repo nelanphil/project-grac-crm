@@ -28,7 +28,7 @@ import {
   DEFAULT_ESTIMATED_MINUTES,
   formatLocalClock,
   formatMonthDayYear,
-  formatTimeWindow,
+  formatDesiredStart,
   isScheduledOnDate,
   jobAccent,
   minutesToLabel,
@@ -313,7 +313,7 @@ function UnscheduledCardShell({
   };
   technicianColors?: Record<string, string>;
 }) {
-  const windowLabel = formatTimeWindow(order.startTime, order.endTime);
+  const windowLabel = formatDesiredStart(order.desiredStartTime, order.desiredStartBy);
   const [movingDate, setMovingDate] = useState(false);
   const moveDateRef = useRef<HTMLInputElement>(null);
   const assignedName = personName(order.assignee);

@@ -12,6 +12,10 @@ export interface IWorkOrderNote extends Document {
   visibleToCustomer: boolean;
   isReminder: boolean;
   mentionUserIds: Types.ObjectId[];
+  /** Desired visit start, HH:mm. Empty when this note has no time tag. */
+  desiredStartTime: string;
+  /** Latest acceptable start, HH:mm. Empty when the note sets one time. */
+  desiredStartBy: string;
   reminderCompletions: IReminderCompletion[];
   createdAt: Date;
   updatedAt: Date;
@@ -27,12 +31,14 @@ const workOrderNoteSchema = new Schema<IWorkOrderNote>(
     },
     authorId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     content: { type: String, required: true, trim: true },
-    visibleToCustomer: { type: Boolean, default: true, index: true },
+    visibleToCustomer: { type: Boolean, default: false, index: true },
     isReminder: { type: Boolean, default: false, index: true },
     mentionUserIds: {
       type: [{ type: Schema.Types.ObjectId, ref: "User" }],
       default: [],
     },
+    desiredStartTime: { type: String, default: "" },
+    desiredStartBy: { type: String, default: "" },
     reminderCompletions: {
       type: [
         {

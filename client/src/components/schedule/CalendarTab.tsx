@@ -83,7 +83,7 @@ import ScheduleMap, {
   jobHasCoordinates,
 } from "@/components/schedule/ScheduleMap";
 import Segmented from "@/components/schedule/Segmented";
-import { DesktopWorkOrderPanel } from "@/components/dashboard/staff/TechnicianWorkOrderPanel";
+import WorkOrderModal from "@/components/work-orders/WorkOrderModal";
 import {
   cityMatchesZone,
   jobOutsideServiceCities,
@@ -1510,11 +1510,18 @@ export default function CalendarTab({
         return false;
       }
       let scheduledStart = suggestion?.proposedStart;
-      const windowStart = normalizeTimeOfDay(job.startTime);
+      const windowStart = normalizeTimeOfDay(job.desiredStartTime);
+      const windowEnd = normalizeTimeOfDay(job.desiredStartBy);
       if (windowStart && scheduledStart) {
         const windowIso = localDateTimeToIso(selectedDate, windowStart);
         if (new Date(windowIso).getTime() > new Date(scheduledStart).getTime()) {
           scheduledStart = windowIso;
+        }
+      }
+      if (windowEnd && scheduledStart) {
+        const capIso = localDateTimeToIso(selectedDate, windowEnd);
+        if (new Date(scheduledStart).getTime() > new Date(capIso).getTime()) {
+          scheduledStart = capIso;
         }
       }
       const nextCrew = crew.includes(userId) ? crew : [...crew, userId];
@@ -2136,7 +2143,7 @@ export default function CalendarTab({
 
   function openWorkOrder(job: WorkOrderListItem) {
     setEditingJob(null);
-    if (job._id !== viewingWorkOrderId) setViewingOrder(null);
+    setViewingOrder(job);
     setViewingWorkOrderId(job._id);
   }
 
@@ -2215,8 +2222,8 @@ export default function CalendarTab({
       label: order?.customerName || "Work order",
       arrival: stop?.arrival,
       departure: stop?.departure,
-      startTime: order?.startTime,
-      endTime: order?.endTime,
+      desiredStartTime: order?.desiredStartTime,
+      desiredStartBy: order?.desiredStartBy,
     };
   });
 
@@ -2314,20 +2321,7 @@ export default function CalendarTab({
     />
   ) : null;
 
-  const workOrderPane = viewingWorkOrderId ? (
-    <div className="h-full min-h-0 overflow-y-auto">
-      <DesktopWorkOrderPanel
-        order={viewingOrder}
-        loading={viewingLoading}
-        error={viewingError}
-        token={token}
-        user={user}
-        canWrite={canWrite}
-        onClose={() => setViewingWorkOrderId(null)}
-        onSaved={(updated) => void handleViewingSaved(updated)}
-      />
-    </div>
-  ) : null;
+
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -2408,7 +2402,6 @@ export default function CalendarTab({
             </p>
           )}
           <ScheduleSplit sidebar={rail}>
-            {workOrderPane ?? (
             <div className="flex h-full min-h-0 flex-col">
               <ScheduleMap
                 unscheduled={addedJobs}
@@ -2426,7 +2419,6 @@ export default function CalendarTab({
                 surfaceClassName="h-full min-h-[24rem] flex-1"
               />
             </div>
-            )}
           </ScheduleSplit>
         </div>
           <DragOverlay dropAnimation={null}>
@@ -2457,7 +2449,6 @@ export default function CalendarTab({
         >
           {view === "week" && monthMode === "table" ? (
             <ScheduleSplit sidebar={rail}>
-              {workOrderPane ?? (
               <div className="h-full min-h-0 overflow-auto">
                 <MonthTable
                   jobs={rangeJobs}
@@ -2470,11 +2461,9 @@ export default function CalendarTab({
                   }}
                 />
               </div>
-              )}
             </ScheduleSplit>
           ) : view === "week" ? (
             <ScheduleSplit sidebar={rail}>
-              {workOrderPane ?? (
               <div className="h-full min-h-0">
                 <WeekBoard
                   staff={orderedStaff}
@@ -2498,12 +2487,10 @@ export default function CalendarTab({
                   }}
                 />
               </div>
-              )}
             </ScheduleSplit>
           ) : (
             <ScheduleSplit sidebar={rail}>
-              {workOrderPane ?? (
-              monthMode === "calendar" ? (
+              {monthMode === "calendar" ? (
                 <div className="h-full min-h-0">
                   <MonthCalendar
                     monthDate={anchorDate}
@@ -2544,6 +2531,7 @@ export default function CalendarTab({
                         job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES,
                       );
                     }}
+                    onViewJob={openWorkOrder}
                   />
                 </div>
               ) : (
@@ -2558,7 +2546,6 @@ export default function CalendarTab({
                     }}
                   />
                 </div>
-              )
               )}
             </ScheduleSplit>
           )}
@@ -2735,6 +2722,18 @@ export default function CalendarTab({
             </div>
           </div>
         </div>
+      )}
+
+      {viewingWorkOrderId && (
+        <WorkOrderModal
+          workOrderId={viewingWorkOrderId}
+          initialOrder={viewingOrder}
+          token={token}
+          user={user}
+          canWrite={canWrite}
+          onClose={() => setViewingWorkOrderId(null)}
+          onSaved={(updated) => void handleViewingSaved(updated)}
+        />
       )}
 
       </>

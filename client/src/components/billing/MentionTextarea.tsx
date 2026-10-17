@@ -6,6 +6,7 @@ import {
   NoteMention,
   searchMentionableUsers,
 } from "@/lib/api";
+import { earlierTimeFloor, suggestTimeTokens, timeTagLabels } from "@/lib/noteTimeTags";
 
 function mentionLabel(person: { firstName: string; lastName: string }): string {
   return `@${`${person.firstName} ${person.lastName}`.replace(/\s+/g, " ").trim()}`;
@@ -69,7 +70,11 @@ export default function MentionTextarea({
     caretRef.current = caret;
     const before = next.slice(0, caret);
     const match = before.match(/(^|\s)@([^\s@]*)$/);
-    setQuery(match ? match[2] : null);
+    const nextQuery = match ? match[2] : null;
+    setQuery((current) => {
+      if (current !== nextQuery) setActiveIndex(0);
+      return nextQuery;
+    });
   }
 
   function handleChange(next: string, caret: number) {
@@ -78,15 +83,36 @@ export default function MentionTextarea({
     syncQuery(next, caret);
   }
 
-  function selectUser(user: MentionableUser) {
+  function insertAt(label: string) {
     const area = areaRef.current;
     const caret = area?.selectionStart ?? caretRef.current;
     const before = value.slice(0, caret);
     const match = before.match(/(^|\s)@([^\s@]*)$/);
     if (!match) return;
     const atIndex = before.length - match[2].length - 1;
-    const label = mentionLabel(user);
     const next = `${value.slice(0, atIndex)}${label} ${value.slice(caret)}`;
+    const cursor = atIndex + label.length + 1;
+    return { next, cursor };
+  }
+
+  function selectTime(token: string) {
+    const inserted = insertAt(token);
+    if (!inserted) return;
+    const pruned = pruneMentions(inserted.next, mentionIds, knownMentions);
+    onChange(inserted.next, pruned.mentionIds, pruned.mentions);
+    setQuery(null);
+    const area = areaRef.current;
+    requestAnimationFrame(() => {
+      area?.focus();
+      area?.setSelectionRange(inserted.cursor, inserted.cursor);
+    });
+  }
+
+  function selectUser(user: MentionableUser) {
+    const label = mentionLabel(user);
+    const inserted = insertAt(label);
+    if (!inserted) return;
+    const { next } = inserted;
     const mention: NoteMention = {
       id: user.id,
       firstName: user.firstName,
@@ -99,13 +125,29 @@ export default function MentionTextarea({
     const ids = mentions.map((item) => item.id);
     onChange(next, ids, mentions);
     setQuery(null);
-    const cursor = atIndex + label.length + 1;
+    const area = areaRef.current;
     requestAnimationFrame(() => {
       area?.focus();
-      area?.setSelectionRange(cursor, cursor);
+      area?.setSelectionRange(inserted.cursor, inserted.cursor);
     });
   }
 
+  const caret = caretRef.current;
+  const beforeCaret = value.slice(0, caret);
+  const activeAt = beforeCaret.match(/(^|\s)@([^\s@]*)$/);
+  const textBeforeAt = activeAt
+    ? beforeCaret.slice(0, beforeCaret.length - activeAt[2].length - 1)
+    : beforeCaret;
+  const notBefore = query != null ? earlierTimeFloor(textBeforeAt) : "";
+  const timeChoices = query != null ? suggestTimeTokens(query, notBefore) : [];
+  const typingTime = query != null && /^\d/.test(query);
+  const menuItems: Array<
+    | { kind: "time"; token: string; label: string }
+    | { kind: "user"; user: MentionableUser }
+  > = [
+    ...timeChoices.map((choice) => ({ kind: "time" as const, ...choice })),
+    ...suggestions.map((user) => ({ kind: "user" as const, user })),
+  ];
   const open = query != null;
 
   return (
@@ -124,22 +166,18 @@ export default function MentionTextarea({
           syncQuery(value, (e.target as HTMLTextAreaElement).selectionStart ?? value.length);
         }}
         onKeyDown={(e) => {
-          if (!open) return;
+          if (!open || menuItems.length === 0) return;
           if (e.key === "ArrowDown") {
             e.preventDefault();
-            setActiveIndex((index) =>
-              suggestions.length === 0 ? 0 : (index + 1) % suggestions.length,
-            );
+            setActiveIndex((index) => (index + 1) % menuItems.length);
           } else if (e.key === "ArrowUp") {
             e.preventDefault();
-            setActiveIndex((index) =>
-              suggestions.length === 0
-                ? 0
-                : (index - 1 + suggestions.length) % suggestions.length,
-            );
-          } else if (e.key === "Enter" && suggestions[activeIndex]) {
+            setActiveIndex((index) => (index - 1 + menuItems.length) % menuItems.length);
+          } else if (e.key === "Enter" && menuItems[activeIndex]) {
             e.preventDefault();
-            selectUser(suggestions[activeIndex]);
+            const item = menuItems[activeIndex];
+            if (item.kind === "time") selectTime(item.token);
+            else selectUser(item.user);
           } else if (e.key === "Escape") {
             e.preventDefault();
             setQuery(null);
@@ -148,31 +186,36 @@ export default function MentionTextarea({
         className="w-full resize-y rounded-lg border border-neutral-200 px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange"
       />
       {open ? (
-        <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-lg">
-          {loading ? (
+        <ul className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-lg">
+          {menuItems.map((item, index) => (
+            <li key={item.kind === "time" ? item.token : item.user.id}>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  if (item.kind === "time") selectTime(item.token);
+                  else selectUser(item.user);
+                }}
+                className={`flex w-full px-3 py-2 text-left text-sm ${
+                  index === activeIndex
+                    ? "bg-brand-orange/10 text-brand-dark"
+                    : "text-neutral-700 hover:bg-neutral-50"
+                }`}
+              >
+                {item.kind === "time"
+                  ? item.label
+                  : `${item.user.firstName} ${item.user.lastName}`}
+              </button>
+            </li>
+          ))}
+          {loading && menuItems.length === 0 ? (
             <li className="px-3 py-2 text-sm text-neutral-500">Searching staff…</li>
-          ) : suggestions.length === 0 ? (
-            <li className="px-3 py-2 text-sm text-neutral-500">No staff match</li>
-          ) : (
-            suggestions.map((user, index) => (
-              <li key={user.id}>
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    selectUser(user);
-                  }}
-                  className={`flex w-full px-3 py-2 text-left text-sm ${
-                    index === activeIndex
-                      ? "bg-brand-orange/10 text-brand-dark"
-                      : "text-neutral-700 hover:bg-neutral-50"
-                  }`}
-                >
-                  {user.firstName} {user.lastName}
-                </button>
-              </li>
-            ))
-          )}
+          ) : null}
+          {!loading && menuItems.length === 0 ? (
+            <li className="px-3 py-2 text-sm text-neutral-500">
+              {typingTime ? "No later time" : "No staff match"}
+            </li>
+          ) : null}
         </ul>
       ) : null}
     </div>
@@ -186,8 +229,10 @@ export function NoteBody({
   content: string;
   mentions?: NoteMention[];
 }) {
-  const labels = (mentions ?? [])
-    .map((mention) => mentionLabel(mention))
+  const labels = [
+    ...timeTagLabels(content),
+    ...(mentions ?? []).map((mention) => mentionLabel(mention)),
+  ]
     .filter((label) => label.length > 1)
     .sort((a, b) => b.length - a.length);
 

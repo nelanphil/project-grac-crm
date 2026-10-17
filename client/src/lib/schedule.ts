@@ -151,6 +151,20 @@ export function timeWindowError(
   return null;
 }
 
+/** One clock, or "Start 8:00–10:00 AM" when the visit may begin anywhere in between. */
+export function formatDesiredStart(
+  start: string | null | undefined,
+  startBy: string | null | undefined,
+): string | null {
+  const earliest = normalizeTimeOfDay(start);
+  const latest = normalizeTimeOfDay(startBy);
+  if (earliest && latest && latest > earliest) {
+    return `Start ${formatHmClock(earliest)}–${formatHmClock(latest)}`;
+  }
+  if (earliest) return formatHmClock(earliest);
+  return null;
+}
+
 export function formatTimeWindow(
   start: string | null | undefined,
   end: string | null | undefined,

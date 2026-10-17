@@ -1750,6 +1750,8 @@ export interface WorkOrderNote {
   isReminder?: boolean;
   mentionUserIds?: string[];
   mentions?: NoteMention[];
+  desiredStartTime?: string;
+  desiredStartBy?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -1846,8 +1848,8 @@ export async function createWorkOrderNote(
   workOrderId: string,
   data: TicketNoteInput,
   source: TicketNoteSource = "work-order",
-): Promise<{ note: WorkOrderNote }> {
-  return authRequest<{ note: WorkOrderNote }>(
+): Promise<{ note: WorkOrderNote; warnings?: string[] }> {
+  return authRequest<{ note: WorkOrderNote; warnings?: string[] }>(
     ticketNotesPath(source, workOrderId),
     {
       method: "POST",
@@ -1863,8 +1865,8 @@ export async function updateWorkOrderNote(
   noteId: string,
   data: TicketNoteInput,
   source: TicketNoteSource = "work-order",
-): Promise<{ note: WorkOrderNote }> {
-  return authRequest<{ note: WorkOrderNote }>(
+): Promise<{ note: WorkOrderNote; warnings?: string[] }> {
+  return authRequest<{ note: WorkOrderNote; warnings?: string[] }>(
     `${ticketNotesPath(source, workOrderId)}/${noteId}`,
     {
       method: "PATCH",
@@ -1879,8 +1881,8 @@ export async function deleteWorkOrderNote(
   workOrderId: string,
   noteId: string,
   source: TicketNoteSource = "work-order",
-): Promise<void> {
-  await authRequest<Record<string, never>>(
+): Promise<{ warnings?: string[] }> {
+  return authRequest<{ warnings?: string[] }>(
     `${ticketNotesPath(source, workOrderId)}/${noteId}`,
     {
       method: "DELETE",
@@ -2057,6 +2059,8 @@ export interface WorkOrderListItem {
   date: string | null;
   startTime?: string | null;
   endTime?: string | null;
+  desiredStartTime?: string | null;
+  desiredStartBy?: string | null;
   descPerform: string;
   descPerformed: string;
   tech: string;
@@ -2560,7 +2564,8 @@ export async function recommendTechnicianForSlot(
   data: {
     date: string;
     startTime?: string;
-    endTime?: string;
+    startBy?: string;
+    estimatedMinutes?: number;
     addressRef?: string;
     address?: string;
     city?: string;

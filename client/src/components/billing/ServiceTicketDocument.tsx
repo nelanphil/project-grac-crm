@@ -221,6 +221,8 @@ export default function ServiceTicketDocument({
         <TicketTotals ticket={ticket} invoiceAction={invoiceAction} />
       </div>
 
+      {notesSlot ? <div className="mt-4">{notesSlot}</div> : null}
+
       {showWorkToPerform ? (
         <div className="mt-4">
           <p className="text-xs font-semibold uppercase text-neutral-500">
@@ -296,8 +298,6 @@ export default function ServiceTicketDocument({
             {ticket.descPerform || "—"}
           </p>
         </div>
-      ) : notesSlot ? (
-        <div className="mt-5">{notesSlot}</div>
       ) : null}
 
       <div className="mt-6 grid gap-5 sm:grid-cols-2">

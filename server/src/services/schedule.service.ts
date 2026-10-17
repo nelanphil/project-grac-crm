@@ -27,6 +27,7 @@ import {
   type WeeklyHours,
   type ScheduleException,
 } from "../utils/scheduleTime";
+import { earliestStartMs } from "../utils/noteTimeTags";
 import {
   computeDayRoute,
   computeDriveMinutes,
@@ -1585,8 +1586,11 @@ async function resolveSlotSite(opts: {
  */
 export async function recommendTechnicianForSlot(opts: {
   date: string;
+  /** Earliest desired start. With startBy, the visit may start anywhere in between. */
   startTime?: string;
-  endTime?: string;
+  /** Latest acceptable start. The visit still lasts estimatedMinutes after the chosen start. */
+  startBy?: string;
+  estimatedMinutes?: number;
   addressRef?: string;
   address?: string;
   city?: string;
@@ -1603,9 +1607,19 @@ export async function recommendTechnicianForSlot(opts: {
     return { technicians: [], recommendation: null };
   }
 
-  const timed = Boolean(opts.startTime && opts.endTime);
-  const slotStart = timed ? localDateToUtc(opts.date, opts.startTime!) : null;
-  const slotEnd = timed ? localDateToUtc(opts.date, opts.endTime!) : null;
+  const minutes =
+    typeof opts.estimatedMinutes === "number" && opts.estimatedMinutes > 0
+      ? opts.estimatedMinutes
+      : DEFAULT_ESTIMATED_MINUTES;
+  const earliest =
+    opts.startTime && isHhMm(opts.startTime)
+      ? localDateToUtc(opts.date, opts.startTime)
+      : null;
+  const latest =
+    earliest && opts.startBy && isHhMm(opts.startBy)
+      ? localDateToUtc(opts.date, opts.startBy)
+      : earliest;
+  const timed = earliest != null && latest != null;
   const excludeId =
     opts.excludeWorkOrderId &&
     mongoose.Types.ObjectId.isValid(opts.excludeWorkOrderId)
@@ -1700,27 +1714,36 @@ export async function recommendTechnicianForSlot(opts: {
     const range = windowToUtcRange(opts.date, window);
     const available = range != null;
     const existing = dayJobsByUser.get(String(tech._id)) ?? [];
-    const insideHours = timed
-      ? range != null &&
-        slotStart != null &&
-        slotEnd != null &&
-        slotStart.getTime() >= range.start.getTime() &&
-        slotEnd.getTime() <= range.end.getTime()
-      : available;
-    const overlaps = timed
-      ? existing.some(
-          (job) =>
-            job.scheduledStart &&
-            job.scheduledEnd &&
-            slotStart != null &&
-            slotEnd != null &&
-            rangesOverlap(
-              slotStart,
-              slotEnd,
-              job.scheduledStart,
-              job.scheduledEnd,
-            ),
-        )
+    const busy = existing
+      .filter((job) => job.scheduledStart && job.scheduledEnd)
+      .map((job) => ({
+        start: job.scheduledStart!.getTime(),
+        end: job.scheduledEnd!.getTime(),
+      }));
+    const windowFit =
+      timed && range && earliest && latest
+        ? {
+            inHours: earliestStartMs({
+              earliest: earliest.getTime(),
+              latest: latest.getTime(),
+              durationMs: minutes * 60_000,
+              windowStart: range.start.getTime(),
+              windowEnd: range.end.getTime(),
+              busy: [],
+            }),
+            open: earliestStartMs({
+              earliest: earliest.getTime(),
+              latest: latest.getTime(),
+              durationMs: minutes * 60_000,
+              windowStart: range.start.getTime(),
+              windowEnd: range.end.getTime(),
+              busy,
+            }),
+          }
+        : null;
+    const insideHours = windowFit ? windowFit.inHours != null : available;
+    const overlaps = windowFit
+      ? windowFit.inHours != null && windowFit.open == null
       : available && range != null
         ? !dayHasRoom(range, existing, DEFAULT_ESTIMATED_MINUTES)
         : false;
@@ -2713,6 +2736,8 @@ export async function findSharedSlot(opts: {
   date: string;
   minutes: number;
   startTime?: string | null;
+  /** Latest acceptable start. The visit may begin anywhere from startTime through this clock. */
+  latestStartTime?: string | null;
   excludeWorkOrderId?: string;
   /** When set, refuse instead of sliding to an earlier open gap. */
   requirePreferred?: boolean;
@@ -2785,9 +2810,30 @@ export async function findSharedSlot(opts: {
     return { ok: false, message: `No shared open time on ${opts.date}` };
   }
   const preferredClock = opts.startTime?.trim() ?? "";
+  const latestClock = opts.latestStartTime?.trim() ?? "";
+  const need = opts.minutes * 60_000;
+  if (isHhMm(preferredClock) && isHhMm(latestClock) && latestClock > preferredClock) {
+    const earliest = localDateToUtc(opts.date, preferredClock).getTime();
+    const latest = localDateToUtc(opts.date, latestClock).getTime();
+    const fit = gaps.find((gap) => {
+      const start = Math.max(gap.start, earliest);
+      return start <= latest && start + need <= gap.end;
+    });
+    if (!fit) {
+      return {
+        ok: false,
+        message: `No open start between ${preferredClock} and ${latestClock} on ${opts.date}`,
+      };
+    }
+    const start = Math.max(fit.start, earliest);
+    return {
+      ok: true,
+      start: new Date(start),
+      end: addMinutes(new Date(start), opts.minutes),
+    };
+  }
   if (isHhMm(preferredClock)) {
     const preferred = localDateToUtc(opts.date, preferredClock).getTime();
-    const need = opts.minutes * 60_000;
     const fit = gaps.find(
       (gap) => gap.start <= preferred && preferred + need <= gap.end,
     );
@@ -2820,6 +2866,8 @@ async function placeSharedCrew(opts: {
   userIds: string[];
   date: string;
   scheduledStart?: Date;
+  /** Do not slide the start later than this instant. */
+  latestStart?: Date;
   estimatedMinutes?: number;
   requirePreferred?: boolean;
 }): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
@@ -2841,12 +2889,16 @@ async function placeSharedCrew(opts: {
       : estimatedMinutesForWorkOrder(job);
   const preferred = opts.scheduledStart
     ? formatLocalTime(opts.scheduledStart)
-    : job.startTime;
+    : job.desiredStartTime || job.startTime;
+  const latestClock = opts.latestStart
+    ? formatLocalTime(opts.latestStart)
+    : job.desiredStartBy;
   const slot = await findSharedSlot({
     userIds: opts.userIds,
     date: opts.date,
     minutes,
     startTime: preferred,
+    latestStartTime: latestClock,
     excludeWorkOrderId: String(job._id),
     requirePreferred: opts.requirePreferred,
   });
@@ -2878,12 +2930,80 @@ async function placeSharedCrew(opts: {
   return { workOrders, warnings: [] };
 }
 
+/**
+ * Place an assigned job using a note time window when one is set.
+ * One time keeps today's preferred clock. Two times stay inside that start window.
+ * With neither, a single technician uses the previous appointment or the typed clock.
+ */
+export async function scheduleDesiredWindow(opts: {
+  workOrderId: string;
+  userIds: string[];
+  date: string;
+  desiredStartTime?: string | null;
+  desiredStartBy?: string | null;
+  fallbackStartTime?: string | null;
+  estimatedMinutes?: number;
+  previousStart?: Date | null;
+}): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
+  const userIds = opts.userIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+  const minutes =
+    typeof opts.estimatedMinutes === "number" && opts.estimatedMinutes > 0
+      ? opts.estimatedMinutes
+      : DEFAULT_ESTIMATED_MINUTES;
+  const desired = opts.desiredStartTime?.trim() ?? "";
+  const by = opts.desiredStartBy?.trim() ?? "";
+  const base = {
+    workOrderId: opts.workOrderId,
+    assignedUserRef: userIds[0] ?? "",
+    assignedUserRefs: userIds,
+    date: opts.date,
+    estimatedMinutes: minutes,
+  };
+  if (desired && by && isHhMm(desired) && isHhMm(by) && by > desired) {
+    const slot = await findSharedSlot({
+      userIds,
+      date: opts.date,
+      minutes,
+      startTime: desired,
+      latestStartTime: by,
+      excludeWorkOrderId: opts.workOrderId,
+    });
+    if (!slot.ok) {
+      throw Object.assign(new Error(slot.message), { status: 409 });
+    }
+    return placeWorkOrder({
+      ...base,
+      scheduledStart: slot.start,
+      latestStart: localDateToUtc(opts.date, by),
+    });
+  }
+  if (userIds.length > 1) {
+    return placeWorkOrder({
+      ...base,
+      ...(desired && isHhMm(desired)
+        ? { scheduledStart: localDateToUtc(opts.date, desired) }
+        : {}),
+    });
+  }
+  return placeWorkOrder({
+    ...base,
+    scheduledStart: await placementStartForAssignee({
+      assignedUserRef: userIds[0] ?? "",
+      date: opts.date,
+      startTime: desired || opts.fallbackStartTime,
+      previousStart: desired ? null : opts.previousStart,
+    }),
+  });
+}
+
 export async function placeWorkOrder(opts: {
   workOrderId: string;
   assignedUserRef: string;
   assignedUserRefs?: string[];
   date: string;
   scheduledStart?: Date;
+  /** Do not slide the start later than this instant. */
+  latestStart?: Date;
   estimatedMinutes?: number;
   /** 0 places the job first. Omit to insert by scheduledStart. */
   insertIndex?: number;
@@ -3056,6 +3176,13 @@ export async function placeWorkOrder(opts: {
       destLabel: placeJobLabel(job),
       driveBetween,
     });
+    if (
+      String(job._id) === droppedId &&
+      opts.latestStart &&
+      start.getTime() > opts.latestStart.getTime()
+    ) {
+      throw Object.assign(new Error("No open start in that window"), { status: 409 });
+    }
     const end = addMinutes(start, duration);
     job.scheduledStart = start;
     job.scheduledEnd = end;

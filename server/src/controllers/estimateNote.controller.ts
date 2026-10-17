@@ -182,7 +182,7 @@ export async function createEstimateNote(
       estimateRef: estimate._id,
       authorId: req.user!.id,
       content,
-      visibleToCustomer: parsed.data.visibleToCustomer ?? true,
+      visibleToCustomer: parsed.data.visibleToCustomer ?? false,
       isReminder,
       mentionUserIds,
     });

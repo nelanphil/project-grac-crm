@@ -93,7 +93,8 @@ const technicianRecommendationSchema = z
   .object({
     date: z.string().regex(localDateRe, "date must be YYYY-MM-DD"),
     startTime: z.string().regex(hhmmRe, "startTime must be HH:mm").optional(),
-    endTime: z.string().regex(hhmmRe, "endTime must be HH:mm").optional(),
+    startBy: z.string().regex(hhmmRe, "startBy must be HH:mm").optional(),
+    estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
     addressRef: z.string().optional(),
     address: z.string().optional(),
     city: z.string().optional(),
@@ -103,20 +104,18 @@ const technicianRecommendationSchema = z
     excludeWorkOrderId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
-    const hasStart = Boolean(data.startTime);
-    const hasEnd = Boolean(data.endTime);
-    if (hasStart !== hasEnd) {
+    if (data.startBy && !data.startTime) {
       ctx.addIssue({
         code: "custom",
-        message: "Start and end time are set together",
-        path: [hasStart ? "endTime" : "startTime"],
+        message: "A start window needs a start time",
+        path: ["startTime"],
       });
     }
-    if (hasStart && hasEnd && data.endTime! <= data.startTime!) {
+    if (data.startBy && data.startTime && data.startBy <= data.startTime) {
       ctx.addIssue({
         code: "custom",
-        message: "End time must be after start time",
-        path: ["endTime"],
+        message: "The latest start must be after the earliest start",
+        path: ["startBy"],
       });
     }
     if (!data.addressRef?.trim() && !data.city?.trim()) {
