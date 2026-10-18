@@ -55,6 +55,7 @@ import legacyDumpRoutes from "./legacyDump.routes";
 import databaseInspectRoutes from "./databaseInspect.routes";
 import reminderRoutes from "./reminder.routes";
 import crashReportRoutes from "./crashReport.routes";
+import dashboardLiveRoutes from "./dashboardLive.routes";
 
 const router = Router();
 
@@ -117,5 +118,6 @@ router.use("/contact-submissions", contactFormSubmissionRoutes);
 router.use("/legacy-dumps", legacyDumpRoutes);
 router.use("/databases", databaseInspectRoutes);
 router.use("/crash-reports", crashReportRoutes);
+router.use("/dashboard", dashboardLiveRoutes);
 
 export default router;

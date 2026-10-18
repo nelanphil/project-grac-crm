@@ -13,6 +13,7 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
+import { publishDashboardChanged } from "../services/dashboardLive";
 import {
   createAudience,
   displayTicketNumber,
@@ -221,6 +222,7 @@ export async function createEstimateNote(
       metadata: { estimateId: String(estimate._id) },
       ...actorFromRequest(req.user),
     });
+    if (isReminder) publishDashboardChanged();
 
     res.status(201).json({ note: asFormatted(populated, true) });
   } catch (err) {
@@ -316,6 +318,7 @@ export async function updateEstimateNote(
       metadata: { estimateId: String(estimate._id) },
       ...actorFromRequest(req.user),
     });
+    if (prevReminder || note.isReminder) publishDashboardChanged();
 
     res.json({ note: asFormatted(populated, true) });
   } catch (err) {
@@ -353,6 +356,7 @@ export async function deleteEstimateNote(
       return;
     }
 
+    const removedReminder = Boolean(note.isReminder);
     await note.deleteOne();
 
     logNotificationAsync({
@@ -364,6 +368,7 @@ export async function deleteEstimateNote(
       metadata: { estimateId: String(estimate._id) },
       ...actorFromRequest(req.user),
     });
+    if (removedReminder) publishDashboardChanged();
 
     res.status(204).send();
   } catch (err) {

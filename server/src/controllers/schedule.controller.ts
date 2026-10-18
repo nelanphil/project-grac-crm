@@ -21,6 +21,7 @@ import {
   enrichScheduleWorkOrders,
   rangeUtc,
 } from "../services/schedule.service";
+import { publishDashboardChanged } from "../services/dashboardLive";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { assigneeInFilter } from "../utils/workOrderCrew";
 import { User, activeUserFilter } from "../models/mongo/User";
@@ -488,6 +489,7 @@ export async function postSchedulePlace(
       insertIndex: parsed.data.insertIndex,
       requirePreferred: parsed.data.requirePreferred,
     });
+    publishDashboardChanged();
     res.json(result);
   } catch (err) {
     const status = (err as { status?: number }).status ?? 500;
@@ -662,6 +664,7 @@ export async function postScheduleRouteApply(
     }
 
     const result = await applyPlannedRoute(parsed.data);
+    publishDashboardChanged();
     res.json(result);
   } catch (err) {
     const status = (err as { status?: number }).status ?? 500;

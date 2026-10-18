@@ -4,105 +4,19 @@ import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   ApiError,
-  getEmailAccounts,
   getInvoices,
-  getMailboxMessages,
-  getMessagingThreads,
-  getRecentWorkOrderNotes,
-  getReminders,
   type InvoiceItem,
-  type MailboxAddress,
-  type MessageThreadItem,
-  type RecentWorkOrderNote,
   type ReminderListItem,
 } from "@/lib/api";
-import { contactDisplayName } from "@/components/messaging/conversationUtils";
 import { formatDateOnly, parseDateOnly } from "@/lib/contractDates";
 import { invoiceCustomerLabel } from "@/lib/formatName";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useDashboardStore } from "@/store/useDashboardStore";
 import TechnicianHomeDashboard from "@/components/dashboard/staff/TechnicianHomeDashboard";
 
-const REMINDER_PREVIEW = 4;
 const NOTE_PREVIEW = 4;
 
 type BriefingTab = "reminders" | "notes" | "inbox";
-
-type InboxPreview = {
-  id: string;
-  kind: "Text" | "Email";
-  title: string;
-  preview: string;
-  at: string | null;
-  href: string;
-};
-
-function emailSender(from: MailboxAddress[]): string {
-  const first = from[0];
-  if (!first) return "Unknown";
-  return first.name.trim() || first.address || "Unknown";
-}
-
-function inboxHrefForThread(thread: MessageThreadItem): string {
-  return `/dashboard/messaging?tab=inbox&threadId=${encodeURIComponent(thread._id)}`;
-}
-
-async function loadUnreadEmails(token: string): Promise<InboxPreview[]> {
-  try {
-    const { accounts } = await getEmailAccounts(token);
-    const connected = accounts.filter(
-      (account) => account.isActive && account.imapHost.trim(),
-    );
-    const mailboxes = await Promise.all(
-      connected.map(async (account) => {
-        try {
-          const { messages } = await getMailboxMessages(
-            token,
-            account._id,
-            "inbox",
-          );
-          return messages
-            .filter((message) => !message.seen)
-            .map((message): InboxPreview => ({
-              id: `email-${account._id}-${message.uid}`,
-              kind: "Email",
-              title: emailSender(message.from),
-              preview:
-                message.subject.trim() ||
-                message.snippet.trim() ||
-                "(no subject)",
-              at: message.date,
-              href: `/dashboard/messaging?tab=inbox&view=email&accountId=${encodeURIComponent(account._id)}&folder=inbox&uid=${message.uid}`,
-            }));
-        } catch {
-          return [] as InboxPreview[];
-        }
-      }),
-    );
-    return mailboxes.flat();
-  } catch {
-    return [];
-  }
-}
-
-async function loadUnreadInbox(token: string): Promise<InboxPreview[]> {
-  const [threadsResult, emails] = await Promise.all([
-    getMessagingThreads(token, { unread: true, page: 1, pageSize: 100 }),
-    loadUnreadEmails(token),
-  ]);
-  const texts: InboxPreview[] = threadsResult.threads.map((thread) => ({
-    id: `text-${thread._id}`,
-    kind: "Text",
-    title: contactDisplayName(thread),
-    preview: thread.lastMessagePreview.trim() || "Text message",
-    at: thread.lastMessageAt,
-    href: inboxHrefForThread(thread),
-  }));
-  return [...texts, ...emails].sort((left, right) => {
-    const leftTime = left.at ? new Date(left.at).getTime() : 0;
-    const rightTime = right.at ? new Date(right.at).getTime() : 0;
-    return rightTime - leftTime;
-  });
-}
 
 function ticketHref(item: ReminderListItem): string {
   return item.source === "estimate"
@@ -273,51 +187,43 @@ export default function StaffBriefingHome() {
   const [tab, setTab] = useState<BriefingTab>(
     canSeeInbox ? "inbox" : "reminders",
   );
-  const [reminders, setReminders] = useState<ReminderListItem[] | null>(null);
-  const [reminderTotal, setReminderTotal] = useState(0);
-  const [reminderError, setReminderError] = useState<string | null>(null);
-  const [notes, setNotes] = useState<RecentWorkOrderNote[] | null>(null);
-  const [notesError, setNotesError] = useState<string | null>(null);
+  const reminders = useDashboardStore((s) => s.reminders);
+  const reminderTotal = useDashboardStore((s) => s.reminderTotal);
+  const reminderError = useDashboardStore((s) => s.reminderError);
+  const notes = useDashboardStore((s) => s.notes);
+  const notesError = useDashboardStore((s) => s.notesError);
+  const inbox = useDashboardStore((s) => s.inbox);
+  const inboxError = useDashboardStore((s) => s.inboxError);
+  const loadBriefing = useDashboardStore((s) => s.loadBriefing);
+  const loadInbox = useDashboardStore((s) => s.loadInbox);
+  const connect = useDashboardStore((s) => s.connect);
+  const disconnect = useDashboardStore((s) => s.disconnect);
+  const setCanSeeInbox = useDashboardStore((s) => s.setCanSeeInbox);
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [payments, setPayments] = useState<InvoiceItem[] | null>(null);
   const [paymentsError, setPaymentsError] = useState<string | null>(null);
-  const [inbox, setInbox] = useState<InboxPreview[] | null>(null);
-  const [inboxError, setInboxError] = useState<string | null>(null);
+  if (useDashboardStore.getState().canSeeInbox !== canSeeInbox) {
+    setCanSeeInbox(canSeeInbox);
+  }
+
+  useEffect(() => {
+    if (!token) {
+      disconnect();
+      return;
+    }
+    loadBriefing(token);
+    connect(token);
+    return () => disconnect();
+  }, [token, loadBriefing, connect, disconnect]);
+
+  useEffect(() => {
+    if (!token || !canSeeInbox) return;
+    loadInbox(token);
+  }, [token, canSeeInbox, loadInbox]);
 
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
-    getReminders(token, {
-      page: 1,
-      pageSize: 50,
-      sort: "created",
-      dir: "desc",
-    })
-      .then((result) => {
-        if (cancelled) return;
-        setReminders(result.reminders.slice(0, REMINDER_PREVIEW));
-        setReminderTotal(result.total);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setReminders([]);
-        setReminderError(
-          err instanceof ApiError ? err.message : "Could not load reminders",
-        );
-      });
-    getRecentWorkOrderNotes(token)
-      .then((result) => {
-        if (cancelled) return;
-        setNotes(result.notes);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setNotes([]);
-        if (err instanceof ApiError && err.status === 403) return;
-        setNotesError(
-          err instanceof ApiError ? err.message : "Could not load recent notes",
-        );
-      });
     Promise.all([
       loadInvoicesByStatus(token, "open"),
       loadInvoicesByStatus(token, "failed"),
@@ -343,26 +249,6 @@ export default function StaffBriefingHome() {
       cancelled = true;
     };
   }, [token]);
-
-  useEffect(() => {
-    if (!token || !canSeeInbox || tab !== "inbox") return;
-    let cancelled = false;
-    setInboxError(null);
-    loadUnreadInbox(token)
-      .then((rows) => {
-        if (!cancelled) setInbox(rows);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setInbox([]);
-        setInboxError(
-          err instanceof ApiError ? err.message : "Could not load inbox",
-        );
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [token, canSeeInbox, tab]);
 
   const visibleNotes =
     notes && !showAllNotes ? notes.slice(0, NOTE_PREVIEW) : (notes ?? []);

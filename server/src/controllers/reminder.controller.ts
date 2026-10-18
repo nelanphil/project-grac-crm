@@ -7,6 +7,7 @@ import { WorkOrder } from "../models/mongo/WorkOrder";
 import { WorkOrderNote, IReminderCompletion } from "../models/mongo/WorkOrderNote";
 import { isCustomerRole } from "../utils/roles";
 import { displayTicketNumber } from "../services/noteAudience";
+import { publishDashboardChanged } from "../services/dashboardLive";
 
 const PAGE_SIZES = [50, 150, 250] as const;
 const SORT_KEYS = ["note", "ticket", "customer", "created", "completed"] as const;
@@ -298,6 +299,7 @@ export async function updateReminderCompleted(
     note.reminderCompletions = completions;
     note.markModified("reminderCompletions");
     await note.save();
+    publishDashboardChanged();
 
     res.json({ id: noteId, source, completed });
   } catch (err) {

@@ -20,6 +20,7 @@ import {
   logNotificationAsync,
   logNotificationThrottledAsync,
 } from "../services/notification.service";
+import { publishDashboardChanged } from "../services/dashboardLive";
 import {
   applyAssignmentSideEffects,
   availabilityWarning,
@@ -549,6 +550,7 @@ export async function createWorkOrder(
 
     const lean = workOrder.toObject() as unknown as Record<string, unknown>;
     const [enriched] = await enrichWithAddress([lean]);
+    if (workOrder.scheduledStart) publishDashboardChanged();
     res.status(201).json(
       placementWarnings.length > 0
         ? { ...enriched, warnings: placementWarnings }
@@ -902,6 +904,13 @@ export async function updateWorkOrder(
 
     const lean = workOrder.toObject() as unknown as Record<string, unknown>;
     const [enriched] = await enrichWithAddress([lean]);
+    const nextStart = workOrder.scheduledStart
+      ? new Date(workOrder.scheduledStart).getTime()
+      : null;
+    const previousStart = prevScheduledStart ? prevScheduledStart.getTime() : null;
+    if (nextStart !== previousStart || nextCrew.join(",") !== prevCrew.join(",")) {
+      publishDashboardChanged();
+    }
     res.json({ ...enriched, warnings });
   } catch (err) {
     console.error("PATCH /work-orders/:id error:", err);
@@ -961,6 +970,7 @@ export async function cancelWorkOrderAppointment(
 
     const lean = workOrder.toObject() as unknown as Record<string, unknown>;
     const [enriched] = await enrichWithAddress([lean]);
+    publishDashboardChanged();
     res.json(enriched);
   } catch (err) {
     console.error("POST /work-orders/:id/cancel-appointment error:", err);
@@ -1003,6 +1013,7 @@ export async function deleteWorkOrder(
       summary: "Work order deleted",
       ...actorFromRequest(req.user),
     });
+    if (workOrder.scheduledStart) publishDashboardChanged();
 
     res.status(200).json({
       message: "Work order deleted",
@@ -1055,6 +1066,7 @@ export async function restoreWorkOrder(
       metadata: { restored: true },
       ...actorFromRequest(req.user),
     });
+    if (workOrder.scheduledStart) publishDashboardChanged();
 
     res.status(200).json({
       message: "Work order restored",

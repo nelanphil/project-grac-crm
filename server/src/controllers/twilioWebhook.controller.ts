@@ -18,6 +18,7 @@ import {
   touchThreadAfterMessage,
 } from "../utils/messageThreads";
 import { toE164 } from "../utils/messagingContext";
+import { publishDashboardChanged } from "../services/dashboardLive";
 import { normalizePhoneDigits } from "../utils/customerSites";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
 import {
@@ -196,6 +197,7 @@ export async function inboundMessageWebhook(
       body,
       at: doc?.createdAt ?? new Date(),
     });
+    publishDashboardChanged();
 
     res.status(200).type("text/xml").send(EMPTY_TWIML);
   } catch (err) {

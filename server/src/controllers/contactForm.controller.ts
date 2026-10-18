@@ -7,6 +7,7 @@ import {
 } from "../models/mongo/ContactFormSettings";
 import { ContactFormSubmission } from "../models/mongo/ContactFormSubmission";
 import { notifyContactFormSubmission } from "../services/contactFormSubmission.service";
+import { publishDashboardChanged } from "../services/dashboardLive";
 import {
   saveContactFormSettingsSchema,
   submitContactFormSchema,
@@ -110,6 +111,7 @@ export async function submitContactForm(
       source: "website",
     });
     notifyContactFormSubmission(submission);
+    publishDashboardChanged();
 
     const settings = await ContactFormSettings.findOne({
       slug: CONTACT_FORM_SLUG,

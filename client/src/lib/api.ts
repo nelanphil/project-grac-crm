@@ -5307,7 +5307,13 @@ export interface ContactFormSubmissionItem {
 
 export async function getContactFormSubmissions(
   token: string,
-  params: { page?: number; pageSize?: number; from?: string; to?: string } = {},
+  params: {
+    page?: number;
+    pageSize?: number;
+    from?: string;
+    to?: string;
+    unread?: boolean;
+  } = {},
 ): Promise<{
   submissions: ContactFormSubmissionItem[];
   total: number;
@@ -5319,6 +5325,7 @@ export async function getContactFormSubmissions(
   if (params.pageSize) search.set("pageSize", String(params.pageSize));
   if (params.from) search.set("from", params.from);
   if (params.to) search.set("to", params.to);
+  if (params.unread) search.set("unread", "true");
   const query = search.toString();
   return authRequest(
     `/contact-submissions${query ? `?${query}` : ""}`,

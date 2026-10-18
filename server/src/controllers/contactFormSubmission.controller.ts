@@ -48,6 +48,9 @@ export async function listContactFormSubmissions(
     if (!Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime())) {
       filter.createdAt = { $gte: from, $lt: to };
     }
+    if (req.query.unread === "true") {
+      filter.readAt = null;
+    }
 
     const [total, rows] = await Promise.all([
       ContactFormSubmission.countDocuments(filter),

@@ -27,6 +27,7 @@ import { seedInvoiceTemplates } from "./models/mongo/InvoiceTemplate";
 import { seedServiceAreas } from "./models/mongo/ServiceArea";
 import { ensureTwilioPhoneLineShape } from "./models/mongo/TwilioAccount";
 import { startRenewalInvoiceScheduler } from "./jobs/scheduler";
+import { startMailboxIdle, stopMailboxIdle } from "./services/mailboxIdle";
 import { applyCompanyTaxRateToOpenDocuments } from "./services/taxSettings";
 
 async function bootstrap(): Promise<void> {
@@ -57,6 +58,7 @@ async function bootstrap(): Promise<void> {
   }
 
   startRenewalInvoiceScheduler();
+  startMailboxIdle();
 
   const server = app.listen(env.port, () => {
     console.log(`Server running on http://localhost:${env.port}`);
@@ -64,6 +66,7 @@ async function bootstrap(): Promise<void> {
 
   const shutdown = async () => {
     console.log("Shutting down...");
+    stopMailboxIdle();
     server.close();
     await disconnectMongoDB();
     process.exit(0);

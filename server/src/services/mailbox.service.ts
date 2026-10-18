@@ -208,6 +208,7 @@ function openMailboxClient(
   host: string,
   password: string,
   connectionTimeout = 15_000,
+  extra?: { socketTimeout?: number; maxIdleTime?: number },
 ): ImapFlow {
   return new ImapFlow({
     host,
@@ -217,8 +218,61 @@ function openMailboxClient(
     logger: false,
     connectionTimeout,
     greetingTimeout: connectionTimeout,
-    socketTimeout: connectionTimeout,
+    socketTimeout: extra?.socketTimeout ?? connectionTimeout,
+    maxIdleTime: extra?.maxIdleTime,
   });
+}
+
+const IDLE_SOCKET_TIMEOUT_MS = 15 * 60 * 1000;
+const IDLE_RENEW_MS = 9 * 60 * 1000;
+
+/**
+ * Hold INBOX open and resolve when IDLE ends. Calls onNewMail when the
+ * mailbox count grows. The caller restarts the watch if this returns.
+ */
+export async function watchInboxIdle(
+  account: IEmailAccount,
+  signal: AbortSignal,
+  onNewMail: () => void,
+): Promise<void> {
+  if (signal.aborted) return;
+  const { host, password } = assertImapReady(account);
+  const client = openMailboxClient(account, host, password, 15_000, {
+    socketTimeout: IDLE_SOCKET_TIMEOUT_MS,
+    maxIdleTime: IDLE_RENEW_MS,
+  });
+  const stop = () => {
+    client.close();
+  };
+  signal.addEventListener("abort", stop, { once: true });
+  let connected = false;
+  try {
+    await client.connect();
+    connected = true;
+    if (signal.aborted) return;
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      client.on("exists", (data: { count?: number; prevCount?: number }) => {
+        const count = data?.count ?? 0;
+        const prevCount = data?.prevCount ?? 0;
+        if (count > prevCount) onNewMail();
+      });
+      await client.idle();
+    } finally {
+      lock.release();
+    }
+  } finally {
+    signal.removeEventListener("abort", stop);
+    if (connected) {
+      try {
+        await client.logout();
+      } catch {
+        client.close();
+      }
+    } else {
+      client.close();
+    }
+  }
 }
 
 async function withMailboxClient<T>(

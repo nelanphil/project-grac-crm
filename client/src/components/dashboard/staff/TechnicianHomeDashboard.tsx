@@ -7,12 +7,10 @@ import {
   ApiError,
   geocodeMissingScheduleAddresses,
   getScheduleRoute,
-  getScheduleStaff,
   getTechnicians,
   getWorkOrder,
   type TechnicianListItem,
   updateWorkOrder,
-  type ScheduleRouteStop,
   type WorkOrderListItem,
 } from "@/lib/api";
 import {
@@ -30,8 +28,14 @@ import {
   startOfWeekSunday,
 } from "@/lib/schedule";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useDashboardStore } from "@/store/useDashboardStore";
+import {
+  assignedToUser,
+  isScheduledAppointment,
+} from "@/lib/dashboardSchedule";
 
 const TECH_STORAGE_KEY = "grac.todoTechnicianId";
+const EMPTY_JOBS: WorkOrderListItem[] = [];
 
 function technicianName(tech: {
   first_name: string;
@@ -45,26 +49,6 @@ function technicianName(tech: {
 
 function possessive(name: string): string {
   return `${name}'s`;
-}
-
-function assignedToUser(job: WorkOrderListItem, userId: string): boolean {
-  if (job.assignee?._id === userId) return true;
-  return typeof job.assignedUserRef === "string" && job.assignedUserRef === userId;
-}
-
-/** Same appointments the schedule board draws: anything still placed on a calendar. */
-function isScheduledAppointment(job: WorkOrderListItem): boolean {
-  return Boolean(job.scheduledStart);
-}
-
-function startMillis(job: WorkOrderListItem): number {
-  if (!job.scheduledStart) return Number.MAX_SAFE_INTEGER;
-  const time = new Date(job.scheduledStart).getTime();
-  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
-}
-
-function compareJobs(a: WorkOrderListItem, b: WorkOrderListItem): number {
-  return startMillis(a) - startMillis(b);
 }
 
 function timeWindow(job: WorkOrderListItem): string {
@@ -309,9 +293,16 @@ export default function TechnicianHomeDashboard() {
   const [techId, setTechId] = useState<string | null>(null);
   const [techsLoading, setTechsLoading] = useState(canSwitchTechnicians);
   const [techsError, setTechsError] = useState<string | null>(null);
-  const [jobs, setJobs] = useState<WorkOrderListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const jobs = useDashboardStore((s) => s.jobs) ?? EMPTY_JOBS;
+  const loading = useDashboardStore((s) => s.scheduleLoading);
+  const error = useDashboardStore((s) => s.scheduleError);
+  const loadSchedule = useDashboardStore((s) => s.loadSchedule);
+  const clearSchedule = useDashboardStore((s) => s.clearSchedule);
+  const updateJobs = useDashboardStore((s) => s.updateJobs);
+  const setRoute = useDashboardStore((s) => s.setRoute);
+  const clearRoute = useDashboardStore((s) => s.clearRoute);
+  const setScheduleFocus = useDashboardStore((s) => s.setScheduleFocus);
+  const setScheduleBusy = useDashboardStore((s) => s.setScheduleBusy);
   const [pending, setPending] = useState<{
     id: string;
     action: CardAction;
@@ -325,8 +316,8 @@ export default function TechnicianHomeDashboard() {
   const [focusDate, setFocusDate] = useState(today);
   const weekStart = startOfWeekSunday(focusDate);
   const weekEnd = addDays(weekStart, 6);
-  const [routeStops, setRouteStops] = useState<ScheduleRouteStop[]>([]);
-  const [routePolyline, setRoutePolyline] = useState<string | undefined>();
+  const routeStops = useDashboardStore((s) => s.routeStops);
+  const routePolyline = useDashboardStore((s) => s.routePolyline);
   const requestedGeocodeRef = useRef(new Set<string>());
   const subjectId = canSwitchTechnicians ? (techId ?? "") : userId;
   const selectedTech =
@@ -376,52 +367,39 @@ export default function TechnicianHomeDashboard() {
   }, [canSwitchTechnicians, token]);
 
   useEffect(() => {
+    setScheduleFocus(focusDate);
+  }, [focusDate, setScheduleFocus]);
+
+  useEffect(() => {
+    setScheduleBusy(Boolean(pending) || busyId != null);
+  }, [pending, busyId, setScheduleBusy]);
+
+  useEffect(() => {
     if (!token) return;
     if (!subjectId) {
-      if (!techsLoading) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setLoading(false);
-        setJobs([]);
-      }
+      if (!techsLoading) clearSchedule();
       return;
     }
-    let cancelled = false;
-
-    setLoading(true);
-    setError(null);
-
-    getScheduleStaff(token, weekStart, weekEnd, subjectId)
-      .then(({ workOrders }) => {
-        if (cancelled) return;
-        setJobs(
-          workOrders
-            .filter(
-              (job) =>
-                assignedToUser(job, subjectId) && isScheduledAppointment(job),
-            )
-            .sort(compareJobs),
-        );
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        if (err instanceof ApiError && err.status === 403) {
-          setError("This account cannot read jobs.");
-          return;
-        }
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : `Failed to load ${scheduleWhose} schedule.`,
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [token, subjectId, weekStart, weekEnd, techsLoading, scheduleWhose]);
+    loadSchedule(token, {
+      subjectId,
+      weekStart,
+      weekEnd,
+      focusDate,
+      whose: scheduleWhose,
+    });
+    // Day changes inside the week update focus through setScheduleFocus.
+    // Reloading jobs here would flash the schedule loading line.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    token,
+    subjectId,
+    weekStart,
+    weekEnd,
+    techsLoading,
+    scheduleWhose,
+    loadSchedule,
+    clearSchedule,
+  ]);
 
   useEffect(() => {
     if (!token || jobs.length === 0) return;
@@ -449,7 +427,7 @@ export default function TechnicianHomeDashboard() {
           const { updated } = await geocodeMissingScheduleAddresses(token, batch);
           batch.forEach((id) => requestedGeocodeRef.current.add(id));
           if (cancelled || updated.length === 0) continue;
-          setJobs((current) => applyAddressCoords(current, updated));
+          updateJobs((current) => applyAddressCoords(current, updated));
         }
       } catch {
         missing.forEach((id) => requestedGeocodeRef.current.add(id));
@@ -494,27 +472,28 @@ export default function TechnicianHomeDashboard() {
     )
     .join("|");
 
+  const routeScopeRef = useRef("");
+
   useEffect(() => {
     if (!token || !subjectId) return;
     let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setRouteStops([]);
-    setRoutePolyline(undefined);
+    const key = `${subjectId}|${focusDate}`;
+    const navigated = routeScopeRef.current !== key;
+    routeScopeRef.current = key;
+    if (navigated) clearRoute();
     getScheduleRoute(token, subjectId, focusDate)
       .then((result) => {
         if (cancelled) return;
-        setRouteStops(result.stops);
-        setRoutePolyline(result.route?.encodedPolyline);
+        setRoute(result.stops, result.route?.encodedPolyline);
       })
       .catch(() => {
-        if (cancelled) return;
-        setRouteStops([]);
-        setRoutePolyline(undefined);
+        if (cancelled || !navigated) return;
+        clearRoute();
       });
     return () => {
       cancelled = true;
     };
-  }, [token, subjectId, focusDate, mapCoordKey]);
+  }, [token, subjectId, focusDate, mapCoordKey, clearRoute, setRoute]);
 
   const periodLabel = formatWeekdayDate(focusDate);
   const pageError = techsError ?? error;
@@ -567,14 +546,14 @@ export default function TechnicianHomeDashboard() {
     try {
       if (action === "complete") {
         await updateWorkOrder(token, id, { completed: true });
-        setJobs((current) =>
+        updateJobs((current) =>
           current.map((job) =>
             job._id === id ? { ...job, completed: true } : job,
           ),
         );
       } else {
         await updateWorkOrder(token, id, { paid: true });
-        setJobs((current) =>
+        updateJobs((current) =>
           current.map((job) => (job._id === id ? { ...job, paid: true } : job)),
         );
       }
@@ -624,11 +603,11 @@ export default function TechnicianHomeDashboard() {
     const stillScheduled =
       assignedToUser(updated, subjectId) && isScheduledAppointment(updated);
     if (!stillScheduled) {
-      setJobs((current) => current.filter((job) => job._id !== updated._id));
+      updateJobs((current) => current.filter((job) => job._id !== updated._id));
       setSelectedId(null);
       return;
     }
-    setJobs((current) =>
+    updateJobs((current) =>
       current.map((job) =>
         job._id === updated._id
           ? {

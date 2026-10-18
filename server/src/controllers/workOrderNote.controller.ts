@@ -15,6 +15,7 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
+import { publishDashboardChanged } from "../services/dashboardLive";
 import {
   createAudience,
   displayTicketNumber,
@@ -387,6 +388,7 @@ export async function createWorkOrderNote(
       metadata: { workOrderId: String(workOrder._id) },
       ...actorFromRequest(req.user),
     });
+    publishDashboardChanged();
 
     res.status(201).json({ note: asFormatted(populated, true), warnings });
   } catch (err) {
@@ -494,6 +496,7 @@ export async function updateWorkOrderNote(
       metadata: { workOrderId: String(workOrder._id) },
       ...actorFromRequest(req.user),
     });
+    if (prevReminder || note.isReminder) publishDashboardChanged();
 
     res.json({ note: asFormatted(populated, true), warnings });
   } catch (err) {
@@ -545,6 +548,7 @@ export async function deleteWorkOrderNote(
       metadata: { workOrderId: String(workOrder._id) },
       ...actorFromRequest(req.user),
     });
+    publishDashboardChanged();
 
     res.json({ warnings });
   } catch (err) {

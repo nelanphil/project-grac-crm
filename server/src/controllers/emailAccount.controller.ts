@@ -12,6 +12,7 @@ import {
 } from "../schemas/emailAccount.schema";
 import { encryptCredential } from "../utils/credentialsCrypto";
 import { sendWithEmailAccount } from "../services/email.service";
+import { syncMailboxIdle } from "../services/mailboxIdle";
 import {
   MailboxError,
   testMailboxConnection,
@@ -133,6 +134,7 @@ export async function createEmailAccount(
     metadata: { friendlyName: data.friendlyName, roles },
     ...actorFromRequest(req.user),
   });
+  syncMailboxIdle();
 
   res.status(201).json({ account: toPublic(account) });
 }
@@ -212,6 +214,7 @@ export async function updateEmailAccount(
     metadata: { friendlyName: account.friendlyName, roles: account.roles },
     ...actorFromRequest(req.user),
   });
+  syncMailboxIdle();
 
   res.json({ account: toPublic(account) });
 }
@@ -234,6 +237,7 @@ export async function deleteEmailAccount(
     metadata: { friendlyName: account.friendlyName },
     ...actorFromRequest(req.user),
   });
+  syncMailboxIdle();
 
   res.json({ message: "Email account deleted" });
 }
