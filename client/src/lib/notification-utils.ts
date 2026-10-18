@@ -25,6 +25,7 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   estimate: "Estimate",
   discount_code: "Discount code",
   mailbox_message: "Email",
+  contact_form: "Contact form",
 };
 
 export function notificationEntityLabel(type: NotificationEntityType): string {
@@ -84,6 +85,18 @@ export function notificationHref(
       return "/dashboard/estimates";
     case "lead":
       return "/dashboard";
+    case "contact_form": {
+      const submitted = new Date(String(item.metadata.submittedAt ?? item.createdAt));
+      const params = new URLSearchParams({
+        tab: "threads",
+        view: "contact-form",
+      });
+      if (!Number.isNaN(submitted.getTime())) {
+        params.set("year", String(submitted.getFullYear()));
+        params.set("month", String(submitted.getMonth() + 1));
+      }
+      return `/dashboard/messaging?${params.toString()}`;
+    }
     case "mailbox_message": {
       const accountId = String(item.metadata.accountId ?? "");
       const folder = item.metadata.folder === "sent" ? "sent" : "inbox";

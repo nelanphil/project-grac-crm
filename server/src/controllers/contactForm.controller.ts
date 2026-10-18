@@ -5,6 +5,8 @@ import {
   CONTACT_FORM_SLUG,
   ContactFormSettings,
 } from "../models/mongo/ContactFormSettings";
+import { ContactFormSubmission } from "../models/mongo/ContactFormSubmission";
+import { notifyContactFormSubmission } from "../services/contactFormSubmission.service";
 import {
   saveContactFormSettingsSchema,
   submitContactFormSchema,
@@ -98,6 +100,16 @@ export async function submitContactForm(
       res.status(400).json({ message: recaptcha.message });
       return;
     }
+
+    const submission = await ContactFormSubmission.create({
+      firstName: fields.firstName,
+      lastName: fields.lastName,
+      email: fields.email,
+      phone: fields.phone,
+      message: fields.message,
+      source: "website",
+    });
+    notifyContactFormSubmission(submission);
 
     const settings = await ContactFormSettings.findOne({
       slug: CONTACT_FORM_SLUG,

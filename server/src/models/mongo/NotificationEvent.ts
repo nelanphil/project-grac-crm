@@ -24,6 +24,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "estimate",
   "discount_code",
   "mailbox_message",
+  "contact_form",
 ] as const;
 
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPES)[number];
@@ -38,6 +39,7 @@ export const OPERATIONAL_ENTITY_TYPES: NotificationEntityType[] = [
   "customer_note",
   "work_order_note",
   "estimate_note",
+  "contact_form",
 ];
 
 export const NOTIFICATION_ACTIONS = [

@@ -5293,6 +5293,61 @@ export async function saveContactFormSettings(
   });
 }
 
+export interface ContactFormSubmissionItem {
+  _id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  message: string;
+  source: "website" | "mailbox-import";
+  readAt: string | null;
+  createdAt: string;
+}
+
+export async function getContactFormSubmissions(
+  token: string,
+  params: { page?: number; pageSize?: number; from?: string; to?: string } = {},
+): Promise<{
+  submissions: ContactFormSubmissionItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const search = new URLSearchParams();
+  if (params.page) search.set("page", String(params.page));
+  if (params.pageSize) search.set("pageSize", String(params.pageSize));
+  if (params.from) search.set("from", params.from);
+  if (params.to) search.set("to", params.to);
+  const query = search.toString();
+  return authRequest(
+    `/contact-submissions${query ? `?${query}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function markContactFormSubmissionRead(
+  token: string,
+  id: string,
+): Promise<{ submission: ContactFormSubmissionItem }> {
+  return authRequest(`/contact-submissions/${id}/read`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function importContactFormSubmissions(
+  token: string,
+): Promise<{ imported: number; skipped: number }> {
+  return authRequest("/contact-submissions/import", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export interface PublicAssetItem {
   _id: string;
   slug: string;
@@ -6212,7 +6267,8 @@ export type NotificationEntityType =
   | "product"
   | "estimate"
   | "discount_code"
-  | "mailbox_message";
+  | "mailbox_message"
+  | "contact_form";
 
 export type NotificationAction =
   | "created"

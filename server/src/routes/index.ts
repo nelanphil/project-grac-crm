@@ -45,6 +45,7 @@ import publicAssetRoutes from "./publicAsset.routes";
 import contactRouter, {
   contactFormSettingsRouter,
 } from "./contactForm.routes";
+import contactFormSubmissionRoutes from "./contactFormSubmission.routes";
 import smsOptInRoutes from "./smsOptIn.routes";
 import recaptchaCredentialsRoutes from "./recaptchaCredentials.routes";
 import taxSettingsRoutes from "./taxSettings.routes";
@@ -112,6 +113,7 @@ router.use("/contact", contactRouter);
 router.use("/sms-opt-in", smsOptInRoutes);
 router.use("/email-preferences", emailPreferenceRoutes);
 router.use("/contact-form-settings", contactFormSettingsRouter);
+router.use("/contact-submissions", contactFormSubmissionRoutes);
 router.use("/legacy-dumps", legacyDumpRoutes);
 router.use("/databases", databaseInspectRoutes);
 router.use("/crash-reports", crashReportRoutes);

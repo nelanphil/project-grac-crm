@@ -444,6 +444,100 @@ export async function hasUnseenInboxFrom(
   }
 }
 
+export type ContactFormMailboxMessage = {
+  folder: MailboxFolder;
+  uid: number;
+  subject: string;
+  messageId: string;
+  date: string | null;
+  text: string;
+};
+
+const CONTACT_FORM_SEARCH_CAP = 100;
+
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"');
+}
+
+/** Inbox and Sent messages whose subject is a website contact-form notification. */
+export async function findContactFormMailboxMessages(
+  account: IEmailAccount,
+): Promise<ContactFormMailboxMessage[]> {
+  return withMailboxClient(account, async (client) => {
+    const folders: { folder: MailboxFolder; path: string }[] = [
+      { folder: "inbox", path: "INBOX" },
+    ];
+    try {
+      folders.push({
+        folder: "sent",
+        path: await resolveFolderPath(client, "sent"),
+      });
+    } catch (err) {
+      console.error(
+        "[mailbox] sent folder unavailable for contact form import",
+        err,
+      );
+    }
+
+    const hits: ContactFormMailboxMessage[] = [];
+    for (const item of folders) {
+      const lock = await client.getMailboxLock(item.path);
+      try {
+        const found = await client.search(
+          { subject: "Website contact from" },
+          { uid: true },
+        );
+        const uids = (Array.isArray(found) ? found : [])
+          .sort((left, right) => right - left)
+          .slice(0, CONTACT_FORM_SEARCH_CAP);
+        for (const uid of uids) {
+          const fetched = await client.fetchOne(
+            String(uid),
+            {
+              uid: true,
+              envelope: true,
+              internalDate: true,
+              source: true,
+            },
+            { uid: true },
+          );
+          if (!fetched || !fetched.source) continue;
+          const source = fetched.source;
+          const parsed = await simpleParser(source);
+          const plain = (parsed.text || "").trim();
+          const html = typeof parsed.html === "string" ? parsed.html : "";
+          hits.push({
+            folder: item.folder,
+            uid: fetched.uid,
+            subject:
+              fetched.envelope?.subject?.trim() ||
+              (parsed.subject || "").trim(),
+            messageId: (
+              fetched.envelope?.messageId ||
+              parsed.messageId ||
+              ""
+            ).trim(),
+            date: messageDate(fetched.envelope?.date, fetched.internalDate),
+            text: plain || htmlToPlainText(html),
+          });
+        }
+      } finally {
+        lock.release();
+      }
+    }
+    return hits;
+  });
+}
+
 export async function appendToSentFolder(
   account: IEmailAccount,
   raw: Buffer,

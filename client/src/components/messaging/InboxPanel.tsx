@@ -4,8 +4,9 @@ import { useState } from "react";
 import { MailboxFolder, TwilioAccountItem } from "@/lib/api";
 import EmailInboxPanel from "./EmailInboxPanel";
 import ThreadsPanel from "./ThreadsPanel";
+import ContactFormSubmissionsPanel from "./ContactFormSubmissionsPanel";
 
-export type InboxView = "text" | "email";
+export type InboxView = "text" | "email" | "contact-form";
 
 type InboxPanelProps = {
   token: string;
@@ -20,6 +21,7 @@ type InboxPanelProps = {
 const VIEWS: { id: InboxView; label: string }[] = [
   { id: "text", label: "Text" },
   { id: "email", label: "Email" },
+  { id: "contact-form", label: "Contact Form" },
 ];
 
 export default function InboxPanel({
@@ -32,6 +34,11 @@ export default function InboxPanel({
   initialEmailMessageId = "",
 }: InboxPanelProps) {
   const [view, setView] = useState<InboxView>(initialView);
+  const [appliedInitialView, setAppliedInitialView] = useState(initialView);
+  if (initialView !== appliedInitialView) {
+    setAppliedInitialView(initialView);
+    setView(initialView);
+  }
   const messageId = initialEmailMessageId.trim();
   const incomingEmailLink =
     initialEmailAccountId && (initialEmailUid || messageId)
@@ -73,6 +80,8 @@ export default function InboxPanel({
           initialUid={initialEmailUid}
           initialMessageId={messageId}
         />
+      ) : view === "contact-form" ? (
+        <ContactFormSubmissionsPanel token={token} />
       ) : (
         <ThreadsPanel token={token} accounts={accounts} />
       )}

@@ -174,10 +174,9 @@ async function roleVisibilityFilter(
 
   if (await userHasCapability(user, "territoryOwner")) {
     const refs = await resolveOwnerCustomerRefs(user.id);
-    if (refs.length === 0) {
-      return { _id: { $in: [] } };
-    }
-    return { customerRef: { $in: refs } };
+    const contactForms = { entityType: "contact_form" as const };
+    if (refs.length === 0) return contactForms;
+    return { $or: [{ customerRef: { $in: refs } }, contactForms] };
   }
 
   if (isCustomerRole(user)) {

@@ -121,7 +121,11 @@ export default function MessagingHub() {
   const initialInvoiceId = searchParams.get("invoiceId");
   const initialTab = searchParams.get("tab");
   const initialInboxView =
-    searchParams.get("view") === "email" ? "email" : "text";
+    searchParams.get("view") === "email"
+      ? "email"
+      : searchParams.get("view") === "contact-form"
+        ? "contact-form"
+        : "text";
 
   const [activeTab, setActiveTab] = useState<MessagingTab>(
     messagingTabFromQuery(initialTab),
@@ -135,6 +139,14 @@ export default function MessagingHub() {
   const [appliedMailboxLink, setAppliedMailboxLink] = useState(mailboxLink);
   if (mailboxLink && mailboxLink !== appliedMailboxLink) {
     setAppliedMailboxLink(mailboxLink);
+    setActiveTab("threads");
+  }
+  const contactFormLink =
+    searchParams.get("view") === "contact-form" ? searchParams.toString() : "";
+  const [appliedContactFormLink, setAppliedContactFormLink] =
+    useState(contactFormLink);
+  if (contactFormLink && contactFormLink !== appliedContactFormLink) {
+    setAppliedContactFormLink(contactFormLink);
     setActiveTab("threads");
   }
 
