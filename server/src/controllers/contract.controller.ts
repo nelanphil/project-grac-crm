@@ -2,7 +2,11 @@ import { Response } from "express";
 import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { Contract } from "../models/mongo/Contract";
-import { activeCustomerFilter, Customer } from "../models/mongo/Customer";
+import {
+  activeCustomerFilter,
+  Customer,
+  notMergedFilter,
+} from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { Equipment } from "../models/mongo/Equipment";
 import {
@@ -35,11 +39,6 @@ import {
 } from "../utils/productDiscounts";
 import { contractProductDiscountsSchema } from "../schemas/contractTemplate.schema";
 
-const notMergedFilter: {
-  $or: Array<{ mergedIntoRef: null } | { mergedIntoRef: { $exists: false } }>;
-} = {
-  $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
-};
 
 async function enrichWithCustomer(
   contracts: Array<Record<string, unknown>>,

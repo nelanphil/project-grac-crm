@@ -197,18 +197,20 @@ export default function CustomerCommunicationsPanel({
                     current === item.id ? "all" : item.id,
                   )
                 }
-                className={`rounded-lg border p-3 text-left transition-colors ${
+                className={`group rounded-lg border p-3 text-left transition-all ${
                   selected
-                    ? "border-brand-orange bg-orange-50"
+                    ? "channel-card-selected"
                     : available
-                      ? "border-neutral-200 hover:border-neutral-300"
-                      : "border-neutral-200 bg-neutral-50"
+                      ? "channel-card-available"
+                      : "channel-card-unavailable"
                 }`}
               >
                 <div className="flex items-center gap-2">
                   <Icon
-                    className={`h-4 w-4 ${
-                      selected ? "text-brand-orange" : "text-neutral-400"
+                    className={`h-4 w-4 shrink-0 transition-colors ${
+                      selected
+                        ? "text-brand-orange"
+                        : "text-neutral-400 group-hover:text-brand-dark"
                     }`}
                   />
                   <span className="text-sm font-semibold text-brand-dark">
@@ -216,14 +218,21 @@ export default function CustomerCommunicationsPanel({
                   </span>
                 </div>
                 <p
-                  className={`mt-2 text-xs ${
+                  className={`mt-2 text-xs truncate ${
                     available ? "text-neutral-600" : "text-neutral-400"
                   }`}
+                  title={preview}
                 >
                   {preview}
                 </p>
                 {isAdmin ? (
-                  <p className="mt-1 text-xs font-medium text-neutral-500">
+                  <p
+                    className={`mt-1 text-xs font-medium ${
+                      selected
+                        ? "text-brand-orange font-semibold"
+                        : "text-neutral-500"
+                    }`}
+                  >
                     {countsLoading ? (
                       <span className="inline-flex items-center gap-1">
                         <Loader2 className="h-3 w-3 animate-spin" />
@@ -236,7 +245,13 @@ export default function CustomerCommunicationsPanel({
                     )}
                   </p>
                 ) : (
-                  <p className="mt-1 text-xs font-medium text-neutral-500">
+                  <p
+                    className={`mt-1 text-xs font-medium ${
+                      selected
+                        ? "text-brand-orange font-semibold"
+                        : "text-neutral-500"
+                    }`}
+                  >
                     {available ? "Available" : "Unavailable"}
                   </p>
                 )}

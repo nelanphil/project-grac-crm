@@ -125,6 +125,9 @@ export const Customer = mongoose.model<ICustomer>("Customer", customerSchema);
 /** Active (non–soft-deleted) customers only. */
 export const activeCustomerFilter = { deletedAt: null } as const;
 
+/** Active unmerged customers (excludes records that have been merged into another customer). */
+export const notMergedFilter = { mergedIntoRef: null } as const;
+
 type ListedIndex = {
   name?: string;
   unique?: boolean;

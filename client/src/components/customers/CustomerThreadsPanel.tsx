@@ -163,8 +163,8 @@ export default function CustomerThreadsPanel({
                         <span
                           className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
                             t.status === "open"
-                              ? "bg-green-50 text-green-700"
-                              : "bg-neutral-100 text-neutral-500"
+                              ? "conversation-status-open"
+                              : "conversation-status-closed"
                           }`}
                         >
                           {t.status}

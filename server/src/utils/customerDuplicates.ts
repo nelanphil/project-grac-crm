@@ -1,5 +1,9 @@
 import mongoose, { Types } from "mongoose";
-import { activeCustomerFilter, Customer } from "../models/mongo/Customer";
+import {
+  activeCustomerFilter,
+  Customer,
+  notMergedFilter,
+} from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import {
   activeContactFilter,
@@ -91,9 +95,6 @@ export type DuplicateCheckResult = {
 const CUSTOMER_MATCH_FIELDS =
   "_id legacyId accountName first last phone email address city state zip";
 
-const notMergedFilter = {
-  $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
-};
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

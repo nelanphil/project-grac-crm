@@ -4,7 +4,7 @@ import {
   normalizeCountyName,
 } from "../constants/floridaCounties";
 import { countyForFloridaZip } from "../constants/floridaZipCounties";
-import { Customer } from "../models/mongo/Customer";
+import { Customer, notMergedFilter } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { User, activeUserFilter } from "../models/mongo/User";
 import { lookupCountyFromCensus } from "./censusGeocoder";
@@ -252,9 +252,6 @@ export async function assignCustomerOwner(
   return ownerId;
 }
 
-const notMergedFilter = {
-  $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
-};
 
 /**
  * Reassign owners for customers affected by a territory change.

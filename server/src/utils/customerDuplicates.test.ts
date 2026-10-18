@@ -113,4 +113,16 @@ describe("customerDuplicates helpers", () => {
     );
     assert.equal(hasBlockingDuplicates(blocked), true);
   });
+
+  it("defines notMergedFilter as a direct field to prevent $or clobbering", async () => {
+    const { notMergedFilter } = await import("../models/mongo/Customer");
+    assert.deepEqual(notMergedFilter, { mergedIntoRef: null });
+    const query = {
+      ...notMergedFilter,
+      $or: [{ accountName: "test" }],
+    };
+    assert.equal(query.mergedIntoRef, null);
+    assert.equal(query.$or.length, 1);
+  });
 });
+

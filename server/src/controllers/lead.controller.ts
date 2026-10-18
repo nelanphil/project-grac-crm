@@ -3,7 +3,11 @@ import mongoose from "mongoose";
 import { getMongoStatus } from "../config/mongodb";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { activeLeadFilter, Lead } from "../models/mongo/Lead";
-import { activeCustomerFilter, Customer } from "../models/mongo/Customer";
+import {
+  activeCustomerFilter,
+  Customer,
+  notMergedFilter,
+} from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import {
@@ -19,9 +23,6 @@ import {
   normalizePhoneDigits,
 } from "../utils/customerSites";
 
-const notMergedFilter = {
-  $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
-};
 
 const LEAD_PAGE_SIZES = [25, 50, 150, 250, 500];
 const LEAD_STATUSES = new Set(["new", "contacted", "qualified", "lost", "won"]);

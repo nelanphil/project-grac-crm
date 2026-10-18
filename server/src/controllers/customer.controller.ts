@@ -2,7 +2,11 @@ import { Response } from "express";
 import mongoose from "mongoose";
 import { z } from "zod";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { activeCustomerFilter, Customer } from "../models/mongo/Customer";
+import {
+  activeCustomerFilter,
+  Customer,
+  notMergedFilter,
+} from "../models/mongo/Customer";
 import {
   CustomerAddress,
   CustomerAddressPropertyType,
@@ -373,11 +377,6 @@ async function findActiveCustomerOr404(
   };
 }
 
-const notMergedFilter: {
-  $or: Array<{ mergedIntoRef: null } | { mergedIntoRef: { $exists: false } }>;
-} = {
-  $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
-};
 
 function trimStr(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";

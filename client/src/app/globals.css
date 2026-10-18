@@ -188,6 +188,69 @@ html[data-theme="dark"] .conversation-status-closed {
   color: #c4b6ab;
 }
 
+/* Customer detail Communications tab channel cards */
+.channel-card-selected {
+  border-color: var(--color-brand-orange);
+  background-color: #fff7ed;
+  box-shadow: inset 0 0 0 1px var(--color-brand-orange);
+}
+
+html[data-theme="dark"] .channel-card-selected {
+  border-color: var(--color-brand-orange);
+  background-color: #382419;
+  box-shadow: inset 0 0 0 1px rgba(243, 108, 33, 0.45);
+}
+
+.channel-card-available {
+  border-color: var(--color-neutral-200);
+  background-color: var(--staff-surface);
+}
+
+.channel-card-available:hover {
+  border-color: var(--color-neutral-300);
+  background-color: var(--staff-cream);
+}
+
+html[data-theme="dark"] .channel-card-available {
+  border-color: var(--staff-border);
+  background-color: var(--staff-surface);
+}
+
+html[data-theme="dark"] .channel-card-available:hover {
+  border-color: #5c534c;
+  background-color: var(--staff-cream);
+}
+
+.channel-card-unavailable {
+  border-color: var(--color-neutral-200);
+  background-color: var(--staff-canvas);
+  opacity: 0.65;
+}
+
+.channel-card-unavailable:hover {
+  opacity: 0.85;
+}
+
+html[data-theme="dark"] .channel-card-unavailable {
+  border-color: var(--staff-border);
+  background-color: #161413;
+  opacity: 0.6;
+}
+
+html[data-theme="dark"] .channel-card-unavailable:hover {
+  opacity: 0.85;
+}
+
+.channel-pill-selected {
+  background-color: #fff7ed;
+  color: var(--color-brand-orange);
+}
+
+html[data-theme="dark"] .channel-pill-selected {
+  background-color: #382419;
+  color: var(--color-brand-orange);
+}
+
 /* Paper documents, customer-facing previews, and the job terminal keep
    their own light (or already-dark) colors. */
 html[data-theme="dark"] :is(.invoice-document, .theme-light) {

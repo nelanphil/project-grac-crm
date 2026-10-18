@@ -246,10 +246,10 @@ export default function CommunicationHistoryPanel({
                   setAccountId("");
                   setPage(1);
                 }}
-                className={`rounded-md px-2 py-1 text-xs font-medium capitalize ${
+                className={`rounded-md px-2 py-1 text-xs font-medium capitalize transition-colors ${
                   channel === c
-                    ? "bg-orange-50 text-brand-orange"
-                    : "text-neutral-600 hover:bg-neutral-50"
+                    ? "channel-pill-selected"
+                    : "text-neutral-600 hover:bg-neutral-100"
                 }`}
               >
                 {c}
