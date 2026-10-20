@@ -8,9 +8,10 @@ import {
   useSyncExternalStore,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { useDndContext, useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { Check, GripVertical, MapPin } from "lucide-react";
 import {
@@ -81,6 +82,19 @@ function jobCity(order: WorkOrderListItem): string {
   return properCaseCity(
     order.address?.city?.trim() || order.customerCity?.trim() || "",
   );
+}
+
+function formatMinutesClock(minutes: number): string {
+  const h24 = Math.floor(minutes / 60) % 24;
+  const m = Math.floor(minutes % 60);
+  const period = h24 >= 12 ? "PM" : "AM";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  const mm = String(m).padStart(2, "0");
+  return `${h12}:${mm} ${period}`;
+}
+
+function orderCustomerName(order: WorkOrderListItem): string {
+  return properCaseCity(order.customerName?.trim() || "") || "Job";
 }
 
 /** Cities for one technician-day, most appointments first. Ties use the city name. */
@@ -759,12 +773,14 @@ function JobBlock({
   dispatcher,
   lane,
   laneCount,
+  liftDrag = false,
 }: {
   order: WorkOrderListItem;
   onClick: () => void;
   dispatcher: boolean;
   lane: number;
   laneCount: number;
+  liftDrag?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
@@ -803,7 +819,7 @@ function JobBlock({
     height: `${heightPct}%`,
     left: `calc(${(lane / columns) * 100}% + 3px)`,
     width: `calc(${100 / columns}% - 5px)`,
-    transform: transform ? CSS.Translate.toString(transform) : undefined,
+    transform: transform && !liftDrag ? CSS.Translate.toString(transform) : undefined,
     backgroundColor: `color-mix(in srgb, ${accent} 34%, var(--staff-surface))`,
     borderLeftColor: accent,
     zIndex: 10 + lane,
@@ -819,7 +835,7 @@ function JobBlock({
       onClick={onClick}
       title={[customerName, timeLabel, detail].filter(Boolean).join(" · ")}
       className={`absolute overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight text-brand-dark transition-shadow hover:shadow-md ${
-        isDragging ? "z-20 opacity-40" : ""
+        isDragging ? "z-20 opacity-30 pointer-events-none" : ""
       }`}
     >
       <div className="truncate font-semibold">{customerName}</div>
@@ -974,7 +990,7 @@ function buildDriveGaps(
   return gaps;
 }
 
-function DriveGapBand({ gap }: { gap: DriveGap }) {
+function DriveGapBand({ gap, dimmed = false }: { gap: DriveGap; dimmed?: boolean }) {
   const boardStart = BOARD_HOUR_START * 60;
   const boardEnd = BOARD_HOUR_END * 60;
   const start = Math.max(gap.startMin, boardStart);
@@ -987,14 +1003,136 @@ function DriveGapBand({ gap }: { gap: DriveGap }) {
   return (
     <div
       title={gap.label}
-      className={`drive-gap pointer-events-none absolute inset-x-1 z-0 flex items-center overflow-hidden rounded-md px-2.5 text-[10px] font-medium leading-none ${
-        gap.tight ? "drive-gap-tight" : ""
-      }`}
+      className={`drive-gap pointer-events-none absolute inset-x-1 z-0 flex items-center overflow-hidden rounded-md px-2.5 text-[10px] font-medium leading-none transition-opacity duration-150 ${
+        dimmed ? "opacity-25" : ""
+      } ${gap.tight ? "drive-gap-tight" : ""}`}
       style={{ top: `${top}%`, height: `${height}%` }}
     >
       {pixelHeight >= DRIVE_LABEL_MIN_PX ? (
         <span className="min-w-0 truncate">{gap.label}</span>
       ) : null}
+    </div>
+  );
+}
+
+function StaffColumnDropSlot({
+  staffId,
+  index,
+  label,
+  subLabel,
+  topPct,
+  heightPct,
+  minHeightPx = 38,
+  gapMinutes,
+  draggedDuration,
+}: {
+  staffId: string;
+  index: number;
+  label: string;
+  subLabel?: string;
+  topPct: number;
+  heightPct: number;
+  minHeightPx?: number;
+  gapMinutes?: number;
+  draggedDuration?: number;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `slot:${staffId}:${index}`,
+  });
+
+  const fits =
+    gapMinutes != null && draggedDuration != null && gapMinutes > 0
+      ? gapMinutes >= draggedDuration
+      : null;
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        top: `${topPct}%`,
+        height: heightPct > 0 ? `max(${heightPct}%, ${minHeightPx}px)` : `${minHeightPx}px`,
+      }}
+      className={`absolute inset-x-1 z-20 flex flex-col justify-center rounded-lg border-2 border-dashed px-2 py-1 select-none transition-all duration-150 ${
+        isOver
+          ? "z-30 border-brand-orange bg-brand-orange/20 shadow-md ring-2 ring-brand-orange/30 scale-[1.01]"
+          : "border-brand-orange/45 bg-brand-orange/[0.04] hover:border-brand-orange/70 hover:bg-brand-orange/[0.08]"
+      }`}
+    >
+      <div className="pointer-events-none flex items-center justify-between gap-1 overflow-hidden">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span
+            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+              isOver ? "bg-brand-orange text-white" : "bg-brand-orange/20 text-brand-orange"
+            }`}
+          >
+            +
+          </span>
+          <span
+            className={`truncate text-[11px] font-semibold ${
+              isOver ? "text-brand-orange" : "text-neutral-700"
+            }`}
+          >
+            {isOver ? "Drop to insert here" : label}
+          </span>
+        </div>
+        {subLabel ? (
+          <span className="shrink-0 text-[10px] font-medium text-neutral-500">
+            {subLabel}
+          </span>
+        ) : null}
+      </div>
+      {fits != null && !isOver ? (
+        <div className="mt-0.5 pointer-events-none flex items-center gap-1 text-[9px]">
+          {fits ? (
+            <span className="rounded bg-emerald-50 px-1 font-medium text-emerald-700 border border-emerald-200/60">
+              Fits ({gapMinutes}m gap)
+            </span>
+          ) : (
+            <span className="rounded bg-amber-50 px-1 font-medium text-amber-700 border border-amber-200/60">
+              Pushes next stops ({gapMinutes}m gap)
+            </span>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function EmptyColumnDropSlot({
+  staff,
+}: {
+  staff: ScheduleStaffMember;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `slot:${staff._id}:0`,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`absolute inset-x-2 top-4 bottom-4 z-20 flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-4 text-center select-none transition-all duration-150 ${
+        isOver
+          ? "border-brand-orange bg-brand-orange/20 shadow-lg ring-2 ring-brand-orange/30 scale-[1.01]"
+          : "border-brand-orange/35 bg-brand-orange/[0.03] hover:border-brand-orange/60 hover:bg-brand-orange/[0.06]"
+      }`}
+    >
+      <div
+        className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors ${
+          isOver ? "bg-brand-orange text-white" : "bg-brand-orange/10 text-brand-orange"
+        }`}
+      >
+        <span className="text-xl font-bold">+</span>
+      </div>
+      <div
+        className={`mt-2 text-xs font-semibold ${
+          isOver ? "text-brand-orange" : "text-neutral-700"
+        }`}
+      >
+        {isOver ? `Assign first stop to ${staff.first_name}` : `Start schedule for ${staff.first_name}`}
+      </div>
+      <div className="mt-1 text-[11px] text-neutral-400">
+        Drop here to start their day
+      </div>
     </div>
   );
 }
@@ -1006,6 +1144,7 @@ function StaffColumn({
   onJobClick,
   onMap,
   dispatcher,
+  draggingJob,
 }: {
   staff: ScheduleStaffMember;
   jobs: WorkOrderListItem[];
@@ -1013,7 +1152,116 @@ function StaffColumn({
   onJobClick: (job: WorkOrderListItem) => void;
   onMap: () => void;
   dispatcher: boolean;
+  draggingJob?: WorkOrderListItem | null;
 }) {
+  const { active } = useDndContext();
+  const isDraggingAnyJob = Boolean(
+    dispatcher && active && String(active.id).startsWith("job:")
+  );
+  const draggedJobId = isDraggingAnyJob ? String(active!.id).slice(4) : null;
+  const activeJob =
+    draggingJob && draggingJob._id === draggedJobId
+      ? draggingJob
+      : jobs.find((j) => j._id === draggedJobId) ?? draggingJob;
+  const draggedDuration =
+    activeJob?.estimatedMinutes ?? DEFAULT_ESTIMATED_MINUTES;
+
+  const boardStart = BOARD_HOUR_START * 60;
+  const boardEnd = BOARD_HOUR_END * 60;
+  const span = boardEnd - boardStart;
+
+  const placedJobs = jobs
+    .map((job) => ({ job, window: jobWindowMinutes(job) }))
+    .filter(
+      (
+        row,
+      ): row is {
+        job: WorkOrderListItem;
+        window: { startMin: number; endMin: number };
+      } => row.window != null,
+    )
+    .sort((a, b) => a.window.startMin - b.window.startMin);
+
+  const dropSlots: ReactNode[] = [];
+  if (isDraggingAnyJob) {
+    if (placedJobs.length === 0) {
+      dropSlots.push(
+        <EmptyColumnDropSlot key={`empty-${staff._id}`} staff={staff} />
+      );
+    } else {
+      const first = placedJobs[0]!;
+      const firstCustomer = orderCustomerName(first.job);
+      const firstStart = first.window.startMin;
+      const gapBefore = Math.max(0, firstStart - boardStart);
+      const slot0TopPct = 0;
+      const slot0HeightPct = Math.max(0, ((firstStart - boardStart) / span) * 100);
+      dropSlots.push(
+        <StaffColumnDropSlot
+          key={`slot-0`}
+          staffId={staff._id}
+          index={0}
+          label="Start of Day"
+          subLabel={`Before ${firstCustomer}`}
+          topPct={slot0TopPct}
+          heightPct={slot0HeightPct}
+          minHeightPx={38}
+          gapMinutes={gapBefore}
+          draggedDuration={draggedDuration}
+        />
+      );
+
+      for (let i = 1; i < placedJobs.length; i += 1) {
+        const prev = placedJobs[i - 1]!;
+        const next = placedJobs[i]!;
+        const prevCustomer = orderCustomerName(prev.job);
+        const nextCustomer = orderCustomerName(next.job);
+        const prevEnd = prev.window.endMin;
+        const nextStart = next.window.startMin;
+        const gapMinutes = Math.max(0, nextStart - prevEnd);
+        const topPct = ((prevEnd - boardStart) / span) * 100;
+        const heightPct = ((Math.max(0, nextStart - prevEnd)) / span) * 100;
+        dropSlots.push(
+          <StaffColumnDropSlot
+            key={`slot-${i}`}
+            staffId={staff._id}
+            index={i}
+            label={`Between ${prevCustomer} & ${nextCustomer}`}
+            subLabel={`~${formatMinutesClock(prevEnd)}`}
+            topPct={topPct}
+            heightPct={heightPct}
+            minHeightPx={38}
+            gapMinutes={gapMinutes}
+            draggedDuration={draggedDuration}
+          />
+        );
+      }
+
+      const last = placedJobs[placedJobs.length - 1]!;
+      const lastCustomer = orderCustomerName(last.job);
+      const lastEnd = last.window.endMin;
+      const gapAfter = Math.max(0, boardEnd - lastEnd);
+      const lastTopPct = ((lastEnd - boardStart) / span) * 100;
+      const lastHeightPct = Math.max(
+        0,
+        ((Math.min(boardEnd, lastEnd + draggedDuration) - lastEnd) / span) * 100
+      );
+      dropSlots.push(
+        <StaffColumnDropSlot
+          key={`slot-${placedJobs.length}`}
+          staffId={staff._id}
+          index={placedJobs.length}
+          label="End of Day"
+          subLabel={`After ${lastCustomer}`}
+          topPct={lastTopPct}
+          heightPct={lastHeightPct}
+          minHeightPx={38}
+          gapMinutes={gapAfter}
+          draggedDuration={draggedDuration}
+        />
+      );
+    }
+  }
+
   const {
     attributes,
     listeners,
@@ -1127,8 +1375,9 @@ function StaffColumn({
           ))}
         </div>
         {gaps.map((gap) => (
-          <DriveGapBand key={gap.key} gap={gap} />
+          <DriveGapBand key={gap.key} gap={gap} dimmed={isDraggingAnyJob} />
         ))}
+        {dropSlots}
         {jobs.map((job) => {
           const layout = lanes.get(job._id) ?? { lane: 0, laneCount: 1 };
           return (
@@ -1138,6 +1387,7 @@ function StaffColumn({
               dispatcher={dispatcher}
               lane={layout.lane}
               laneCount={layout.laneCount}
+              liftDrag={true}
               onClick={() => onJobClick(job)}
             />
           );
@@ -1152,6 +1402,7 @@ export default function WeekBoard({
   jobs,
   selectedDate,
   dispatcher,
+  draggingJob,
   onJobClick,
   onMap,
 }: {
@@ -1159,6 +1410,7 @@ export default function WeekBoard({
   jobs: WorkOrderListItem[];
   selectedDate: string;
   dispatcher: boolean;
+  draggingJob?: WorkOrderListItem | null;
   onJobClick: (job: WorkOrderListItem) => void;
   onMap: (userId: string) => void;
 }) {
@@ -1272,6 +1524,7 @@ export default function WeekBoard({
                   : []
               }
               dispatcher={dispatcher}
+              draggingJob={draggingJob}
               onJobClick={onJobClick}
               onMap={() => onMap(person._id)}
             />

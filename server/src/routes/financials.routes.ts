@@ -3,11 +3,15 @@ import {
   authenticate,
   requirePermission,
 } from "../middleware/auth.middleware";
-import { getFinancialsSummary } from "../controllers/financials.controller";
+import {
+  getFinancialsRecords,
+  getFinancialsSummary,
+} from "../controllers/financials.controller";
 
 const router = Router();
 
 router.use(authenticate);
 router.get("/summary", requirePermission("reports:read"), getFinancialsSummary);
+router.get("/records", requirePermission("reports:read"), getFinancialsRecords);
 
 export default router;

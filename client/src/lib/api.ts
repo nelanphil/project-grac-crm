@@ -4136,6 +4136,75 @@ export async function getFinancialsSummary(
   );
 }
 
+export type FinancialFilterType =
+  | "invoiced"
+  | "paid"
+  | "outstanding"
+  | "past_due"
+  | "open_work_orders"
+  | "unbilled_work"
+  | "labor_hours"
+  | "estimates";
+
+export interface FinancialRecordItem {
+  _id: string;
+  recordType: "invoice" | "work_order" | "estimate";
+  number: string;
+  customerName: string;
+  date: string;
+  dueDate?: string | null;
+  paidAt?: string | null;
+  status: string;
+  amountCents?: number;
+  total?: number;
+  paid?: boolean;
+  laborHours?: number;
+  sourceType?: string;
+  description?: string;
+  detailUrl: string;
+}
+
+export interface FinancialRecordsResponse {
+  type: FinancialFilterType;
+  records: FinancialRecordItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export async function getFinancialsRecords(
+  token: string,
+  opts: {
+    type: FinancialFilterType;
+    from?: string;
+    to?: string;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+    sortBy?: string;
+    sortDir?: "asc" | "desc";
+  },
+): Promise<FinancialRecordsResponse> {
+  const params = new URLSearchParams();
+  params.set("type", opts.type);
+  if (opts.from) params.set("from", opts.from);
+  if (opts.to) params.set("to", opts.to);
+  if (opts.search) params.set("search", opts.search);
+  if (opts.page != null) params.set("page", String(opts.page));
+  if (opts.pageSize != null) params.set("pageSize", String(opts.pageSize));
+  if (opts.sortBy) params.set("sortBy", opts.sortBy);
+  if (opts.sortDir) params.set("sortDir", opts.sortDir);
+  const qs = params.toString();
+  return authRequest<FinancialRecordsResponse>(
+    `/financials/records${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+
 export async function updateUserRole(
   token: string,
   id: string,

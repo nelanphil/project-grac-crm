@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  type CollisionDetection,
   DndContext,
   DragEndEvent,
   DragOverlay,
@@ -98,6 +99,13 @@ function dropColumnId(overId: string): string {
   if (overId.startsWith("row:") || overId.startsWith("col:")) return overId.slice(4);
   return "";
 }
+
+const calendarCollisionDetection: CollisionDetection = (args) => {
+  const collisions = pointerWithin(args);
+  const slotCollision = collisions.find((c) => String(c.id).startsWith("slot:"));
+  if (slotCollision) return [slotCollision];
+  return collisions;
+};
 
 function dayColumnMinutes(userId: string, event: DragEndEvent): number | null {
   const translated = event.active.rect.current.translated;
@@ -1487,6 +1495,7 @@ export default function CalendarTab({
     if (!token || !canWrite) return false;
     const crew = workOrderCrewIds(job);
     const alreadyScheduled =
+      insertIndex === undefined &&
       Boolean(job.scheduledStart) &&
       crew.includes(userId) &&
       workOrderLocalDate(job) === selectedDate;
@@ -1524,7 +1533,12 @@ export default function CalendarTab({
           scheduledStart = capIso;
         }
       }
-      const nextCrew = crew.includes(userId) ? crew : [...crew, userId];
+      const nextCrew =
+        insertIndex !== undefined && (!crew.includes(userId) || crew.length <= 1)
+          ? [userId]
+          : crew.includes(userId)
+            ? crew
+            : [...crew, userId];
       const placed = await placeScheduleWorkOrder(token, {
         workOrderId: job._id,
         assignedUserRef: nextCrew[0] ?? userId,
@@ -1648,6 +1662,24 @@ export default function CalendarTab({
       overId === "route-table"
     ) {
       await addDroppedJob(overId, activeId.slice(4));
+      return;
+    }
+    if (overId.startsWith("slot:")) {
+      const parts = overId.split(":");
+      const userId = parts[1];
+      const insertIndex = parseInt(parts[2] ?? "0", 10);
+      if (!userId || Number.isNaN(insertIndex)) return;
+      const workOrderId = activeId.slice(4);
+      const dropped = jobById.get(workOrderId);
+      if (dropped && !(await confirmTerritory(dropped, userId))) return;
+      if (dropped) {
+        await assignRailTechnician(
+          dropped,
+          userId,
+          insertIndex,
+          dropped.estimatedMinutes,
+        );
+      }
       return;
     }
     const userId = dropColumnId(overId);
@@ -2313,7 +2345,7 @@ export default function CalendarTab({
           ? dispatcher
           : view === "week" && surface === "calendar")
       }
-      liftDrag={surface === "map"}
+      liftDrag={surface === "map" || (view === "week" && surface === "calendar")}
       pane={mapRailPane}
       onPane={setMapRailPane}
       technicianPane={technicianPane}
@@ -2444,8 +2476,16 @@ export default function CalendarTab({
         <DndContext
           key="schedule-calendar"
           sensors={sensors}
-          collisionDetection={pointerWithin}
-          onDragEnd={(e) => void handleDragEnd(e)}
+          collisionDetection={calendarCollisionDetection}
+          onDragStart={(event) => {
+            const id = String(event.active.id);
+            setDraggingJobId(id.startsWith("job:") ? id.slice(4) : null);
+          }}
+          onDragCancel={() => setDraggingJobId(null)}
+          onDragEnd={(e) => {
+            setDraggingJobId(null);
+            void handleDragEnd(e);
+          }}
         >
           {view === "week" && monthMode === "table" ? (
             <ScheduleSplit sidebar={rail}>
@@ -2470,6 +2510,7 @@ export default function CalendarTab({
                   jobs={jobs}
                   selectedDate={selectedDate}
                   dispatcher={dispatcher && canWrite}
+                  draggingJob={draggingJob}
                   onJobClick={(job) => {
                     setEditingJob(job);
                     setDurationDraft(
@@ -2549,6 +2590,24 @@ export default function CalendarTab({
               )}
             </ScheduleSplit>
           )}
+          <DragOverlay dropAnimation={null}>
+            {draggingJob ? (
+              <div className="w-56 cursor-grabbing rounded-xl ring-2 ring-brand-orange/40 shadow-2xl rotate-1">
+                <UnscheduledCard
+                  order={draggingJob}
+                  selected={false}
+                  onSelect={() => {}}
+                  draggable={false}
+                  technicianColors={technicianColors}
+                  recommendation={
+                    recommendationsEnabled
+                      ? recommendedTechnician(recommendations[draggingJob._id])
+                      : undefined
+                  }
+                />
+              </div>
+            ) : null}
+          </DragOverlay>
         </DndContext>
       )}
       </div>
