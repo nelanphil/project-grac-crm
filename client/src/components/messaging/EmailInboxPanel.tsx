@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Archive, ArchiveRestore, Loader2 } from "lucide-react";
 import EmailReplyComposer from "@/components/messaging/EmailReplyComposer";
 import EmailStaffTags from "@/components/messaging/EmailStaffTags";
+import EmailPreview from "./EmailPreview";
 import {
   ApiError,
   EmailAccountItem,
@@ -102,6 +103,15 @@ function formatDisconnectedNames(accounts: { friendlyName: string }[]): string {
   if (names.length <= 1) return names[0] ?? "This account";
   if (names.length === 2) return `${names[0]} and ${names[1]}`;
   return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function formatBytes(size: number): string {
@@ -254,6 +264,9 @@ export default function EmailInboxPanel({
   const [deliverySubsystemOnly, setDeliverySubsystemOnly] = useState(false);
   const [showArchivedOnly, setShowArchivedOnly] = useState(false);
   const [archivingUids, setArchivingUids] = useState<Set<number>>(new Set());
+  const [expandedQuotedKeys, setExpandedQuotedKeys] = useState<Set<string>>(
+    new Set(),
+  );
   const deepLinkRef = useRef<DeepLink>(
     deepLinkFromProps(initialAccountId, initialFolder, initialUid, initialMessageId),
   );
@@ -1234,11 +1247,24 @@ export default function EmailInboxPanel({
                       const who = partyAddresses(message.folder, message);
                       const focused =
                         message.uid === focusedUid && message.folder === folder;
-                      const bodyHtml = message.displayHtml || message.html;
+                      const msgKey = `${message.source}-${message.folder}-${message.uid ?? message.messageId}-${index}`;
+                      const hasQuotedDifference =
+                        Boolean(message.html) &&
+                        Boolean(message.displayHtml) &&
+                        message.html.length > (message.displayHtml?.length ?? 0);
+                      const isQuotedExpanded = expandedQuotedKeys.has(msgKey);
+                      const rawHtml = isQuotedExpanded
+                        ? message.html
+                        : message.displayHtml || message.html;
                       const bodyText = message.displayText || message.text;
+                      const resolvedHtml = rawHtml
+                        ? rawHtml
+                        : bodyText
+                          ? `<pre style="font-family: inherit; white-space: pre-wrap; font-size: 14px; line-height: 1.6; color: #1a202c; padding: 16px; margin: 0;">${escapeHtml(bodyText)}</pre>`
+                          : "";
                       return (
                         <section
-                          key={`${message.source}-${message.folder}-${message.uid ?? message.messageId}-${index}`}
+                          key={msgKey}
                           className={`rounded-lg border px-3 py-3 ${
                             focused
                               ? "border-brand-orange bg-[var(--staff-surface)]"
@@ -1289,19 +1315,34 @@ export default function EmailInboxPanel({
                               ))}
                             </ul>
                           ) : null}
-                          <div className="mt-3 overflow-hidden rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)]">
-                            {bodyHtml ? (
-                              <iframe
-                                title={message.subject || "Email"}
-                                sandbox=""
-                                srcDoc={bodyHtml}
-                                className="h-[420px] w-full border-0 bg-[var(--staff-surface)]"
-                              />
-                            ) : (
-                              <pre className="whitespace-pre-wrap p-4 font-sans text-sm text-[var(--staff-ink)]">
-                                {bodyText || "(No message body)"}
-                              </pre>
-                            )}
+                          <div className="mt-3">
+                            <EmailPreview
+                              fullWidth
+                              hideHeader
+                              subject={message.subject || ""}
+                              html={resolvedHtml}
+                              frameClassName="h-[520px] w-full border-0 bg-white"
+                            />
+                            {hasQuotedDifference ? (
+                              <div className="mt-1 flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setExpandedQuotedKeys((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(msgKey)) next.delete(msgKey);
+                                      else next.add(msgKey);
+                                      return next;
+                                    });
+                                  }}
+                                  className="text-[11px] font-medium text-brand-orange hover:underline"
+                                >
+                                  {isQuotedExpanded
+                                    ? "Hide quoted history"
+                                    : "Show full email with history"}
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
                         </section>
                       );

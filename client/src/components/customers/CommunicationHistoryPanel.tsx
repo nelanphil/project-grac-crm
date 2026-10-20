@@ -59,7 +59,8 @@ function emailSnippet(body: string, html: string): string {
 
 function emailThreadHref(row: EmailCommunicationItem): string {
   const params = new URLSearchParams({
-    tab: "sent-emails",
+    tab: "email",
+    view: "sent-emails",
     emailId: row._id,
   });
   return `/dashboard/messaging?${params.toString()}`;

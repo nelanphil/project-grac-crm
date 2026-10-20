@@ -58,7 +58,7 @@ import ScheduledEmailsPanel from "./ScheduledEmailsPanel";
 import ScheduledMessagesPanel from "./ScheduledMessagesPanel";
 import SentEmailsPanel from "./SentEmailsPanel";
 import TemplatesPanel from "./TemplatesPanel";
-import InboxPanel from "./InboxPanel";
+import InboxPanel, { InboxView } from "./InboxPanel";
 
 const MAX_SEND = 200;
 
@@ -72,9 +72,10 @@ type MessagingTab =
   | "create"
   | "email"
   | "threads"
-  | "sent-emails"
   | "scheduled-emails"
   | "scheduled-messages";
+
+type EmailSubTab = "wizard" | "sent-emails";
 
 function templateTypeOf(template: MessageTemplateItem): MessageTemplateType {
   return template.templateType === "email" ? "email" : "sms";
@@ -101,11 +102,11 @@ function smsMergeFieldsFrom(fields: MergeFieldItem[]): MergeFieldItem[] {
 
 function messagingTabFromQuery(tab: string | null): MessagingTab {
   if (tab === "inbox" || tab === "threads") return "threads";
+  if (tab === "sent-emails") return "email";
   if (
     tab === "templates" ||
     tab === "create" ||
     tab === "email" ||
-    tab === "sent-emails" ||
     tab === "scheduled-emails" ||
     tab === "scheduled-messages"
   ) {
@@ -121,7 +122,7 @@ export default function MessagingHub() {
   const initialInvoiceId = searchParams.get("invoiceId");
   const [invoiceAmountCents, setInvoiceAmountCents] = useState<number>();
   const initialTab = searchParams.get("tab");
-  const initialInboxView =
+  const initialInboxView: InboxView =
     searchParams.get("view") === "email"
       ? "email"
       : searchParams.get("view") === "contact-form"
@@ -131,11 +132,38 @@ export default function MessagingHub() {
   const [activeTab, setActiveTab] = useState<MessagingTab>(
     messagingTabFromQuery(initialTab),
   );
+
+  const initialEmailSubTab: EmailSubTab =
+    searchParams.get("tab") === "sent-emails" ||
+    (searchParams.get("tab") === "email" &&
+      searchParams.get("view") === "sent-emails") ||
+    searchParams.get("view") === "sent-emails" ||
+    Boolean(searchParams.get("emailId"))
+      ? "sent-emails"
+      : "wizard";
+  const [emailSubTab, setEmailSubTab] =
+    useState<EmailSubTab>(initialEmailSubTab);
+
   const sentEmailId = searchParams.get("emailId") ?? "";
   const [appliedSentEmailId, setAppliedSentEmailId] = useState(sentEmailId);
   if (sentEmailId && sentEmailId !== appliedSentEmailId) {
     setAppliedSentEmailId(sentEmailId);
-    setActiveTab("sent-emails");
+    setActiveTab("email");
+    setEmailSubTab("sent-emails");
+  }
+  const sentEmailsLink =
+    searchParams.get("tab") === "sent-emails" ||
+    (searchParams.get("tab") === "email" &&
+      searchParams.get("view") === "sent-emails") ||
+    searchParams.get("view") === "sent-emails"
+      ? searchParams.toString()
+      : "";
+  const [appliedSentEmailsLink, setAppliedSentEmailsLink] =
+    useState(sentEmailsLink);
+  if (sentEmailsLink && sentEmailsLink !== appliedSentEmailsLink) {
+    setAppliedSentEmailsLink(sentEmailsLink);
+    setActiveTab("email");
+    setEmailSubTab("sent-emails");
   }
   const mailboxLink =
     searchParams.get("view") === "email" &&
@@ -1370,7 +1398,6 @@ export default function MessagingHub() {
             ["email", "Email Wizard"],
             ["scheduled-messages", "Scheduled Messages"],
             ["scheduled-emails", "Scheduled Emails"],
-            ["sent-emails", "Sent Emails"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -1583,7 +1610,33 @@ export default function MessagingHub() {
           onApplyOfferOverrides={applySmsOfferOverrides}
         />
       ) : activeTab === "email" ? (
-        <EmailCreatePanel
+        <div className="space-y-4">
+          <div className="flex gap-1 border-b border-[var(--staff-border)]">
+            {(
+              [
+                ["wizard", "Email Wizard"],
+                ["sent-emails", "Sent Emails"],
+              ] as const
+            ).map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setEmailSubTab(val)}
+                className={`border-b-2 px-3 pb-2 text-sm font-medium transition-colors ${
+                  emailSubTab === val
+                    ? "border-brand-orange text-brand-dark"
+                    : "border-transparent text-neutral-500 hover:text-brand-dark"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {emailSubTab === "sent-emails" ? (
+            <SentEmailsPanel token={token} initialEmailId={sentEmailId} />
+          ) : (
+            <EmailCreatePanel
           key={emailResetSignal}
           search={emailSearch}
           onSearchChange={(v) => {
@@ -1722,12 +1775,12 @@ export default function MessagingHub() {
             setActiveTab("scheduled-emails");
           }}
         />
+          )}
+        </div>
       ) : activeTab === "scheduled-messages" ? (
         <ScheduledMessagesPanel token={token} />
       ) : activeTab === "scheduled-emails" ? (
         <ScheduledEmailsPanel token={token} />
-      ) : activeTab === "sent-emails" ? (
-        <SentEmailsPanel token={token} initialEmailId={sentEmailId} />
       ) : (
         <InboxPanel
           token={token}
