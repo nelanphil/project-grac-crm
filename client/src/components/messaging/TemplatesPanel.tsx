@@ -277,10 +277,10 @@ export default function TemplatesPanel({
                 <span className="mt-0.5 block text-xs text-neutral-500">
                   When a message from this template includes a payment link,
                   each recipient gets a temporary contract and an open invoice
-                  for the catalog contract you pick. That invoice is added to
-                  the same checkout as any unpaid invoices or work orders they
-                  already have. Paying the contract invoice makes the contract
-                  permanent.
+                  for the catalog contract you pick. General links cover only
+                  the latest eligible invoice, not a combined balance.
+                  Invoice-originated messages do not create temporary offers.
+                  Paying the contract invoice makes the contract permanent.
                 </span>
                 <select
                   value={offerContractTemplateId ?? ""}

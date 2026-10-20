@@ -85,7 +85,7 @@ const SMS_PAYMENT_LINK_FIELD: MergeFieldItem = {
   key: "payment_link",
   label: "Payment link",
   description:
-    "Payment link for the selected invoice, or an outstanding-balance snapshot when no invoice is selected. Includes the covered total.",
+    "Payment link for the selected invoice, or the latest eligible invoice when none is selected. Includes the covered total.",
 };
 
 /** SMS always offers {{payment_link}}, even if an older API still marks it email-only. */

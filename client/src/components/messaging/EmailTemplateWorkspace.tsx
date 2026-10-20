@@ -229,11 +229,11 @@ export default function EmailTemplateWorkspace({
             />
             <span>
               <span className="font-medium text-brand-dark">
-                Include payment link for all unpaid invoices and work orders
+                Include payment link for the selected or latest eligible invoice
               </span>
               <span className="mt-0.5 block text-xs text-neutral-500">
-                Adds a Pay securely button covering every open invoice and
-                unpaid work order, even without inserting {"{{payment_link}}"}.
+                Adds a button and total for one invoice, even without inserting
+                {"{{payment_link}}"}. Other balances are not included.
               </span>
             </span>
           </label>
@@ -247,9 +247,9 @@ export default function EmailTemplateWorkspace({
             <span className="mt-0.5 block text-xs text-neutral-500">
               When this email includes a payment link, each recipient gets a
               temporary contract and an open invoice for the catalog contract
-              you pick. That invoice is added to the same checkout as any
-              unpaid invoices or work orders they already have. Paying the
-              contract invoice makes the contract permanent.
+              you pick. General links cover only the latest eligible invoice,
+              not a combined balance. Invoice-originated messages do not create
+              temporary offers. Paying the contract invoice makes it permanent.
             </span>
             <select
               value={offerContractTemplateId ?? ""}

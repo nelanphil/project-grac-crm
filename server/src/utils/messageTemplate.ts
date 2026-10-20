@@ -40,7 +40,7 @@ export const MERGE_FIELDS: MergeFieldDef[] = [
     key: "payment_link",
     label: "Payment link",
     description:
-      "A payment link for this invoice when sent from an invoice, otherwise a snapshot of the customer's outstanding balance. The covered total is included in the message.",
+      "A payment link for this invoice when sent from an invoice, otherwise a snapshot of the latest eligible invoice. The covered total is included in the message.",
   },
   {
     key: "invoice",

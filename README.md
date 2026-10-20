@@ -91,16 +91,20 @@ Repo-root `.env` is loaded by the API (`server/src/config/env.ts`).
   If an amount changes, an item is removed, or an invoice becomes paid/void,
   checkout stops and asks for a new link instead of charging a different balance.
   A customer-applied discount can still reduce the displayed payment.
-- General payment-link messages cover a snapshot of the outstanding balance
-  and include the covered total. Later invoices are not added to that link.
-  Existing customer-wide links and authenticated account checkout remain balance
-  checkouts; previously sent links are not retroactively invoice-scoped.
+- General payment-link messages snapshot only the latest eligible invoice and
+  include its total. Eligibility uses the due date (or issued date) through today
+  in America/New_York; work-order invoices require a completed, non-deleted job.
+  Future-due invoices and unbilled work orders are excluded. Later invoices are
+  not added to a newly generated link. Existing stable customer links resolve
+  the latest eligible invoice dynamically; they are not historical amount
+  snapshots. Authenticated account checkout remains a balance checkout.
 - Invoice message API requests supply `invoiceId` and `expectedAmountCents`.
   Scheduled invoice messages preserve both and fail explicitly if the amount
   changes before delivery. Legacy scheduled invoice payment messages without
   an expected amount must be recreated.
-- Customer communication emails open the stored CRM email by `emailId` on the
-  Sent Emails tab. Viewing does not depend on a copy in an IMAP Sent folder.
+- Customer communication emails open the stored CRM email by `emailId` under
+  Messages -> Email Wizard -> Sent Emails. Viewing does not depend on a copy in
+  an IMAP Sent folder.
 
 | Method | Path | Description |
 |--------|------|-------------|

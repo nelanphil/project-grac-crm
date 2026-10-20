@@ -500,11 +500,10 @@ export default function EmailCreatePanel({
 
           {showPaymentLinkColumn ? (
             <p className="mb-2 text-xs text-neutral-500">
-              “Will send” means this contact has unpaid invoices or unpaid work
-              orders, or a temporary contract will be created when the email
-              sends. A selected temporary contract is added to the same
-              checkout as any existing balance. “No button” means they have
-              neither.
+              “Will send” means this contact has an eligible invoice, or a
+              temporary contract offer is selected. General links cover only
+              the latest eligible invoice, not a combined balance. Future-due
+              invoices and incomplete work orders are excluded.
             </p>
           ) : null}
 
@@ -1008,12 +1007,11 @@ export default function EmailCreatePanel({
             </h2>
             {showPaymentLinkColumn ? (
               <p className="mb-3 text-xs text-neutral-500">
-                Recipients marked “No button” have no unpaid invoices or unpaid
-                work orders, and no temporary contract is set, so their email
-                will omit the Pay securely button. “Temporary contract” means
-                that contract and its invoice are created when the email sends
-                and added to the same checkout as any unpaid invoices or work
-                orders.
+                Recipients marked “No button” have no eligible invoice or
+                temporary offer selected. Their email omits the payment button.
+                Temporary offers create a contract and invoice when sending.
+                General links cover only the latest eligible invoice; messages
+                sent from an invoice cover only that specific invoice.
               </p>
             ) : null}
             {selectedContacts.length === 0 ? (

@@ -337,7 +337,7 @@ export async function previewEmailMessage(
       bodyText: renderedBody,
       paymentUrl,
       paymentSummary,
-      paymentButtonLabel: parsed.data.invoiceId ? "Pay this invoice" : "Pay outstanding balance",
+      paymentButtonLabel: "Pay this invoice",
       chrome: renderedChrome,
       unsubscribeUrl: buildUnsubscribeUrl(previewEmail, "general"),
       invoiceWidget,

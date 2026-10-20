@@ -106,7 +106,7 @@ describe("scoped checkout links", () => {
     assert.equal(stored?.invoiceOnly, false);
     assert.equal(stored?.items.length, 1);
     assert.equal(stored?.items[0]?.id, String(old._id));
-    assert.match(paymentAmountLabel(result.totalCents, false), /Outstanding balance.*\$321\.00/);
+    assert.match(paymentAmountLabel(result.totalCents, false), /Latest eligible invoice total: \$321\.00/);
   });
 
   it("does not add invoices created after a link was sent", async () => {

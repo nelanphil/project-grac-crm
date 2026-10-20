@@ -146,5 +146,5 @@ export function assertScopedSelection(
 }
 
 export function paymentAmountLabel(cents: number, invoiceOnly: boolean): string {
-  return `${invoiceOnly ? "Invoice total" : "Outstanding balance covered by this link"}: $${(cents / 100).toFixed(2)}`;
+  return `${invoiceOnly ? "Invoice total" : "Latest eligible invoice total"}: $${(cents / 100).toFixed(2)}`;
 }

@@ -966,7 +966,7 @@ export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
               Include a link to pay only this invoice
             </span>
             <span className="mt-0.5 block text-xs text-neutral-500">
-              The link covers their unpaid balance, including this invoice.
+              The link covers only this invoice. Other outstanding balances are not included.
             </span>
           </span>
         </label>

@@ -358,7 +358,7 @@ export async function dispatchStaffEmailBatch(
         bodyText: renderedBody,
         paymentUrl,
         paymentSummary: paymentLabel,
-        paymentButtonLabel: input.invoiceId ? "Pay this invoice" : "Pay outstanding balance",
+        paymentButtonLabel: "Pay this invoice",
         chrome: renderedChrome,
         unsubscribeUrl,
         invoiceWidget,
