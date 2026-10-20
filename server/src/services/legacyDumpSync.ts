@@ -2,6 +2,7 @@
  * Incremental import of phpMyAdmin customers / work_orders dumps.
  * Uses a dedicated mongoose connection so the API's default connection is never retargeted.
  */
+import { randomInt } from "crypto";
 import mongoose, { Connection, Model, Types } from "mongoose";
 import {
   activeCustomerFilter,
@@ -15,6 +16,7 @@ import { Equipment, IEquipment } from "../models/mongo/Equipment";
 import { IContract, Contract } from "../models/mongo/Contract";
 import { IContractTemplate, ContractTemplate } from "../models/mongo/ContractTemplate";
 import { IInvoice, Invoice } from "../models/mongo/Invoice";
+import { TAX_SETTINGS_SLUG, TaxSettings } from "../models/mongo/TaxSettings";
 import { IProduct, Product } from "../models/mongo/Product";
 import { IWorkOrder, WorkOrder } from "../models/mongo/WorkOrder";
 import {
@@ -22,11 +24,29 @@ import {
   type AscContractSyncSummary,
 } from "./ascContractSync";
 import {
-  hasPricedProductLines,
   legacyWorkOrderHasBillableMoney,
-  mappedWorkOrderMoneyFields,
+  ensureLegacyCatalogProducts,
+  linkCatalogProductRefs,
+  mongooseLegacyProductWriter,
+  partsForMongo,
+  resolveLegacyWorkOrderMoney,
+  workOrderLinesNeedProductLink,
+  workOrderLinesNeedRebuild,
+  workOrderMoneyFieldsFromMapped,
   type LegacyCatalogProduct,
+  type LegacyMappedWorkOrderMoney,
 } from "./legacyWorkOrderItems";
+import {
+  dollarsToCents,
+  invoiceNumberPrefixFromDate,
+  workOrderInvoiceLineItems,
+} from "./invoice.service";
+import {
+  companyTaxForUnpaidWorkOrder,
+  DEFAULT_TAX_RATE_PERCENT,
+  normalizeTaxRatePercent,
+  taxCentsFromDollars,
+} from "./taxSettings";
 import { mintCheckoutKey } from "../utils/checkoutKey";
 import {
   customerHasEquipmentData,
@@ -849,7 +869,23 @@ type ExistingWorkOrder = {
   customerZip?: string;
   customerPhone?: string;
   customerEmail?: string;
-  parts?: Array<{ lineType?: string }>;
+  number?: string;
+  date?: Date | null;
+  descPerform?: string;
+  paid?: boolean;
+  parts?: Array<{
+    lineType?: string;
+    partNumber?: string;
+    productRef?: Types.ObjectId | string | null;
+    description?: string;
+    quantity?: number;
+    unitPrice?: number;
+    amount?: number;
+    kind?: string;
+  }>;
+  subtotal?: number;
+  shipping?: number;
+  total?: number;
 };
 
 function emptySnapshot(value: string | undefined): boolean {
@@ -899,24 +935,668 @@ async function backfillExistingWorkOrderCustomer(
   return true;
 }
 
+async function boundTaxRate(models: BoundModels): Promise<number> {
+  const conn = models.Product.db;
+  const TaxModel =
+    conn.models.TaxSettings ?? conn.model("TaxSettings", TaxSettings.schema);
+  const doc = await TaxModel.findOne({ slug: TAX_SETTINGS_SLUG })
+    .select("ratePercent")
+    .lean();
+  return normalizeTaxRatePercent(
+    (doc as { ratePercent?: number } | null)?.ratePercent ?? DEFAULT_TAX_RATE_PERCENT,
+  );
+}
+
+function unpaidTaxFields(
+  mapped: LegacyMappedWorkOrderMoney,
+  paid: boolean,
+  rate: number,
+): { taxRate: number; tax: number; total: number; taxOverridden: boolean } {
+  if (paid) {
+    return { taxRate: 0, tax: 0, total: mapped.total, taxOverridden: false };
+  }
+  const next = companyTaxForUnpaidWorkOrder(
+    {
+      paid: false,
+      taxOverridden: false,
+      subtotal: mapped.subtotal,
+      shipping: mapped.shipping,
+      taxRate: 0,
+      tax: 0,
+      total: mapped.total,
+    },
+    rate,
+  );
+  if (!next) {
+    return { taxRate: rate, tax: 0, total: mapped.total, taxOverridden: false };
+  }
+  return { ...next, taxOverridden: false };
+}
+
+async function nextBoundInvoiceNumber(
+  models: BoundModels,
+  issuedAt: Date,
+): Promise<string> {
+  const prefix = invoiceNumberPrefixFromDate(issuedAt);
+  for (let i = 0; i < 20; i += 1) {
+    const number = `${prefix}${String(randomInt(0, 100_000)).padStart(5, "0")}`;
+    const exists = await models.Invoice.exists({ number });
+    if (!exists) return number;
+  }
+  throw new Error("Unable to allocate a unique invoice number");
+}
+
+async function upsertBoundWorkOrderInvoice(
+  models: BoundModels,
+  wo: {
+    _id: Types.ObjectId;
+    customerId: number;
+    customerRef?: Types.ObjectId | null;
+    number?: string;
+    date?: Date | null;
+    descPerform?: string;
+    paid?: boolean;
+    parts?: LegacyMappedWorkOrderMoney["parts"];
+    totalLabor?: number;
+    miscExp?: number;
+    shipping?: number;
+    total: number;
+    taxRate: number;
+    tax: number;
+  },
+): Promise<void> {
+  if (wo.total <= 0 || !wo.customerRef) return;
+  const amountCents = dollarsToCents(wo.total);
+  if (amountCents <= 0) return;
+  const existing = await models.Invoice.findOne({
+    workOrderRef: wo._id,
+    status: { $ne: "void" },
+  });
+  const lineItems = workOrderInvoiceLineItems(wo);
+  const taxCents = wo.paid ? 0 : taxCentsFromDollars(wo.tax);
+  const taxRatePercent = wo.paid ? 0 : wo.taxRate;
+  if (existing) {
+    if (wo.paid || existing.status === "paid") return;
+    if (!["open", "draft", "failed"].includes(existing.status)) return;
+    existing.amountCents = amountCents;
+    existing.lineItems = lineItems;
+    existing.taxRatePercent = taxRatePercent;
+    existing.taxCents = taxCents;
+    existing.taxOverridden = false;
+    if (!existing.customerRef) existing.customerRef = wo.customerRef;
+    await existing.save();
+    return;
+  }
+
+  const issuedAt = wo.date instanceof Date ? wo.date : new Date();
+  const payload = {
+    customerId: wo.customerId,
+    customerRef: wo.customerRef,
+    sourceType: "work_order" as const,
+    workOrderRef: wo._id,
+    lineItems,
+    amountCents,
+    currency: "USD",
+    status: wo.paid ? ("paid" as const) : ("open" as const),
+    dueDate: null,
+    issuedAt,
+    paidAt: wo.paid ? issuedAt : null,
+    metadata: { backfilled: true },
+    taxRatePercent,
+    taxCents,
+    taxOverridden: false,
+  };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await models.Invoice.create({
+        ...payload,
+        number: await nextBoundInvoiceNumber(models, issuedAt),
+      });
+      return;
+    } catch (err) {
+      const code = (err as { code?: number }).code;
+      if (code !== 11000 || attempt === 2) throw err;
+    }
+  }
+}
+
 async function backfillExistingWorkOrderLineItems(
   models: BoundModels,
   existing: ExistingWorkOrder,
   row: WorkOrderRow,
   catalog: LegacyCatalogProduct[],
   dryRun: boolean,
+  taxRate: number,
 ): Promise<boolean> {
-  if (hasPricedProductLines(existing.parts)) return false;
-  if (!legacyWorkOrderHasBillableMoney(row)) return false;
-
-  const money = mappedWorkOrderMoneyFields(row, catalog);
-  if (!hasPricedProductLines(money.parts) && money.total <= 0) return false;
-
+  const needsRebuild = workOrderLinesNeedRebuild(existing.parts);
+  const needsLink = !needsRebuild && workOrderLinesNeedProductLink(existing.parts);
+  if (!needsRebuild && !needsLink) return false;
+  if (needsRebuild && !legacyWorkOrderHasBillableMoney(row)) return false;
   if (dryRun) return true;
 
-  await models.WorkOrder.updateOne({ _id: existing._id }, { $set: money });
-  existing.parts = money.parts;
+  const paid = existing.paid ?? row.paid;
+  if (needsRebuild) {
+    const mapped = await resolveLegacyWorkOrderMoney(
+      row,
+      catalog,
+      mongooseLegacyProductWriter(models.Product),
+    );
+    if (mapped.total <= 0) return false;
+    const tax = unpaidTaxFields(mapped, paid, taxRate);
+    const money = {
+      ...workOrderMoneyFieldsFromMapped(mapped),
+      taxRate: tax.taxRate,
+      tax: tax.tax,
+      taxOverridden: tax.taxOverridden,
+      total: tax.total,
+    };
+    await models.WorkOrder.updateOne({ _id: existing._id }, { $set: money });
+    existing.parts = mapped.parts;
+    existing.total = tax.total;
+    await upsertBoundWorkOrderInvoice(models, {
+      _id: existing._id,
+      customerId: existing.customerId,
+      customerRef: existing.customerRef,
+      number: existing.number,
+      date: existing.date ?? row.date,
+      descPerform: row.descPerform,
+      paid,
+      parts: mapped.parts,
+      totalLabor: mapped.totalLabor,
+      miscExp: mapped.miscExp,
+      shipping: mapped.shipping,
+      total: tax.total,
+      taxRate: tax.taxRate,
+      tax: tax.tax,
+    });
+    return true;
+  }
+
+  await ensureLegacyCatalogProducts(
+    mongooseLegacyProductWriter(models.Product),
+    (existing.parts ?? []).map((part) => ({
+      lineType: part.lineType === "note" ? "note" as const : "product" as const,
+      partNumber: part.partNumber ?? "",
+      description: part.description ?? part.partNumber ?? "",
+      kind: part.kind === "labor" ? "labor" as const : "part" as const,
+      listPrice: part.unitPrice ?? 0,
+      unitPrice: part.unitPrice ?? 0,
+      amount: part.amount ?? 0,
+    })),
+    catalog,
+  );
+  const linked = (existing.parts ?? []).map((part) => ({
+    productRef: part.productRef ? String(part.productRef) : null,
+    contractTemplateRef: null,
+    enrolledContractRef: null,
+    lineType: part.lineType === "note" ? "note" as const : "product" as const,
+    kind: part.kind === "labor" ? "labor" as const : "part" as const,
+    partNumber: part.partNumber ?? "",
+    description: part.description ?? "",
+    quantity: part.quantity ?? 0,
+    unitPrice: part.unitPrice ?? 0,
+    listPrice: part.unitPrice ?? 0,
+    priceOverridden: false,
+    amount: part.amount ?? 0,
+  }));
+  if (!linkCatalogProductRefs(linked, catalog)) return false;
+  await models.WorkOrder.updateOne(
+    { _id: existing._id },
+    { $set: { parts: partsForMongo(linked) } },
+  );
+  existing.parts = linked;
+  if ((existing.total ?? 0) > 0) {
+    await upsertBoundWorkOrderInvoice(models, {
+      _id: existing._id,
+      customerId: existing.customerId,
+      customerRef: existing.customerRef,
+      number: existing.number,
+      date: existing.date ?? row.date,
+      descPerform: existing.descPerform ?? row.descPerform,
+      paid,
+      parts: linked,
+      shipping: existing.shipping ?? 0,
+      total: existing.total ?? 0,
+      taxRate: 0,
+      tax: 0,
+    });
+  }
   return true;
+}
+
+function allocateInvoiceNumber(issuedAt: Date, reserved: Set<string>): string {
+  const prefix = invoiceNumberPrefixFromDate(issuedAt);
+  for (let i = 0; i < 40; i += 1) {
+    const number = `${prefix}${String(randomInt(0, 100_000)).padStart(5, "0")}`;
+    if (reserved.has(number)) continue;
+    reserved.add(number);
+    return number;
+  }
+  throw new Error("Unable to allocate a unique invoice number");
+}
+
+type BoundInvoiceInsert = {
+  label: string;
+  number: string;
+  customerId: number;
+  customerRef: Types.ObjectId;
+  sourceType: "work_order";
+  workOrderRef: Types.ObjectId;
+  lineItems: { description: string; amountCents: number }[];
+  amountCents: number;
+  currency: "USD";
+  status: "paid" | "open";
+  dueDate: null;
+  issuedAt: Date;
+  paidAt: Date | null;
+  metadata: { backfilled: true };
+  taxRatePercent: number;
+  taxCents: number;
+  taxOverridden: false;
+};
+
+async function insertInvoiceBatch(
+  models: BoundModels,
+  docs: BoundInvoiceInsert[],
+  reserved: Set<string>,
+  onError: (message: string) => void,
+): Promise<number> {
+  const payload = docs.map(({ label: _label, ...doc }) => doc);
+  try {
+    const inserted = await models.Invoice.insertMany(payload, { ordered: false });
+    return inserted.length;
+  } catch (err) {
+    const bulk = err as {
+      insertedDocs?: unknown[];
+      message?: string;
+      writeErrors?: Array<{
+        index?: number;
+        code?: number;
+        errmsg?: string;
+        err?: { code?: number; errmsg?: string };
+      }>;
+    };
+    let count = bulk.insertedDocs?.length ?? 0;
+    const failures = bulk.writeErrors ?? [];
+    if (failures.length === 0) {
+      onError(`Invoice batch failed: ${err instanceof Error ? err.message : String(err)}`);
+      return count;
+    }
+    for (const failure of failures) {
+      const code = failure.code ?? failure.err?.code;
+      const doc = docs[failure.index ?? -1];
+      if (code === 11000 && doc) {
+        try {
+          const { label: _label, ...rest } = doc;
+          await models.Invoice.create({
+            ...rest,
+            number: allocateInvoiceNumber(doc.issuedAt, reserved),
+          });
+          count += 1;
+          continue;
+        } catch (retryErr) {
+          onError(
+            `Invoice sync skipped for ${doc.label}: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+          );
+          continue;
+        }
+      }
+      onError(
+        `Invoice sync skipped for ${doc?.label ?? "unknown"}: ${failure.errmsg ?? failure.err?.errmsg ?? bulk.message ?? "write failed"}`,
+      );
+    }
+    return count;
+  }
+}
+
+export type WorkOrderLineItemBackfillResult = {
+  target: LegacyDumpTarget;
+  label: string;
+  updated: number;
+  skipped: number;
+  invoicesSynced: number;
+  invoiceErrors: number;
+};
+
+/**
+ * Rebuild placeholder legacy lines and sync invoices on one dump database.
+ * Uses a dedicated connection so products and invoices stay on that database.
+ */
+export async function backfillStoredWorkOrderLineItems(options: {
+  target: LegacyDumpTarget;
+  mongoUri: string;
+  dryRun?: boolean;
+  onLog?: (message: string) => void;
+}): Promise<WorkOrderLineItemBackfillResult> {
+  const dryRun = options.dryRun ?? false;
+  const log = options.onLog ?? ((message: string) => console.log(message));
+  const label = describeMongoTarget(options.mongoUri);
+  const prefix = dryRun ? "[dry-run] " : "";
+  log(`${prefix}Connecting to ${options.target} (${label})…`);
+
+  const conn = mongoose.createConnection(options.mongoUri, {
+    serverSelectionTimeoutMS: 20_000,
+    socketTimeoutMS: 60_000,
+    maxPoolSize: 5,
+  });
+  await conn.asPromise();
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  try {
+    const models = bindModels(conn);
+    const catalog = await loadProductCatalog(models);
+    const taxRate = dryRun ? 0 : await boundTaxRate(models);
+    const writer = mongooseLegacyProductWriter(models.Product);
+    log(`${prefix}Loaded ${catalog.length.toLocaleString()} products from ${label}.`);
+
+    const candidates = await models.WorkOrder.find({
+      $or: [
+        { total: { $gt: 0 } },
+        { totalParts: { $gt: 0 } },
+        { totalLabor: { $gt: 0 } },
+        { miscExp: { $gt: 0 } },
+        { shipping: { $gt: 0 } },
+        { descPerform: /(?:asc|acs)\s*\$?\s*\d|\$\s*\d+(?:\.\d{1,2})?\s*plus\s+parts/i },
+        { descPerformed: /(?:asc|acs)\s*\$?\s*\d|\$\s*\d+(?:\.\d{1,2})?\s*plus\s+parts/i },
+        { "parts.partNumber": /^IMPORTED/i },
+      ],
+    })
+      .select(
+        "legacyId number descPerform descPerformed parts totalParts totalLabor miscExp subtotal shipping total laborHours paid customerId customerRef date taxRate tax taxOverridden",
+      )
+      .lean();
+
+    let updated = 0;
+    let skipped = 0;
+    let invoicesSynced = 0;
+    let invoiceErrors = 0;
+    let lastNote = `loading ${candidates.length.toLocaleString()} candidate work orders`;
+    heartbeat = setInterval(() => {
+      log(`${prefix}${options.target}: still working — ${lastNote}`);
+    }, 15_000);
+    log(`${prefix}${options.target}: found ${candidates.length.toLocaleString()} candidates. Loading existing invoices…`);
+    lastNote = "loading existing invoices";
+
+    const billed = new Set<string>();
+    const openInvoices = new Map<string, Types.ObjectId>();
+    const reserved = new Set<string>();
+    const existingInvoices = await models.Invoice.find({
+      workOrderRef: { $in: candidates.map((wo) => wo._id) },
+      status: { $ne: "void" },
+    })
+      .select("_id workOrderRef status")
+      .lean();
+    for (const invoice of existingInvoices) {
+      if (!invoice.workOrderRef) continue;
+      const id = String(invoice.workOrderRef);
+      billed.add(id);
+      if (invoice.status === "open" || invoice.status === "draft" || invoice.status === "failed") {
+        openInvoices.set(id, invoice._id);
+      }
+    }
+    if (!dryRun) {
+      lastNote = "loading invoice numbers";
+      const numbers = await models.Invoice.distinct("number");
+      for (const number of numbers) {
+        if (typeof number === "string" && number) reserved.add(number);
+      }
+    }
+    log(
+      `${prefix}${options.target}: ${billed.size.toLocaleString()} already billed. Mapping lines…`,
+    );
+
+    const woOps: mongoose.AnyBulkWriteOperation[] = [];
+    const invoiceUpdates: mongoose.AnyBulkWriteOperation[] = [];
+    const invoiceInserts: BoundInvoiceInsert[] = [];
+
+    const flush = async (force = false) => {
+      const pending = woOps.length + invoiceUpdates.length + invoiceInserts.length;
+      if (!force && pending < 100) return;
+      if (pending === 0) return;
+      lastNote = `writing ${woOps.length.toLocaleString()} work orders and ${(invoiceInserts.length + invoiceUpdates.length).toLocaleString()} invoices`;
+      log(`${prefix}${options.target}: ${lastNote}…`);
+      if (woOps.length > 0) {
+        await models.WorkOrder.bulkWrite(woOps.splice(0, woOps.length), { ordered: false });
+      }
+      if (invoiceUpdates.length > 0) {
+        const updates = invoiceUpdates.splice(0, invoiceUpdates.length);
+        await models.Invoice.bulkWrite(updates, { ordered: false });
+        invoicesSynced += updates.length;
+      }
+      if (invoiceInserts.length > 0) {
+        const batch = invoiceInserts.splice(0, invoiceInserts.length);
+        invoicesSynced += await insertInvoiceBatch(models, batch, reserved, (message) => {
+          invoiceErrors += 1;
+          log(message);
+        });
+      }
+    };
+
+    const queueInvoice = (
+      wo: (typeof candidates)[number],
+      money: {
+        paid: boolean;
+        total: number;
+        taxRate: number;
+        tax: number;
+        parts?: Parameters<typeof workOrderInvoiceLineItems>[0]["parts"];
+        totalLabor?: number;
+        miscExp?: number;
+        shipping?: number;
+      },
+    ) => {
+      if (money.total <= 0 || !wo.customerRef || typeof wo.customerId !== "number") return;
+      const id = String(wo._id);
+      const issuedAt = wo.date instanceof Date ? wo.date : new Date();
+      const amountCents = dollarsToCents(money.total);
+      if (amountCents <= 0) return;
+      const lineItems = workOrderInvoiceLineItems({
+        parts: money.parts,
+        totalLabor: money.totalLabor,
+        miscExp: money.miscExp,
+        shipping: money.shipping,
+        total: money.total,
+        descPerform: wo.descPerform,
+        number: wo.number,
+      });
+      const taxCents = money.paid ? 0 : taxCentsFromDollars(money.tax);
+      const taxRatePercent = money.paid ? 0 : money.taxRate;
+      const openId = openInvoices.get(id);
+      if (dryRun) {
+        if (openId || !billed.has(id)) invoicesSynced += 1;
+        return;
+      }
+      if (openId) {
+        invoiceUpdates.push({
+          updateOne: {
+            filter: { _id: openId, status: { $in: ["open", "draft", "failed"] } },
+            update: {
+              $set: {
+                amountCents,
+                lineItems,
+                taxRatePercent,
+                taxCents,
+                taxOverridden: false,
+                customerRef: wo.customerRef,
+              },
+            },
+          },
+        });
+        return;
+      }
+      if (billed.has(id)) return;
+      const number = allocateInvoiceNumber(issuedAt, reserved);
+      invoiceInserts.push({
+        label: wo.number || String(wo.legacyId || wo._id),
+        number,
+        customerId: wo.customerId,
+        customerRef: wo.customerRef,
+        sourceType: "work_order",
+        workOrderRef: wo._id,
+        lineItems,
+        amountCents,
+        currency: "USD",
+        status: money.paid ? "paid" : "open",
+        dueDate: null,
+        issuedAt,
+        paidAt: money.paid ? issuedAt : null,
+        metadata: { backfilled: true },
+        taxRatePercent,
+        taxCents,
+        taxOverridden: false,
+      });
+      billed.add(id);
+    };
+
+    for (let index = 0; index < candidates.length; index += 1) {
+      const wo = candidates[index];
+      const labelForWo = wo.number || String(wo.legacyId || wo._id);
+      lastNote = `pricing ${index + 1}/${candidates.length} ${labelForWo}`;
+      const needsRebuild = workOrderLinesNeedRebuild(wo.parts);
+      const needsLink = !needsRebuild && workOrderLinesNeedProductLink(wo.parts);
+      if (!needsRebuild && !needsLink) {
+        if ((wo.total ?? 0) > 0 && !billed.has(String(wo._id))) {
+          queueInvoice(wo, {
+            paid: Boolean(wo.paid),
+            total: wo.total ?? 0,
+            taxRate: wo.taxRate ?? 0,
+            tax: wo.tax ?? 0,
+            parts: wo.parts,
+            shipping: wo.shipping ?? 0,
+          });
+        }
+        skipped += 1;
+        if ((index + 1) % 100 === 0) {
+          log(
+            `${prefix}${options.target}: reviewed ${(index + 1).toLocaleString()}/${candidates.length.toLocaleString()}`,
+          );
+        }
+        await flush();
+        continue;
+      }
+      if (needsRebuild && !legacyWorkOrderHasBillableMoney(wo)) {
+        skipped += 1;
+        continue;
+      }
+
+      const paid = Boolean(wo.paid);
+      if (needsRebuild) {
+        const mapped = await resolveLegacyWorkOrderMoney(
+          wo,
+          catalog,
+          dryRun ? null : writer,
+        );
+        if (mapped.total <= 0) {
+          skipped += 1;
+          continue;
+        }
+        const tax = unpaidTaxFields(mapped, paid, taxRate);
+        updated += 1;
+        if (!dryRun) {
+          woOps.push({
+            updateOne: {
+              filter: { _id: wo._id },
+              update: {
+                $set: {
+                  ...workOrderMoneyFieldsFromMapped(mapped),
+                  taxRate: tax.taxRate,
+                  tax: tax.tax,
+                  taxOverridden: tax.taxOverridden,
+                  total: tax.total,
+                },
+              },
+            },
+          });
+        }
+        queueInvoice(wo, {
+          paid,
+          total: tax.total,
+          taxRate: tax.taxRate,
+          tax: tax.tax,
+          parts: mapped.parts,
+          totalLabor: mapped.totalLabor,
+          miscExp: mapped.miscExp,
+          shipping: mapped.shipping,
+        });
+      } else {
+        if (!dryRun) {
+          await ensureLegacyCatalogProducts(
+            writer,
+            (wo.parts ?? []).map((part) => ({
+              lineType: part.lineType === "note" ? "note" as const : "product" as const,
+              partNumber: part.partNumber ?? "",
+              description: part.description ?? part.partNumber ?? "",
+              kind: part.kind === "labor" ? "labor" as const : "part" as const,
+              listPrice: part.unitPrice ?? part.listPrice ?? 0,
+              unitPrice: part.unitPrice ?? 0,
+              amount: part.amount ?? 0,
+            })),
+            catalog,
+          );
+        }
+        const linked = (wo.parts ?? []).map((part) => ({
+          productRef: part.productRef ? String(part.productRef) : null,
+          contractTemplateRef: part.contractTemplateRef ? String(part.contractTemplateRef) : null,
+          enrolledContractRef: part.enrolledContractRef ? String(part.enrolledContractRef) : null,
+          lineType: part.lineType === "note" ? "note" as const : part.lineType === "agreement" ? "agreement" as const : "product" as const,
+          kind: part.kind === "labor" ? "labor" as const : part.kind === "equipment" ? "equipment" as const : "part" as const,
+          partNumber: part.partNumber ?? "",
+          description: part.description ?? "",
+          quantity: part.quantity ?? 0,
+          unitPrice: part.unitPrice ?? 0,
+          listPrice: part.listPrice ?? part.unitPrice ?? 0,
+          priceOverridden: Boolean(part.priceOverridden),
+          amount: part.amount ?? 0,
+        }));
+        if (!linkCatalogProductRefs(linked, catalog)) {
+          skipped += 1;
+          continue;
+        }
+        updated += 1;
+        if (!dryRun) {
+          woOps.push({
+            updateOne: {
+              filter: { _id: wo._id },
+              update: { $set: { parts: partsForMongo(linked) } },
+            },
+          });
+        }
+        if ((wo.total ?? 0) > 0) {
+          queueInvoice(wo, {
+            paid,
+            total: wo.total ?? 0,
+            taxRate: wo.taxRate ?? 0,
+            tax: wo.tax ?? 0,
+            parts: linked,
+            shipping: wo.shipping ?? 0,
+          });
+        }
+      }
+
+      if ((index + 1) % 100 === 0 || index + 1 === candidates.length) {
+        log(
+          `${prefix}${options.target}: reviewed ${(index + 1).toLocaleString()}/${candidates.length.toLocaleString()} (${updated.toLocaleString()} to update)`,
+        );
+      }
+      await flush();
+    }
+    lastNote = "writing the final batch";
+    await flush(true);
+
+    log(
+      `${prefix}${options.target}: mapped ${updated.toLocaleString()} work orders, skipped ${skipped.toLocaleString()}, invoices ${invoicesSynced.toLocaleString()}, invoice errors ${invoiceErrors.toLocaleString()}.`,
+    );
+    return {
+      target: options.target,
+      label,
+      updated,
+      skipped,
+      invoicesSynced,
+      invoiceErrors,
+    };
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+    await conn.close();
+  }
 }
 
 export async function runLegacyDumpSync(options: {
@@ -1203,7 +1883,7 @@ export async function runLegacyDumpSync(options: {
     log("Loading existing work orders…");
     const existingWos = await models.WorkOrder.find()
       .select(
-        "_id legacyId customerId customerRef customerName customerAddress customerCity customerZip customerPhone customerEmail date descPerform parts",
+        "_id legacyId number customerId customerRef customerName customerAddress customerCity customerZip customerPhone customerEmail date descPerform paid parts subtotal shipping total",
       )
       .lean();
     const existingWoLegacyIds = new Set<number>();
@@ -1235,6 +1915,7 @@ export async function runLegacyDumpSync(options: {
     let backfilledWoRefs = 0;
     let backfilledWoLineItems = 0;
     const productCatalog = await loadProductCatalog(models);
+    const taxRate = dryRun ? 0 : await boundTaxRate(models);
     if (workOrderRows.length > 0) {
       log(
         `Loaded ${productCatalog.length.toLocaleString()} active products for work-order line mapping.`,
@@ -1265,6 +1946,7 @@ export async function runLegacyDumpSync(options: {
             row,
             productCatalog,
             dryRun,
+            taxRate,
           );
           if (mappedItems) backfilledWoLineItems += 1;
         }
@@ -1302,8 +1984,13 @@ export async function runLegacyDumpSync(options: {
       }
 
       const site = await loadSiteRefs(models, customer._id, siteCache);
-      const money = mappedWorkOrderMoneyFields(row, productCatalog);
-      await models.WorkOrder.create({
+      const mapped = await resolveLegacyWorkOrderMoney(
+        row,
+        productCatalog,
+        mongooseLegacyProductWriter(models.Product),
+      );
+      const tax = unpaidTaxFields(mapped, row.paid, taxRate);
+      const createdWo = await models.WorkOrder.create({
         legacyId: row.legacyId,
         userId: row.userId,
         customerId: customer.legacyId,
@@ -1316,7 +2003,11 @@ export async function runLegacyDumpSync(options: {
         date: row.date,
         tech: row.tech,
         descPerformed: row.descPerformed,
-        ...money,
+        ...workOrderMoneyFieldsFromMapped(mapped),
+        taxRate: tax.taxRate,
+        tax: tax.tax,
+        taxOverridden: tax.taxOverridden,
+        total: tax.total,
         certify: row.certify,
         completed: row.completed,
         customerName: displayName(customer),
@@ -1329,6 +2020,22 @@ export async function runLegacyDumpSync(options: {
         generatorModel: customer.generatorModel,
         exerciseDay: customer.exday,
         exerciseTime: customer.extime,
+      });
+      await upsertBoundWorkOrderInvoice(models, {
+        _id: createdWo._id,
+        customerId: customer.legacyId,
+        customerRef: customer._id,
+        number: createdWo.number,
+        date: row.date,
+        descPerform: row.descPerform,
+        paid: row.paid,
+        parts: mapped.parts,
+        totalLabor: mapped.totalLabor,
+        miscExp: mapped.miscExp,
+        shipping: mapped.shipping,
+        total: tax.total,
+        taxRate: tax.taxRate,
+        tax: tax.tax,
       });
 
       existingWoLegacyIds.add(row.legacyId);

@@ -25,9 +25,15 @@ export const mailboxReplySchema = z.object({
   bcc: z.array(emailAddress).max(50).optional().default([]),
   subject: z.string().trim().min(1).max(300),
   html: z.string().max(100_000),
+  useBrandTemplate: z.boolean().optional().default(true),
 });
 
 export const mailboxAssigneesSchema = z.object({
   folder: mailboxFolderSchema,
   userIds: z.array(z.string().trim().min(1)).max(20),
+});
+
+export const mailboxArchiveSchema = z.object({
+  folder: mailboxFolderSchema,
+  archived: z.boolean().default(true),
 });

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
+import { Archive, ArchiveRestore, Loader2 } from "lucide-react";
 import EmailReplyComposer from "@/components/messaging/EmailReplyComposer";
 import EmailStaffTags from "@/components/messaging/EmailStaffTags";
 import {
@@ -23,9 +23,10 @@ import {
   locateMailboxMessage,
   replyToMailboxMessage,
   setMailboxAssignees,
+  setMailboxMessageArchived,
   updateEmailAccount,
 } from "@/lib/api";
-import { formatAddressList } from "@/lib/mailboxReply";
+import { formatAddressList, isMailDeliverySubsystem } from "@/lib/mailboxReply";
 
 type EmailInboxPanelProps = {
   token: string;
@@ -185,6 +186,7 @@ function toDetail(message: MailboxThreadMessage): MailboxMessageDetail | null {
     html: message.html,
     attachments: message.attachments,
     references: message.references,
+    archived: message.archived,
   };
 }
 
@@ -249,6 +251,9 @@ export default function EmailInboxPanel({
   const [replyNotice, setReplyNotice] = useState<string | null>(null);
   const [savingAutoReply, setSavingAutoReply] = useState(false);
   const [autoReplyError, setAutoReplyError] = useState<string | null>(null);
+  const [deliverySubsystemOnly, setDeliverySubsystemOnly] = useState(false);
+  const [showArchivedOnly, setShowArchivedOnly] = useState(false);
+  const [archivingUids, setArchivingUids] = useState<Set<number>>(new Set());
   const deepLinkRef = useRef<DeepLink>(
     deepLinkFromProps(initialAccountId, initialFolder, initialUid, initialMessageId),
   );
@@ -318,7 +323,59 @@ export default function EmailInboxPanel({
     [accounts, accountId],
   );
   const mailboxReady = Boolean(selectedAccount?.imapHost?.trim());
-  const threads = useMemo(() => groupThreads(messages), [messages]);
+  const allThreads = useMemo(() => groupThreads(messages), [messages]);
+
+  const isGroupArchived = (group: MailboxMessageSummary[]) =>
+    group.some((message) => Boolean(message.archived));
+
+  const archivedCount = useMemo(
+    () => allThreads.filter(isGroupArchived).length,
+    [allThreads],
+  );
+
+  const deliverySubsystemCount = useMemo(
+    () =>
+      allThreads
+        .filter((group) => !isGroupArchived(group))
+        .filter((group) =>
+          group.some((message) => isMailDeliverySubsystem(message)),
+        ).length,
+    [allThreads],
+  );
+
+  const threads = useMemo(() => {
+    if (folder !== "inbox") return allThreads;
+    if (showArchivedOnly) {
+      return allThreads.filter(isGroupArchived);
+    }
+    const activeThreads = allThreads.filter((group) => !isGroupArchived(group));
+    if (deliverySubsystemOnly) {
+      return activeThreads.filter((group) =>
+        group.some((message) => isMailDeliverySubsystem(message)),
+      );
+    }
+    return activeThreads.filter(
+      (group) => !group.some((message) => isMailDeliverySubsystem(message)),
+    );
+  }, [allThreads, folder, showArchivedOnly, deliverySubsystemOnly]);
+
+  useEffect(() => {
+    if (!selectedThreadKey || selectedThreadKey === "opening") return;
+    const isVisible = threads.some((group) => {
+      const latest = group[0];
+      return latest && threadKeyOf(latest) === selectedThreadKey;
+    });
+    if (!isVisible) {
+      if (threads.length > 0 && threads[0]?.[0]) {
+        const first = threads[0][0];
+        setSelectedThreadKey(threadKeyOf(first));
+        setFocusedUid(first.uid);
+      } else {
+        setSelectedThreadKey(null);
+        setFocusedUid(null);
+      }
+    }
+  }, [threads, selectedThreadKey]);
 
   useEffect(() => {
     const link = deepLinkRef.current;
@@ -559,12 +616,61 @@ export default function EmailInboxPanel({
     }
   }
 
+  async function handleToggleArchive(
+    target: MailboxMessageSummary | MailboxThreadMessage,
+    nextArchived: boolean,
+  ) {
+    if (target.uid == null) return;
+    const uid = target.uid;
+    const targetFolder = "folder" in target ? target.folder : folder;
+    setArchivingUids((prev) => new Set(prev).add(uid));
+
+    // Optimistically update
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.uid === uid ? { ...msg, archived: nextArchived } : msg,
+      ),
+    );
+    setThread((prev) =>
+      prev?.map((msg) =>
+        msg.uid === uid ? { ...msg, archived: nextArchived } : msg,
+      ) ?? null,
+    );
+
+    try {
+      await setMailboxMessageArchived(token, accountId, uid, {
+        folder: targetFolder,
+        archived: nextArchived,
+      });
+    } catch (err) {
+      // Rollback on error
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.uid === uid ? { ...msg, archived: !nextArchived } : msg,
+        ),
+      );
+      setThread((prev) =>
+        prev?.map((msg) =>
+          msg.uid === uid ? { ...msg, archived: !nextArchived } : msg,
+        ) ?? null,
+      );
+      console.error("Could not update archive state", err);
+    } finally {
+      setArchivingUids((prev) => {
+        const next = new Set(prev);
+        next.delete(uid);
+        return next;
+      });
+    }
+  }
+
   async function handleSendReply(input: {
     to: string[];
     cc: string[];
     bcc: string[];
     subject: string;
     html: string;
+    useBrandTemplate: boolean;
   }) {
     if (!replyTarget?.uid || !composeMode) return;
     setSendingReply(true);
@@ -652,6 +758,8 @@ export default function EmailInboxPanel({
                 onClick={() => {
                   abandonDeepLink();
                   setFolder(value);
+                  setDeliverySubsystemOnly(false);
+                  setShowArchivedOnly(false);
                 }}
                 className={`rounded-md px-2.5 py-1 text-xs font-medium ${
                   active
@@ -678,6 +786,65 @@ export default function EmailInboxPanel({
             />
             Automatic reply
           </label>
+          {folder === "inbox" ? (
+            <>
+              <label
+                className="ml-2 flex items-center gap-1.5 text-[11px] text-neutral-600 cursor-pointer select-none"
+                title="Show only automated Mail Delivery Subsystem and delivery status failure notices"
+              >
+                <input
+                  type="checkbox"
+                  className="accent-brand-orange cursor-pointer"
+                  checked={deliverySubsystemOnly}
+                  disabled={showArchivedOnly}
+                  onChange={(event) =>
+                    setDeliverySubsystemOnly(event.target.checked)
+                  }
+                />
+                <span>Mail Delivery Subsystem</span>
+                {deliverySubsystemCount > 0 ? (
+                  <span
+                    className={`rounded-full px-1.5 py-0.2 text-[10px] font-semibold ${
+                      deliverySubsystemOnly
+                        ? "bg-brand-orange text-white"
+                        : "bg-neutral-200 text-neutral-600"
+                    }`}
+                  >
+                    {deliverySubsystemCount}
+                  </span>
+                ) : null}
+              </label>
+
+              <label
+                className="ml-2 flex items-center gap-1.5 text-[11px] text-neutral-600 cursor-pointer select-none"
+                title="View archived email messages"
+              >
+                <input
+                  type="checkbox"
+                  className="accent-brand-orange cursor-pointer"
+                  checked={showArchivedOnly}
+                  onChange={(event) => {
+                    setShowArchivedOnly(event.target.checked);
+                    if (event.target.checked) {
+                      setDeliverySubsystemOnly(false);
+                    }
+                  }}
+                />
+                <span>Archived</span>
+                {archivedCount > 0 ? (
+                  <span
+                    className={`rounded-full px-1.5 py-0.2 text-[10px] font-semibold ${
+                      showArchivedOnly
+                        ? "bg-brand-orange text-white"
+                        : "bg-neutral-200 text-neutral-600"
+                    }`}
+                  >
+                    {archivedCount}
+                  </span>
+                ) : null}
+              </label>
+            </>
+          ) : null}
         </div>
         {accounts.length > 0 ? (
           <select
@@ -767,61 +934,141 @@ export default function EmailInboxPanel({
                     Retry
                   </button>
                 </div>
-              ) : threads.length === 0 ? (
-                <p className="p-3 text-xs text-neutral-500">
-                  {folder === "inbox"
-                    ? "Inbox is empty."
-                    : "No sent mail in this folder."}
-                </p>
               ) : (
-                <ul>
-                  {threads.map((group) => {
-                    const latest = group[0];
-                    if (!latest) return null;
-                    const key = threadKeyOf(latest);
-                    const active = selectedThreadKey === key;
-                    const unread = group.some((message) => !message.seen);
-                    const who = partyAddresses(folder, latest);
-                    const customer = latest.customer ?? null;
-                    return (
-                      <li
-                        key={key}
-                        className={`border-b border-[var(--staff-border)] ${
-                          active
-                            ? "conversation-row-active border-l-2 border-l-brand-orange"
-                            : ""
-                        }`}
+                <>
+                  {folder === "inbox" && showArchivedOnly ? (
+                    <div className="flex items-center justify-between border-b border-[var(--staff-border)] bg-amber-50/80 px-3 py-1.5 text-[11px] text-amber-950">
+                      <span className="font-medium">
+                        Showing {archivedCount} archived {archivedCount === 1 ? "email" : "emails"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowArchivedOnly(false)}
+                        className="font-semibold text-brand-orange hover:underline ml-2"
                       >
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => selectThread(group)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              selectThread(group);
-                            }
-                          }}
-                          className={`flex w-full gap-2.5 px-3 py-2.5 text-left ${
-                            active ? "" : "hover:bg-[var(--staff-cream)]"
-                          }`}
-                        >
-                          <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-midnight text-[11px] font-semibold text-white">
-                            {partyInitial(who)}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="flex items-baseline justify-between gap-2">
-                              <CustomerName
-                                name={partyName(who)}
-                                customer={customer}
-                                className={`truncate text-[13px] text-[var(--staff-ink)] ${
-                                  unread ? "font-semibold" : "font-medium"
-                                }`}
-                              />
-                              <span className="shrink-0 text-[10px] text-neutral-400">
-                                {formatWhen(latest.date)}
+                        Back to Inbox
+                      </button>
+                    </div>
+                  ) : folder === "inbox" && deliverySubsystemCount > 0 ? (
+                    <div
+                      className={`flex items-center justify-between border-b border-[var(--staff-border)] px-3 py-1.5 text-[11px] ${
+                        deliverySubsystemOnly
+                          ? "bg-amber-50 text-amber-900"
+                          : "bg-[var(--staff-cream)] text-neutral-600"
+                      }`}
+                    >
+                      <span>
+                        {deliverySubsystemOnly
+                          ? `Showing ${deliverySubsystemCount} Mail Delivery Subsystem ${
+                              deliverySubsystemCount === 1 ? "notice" : "notices"
+                            }`
+                          : `${deliverySubsystemCount} Mail Delivery Subsystem ${
+                              deliverySubsystemCount === 1 ? "notice" : "notices"
+                            } hidden`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDeliverySubsystemOnly((current) => !current)
+                        }
+                        className="font-semibold text-brand-orange hover:underline ml-2"
+                      >
+                        {deliverySubsystemOnly ? "Show Inbox" : "Show"}
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {threads.length === 0 ? (
+                    <p className="p-3 text-xs text-neutral-500">
+                      {folder === "inbox"
+                        ? showArchivedOnly
+                          ? "No archived emails."
+                          : deliverySubsystemOnly
+                            ? "No Mail Delivery Subsystem messages in inbox."
+                            : "Inbox is empty."
+                        : "No sent mail in this folder."}
+                    </p>
+                  ) : (
+                    <ul>
+                      {threads.map((group) => {
+                        const latest = group[0];
+                        if (!latest) return null;
+                        const key = threadKeyOf(latest);
+                        const active = selectedThreadKey === key;
+                        const unread = group.some((message) => !message.seen);
+                        const who = partyAddresses(folder, latest);
+                        const customer = latest.customer ?? null;
+                        const isArchived = Boolean(latest.archived);
+                        return (
+                          <li
+                            key={key}
+                            className={`border-b border-[var(--staff-border)] ${
+                              active
+                                ? "conversation-row-active border-l-2 border-l-brand-orange"
+                                : ""
+                            }`}
+                          >
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => selectThread(group)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  selectThread(group);
+                                }
+                              }}
+                              className={`group flex w-full gap-2.5 px-3 py-2.5 text-left ${
+                                active ? "" : "hover:bg-[var(--staff-cream)]"
+                              }`}
+                            >
+                              <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-midnight text-[11px] font-semibold text-white">
+                                {partyInitial(who)}
                               </span>
-                            </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-baseline justify-between gap-2">
+                                  <CustomerName
+                                    name={partyName(who)}
+                                    customer={customer}
+                                    className={`truncate text-[13px] text-[var(--staff-ink)] ${
+                                      unread ? "font-semibold" : "font-medium"
+                                    }`}
+                                  />
+                                  <span className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[10px] text-neutral-400">
+                                      {formatWhen(latest.date)}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      title={
+                                        isArchived
+                                          ? "Unarchive (restore to inbox)"
+                                          : "Archive email"
+                                      }
+                                      disabled={archivingUids.has(latest.uid)}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleToggleArchive(
+                                          latest,
+                                          !isArchived,
+                                        );
+                                      }}
+                                      className={`rounded p-0.5 text-neutral-400 hover:text-brand-dark hover:bg-neutral-200/70 transition-all ${
+                                        archivingUids.has(latest.uid)
+                                          ? "opacity-100"
+                                          : "opacity-60 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
+                                      }`}
+                                    >
+                                      {archivingUids.has(latest.uid) ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      ) : isArchived ? (
+                                        <ArchiveRestore className="h-3.5 w-3.5 text-brand-orange" />
+                                      ) : (
+                                        <Archive className="h-3.5 w-3.5" />
+                                      )}
+                                    </button>
+                                  </span>
+                                </span>
                             <span
                               className={`mt-0.5 block truncate text-xs text-neutral-700 ${
                                 unread ? "font-semibold" : ""
@@ -841,7 +1088,9 @@ export default function EmailInboxPanel({
                   })}
                 </ul>
               )}
-            </div>
+            </>
+          )}
+        </div>
 
             <div
               className={`min-h-[280px] min-w-0 flex-col ${
@@ -925,6 +1174,38 @@ export default function EmailInboxPanel({
                           </button>
                         );
                       })}
+                      {replyTarget?.uid != null ? (
+                        <button
+                          type="button"
+                          disabled={archivingUids.has(replyTarget.uid)}
+                          onClick={() =>
+                            void handleToggleArchive(
+                              replyTarget,
+                              !replyTarget.archived,
+                            )
+                          }
+                          className="inline-flex items-center gap-1 rounded-md border border-[var(--staff-border)] px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-[var(--staff-cream)] transition-colors disabled:opacity-50"
+                          title={
+                            replyTarget.archived
+                              ? "Restore to inbox"
+                              : "Archive email"
+                          }
+                        >
+                          {archivingUids.has(replyTarget.uid) ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : replyTarget.archived ? (
+                            <>
+                              <ArchiveRestore className="h-3.5 w-3.5 text-brand-orange" />
+                              Unarchive
+                            </>
+                          ) : (
+                            <>
+                              <Archive className="h-3.5 w-3.5 text-neutral-500" />
+                              Archive
+                            </>
+                          )}
+                        </button>
+                      ) : null}
                     </div>
                     {replyTarget?.uid != null ? (
                       <div className="mt-2">
@@ -1031,25 +1312,26 @@ export default function EmailInboxPanel({
                       {replyNotice}
                     </p>
                   ) : null}
-                  {composeMode && replyDetail ? (
-                    <EmailReplyComposer
-                      key={`${replyDetail.uid}-${replyDetail.messageKey}-${composeMode}`}
-                      mode={composeMode}
-                      folder={replyTarget?.folder ?? folder}
-                      detail={replyDetail}
-                      ownAddress={selectedAccount?.fromEmail ?? ""}
-                      sending={sendingReply}
-                      error={replyError}
-                      onCancel={() => setComposeMode(null)}
-                      onSend={(input) => void handleSendReply(input)}
-                    />
-                  ) : null}
                 </article>
               ) : null}
             </div>
           </div>
         </>
       )}
+
+      {composeMode && replyDetail ? (
+        <EmailReplyComposer
+          key={`${replyDetail.uid}-${replyDetail.messageKey}-${composeMode}`}
+          mode={composeMode}
+          folder={replyTarget?.folder ?? folder}
+          detail={replyDetail}
+          ownAddress={selectedAccount?.fromEmail ?? ""}
+          sending={sendingReply}
+          error={replyError}
+          onCancel={() => setComposeMode(null)}
+          onSend={(input) => void handleSendReply(input)}
+        />
+      ) : null}
     </section>
   );
 }

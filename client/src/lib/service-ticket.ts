@@ -701,6 +701,7 @@ export function ticketFromRecord(record: {
     quantity?: number;
     unitPrice?: number;
     listPrice?: number;
+    amount?: number;
     priceOverridden?: boolean;
   }>;
   miscExp?: number | null;
@@ -737,9 +738,23 @@ export function ticketFromRecord(record: {
     enrolledContractRef: part.enrolledContractRef ?? "",
     partNumber: part.partNumber ?? "",
     description: part.description ?? "",
-    quantity: part.quantity ? String(part.quantity) : "",
-    listPrice: part.listPrice ? String(part.listPrice) : part.unitPrice ? String(part.unitPrice) : "",
-    unitPrice: part.unitPrice ? String(part.unitPrice) : "",
+    quantity: part.quantity
+      ? String(part.quantity)
+      : part.amount
+        ? "1"
+        : "",
+    listPrice: part.listPrice
+      ? String(part.listPrice)
+      : part.unitPrice
+        ? String(part.unitPrice)
+        : part.amount
+          ? String(part.amount)
+          : "",
+    unitPrice: part.unitPrice
+      ? String(part.unitPrice)
+      : part.amount
+        ? String(part.amount)
+        : "",
     priceOverridden: Boolean(part.priceOverridden),
   }));
   return {

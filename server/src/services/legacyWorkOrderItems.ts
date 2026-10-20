@@ -1,4 +1,5 @@
-import { Types } from "mongoose";
+import { Model, Types } from "mongoose";
+import type { IProduct } from "../models/mongo/Product";
 import {
   computeTicketTotals,
   normalizeParts,
@@ -14,6 +15,7 @@ export type LegacyCatalogProduct = {
   kind?: "part" | "labor" | string;
   listPrice?: number;
   unitPrice?: number;
+  active?: boolean;
 };
 
 export type LegacyWorkOrderMoneyInput = {
@@ -167,23 +169,18 @@ function combinedText(input: LegacyWorkOrderMoneyInput): string {
   return `${unescapeDumpText(input.descPerform ?? "")}\n${unescapeDumpText(input.descPerformed ?? "")}`;
 }
 
-function firstLineLabel(text: string, fallback: string): string {
-  const line =
-    unescapeDumpText(text)
-      .split(/\r?\n/)
-      .map((part) => part.trim())
-      .find((part) => part.length > 0) ?? "";
-  const cleaned = line.replace(/\s+/g, " ").trim();
-  if (!cleaned) return fallback;
-  return cleaned.length > 80 ? `${cleaned.slice(0, 77).trim()}...` : cleaned;
-}
 
-/** ASC / service list price written in the job description, e.g. "ASC $300 PLUS PARTS". */
+/**
+ * ASC / service list price written in the job description.
+ * Accepts "ASC $300 PLUS PARTS" and "ASC 300". Ignores time windows
+ * ("ASC 8-10") and dates ("ASC 1/17/24", "asc 12/19/23").
+ */
 export function extractQuotedServicePrice(text: string): number {
   const source = text ?? "";
   const patterns = [
     /(?:asc|acs)\s*\$\s*(\d+(?:\.\d{1,2})?)/i,
     /\$\s*(\d+(?:\.\d{1,2})?)\s*plus\s+parts/i,
+    /(?:asc|acs)\s*\$?\s*(\d{2,5}(?:\.\d{1,2})?)(?![-/\d])/i,
   ];
   for (const pattern of patterns) {
     const match = source.match(pattern);
@@ -431,8 +428,38 @@ export function legacyWorkOrderHasBillableMoney(
     money(input.totalParts) > MONEY_EPS ||
     money(input.totalLabor) > MONEY_EPS ||
     money(input.miscExp) > MONEY_EPS ||
-    money(input.shipping) > MONEY_EPS
+    money(input.shipping) > MONEY_EPS ||
+    extractQuotedServicePrice(combinedText(input)) > MONEY_EPS
   );
+}
+
+/** Placeholder or sentence codes that should be remapped onto real products. */
+export function isPlaceholderProductCode(partNumber: string | undefined): boolean {
+  const raw = (partNumber ?? "").trim();
+  if (!raw) return true;
+  const code = normalizeProductCode(raw);
+  if (!code || code.startsWith("IMPORTED")) return true;
+  return /\s/.test(raw) || raw.length > 24;
+}
+
+export function workOrderLinesNeedRebuild(
+  parts: Array<{ lineType?: string; partNumber?: string }> | undefined,
+): boolean {
+  const priced = (parts ?? []).filter((part) => part.lineType !== "note");
+  if (priced.length === 0) return true;
+  return priced.some((part) => isPlaceholderProductCode(part.partNumber));
+}
+
+export function workOrderLinesNeedProductLink(
+  parts:
+    | Array<{ lineType?: string; partNumber?: string; productRef?: unknown }>
+    | undefined,
+): boolean {
+  return (parts ?? []).some((part) => {
+    if (part.lineType === "note") return false;
+    if (part.productRef) return false;
+    return !isPlaceholderProductCode(part.partNumber);
+  });
 }
 
 /**
@@ -452,6 +479,12 @@ export function mapLegacyWorkOrderItems(
   const componentTotal = roundMoney(sqlParts + sqlLabor + miscExp + shipping);
   if (total <= MONEY_EPS && componentTotal > MONEY_EPS) {
     total = componentTotal;
+  }
+  // A written quote is the billable total only when SQL stored no money.
+  // Do not override a positive SQL total.
+  if (total <= MONEY_EPS && componentTotal <= MONEY_EPS) {
+    const quoted = extractQuotedServicePrice(combinedText(input));
+    if (quoted > MONEY_EPS) total = quoted;
   }
 
   if (total <= MONEY_EPS) {
@@ -519,18 +552,14 @@ export function mapLegacyWorkOrderItems(
     }
   }
 
-  const serviceLabel = firstLineLabel(
-    input.descPerform ?? "",
-    "IMPORTED SERVICE",
-  );
   const parts: NormalizedTicketPart[] = [
-    ...allocateKind(partItems, partBudget, "part", "IMPORTED PARTS", "IMPORTED-PARTS"),
+    ...allocateKind(partItems, partBudget, "part", "PARTS", "PARTS"),
     ...allocateKind(
       laborItems,
       laborBudget,
       "labor",
-      serviceLabel,
-      laborItems[0]?.partNumber || "IMPORTED-LABOR",
+      "SERVICE",
+      laborItems[0]?.partNumber || "SERVICE",
     ),
   ];
 
@@ -599,11 +628,7 @@ export function partsForMongo(parts: NormalizedTicketPart[]) {
   }));
 }
 
-export function mappedWorkOrderMoneyFields(
-  input: LegacyWorkOrderMoneyInput,
-  catalog: LegacyCatalogProduct[] = [],
-) {
-  const mapped = mapLegacyWorkOrderItems(input, catalog);
+export function workOrderMoneyFieldsFromMapped(mapped: LegacyMappedWorkOrderMoney) {
   return {
     parts: partsForMongo(mapped.parts),
     laborHours: mapped.laborHours,
@@ -616,4 +641,205 @@ export function mappedWorkOrderMoneyFields(
     subtotal: mapped.subtotal,
     total: mapped.total,
   };
+}
+
+function findCatalogByCode(
+  catalog: LegacyCatalogProduct[],
+  code: string,
+): LegacyCatalogProduct | undefined {
+  const needle = normalizeProductCode(code);
+  if (!needle) return undefined;
+  return catalog.find((product) => {
+    const productCode = catalogCode(product);
+    const partNumber = normalizeProductCode(product.partNumber || "");
+    return productCode === needle || partNumber === needle;
+  });
+}
+
+/** Attach catalog refs by code without changing a line's billed amount. */
+export function linkCatalogProductRefs(
+  parts: NormalizedTicketPart[],
+  catalog: LegacyCatalogProduct[],
+): boolean {
+  let changed = false;
+  for (const part of parts) {
+    if (part.lineType === "note" || part.productRef) continue;
+    const product = findCatalogByCode(catalog, part.partNumber);
+    if (!product) continue;
+    part.productRef = product._id;
+    const listPrice = catalogPrice(product);
+    if (listPrice > MONEY_EPS && Math.abs(listPrice - part.unitPrice) > MONEY_EPS) {
+      part.listPrice = listPrice;
+      part.priceOverridden = true;
+    }
+    changed = true;
+  }
+  return changed;
+}
+
+export type LegacyProductDraft = {
+  partNumber: string;
+  name: string;
+  kind: "part" | "labor";
+  listPrice: number;
+};
+
+export type LegacyProductWriter = {
+  findByCodes: (code: string) => Promise<(LegacyCatalogProduct & { active?: boolean }) | null>;
+  save: (
+    product: LegacyCatalogProduct & { active?: boolean },
+  ) => Promise<LegacyCatalogProduct>;
+  create: (draft: LegacyProductDraft) => Promise<LegacyCatalogProduct>;
+};
+
+function draftsFromParts(
+  parts: Array<
+    Pick<
+      NormalizedTicketPart,
+      "lineType" | "partNumber" | "description" | "kind" | "listPrice" | "unitPrice" | "amount"
+    >
+  >,
+  catalog: LegacyCatalogProduct[],
+): LegacyProductDraft[] {
+  const drafts: LegacyProductDraft[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    if (part.lineType === "note") continue;
+    if (money(part.amount) <= MONEY_EPS && money(part.unitPrice) <= MONEY_EPS) continue;
+    const code = normalizeProductCode(part.partNumber || "");
+    if (!code || code.startsWith("IMPORTED") || seen.has(code)) continue;
+    if (findCatalogByCode(catalog, code)) continue;
+    seen.add(code);
+    const listPrice = money(part.listPrice) > MONEY_EPS ? money(part.listPrice) : money(part.unitPrice);
+    drafts.push({
+      partNumber: code,
+      name: (part.description || code).trim().toUpperCase() || code,
+      kind: part.kind === "labor" ? "labor" : "part",
+      listPrice,
+    });
+  }
+  return drafts;
+}
+
+function isDuplicateKey(err: unknown): boolean {
+  return Boolean(err && typeof err === "object" && (err as { code?: number }).code === 11000);
+}
+
+function catalogFromProduct(product: {
+  _id: unknown;
+  productCode?: string;
+  partNumber?: string;
+  name?: string;
+  kind?: string;
+  listPrice?: number;
+  unitPrice?: number;
+  active?: boolean;
+}): LegacyCatalogProduct {
+  return {
+    _id: String(product._id),
+    productCode: product.productCode,
+    partNumber: product.partNumber,
+    name: product.name,
+    kind: product.kind,
+    listPrice: product.listPrice,
+    unitPrice: product.unitPrice,
+    active: product.active,
+  };
+}
+
+/** Create missing canonical products. First list price wins; later lines override price. */
+export async function ensureLegacyCatalogProducts(
+  writer: LegacyProductWriter,
+  parts: Array<
+    Pick<
+      NormalizedTicketPart,
+      "lineType" | "partNumber" | "description" | "kind" | "listPrice" | "unitPrice" | "amount"
+    >
+  >,
+  catalog: LegacyCatalogProduct[],
+): Promise<void> {
+  const drafts = draftsFromParts(parts, catalog);
+  for (const draft of drafts) {
+    if (findCatalogByCode(catalog, draft.partNumber)) continue;
+    let product = await writer.findByCodes(draft.partNumber);
+    if (product?.active === false) {
+      product = await writer.save({ ...product, active: true });
+    }
+    if (!product) {
+      product = await writer.create(draft);
+    }
+    if (product && !findCatalogByCode(catalog, product.partNumber || draft.partNumber)) {
+      catalog.push(product);
+    }
+  }
+}
+
+export function mongooseLegacyProductWriter(ProductModel: Model<IProduct>): LegacyProductWriter {
+  async function findByCodes(code: string) {
+    const doc = await ProductModel.findOne({
+      $or: [{ partNumber: code }, { productCode: code }],
+    }).select("_id productCode partNumber name kind listPrice unitPrice active");
+    return doc ? catalogFromProduct(doc) : null;
+  }
+
+  return {
+    findByCodes,
+    async save(product) {
+      await ProductModel.updateOne({ _id: product._id }, { $set: { active: true } });
+      return { ...product, active: true };
+    },
+    async create(draft) {
+      try {
+        const doc = await ProductModel.create({
+          partNumber: draft.partNumber,
+          productCode: draft.partNumber,
+          productNumber: draft.partNumber,
+          name: draft.name,
+          kind: draft.kind,
+          listPrice: draft.listPrice,
+          unitPrice: draft.listPrice,
+          active: true,
+        });
+        return catalogFromProduct(doc);
+      } catch (err) {
+        if (!isDuplicateKey(err)) throw err;
+        const existing = await findByCodes(draft.partNumber);
+        if (!existing) throw err;
+        if (existing.active === false) {
+          await ProductModel.updateOne({ _id: existing._id }, { $set: { active: true } });
+          return { ...existing, active: true };
+        }
+        return existing;
+      }
+    },
+  };
+}
+
+/**
+ * Map, create any missing product codes, then map again so new products link.
+ * Mutates `catalog` with products created during this call.
+ */
+export async function resolveLegacyWorkOrderMoney(
+  input: LegacyWorkOrderMoneyInput,
+  catalog: LegacyCatalogProduct[],
+  writer?: LegacyProductWriter | null,
+): Promise<LegacyMappedWorkOrderMoney> {
+  if (writer) {
+    const preview = mapLegacyWorkOrderItems(input, catalog);
+    if (preview.total > MONEY_EPS) {
+      await ensureLegacyCatalogProducts(writer, preview.parts, catalog);
+    }
+  }
+  const mapped = mapLegacyWorkOrderItems(input, catalog);
+  linkCatalogProductRefs(mapped.parts, catalog);
+  return mapped;
+}
+
+export function mappedWorkOrderMoneyFields(
+  input: LegacyWorkOrderMoneyInput,
+  catalog: LegacyCatalogProduct[] = [],
+) {
+  const mapped = mapLegacyWorkOrderItems(input, catalog);
+  linkCatalogProductRefs(mapped.parts, catalog);
+  return workOrderMoneyFieldsFromMapped(mapped);
 }

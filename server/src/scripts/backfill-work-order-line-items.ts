@@ -1,110 +1,90 @@
 /**
  * Maps stored legacy work-order totals and descriptions onto parts/labor
- * line items using the current product catalog.
+ * line items, then syncs invoices, on both development and production.
  *
- * Safe to re-run: skips tickets that already have priced product lines.
+ * Uses each database's own connection. Products and invoices are written to
+ * that database, not the API default connection.
  *
- * Run: npx tsx src/scripts/backfill-work-order-line-items.ts
- * Dry run: npx tsx src/scripts/backfill-work-order-line-items.ts --dry-run
+ * Dry run both:
+ *   npx tsx src/scripts/backfill-work-order-line-items.ts --dry-run
+ * Write development, preview production:
+ *   npx tsx src/scripts/backfill-work-order-line-items.ts
+ * Write both:
+ *   npx tsx src/scripts/backfill-work-order-line-items.ts --confirm
+ * One target:
+ *   npx tsx src/scripts/backfill-work-order-line-items.ts --target production --confirm
  */
 import dotenv from "dotenv";
 import path from "path";
 
-dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+const envCandidates = [
+  path.resolve(__dirname, "../../.env"),
+  path.resolve(process.cwd(), ".env"),
+  path.resolve(__dirname, "../../../.env"),
+];
+for (const envPath of envCandidates) {
+  dotenv.config({ path: envPath });
+}
 
 import mongoose from "mongoose";
 mongoose.set("autoIndex", false);
 
-import { connectMongoDB, disconnectMongoDB } from "../config/mongodb";
-import { Product } from "../models/mongo/Product";
-import { WorkOrder } from "../models/mongo/WorkOrder";
 import {
-  hasPricedProductLines,
-  legacyWorkOrderHasBillableMoney,
-  mappedWorkOrderMoneyFields,
-} from "../services/legacyWorkOrderItems";
+  backfillStoredWorkOrderLineItems,
+  describeMongoTarget,
+  resolveLegacyDumpUri,
+  type LegacyDumpTarget,
+} from "../services/legacyDumpSync";
 
 const DRY_RUN = process.argv.includes("--dry-run");
-const BATCH_SIZE = 200;
+const CONFIRM = process.argv.includes("--confirm");
 
-async function main(): Promise<void> {
-  await connectMongoDB();
-
-  const catalog = (
-    await Product.find({ active: { $ne: false } })
-      .select("_id productCode partNumber name kind listPrice unitPrice")
-      .lean()
-  ).map((product) => ({
-    _id: String(product._id),
-    productCode: product.productCode,
-    partNumber: product.partNumber,
-    name: product.name,
-    kind: product.kind,
-    listPrice: product.listPrice,
-    unitPrice: product.unitPrice,
-  }));
-  console.log(`Loaded ${catalog.length} products for line-item mapping.`);
-
-  const candidates = await WorkOrder.find({
-    $or: [
-      { total: { $gt: 0 } },
-      { totalParts: { $gt: 0 } },
-      { totalLabor: { $gt: 0 } },
-      { miscExp: { $gt: 0 } },
-      { shipping: { $gt: 0 } },
-    ],
-  })
-    .select(
-      "legacyId number descPerform descPerformed parts totalParts totalLabor miscExp subtotal shipping total laborHours",
-    )
-    .lean();
-
-  let updated = 0;
-  let skipped = 0;
-
-  for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
-    const batch = candidates.slice(i, i + BATCH_SIZE);
-    const ops: mongoose.AnyBulkWriteOperation[] = [];
-    for (const wo of batch) {
-      if (hasPricedProductLines(wo.parts)) {
-        skipped += 1;
-        continue;
-      }
-      if (!legacyWorkOrderHasBillableMoney(wo)) {
-        skipped += 1;
-        continue;
-      }
-      const money = mappedWorkOrderMoneyFields(wo, catalog);
-      if (!hasPricedProductLines(money.parts) && money.total <= 0) {
-        skipped += 1;
-        continue;
-      }
-      updated += 1;
-      if (!DRY_RUN) {
-        ops.push({
-          updateOne: {
-            filter: { _id: wo._id },
-            update: { $set: money },
-          },
-        });
-      }
-    }
-    if (ops.length > 0) {
-      await WorkOrder.bulkWrite(ops, { ordered: false });
-    }
-    console.log(
-      `  Processed ${Math.min(i + BATCH_SIZE, candidates.length)}/${candidates.length}`,
-    );
-  }
-
-  console.log(
-    `${DRY_RUN ? "[dry-run] " : ""}Mapped line items on ${updated} work orders, skipped ${skipped}.`,
-  );
-  await disconnectMongoDB();
+function requestedTargets(): LegacyDumpTarget[] {
+  const flagIndex = process.argv.indexOf("--target");
+  const value = flagIndex >= 0 ? process.argv[flagIndex + 1] : undefined;
+  if (!value) return ["development", "production"];
+  if (value === "development" || value === "production") return [value];
+  throw new Error(`Unknown --target ${value}. Use development or production.`);
 }
 
-main().catch(async (err) => {
+async function main(): Promise<void> {
+  const targets = requestedTargets();
+  let failed = 0;
+
+  for (const target of targets) {
+    const uri = resolveLegacyDumpUri(target);
+    if (!uri) {
+      failed += 1;
+      console.error(
+        `[${target}] URI is not set (${target === "production" ? "MONGODB_URI_PRODUCTION" : "MONGODB_URI_DEVELOPMENT / MONGODB_URI"}).`,
+      );
+      continue;
+    }
+
+    const write = !DRY_RUN && (target !== "production" || CONFIRM);
+    if (!write && target === "production" && !DRY_RUN) {
+      console.log(
+        `[production] Skipping write to ${describeMongoTarget(uri)}. Re-run with --confirm to update production.`,
+      );
+    }
+
+    try {
+      await backfillStoredWorkOrderLineItems({
+        target,
+        mongoUri: uri,
+        dryRun: !write,
+        onLog: (message) => console.log(message),
+      });
+    } catch (err) {
+      failed += 1;
+      console.error(`[${target}] Backfill failed:`, err);
+    }
+  }
+
+  if (failed > 0) process.exit(1);
+}
+
+main().catch((err) => {
   console.error("Backfill failed:", err);
-  await disconnectMongoDB();
   process.exit(1);
 });

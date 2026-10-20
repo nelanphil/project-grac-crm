@@ -195,7 +195,7 @@ export default function CheckoutCartView({
         <div className="flex flex-col gap-6 md:flex-row md:items-start">
           <section className="min-w-0 flex-1 rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-4">
             <h2 className="text-lg font-semibold text-brand-dark">
-              Order Summary
+              {cart?.invoiceOnly ? "Pay this invoice" : "Order Summary"}
             </h2>
             <ul className="space-y-2">
               {items.map((item) => {
@@ -208,6 +208,7 @@ export default function CheckoutCartView({
                         type="checkbox"
                         className="mt-1 h-4 w-4 accent-brand-dark"
                         checked={checked}
+                        disabled={cart?.invoiceOnly}
                         onChange={() => toggle(item)}
                       />
                       <div className="min-w-0 flex-1 space-y-1">

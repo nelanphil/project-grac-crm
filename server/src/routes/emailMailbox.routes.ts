@@ -10,6 +10,7 @@ import {
   listMailboxMessagesHandler,
   locateMailboxMessageHandler,
   replyMailboxMessageHandler,
+  setMailboxArchiveHandler,
   setMailboxAssigneesHandler,
 } from "../controllers/emailMailbox.controller";
 
@@ -47,6 +48,11 @@ router.put(
   "/:accountId/messages/:uid/assignees",
   requirePermission("messages:write"),
   setMailboxAssigneesHandler,
+);
+router.put(
+  "/:accountId/messages/:uid/archive",
+  requirePermission("messages:write"),
+  setMailboxArchiveHandler,
 );
 
 export default router;

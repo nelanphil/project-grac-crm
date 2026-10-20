@@ -90,3 +90,31 @@ export function formatAddressList(list: MailboxAddress[]): string {
     )
     .join(", ");
 }
+
+export function isMailDeliverySubsystem(message: {
+  from?: MailboxAddress[];
+  subject?: string;
+}): boolean {
+  const from = message.from ?? [];
+  const matchesSender = from.some((item) => {
+    const name = (item.name || "").trim().toLowerCase();
+    const addr = (item.address || "").trim().toLowerCase();
+    const local = addr.split("@")[0] ?? "";
+    return (
+      name.includes("mail delivery subsystem") ||
+      name.includes("mail delivery system") ||
+      name.includes("mailer-daemon") ||
+      local === "mailer-daemon" ||
+      local === "postmaster"
+    );
+  });
+  if (matchesSender) return true;
+
+  const subject = (message.subject || "").trim().toLowerCase();
+  return (
+    subject.startsWith("delivery status notification") ||
+    subject.includes("undelivered mail") ||
+    subject.includes("mail delivery failed") ||
+    subject.startsWith("failure notice")
+  );
+}

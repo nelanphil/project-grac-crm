@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  ensureLegacyCatalogProducts,
   extractQuotedServicePrice,
   hasPricedProductLines,
   legacyWorkOrderHasBillableMoney,
   mapLegacyWorkOrderItems,
+  resolveLegacyWorkOrderMoney,
+  workOrderLinesNeedProductLink,
+  workOrderLinesNeedRebuild,
+  type LegacyCatalogProduct,
+  type LegacyProductWriter,
 } from "./legacyWorkOrderItems";
 
 const CATALOG = [
@@ -42,9 +48,16 @@ describe("extractQuotedServicePrice", () => {
     assert.equal(extractQuotedServicePrice("ASC $300 PLUS PARTS"), 300);
   });
 
-  it("ignores time windows and payment notes", () => {
+  it("ignores time windows, dates, and payment notes", () => {
     assert.equal(extractQuotedServicePrice("ASC 8-10"), 0);
+    assert.equal(extractQuotedServicePrice("ASC 1/17/24"), 0);
+    assert.equal(extractQuotedServicePrice("asc 12/19/23"), 0);
     assert.equal(extractQuotedServicePrice("Paid check $395"), 0);
+  });
+
+  it("reads a bare ASC amount", () => {
+    assert.equal(extractQuotedServicePrice("ASC 300"), 300);
+    assert.equal(extractQuotedServicePrice("acs 250.50 tomorrow"), 250.5);
   });
 });
 
@@ -58,14 +71,40 @@ describe("mapLegacyWorkOrderItems", () => {
     assert.equal(mapped.total, 0);
   });
 
-  it("uses the first readable line when dump text has escaped newlines", () => {
+  it("prices unmatched labor as SERVICE instead of the job sentence", () => {
     const mapped = mapLegacyWorkOrderItems({
       descPerform: "Tune up and inspect\\r\\nCall only",
       total: 250,
     });
     const labor = mapped.parts.find((part) => part.kind === "labor");
-    assert.equal(labor?.description, "Tune up and inspect");
+    assert.equal(labor?.partNumber, "SERVICE");
+    assert.equal(labor?.description, "SERVICE");
+    assert.equal(labor?.quantity, 1);
+    assert.equal(labor?.unitPrice, 250);
+    assert.equal(labor?.amount, 250);
     assert.equal(mapped.total, 250);
+  });
+
+  it("prices a zero-total ASC 300 quote as a labor line", () => {
+    const mapped = mapLegacyWorkOrderItems({
+      descPerform: "ASC 300",
+      total: 0,
+    });
+    const labor = mapped.parts.find((part) => part.kind === "labor");
+    assert.equal(labor?.partNumber, "ASC");
+    assert.equal(labor?.description, "ANNUAL SERVICE");
+    assert.equal(labor?.quantity, 1);
+    assert.equal(labor?.amount, 300);
+    assert.equal(mapped.total, 300);
+    assert.equal(mapped.totalLabor, 300);
+  });
+
+  it("does not replace a positive SQL total with a written quote", () => {
+    const mapped = mapLegacyWorkOrderItems({
+      descPerform: "ASC 300",
+      total: 320,
+    });
+    assert.equal(mapped.total, 320);
   });
 
   it("maps a total-only ASC ticket to a labor line", () => {
@@ -196,10 +235,92 @@ describe("legacy mapping helpers", () => {
   it("detects billable money and priced lines", () => {
     assert.equal(legacyWorkOrderHasBillableMoney({ total: 10 }), true);
     assert.equal(legacyWorkOrderHasBillableMoney({ total: 0 }), false);
+    assert.equal(
+      legacyWorkOrderHasBillableMoney({ total: 0, descPerform: "ASC 300" }),
+      true,
+    );
     assert.equal(hasPricedProductLines([]), false);
     assert.equal(
       hasPricedProductLines([{ lineType: "note" }, { lineType: "product" }]),
       true,
     );
+  });
+
+  it("rebuilds notes and imported codes, and only links real unlinked codes", () => {
+    assert.equal(
+      workOrderLinesNeedRebuild([{ lineType: "note", partNumber: "" }]),
+      true,
+    );
+    assert.equal(
+      workOrderLinesNeedRebuild([
+        { lineType: "product", partNumber: "IMPORTED-LABOR" },
+      ]),
+      true,
+    );
+    assert.equal(
+      workOrderLinesNeedRebuild([{ lineType: "product", partNumber: "ASC" }]),
+      false,
+    );
+    assert.equal(
+      workOrderLinesNeedProductLink([
+        { lineType: "product", partNumber: "ASC", productRef: null },
+      ]),
+      true,
+    );
+    assert.equal(
+      workOrderLinesNeedProductLink([
+        { lineType: "product", partNumber: "ASC", productRef: "abc" },
+      ]),
+      false,
+    );
+  });
+});
+
+describe("ensureLegacyCatalogProducts", () => {
+  it("creates a missing ASC product and links it on the second map", async () => {
+    const catalog: LegacyCatalogProduct[] = [];
+    const saved: LegacyCatalogProduct[] = [];
+    const writer: LegacyProductWriter = {
+      async findByCodes(code) {
+        return saved.find((product) => product.partNumber === code) ?? null;
+      },
+      async save(product) {
+        return { ...product, active: true };
+      },
+      async create(draft) {
+        const product: LegacyCatalogProduct = {
+          _id: "64b0000000000000000000dd",
+          productCode: draft.partNumber,
+          partNumber: draft.partNumber,
+          name: draft.name,
+          kind: draft.kind,
+          listPrice: draft.listPrice,
+          unitPrice: draft.listPrice,
+          active: true,
+        };
+        saved.push(product);
+        return product;
+      },
+    };
+
+    const mapped = await resolveLegacyWorkOrderMoney(
+      { descPerform: "ASC 300", total: 0 },
+      catalog,
+      writer,
+    );
+    const labor = mapped.parts.find((part) => part.kind === "labor");
+    assert.equal(labor?.partNumber, "ASC");
+    assert.equal(labor?.productRef, "64b0000000000000000000dd");
+    assert.equal(labor?.quantity, 1);
+    assert.equal(labor?.amount, 300);
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0]?.listPrice, 300);
+
+    await ensureLegacyCatalogProducts(
+      writer,
+      mapped.parts,
+      catalog,
+    );
+    assert.equal(saved.length, 1);
   });
 });

@@ -328,6 +328,8 @@ export function buildStaffOutboundEmail(opts: {
   subject: string;
   bodyText: string;
   paymentUrl?: string;
+  paymentSummary?: string;
+  paymentButtonLabel?: string;
   chrome?: EmailChrome;
   unsubscribeUrl?: string;
   /** Trusted HTML inserted where {{invoice}} sits, after body sanitization. */
@@ -355,9 +357,11 @@ export function buildStaffOutboundEmail(opts: {
             `<p style="margin:0 0 12px;">${block.replace(/\n/g, "<br />")}</p>`,
         )
         .join("");
-  const bodyHtml = injectInvoiceWidgetHtml(sanitizedBody, widgetHtml);
+  const bodyHtml = injectInvoiceWidgetHtml(sanitizedBody, widgetHtml) +
+    (opts.paymentSummary ? `<p>${escapeHtml(opts.paymentSummary)}</p>` : "");
   const plainSource = isHtml ? htmlToPlainText(bodyForHtml) : bodyForHtml;
-  const plainBody = injectInvoiceWidgetText(plainSource, widgetText);
+  const plainBody = [injectInvoiceWidgetText(plainSource, widgetText), opts.paymentSummary]
+    .filter(Boolean).join("\n\n");
   const previewText = plainBody.replace(/\s+/g, " ").trim().slice(0, 140);
 
   const html = renderBrandedEmail({
@@ -366,7 +370,7 @@ export function buildStaffOutboundEmail(opts: {
     bodyHtml: bodyHtml || `<p style="margin:0;"></p>`,
     hideNoReplyNote: true,
     cta: paymentUrl
-      ? { label: "Pay securely", url: paymentUrl }
+      ? { label: opts.paymentButtonLabel || "Pay securely", url: paymentUrl }
       : undefined,
     chrome,
     unsubscribe: unsubscribeUrl

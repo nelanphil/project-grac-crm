@@ -4,6 +4,7 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import { EmailAccount } from "../models/mongo/EmailAccount";
 import { User } from "../models/mongo/User";
 import {
+  mailboxArchiveSchema,
   mailboxAssigneesSchema,
   mailboxListQuerySchema,
   mailboxLocateQuerySchema,
@@ -11,9 +12,10 @@ import {
   mailboxReplySchema,
 } from "../schemas/mailbox.schema";
 import {
-  assigneesByMessageKey,
+  mailboxMetadataByMessageKey,
   rememberAssignmentLocations,
   replaceMailboxAssignees,
+  setMailboxArchived,
 } from "../services/mailboxAssignment.service";
 import { sendMailboxReply } from "../services/mailboxReply.service";
 import {
@@ -120,7 +122,7 @@ export async function listMailboxMessagesHandler(
       ...message,
       messageKey: assignmentMessageKey(message.messageId, folder, message.uid),
     }));
-    const assigned = await assigneesByMessageKey(
+    const meta = await mailboxMetadataByMessageKey(
       account._id,
       keyed.map((message) => message.messageKey),
     );
@@ -143,7 +145,8 @@ export async function listMailboxMessagesHandler(
         ...message,
         threadKey: threadKeys[index] ?? `uid:${folder}:${message.uid}`,
         customer: customers.get(index) ?? null,
-        assignees: assigned.get(message.messageKey) ?? [],
+        assignees: meta.get(message.messageKey)?.assignees ?? [],
+        archived: meta.get(message.messageKey)?.archived ?? false,
       })),
     });
   } catch (err) {
@@ -207,13 +210,14 @@ export async function getMailboxMessageHandler(
       parsed.data.folder,
       uid,
     );
-    const assigned = await assigneesByMessageKey(account._id, [messageKey]);
+    const meta = await mailboxMetadataByMessageKey(account._id, [messageKey]);
     res.json({
       folder: parsed.data.folder,
       message: {
         ...message,
         messageKey,
-        assignees: assigned.get(messageKey) ?? [],
+        assignees: meta.get(messageKey)?.assignees ?? [],
+        archived: meta.get(messageKey)?.archived ?? false,
       },
     });
   } catch (err) {
@@ -253,7 +257,7 @@ export async function getMailboxThreadHandler(
         message.uid ?? uid,
       ),
     }));
-    const assigned = await assigneesByMessageKey(
+    const meta = await mailboxMetadataByMessageKey(
       account._id,
       keyed.map((message) => message.messageKey),
     );
@@ -264,7 +268,8 @@ export async function getMailboxThreadHandler(
       messages: keyed.map((message, index) => ({
         ...message,
         customer: customers.get(index) ?? null,
-        assignees: assigned.get(message.messageKey) ?? [],
+        assignees: meta.get(message.messageKey)?.assignees ?? [],
+        archived: meta.get(message.messageKey)?.archived ?? false,
       })),
     });
   } catch (err) {
@@ -311,6 +316,7 @@ export async function replyMailboxMessageHandler(
       bcc: parsed.data.bcc,
       subject: parsed.data.subject,
       html: parsed.data.html,
+      useBrandTemplate: parsed.data.useBrandTemplate,
     });
     res.json(result);
   } catch (err) {
@@ -383,6 +389,46 @@ export async function setMailboxAssigneesHandler(
     }
 
     res.json({ assignees: saved.userRefs, messageKey });
+  } catch (err) {
+    sendMailboxError(res, err);
+  }
+}
+
+export async function setMailboxArchiveHandler(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  const parsed = mailboxArchiveSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "Check archive parameters",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  const uid = parseUid(String(req.params.uid), res);
+  if (uid == null) return;
+
+  const account = await loadReadableAccount(String(req.params.accountId), res);
+  if (!account) return;
+
+  try {
+    const message = await getMailboxMessage(account, parsed.data.folder, uid);
+    const messageKey = assignmentMessageKey(
+      message.messageId,
+      parsed.data.folder,
+      uid,
+    );
+    const result = await setMailboxArchived({
+      accountId: account._id,
+      messageKey,
+      folder: parsed.data.folder,
+      uid,
+      subject: message.subject,
+      archived: parsed.data.archived,
+    });
+    res.json(result);
   } catch (err) {
     sendMailboxError(res, err);
   }

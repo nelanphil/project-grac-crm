@@ -199,9 +199,53 @@ function formatQuoteDate(value: string | null): string {
   return date.toUTCString();
 }
 
+const COMPANY = {
+  name: "Generator Maintenance of Florida",
+  tagline: "Expert Backup Power for Central Florida",
+  phone: "(386) 631-8982",
+  phoneHref: "tel:+13866318982",
+  email: "contact@genmaintoffl.com",
+  license: "Licensed & Insured",
+} as const;
+
+export function renderBrandedReplyShell(bodyHtml: string): string {
+  const content = bodyHtml.trim() || "<p></p>";
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;background-color:#ffffff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+  <tr>
+    <td style="background-color:#0b1f33;padding:20px 28px;border-bottom:3px solid #f36c21;text-align:left;">
+      <div style="font-family:Arial,Helvetica,sans-serif,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji';font-size:17px;font-weight:700;letter-spacing:-0.01em;color:#ffffff;">
+        ${escapeHtml(COMPANY.name)}
+      </div>
+      <div style="margin-top:3px;font-family:Arial,Helvetica,sans-serif,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji';font-size:11px;color:#f36c21;font-weight:600;">
+        ${escapeHtml(COMPANY.tagline)}
+      </div>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:24px 28px;font-family:Arial,Helvetica,sans-serif,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji';font-size:14px;line-height:1.6;color:#231f20;">
+      ${content}
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:16px 28px;background-color:#f8fafc;border-top:1px solid #e2e8f0;font-family:Arial,Helvetica,sans-serif,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji';font-size:12px;color:#64748b;line-height:1.5;">
+      <div style="font-weight:700;color:#0b1f33;font-size:12px;">${escapeHtml(COMPANY.name)}</div>
+      <div style="margin-top:4px;">
+        <a href="${COMPANY.phoneHref}" style="color:#f36c21;text-decoration:none;font-weight:600;">${escapeHtml(COMPANY.phone)}</a>
+        &nbsp;·&nbsp;
+        <a href="mailto:${escapeHtml(COMPANY.email)}" style="color:#f36c21;text-decoration:none;">${escapeHtml(COMPANY.email)}</a>
+      </div>
+      <div style="margin-top:3px;font-size:11px;color:#94a3b8;">
+        ${escapeHtml(COMPANY.license)} &nbsp;·&nbsp; Generac Authorized Dealer &nbsp;·&nbsp; Central Florida
+      </div>
+    </td>
+  </tr>
+</table>`;
+}
+
 export function composeReplyHtml(input: {
   mode: MailboxReplyMode;
   bodyHtml: string;
+  useBrandTemplate?: boolean;
   original: {
     html: string;
     text: string;
@@ -211,6 +255,9 @@ export function composeReplyHtml(input: {
     subject: string;
   };
 }): string {
+  const content = input.useBrandTemplate
+    ? renderBrandedReplyShell(input.bodyHtml)
+    : input.bodyHtml;
   const original = quoteBodyHtml(input.original.html, input.original.text);
   if (input.mode === "forward") {
     const header = [
@@ -222,12 +269,12 @@ export function composeReplyHtml(input: {
     ]
       .map((line) => escapeHtml(line))
       .join("<br>");
-    return `${input.bodyHtml}<br><p>${header}</p>${original}`;
+    return `${content}<br><div style="max-width:640px;margin:16px auto 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#64748b;"><p style="margin:0 0 6px 0;">${header}</p>${original}</div>`;
   }
   const who = formatMailboxAddress(input.original.from) || "someone";
   const when = formatQuoteDate(input.original.date);
   const intro = when ? `On ${when}, ${who} wrote:` : `${who} wrote:`;
-  return `${input.bodyHtml}<br><p>${escapeHtml(intro)}</p>${original}`;
+  return `${content}<br><div style="max-width:640px;margin:16px auto 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#64748b;"><p style="margin:0 0 6px 0;">${escapeHtml(intro)}</p>${original}</div>`;
 }
 
 export function threadingHeaders(input: {

@@ -30,6 +30,7 @@ export async function sendMailboxReply(input: {
   bcc: string[];
   subject: string;
   html: string;
+  useBrandTemplate?: boolean;
   automatic?: boolean;
 }): Promise<{ sent: true; savedToSent: boolean }> {
   if (input.to.length === 0) {
@@ -48,6 +49,7 @@ export async function sendMailboxReply(input: {
   const html = composeReplyHtml({
     mode: input.mode,
     bodyHtml,
+    useBrandTemplate: input.useBrandTemplate,
     original: {
       html: original.html,
       text: original.text,

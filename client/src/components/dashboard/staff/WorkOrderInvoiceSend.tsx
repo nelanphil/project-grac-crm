@@ -93,7 +93,7 @@ export default function WorkOrderInvoiceSend({
   const [error, setError] = useState<string | null>(null);
   const orderId = order._id;
   // Autosave replaces `order` on every edit; only these fields change the invoice.
-  const invoiceKey = `${orderId}:${order.total}:${order.customerRef ?? ""}:${order.paid}`;
+  const invoiceKey = `${orderId}:${order.total}:${order.customerRef ?? ""}:${order.paid}:${order.completed}`;
 
   useEffect(() => {
     if (!enabled) return;
@@ -131,7 +131,7 @@ export default function WorkOrderInvoiceSend({
     : error
       ? error
       : !invoice
-        ? "Add a customer and a total above $0 to create this invoice."
+        ? "Mark the work order complete and set a total above $0 to create this invoice."
         : null;
 
   return (

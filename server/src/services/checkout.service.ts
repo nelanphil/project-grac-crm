@@ -27,13 +27,17 @@ import {
   findInvoicesForWebhook,
   InvoiceAmountError,
   markInvoicePaid,
+  WorkOrderNotReadyError,
 } from "./invoice.service";
+import { pickAvailableInvoicesForCustomers } from "./paymentLinkCart";
 import { sendPaymentReceipt } from "./paymentReceipt.service";
 import { buildCheckoutCompleteUrl } from "../utils/checkoutKey";
 import {
   findUnbilledWorkOrdersForCustomers,
   paymentNoteForInvoiceIds,
 } from "../utils/paymentLinkForCustomer";
+import type { CheckoutLinkItem } from "../models/mongo/CheckoutLink";
+import { CHANGED_CHECKOUT_MESSAGE } from "../utils/checkoutLinkScope";
 
 const PAYABLE_INVOICE_STATUSES = ["open", "draft", "failed"] as const;
 
@@ -156,6 +160,74 @@ export async function listPayableCart(
   };
 }
 
+/** Public payment-link cart: one invoice available through today, no unbilled jobs. */
+export async function listPaymentLinkCart(
+  customerIds: string[],
+  options?: { preferredCustomerId?: string },
+): Promise<PublicCheckoutCart> {
+  const unique = [
+    ...new Set(customerIds.filter((id) => Types.ObjectId.isValid(id))),
+  ];
+  if (unique.length === 0) {
+    return { customerLabel: "", items: [], totalCents: 0 };
+  }
+
+  const [customers, picked] = await Promise.all([
+    Customer.find({ _id: { $in: unique.map((id) => new Types.ObjectId(id)) } })
+      .select("first last accountName")
+      .lean(),
+    pickAvailableInvoicesForCustomers(unique),
+  ]);
+  const items: PublicCheckoutItem[] = [...picked.values()].map((invoice) => ({
+    id: String(invoice._id),
+    kind: "invoice",
+    number: invoice.number ?? "",
+    description: invoiceDescription(invoice),
+    amountCents: invoice.amountCents || 0,
+    status: invoice.status,
+    sourceType: invoice.sourceType,
+  }));
+  const preferredId = options?.preferredCustomerId;
+  const preferred =
+    (preferredId
+      ? customers.find((customer) => String(customer._id) === preferredId)
+      : undefined) ?? customers[0];
+
+  return {
+    customerLabel: preferred ? shortCustomerLabel(preferred) : "",
+    items,
+    totalCents: items.reduce((sum, item) => sum + item.amountCents, 0),
+  };
+}
+
+export async function assertStablePaymentLinkSelection(
+  customerId: string,
+  invoiceIds?: string[],
+  workOrderIds?: string[],
+): Promise<void> {
+  if ((workOrderIds ?? []).some(Boolean)) {
+    throw new CheckoutError(
+      "Only the current invoice on this payment link can be paid.",
+      400,
+    );
+  }
+  const cart = await listPaymentLinkCart([customerId]);
+  const allowed = cart.items
+    .filter((item) => item.kind === "invoice")
+    .map((item) => item.id);
+  const requested = (invoiceIds ?? []).filter(Boolean);
+  if (
+    allowed.length !== 1 ||
+    requested.length !== 1 ||
+    requested[0] !== allowed[0]
+  ) {
+    throw new CheckoutError(
+      "Only the current invoice on this payment link can be paid.",
+      400,
+    );
+  }
+}
+
 function uniqueObjectIds(ids: string[] | undefined): Types.ObjectId[] {
   return [
     ...new Set((ids ?? []).filter((id) => Types.ObjectId.isValid(id))),
@@ -239,6 +311,15 @@ async function resolveCheckoutSelection(input: {
     if (wo.paid) {
       throw new CheckoutError("Work order is already paid", 400);
     }
+    if (wo.deletedAt || !wo.completed) {
+      throw new CheckoutError("This work order is not ready to invoice", 400);
+    }
+    if (dollarsToCents(wo.total || 0) <= 0) {
+      throw new CheckoutError(
+        "Work order total must be greater than zero to invoice",
+        400,
+      );
+    }
   }
 
   const quoteItems: CheckoutQuoteItem[] = invoices.map((invoice) => ({
@@ -288,7 +369,10 @@ async function resolveCheckoutSelection(input: {
       const { invoice } = await ensureOpenInvoiceForWorkOrder(wo);
       ensured.push(invoice);
     } catch (err) {
-      if (err instanceof InvoiceAmountError) {
+      if (
+        err instanceof InvoiceAmountError ||
+        err instanceof WorkOrderNotReadyError
+      ) {
         throw new CheckoutError(err.message, 400);
       }
       throw err;
@@ -600,12 +684,29 @@ export async function startCustomerCheckout(input: {
   discountCode?: string;
   checkoutKey?: string;
   returnFrom?: "dashboard";
+  expectedItems?: CheckoutLinkItem[];
 }): Promise<{ url: string }> {
   const selection = await resolveCheckoutSelection({
     ...input,
     ensureWorkOrderInvoices: true,
   });
   const unpaid = selection.unpaid;
+  if (input.expectedItems) {
+    const expectedItems = input.expectedItems
+      .filter((item) => item.kind === "invoice"
+        ? input.invoiceIds?.includes(item.id)
+        : input.workOrderIds?.includes(item.id));
+    if (unpaid.length !== expectedItems.length || unpaid.some((invoice) =>
+      !expectedItems.some((item) =>
+        (item.kind === "invoice"
+          ? item.id === String(invoice._id)
+          : item.id === String(invoice.workOrderRef)) &&
+        item.amountCents === invoice.amountCents,
+      ),
+    )) {
+      throw new CheckoutError(CHANGED_CHECKOUT_MESSAGE, 409);
+    }
+  }
   const primary = unpaid[0];
 
   let amountCents = unpaid.reduce(

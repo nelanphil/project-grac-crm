@@ -37,7 +37,9 @@ function formatTime(iso: string): string {
 }
 
 function emailSnippet(body: string, html: string): string {
-  const source = body.trim() || html;
+  const source = body.trim() && !/\{\{\s*invoice\s*\}\}/.test(body)
+    ? body
+    : html || body;
   return source
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -55,13 +57,10 @@ function emailSnippet(body: string, html: string): string {
     .trim();
 }
 
-function emailThreadHref(row: EmailCommunicationItem): string | null {
-  if (!row.emailAccountRef || !row.providerMessageId) return null;
+function emailThreadHref(row: EmailCommunicationItem): string {
   const params = new URLSearchParams({
-    tab: "inbox",
-    view: "email",
-    accountId: row.emailAccountRef,
-    messageId: row.providerMessageId,
+    tab: "sent-emails",
+    emailId: row._id,
   });
   return `/dashboard/messaging?${params.toString()}`;
 }

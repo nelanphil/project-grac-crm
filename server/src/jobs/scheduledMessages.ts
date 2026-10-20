@@ -43,6 +43,8 @@ export async function runScheduledMessageJob(): Promise<{
             renewalYear: row.renewalYear ?? undefined,
             renewalMonth: row.renewalMonth ?? undefined,
             includePaymentLink: row.includePaymentLink,
+            invoiceId: row.invoiceRef ? String(row.invoiceRef) : undefined,
+            expectedAmountCents: row.expectedAmountCents,
             offerContractTemplateId: row.offerContractTemplateId
               ? String(row.offerContractTemplateId)
               : null,

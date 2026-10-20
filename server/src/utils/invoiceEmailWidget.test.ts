@@ -44,4 +44,22 @@ describe("invoice email widget", () => {
     assert.doesNotMatch(wrapped.html, /\{\{\s*invoice\s*\}\}/);
     assert.doesNotMatch(wrapped.html, /Annual service/);
   });
+
+  it("uses the same invoice-only link and quoted amount in HTML and plain text", () => {
+    const url = "https://example.test/checkout/?c=q_invoice-only";
+    const wrapped = buildStaffOutboundEmail({
+      subject: "Invoice CURRENT",
+      bodyText: "Hi Ryan,\n\nPlease pay {{payment_link}}",
+      paymentUrl: url,
+      paymentSummary: "Invoice total: $363.80",
+      paymentButtonLabel: "Pay this invoice",
+      invoiceWidget: { html: "<table><tr><td>$363.80</td></tr></table>", text: "$363.80" },
+    });
+    assert.match(wrapped.html, /Pay this invoice/);
+    assert.match(wrapped.html, /Invoice total: \$363\.80/);
+    assert.ok(wrapped.html.includes(url));
+    assert.ok(wrapped.text.includes(url));
+    assert.match(wrapped.text, /Invoice total: \$363\.80/);
+    assert.doesNotMatch(wrapped.html, /684\.80|321\.00/);
+  });
 });

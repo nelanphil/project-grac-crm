@@ -19,11 +19,14 @@ import {
 import {
   dollarsToCents,
   ensureOpenInvoiceForWorkOrder,
+  findPendingCompletedWorkOrderInvoices,
   InvoiceAmountError,
   invoiceTaxFromCurrentRate,
   markInvoicePaid,
   nextInvoiceNumber,
   reopenInvoice,
+  WORK_ORDER_REOPENED_REASON,
+  WorkOrderNotReadyError,
 } from "../services/invoice.service";
 import {
   actorFromRequest,
@@ -35,8 +38,6 @@ import { hashPayToken } from "../utils/payToken";
 import { paymentNoteForInvoiceIds } from "../utils/paymentLinkForCustomer";
 import {
   buildCheckoutCompleteUrl,
-  buildCheckoutUrl,
-  getOrCreateCheckoutKey,
 } from "../utils/checkoutKey";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { listVisibleWorkOrderNotes } from "./workOrderNote.controller";
@@ -48,6 +49,8 @@ import {
 } from "../services/taxSettings";
 import { isStaffRole } from "../utils/roles";
 import { buildTokenSearchFilter } from "../utils/textSearch";
+import { createScopedPaymentLink } from "../services/checkoutLink.service";
+import { CheckoutError } from "../services/checkout.service";
 
 export { resolveCustomerRefsForAuthUser };
 
@@ -409,6 +412,60 @@ export async function getInvoices(
   }
 }
 
+function withInvoiceNames(
+  invoices: Array<Record<string, unknown>>,
+  names: Map<string, { customerName: string; contactName: string }>,
+) {
+  return invoices.map((invoice) => {
+    const customerRef = invoice.customerRef ? String(invoice.customerRef) : "";
+    const extra = customerRef ? names.get(customerRef) : undefined;
+    return {
+      ...toPublicInvoice(invoice),
+      customerName: extra?.customerName ?? "",
+      contactName: extra?.contactName ?? "",
+    };
+  });
+}
+
+export async function getPendingPayments(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    const search =
+      typeof req.query.search === "string" ? req.query.search.trim() : "";
+    const pageRaw = typeof req.query.page === "string" ? req.query.page : "";
+    const paginate = Boolean(pageRaw);
+    const page = Math.max(1, parseInt(pageRaw, 10) || 1);
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "50"), 10);
+    const pageSize = INVOICE_PAGE_SIZES.includes(pageSizeRaw)
+      ? pageSizeRaw
+      : 50;
+    const customerRefs = search ? await customerRefsMatchingSearch(search) : [];
+    const { invoices, total } = await findPendingCompletedWorkOrderInvoices({
+      number: search ? new RegExp(escapeRegex(search), "i") : undefined,
+      customerRefs: search ? customerRefs : undefined,
+      skip: paginate ? (page - 1) * pageSize : undefined,
+      limit: paginate ? pageSize : undefined,
+    });
+    const names = await invoiceListNames(
+      invoices as Array<{ customerRef?: Types.ObjectId | null }>,
+    );
+    res.json({
+      invoices: withInvoiceNames(invoices, names),
+      total,
+      ...(paginate ? { page, pageSize } : {}),
+    });
+  } catch (err) {
+    console.error("[invoices] pending payments failed", err);
+    res.status(500).json({ message: "Failed to list pending payments" });
+  }
+}
+
 export async function getInvoiceById(
   req: AuthRequest,
   res: Response,
@@ -574,7 +631,10 @@ export async function createInvoice(
         res.status(201).json({ invoice: toPublicInvoice(invoice) });
         return;
       } catch (err) {
-        if (err instanceof InvoiceAmountError) {
+        if (
+          err instanceof InvoiceAmountError ||
+          err instanceof WorkOrderNotReadyError
+        ) {
           res.status(400).json({ message: err.message });
           return;
         }
@@ -949,13 +1009,21 @@ export async function createInvoicePayLink(
       return;
     }
 
-    const key = await getOrCreateCheckoutKey(String(invoice.customerRef));
-    const payUrl = buildCheckoutUrl(key, { invoiceId: String(invoice._id) });
+    const link = await createScopedPaymentLink(String(invoice.customerRef), {
+      invoiceId: String(invoice._id),
+      expectedAmountCents: invoice.amountCents,
+    });
+    if (!link) throw new Error("Invoice is not payable");
     res.json({
-      payUrl,
+      payUrl: link.payUrl,
       invoice: toPublicInvoice(invoice),
     });
-  } catch {
+  } catch (err) {
+    if (err instanceof CheckoutError) {
+      res.status(err.statusCode).json({ message: err.message });
+      return;
+    }
+    console.error("[invoices] create pay link failed", err);
     res.status(500).json({ message: "Failed to create pay link" });
   }
 }
@@ -986,6 +1054,24 @@ export async function getInvoiceByPayToken(
       )
     ) {
       res.status(410).json({ message: "Pay link expired" });
+      return;
+    }
+
+    const payable = invoices.filter(
+      (invoice) => invoice.status !== "paid" && invoice.status !== "void",
+    );
+    if (
+      payable.length === 0 &&
+      invoices.some(
+        (invoice) =>
+          invoice.status === "void" &&
+          invoice.metadata?.voidReason === WORK_ORDER_REOPENED_REASON,
+      )
+    ) {
+      res.status(409).json({
+        message:
+          "This invoice is no longer payable because the work order was reopened.",
+      });
       return;
     }
 
@@ -1042,7 +1128,16 @@ export async function startCheckoutByPayToken(
       (invoice) => invoice.status !== "paid" && invoice.status !== "void",
     );
     if (unpaid.length === 0) {
-      res.status(400).json({ message: "Invoice is already paid" });
+      const reopened = invoices.some(
+        (invoice) =>
+          invoice.status === "void" &&
+          invoice.metadata?.voidReason === WORK_ORDER_REOPENED_REASON,
+      );
+      res.status(reopened ? 409 : 400).json({
+        message: reopened
+          ? "This invoice is no longer payable because the work order was reopened."
+          : "Invoice is already paid",
+      });
       return;
     }
 

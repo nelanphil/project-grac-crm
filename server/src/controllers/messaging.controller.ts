@@ -77,6 +77,8 @@ import {
 } from "../utils/paymentLinkForCustomer";
 import { composeSmsPaymentBody } from "../utils/smsPaymentLink";
 import { resolveSmsPaymentUrl } from "../services/smsPaymentLink.service";
+import { paymentAmountLabel, previewPaymentSummary, validateInvoiceMessage } from "../services/checkoutLink.service";
+import { CheckoutError } from "../services/checkout.service";
 
 const PAGE_SIZES = new Set([25, 50, 100, 150, 200, 250]);
 const SEND_CONCURRENCY = 5;
@@ -192,6 +194,7 @@ export async function previewMessage(
     const wantsPayLink =
       includePaymentLink === true || templateUsesPaymentLink(body);
     let paymentUrl: string | null = null;
+    let paymentSummary = "";
     if (wantsPayLink) {
       const offerId = offerContractTemplateId ?? null;
       const showLink = sample
@@ -200,10 +203,13 @@ export async function previewMessage(
           ? (await customerHasPayableInvoice(customerRef)) || Boolean(offerId)
           : Boolean(offerId);
       if (showLink) paymentUrl = sampleShortPaymentUrl();
+      if (customerRef && paymentUrl) {
+        paymentSummary = await previewPaymentSummary(customerRef, parsed.data.invoiceId);
+      }
     }
 
     const composed = composeSmsPaymentBody({
-      bodyTemplate: body,
+      bodyTemplate: body + (paymentSummary ? `\n${paymentSummary}` : ""),
       context,
       includePaymentLink: includePaymentLink === true,
       paymentUrl,
@@ -214,6 +220,7 @@ export async function previewMessage(
       sample,
     });
   } catch (err) {
+    if (messagingErrorResponse(err, res)) return;
     console.error("POST /messaging/preview error:", err);
     res.status(500).json({ message: "Failed to preview message" });
   }
@@ -256,6 +263,7 @@ export async function dispatchMessagingBatch(
   data: MessagingSendInput,
   options: { userId?: string | null; apiBase: string },
 ) {
+    await validateInvoiceMessage(data);
     let bodyTemplate = data.body?.trim() ?? "";
     let templateOfferId: string | null = null;
 
@@ -321,8 +329,14 @@ export async function dispatchMessagingBatch(
     const wantsPayLink =
       data.includePaymentLink === true ||
       templateUsesPaymentLink(bodyTemplate);
+    if (data.invoiceId && wantsPayLink && data.expectedAmountCents === undefined) {
+      throw new MessagingDispatchError(409, "Refresh the invoice before sending its payment link.");
+    }
     const paymentLinkForCustomer = wantsPayLink
-      ? createShortPaymentLinkCache(scope)
+      ? createShortPaymentLinkCache(scope, {
+          invoiceId: data.invoiceId,
+          expectedAmountCents: data.expectedAmountCents,
+        })
       : null;
     const offerInflight = new Map<string, Promise<unknown>>();
 
@@ -352,18 +366,23 @@ export async function dispatchMessagingBatch(
         const toPhone = phoneOverride || built.contact.phone;
         const toE164Number = toE164(toPhone);
         let paymentUrl: string | null = null;
+        let paymentLabel = "";
         if (wantsPayLink && paymentLinkForCustomer) {
           paymentUrl = await resolveSmsPaymentUrl({
             contactId,
             customerId: built.contact.customerRef,
-            offerContractTemplateId,
-            offerContractOverrides: data.offerContractOverrides,
-            paymentLinkForCustomer,
+            offerContractTemplateId: data.invoiceId ? null : offerContractTemplateId,
+            offerContractOverrides: data.invoiceId ? [] : data.offerContractOverrides,
+            paymentLinkForCustomer: async (customerId) => {
+              const link = await paymentLinkForCustomer(customerId);
+              if (link) paymentLabel = paymentAmountLabel(link.totalCents, Boolean(data.invoiceId));
+              return link;
+            },
             offerInflight,
           });
         }
         const composed = composeSmsPaymentBody({
-          bodyTemplate,
+          bodyTemplate: bodyTemplate + (paymentLabel ? `\n${paymentLabel}` : ""),
           context: built.context,
           includePaymentLink: data.includePaymentLink === true,
           paymentUrl,
@@ -548,6 +567,10 @@ export async function dispatchMessagingBatch(
 }
 
 function messagingErrorResponse(err: unknown, res: Response): boolean {
+  if (err instanceof CheckoutError) {
+    res.status(err.statusCode).json({ message: err.message });
+    return true;
+  }
   if (
     err instanceof MessagingDispatchError ||
     err instanceof ScheduledAtError
@@ -670,6 +693,7 @@ export async function scheduleMessages(
 
     const data = parsed.data;
     const scheduledAt = parseFutureScheduledAt(data.scheduledAt);
+    await validateInvoiceMessage(data);
     let bodyTemplate = data.body?.trim() ?? "";
     let templateOfferId: string | null = null;
 
@@ -721,6 +745,8 @@ export async function scheduleMessages(
     const userId = req.user?.id ? new Types.ObjectId(req.user.id) : null;
 
     const row = await ScheduledMessageSend.create({
+      invoiceRef: data.invoiceId ? new Types.ObjectId(data.invoiceId) : null,
+      expectedAmountCents: data.expectedAmountCents,
       contactIds: [...new Set(data.contactIds)],
       body: bodyTemplate,
       templateRef: data.templateId ? new Types.ObjectId(data.templateId) : null,

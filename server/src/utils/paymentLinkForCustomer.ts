@@ -10,8 +10,10 @@ import {
   getOrCreatePayCode,
 } from "./checkoutKey";
 import type { RenewalScope } from "./messagingContext";
+import { createScopedPaymentLink } from "../services/checkoutLink.service";
+import { pickAvailableInvoicesForCustomers } from "../services/paymentLinkCart";
 
-const OPEN_STATUSES = ["open", "draft"] as const;
+const OPEN_STATUSES = ["open", "draft", "failed"] as const;
 
 export async function findOpenInvoicesForCustomer(
   customerId: string,
@@ -30,7 +32,7 @@ function uniqueValidCustomerIds(customerIds: string[]): Types.ObjectId[] {
 }
 
 /**
- * Unpaid billable work orders that do not already have an open/draft invoice.
+ * Unpaid billable work orders that do not already have a payable invoice.
  * Matches customerRef, and customerId = Customer.legacyId for older tickets.
  */
 export async function findUnbilledWorkOrdersForCustomers(
@@ -61,6 +63,7 @@ export async function findUnbilledWorkOrdersForCustomers(
 
   const wos = await WorkOrder.find({
     paid: { $ne: true },
+    completed: true,
     total: { $gt: 0 },
     $or: or,
   });
@@ -91,41 +94,22 @@ export async function findUnbilledWorkOrdersForCustomers(
   return result;
 }
 
-/** True when the customer has an open/draft invoice or an unpaid billable work order. */
+/** True when a payment link can show an invoice available through today. */
 export async function customerHasPayableInvoice(
   customerId: string,
   _scope?: RenewalScope,
 ): Promise<boolean> {
   if (!Types.ObjectId.isValid(customerId)) return false;
-  const count = await Invoice.countDocuments({
-    customerRef: new Types.ObjectId(customerId),
-    status: { $in: OPEN_STATUSES },
-  });
-  if (count > 0) return true;
-  const unbilled = await findUnbilledWorkOrdersForCustomers([customerId]);
-  return unbilled.length > 0;
+  const picked = await pickAvailableInvoicesForCustomers([customerId]);
+  return picked.has(customerId);
 }
 
-/** Customer ids that have an open/draft invoice or an unpaid billable work order. */
+/** Customer ids whose payment link has an invoice available through today. */
 export async function payableInvoiceCustomerIds(
   customerIds: string[],
 ): Promise<Set<string>> {
-  const unique = [
-    ...new Set(customerIds.filter((id) => Types.ObjectId.isValid(id))),
-  ];
-  if (unique.length === 0) return new Set();
-
-  const rows = await Invoice.find({
-    customerRef: { $in: unique.map((id) => new Types.ObjectId(id)) },
-    status: { $in: OPEN_STATUSES },
-  })
-    .select("customerRef")
-    .lean();
-
-  const available = new Set(rows.map((r) => String(r.customerRef)));
-  const unbilled = await findUnbilledWorkOrdersForCustomers(unique);
-  for (const row of unbilled) available.add(row.customerId);
-  return available;
+  const picked = await pickAvailableInvoicesForCustomers(customerIds);
+  return new Set(picked.keys());
 }
 
 /**
@@ -134,15 +118,16 @@ export async function payableInvoiceCustomerIds(
 export async function mintPaymentLinkForCustomer(
   customerId: string,
   _scope?: RenewalScope,
-): Promise<{ payUrl: string; invoiceId: string } | null> {
-  const payable = await customerHasPayableInvoice(customerId);
-  if (!payable) return null;
+): Promise<{ payUrl: string; invoiceId: string; totalCents: number } | null> {
+  const picked = await pickAvailableInvoicesForCustomers([customerId]);
+  const invoice = picked.get(customerId);
+  if (!invoice) return null;
 
-  const invoices = await findOpenInvoicesForCustomer(customerId);
   const key = await getOrCreateCheckoutKey(customerId);
   return {
     payUrl: buildCheckoutUrl(key),
-    invoiceId: invoices[0] ? String(invoices[0]._id) : "",
+    invoiceId: String(invoice._id),
+    totalCents: invoice.amountCents || 0,
   };
 }
 
@@ -153,43 +138,54 @@ export async function mintPaymentLinkForCustomer(
 export async function mintShortPaymentLinkForCustomer(
   customerId: string,
   _scope?: RenewalScope,
-): Promise<{ payUrl: string; invoiceId: string } | null> {
-  const payable = await customerHasPayableInvoice(customerId);
-  if (!payable) return null;
+): Promise<{ payUrl: string; invoiceId: string; totalCents: number } | null> {
+  const picked = await pickAvailableInvoicesForCustomers([customerId]);
+  const invoice = picked.get(customerId);
+  if (!invoice) return null;
 
-  const invoices = await findOpenInvoicesForCustomer(customerId);
   const code = await getOrCreatePayCode(customerId);
   return {
     payUrl: buildShortPaymentUrl(code),
-    invoiceId: invoices[0] ? String(invoices[0]._id) : "",
+    invoiceId: String(invoice._id),
+    totalCents: invoice.amountCents || 0,
   };
 }
 
-export function createPaymentLinkCache(scope?: RenewalScope) {
+export function createPaymentLinkCache(
+  _scope?: RenewalScope,
+  options?: { invoiceId?: string | null; expectedAmountCents?: number },
+) {
   const inflight = new Map<
     string,
-    Promise<{ payUrl: string; invoiceId: string } | null>
+    Promise<{ payUrl: string; invoiceId: string; totalCents: number } | null>
   >();
 
   return function paymentLinkForCustomer(customerId: string) {
     const existing = inflight.get(customerId);
     if (existing) return existing;
-    const pending = mintPaymentLinkForCustomer(customerId, scope);
+    const pending = options?.invoiceId
+      ? createScopedPaymentLink(customerId, options)
+      : mintPaymentLinkForCustomer(customerId);
     inflight.set(customerId, pending);
     return pending;
   };
 }
 
-export function createShortPaymentLinkCache(scope?: RenewalScope) {
+export function createShortPaymentLinkCache(
+  _scope?: RenewalScope,
+  options?: { invoiceId?: string | null; expectedAmountCents?: number },
+) {
   const inflight = new Map<
     string,
-    Promise<{ payUrl: string; invoiceId: string } | null>
+    Promise<{ payUrl: string; invoiceId: string; totalCents: number } | null>
   >();
 
-  return function shortPaymentLinkForCustomer(customerId: string) {
+  return function paymentLinkForCustomer(customerId: string) {
     const existing = inflight.get(customerId);
     if (existing) return existing;
-    const pending = mintShortPaymentLinkForCustomer(customerId, scope);
+    const pending = options?.invoiceId
+      ? createScopedPaymentLink(customerId, options)
+      : mintShortPaymentLinkForCustomer(customerId);
     inflight.set(customerId, pending);
     return pending;
   };

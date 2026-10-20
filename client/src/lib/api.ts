@@ -3015,6 +3015,35 @@ export interface CreateInvoiceInput {
   allowPaidBypass?: boolean;
 }
 
+export async function getPendingPayments(
+  token: string,
+  params?: {
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  invoices: InvoiceItem[];
+  total?: number;
+  page?: number;
+  pageSize?: number;
+}> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.page != null) qs.set("page", String(params.page));
+  if (params?.pageSize != null) qs.set("pageSize", String(params.pageSize));
+  const q = qs.toString();
+  return authRequest<{
+    invoices: InvoiceItem[];
+    total?: number;
+    page?: number;
+    pageSize?: number;
+  }>(`/invoices/pending-payments${q ? `?${q}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export async function getInvoices(
   token: string,
   params?: {
@@ -3241,6 +3270,7 @@ export interface CheckoutCart {
   customerLabel: string;
   items: CheckoutItem[];
   totalCents: number;
+  invoiceOnly?: boolean;
 }
 
 export type CheckoutConfirmStatus = "paid" | "failed" | "pending";
@@ -4584,6 +4614,7 @@ export interface MailboxMessageSummary {
   messageKey: string;
   assignees: string[];
   customer: MailboxCustomerLink | null;
+  archived?: boolean;
 }
 
 export interface MailboxAttachmentMeta {
@@ -4623,6 +4654,7 @@ export interface MailboxThreadMessage {
   messageKey: string;
   assignees: string[];
   customer: MailboxCustomerLink | null;
+  archived?: boolean;
 }
 
 export async function locateMailboxMessage(
@@ -4704,6 +4736,7 @@ export async function replyToMailboxMessage(
     bcc: string[];
     subject: string;
     html: string;
+    useBrandTemplate?: boolean;
   },
 ): Promise<{ sent: true; savedToSent: boolean }> {
   return authRequest<{ sent: true; savedToSent: boolean }>(
@@ -4724,6 +4757,22 @@ export async function setMailboxAssignees(
 ): Promise<{ assignees: string[]; messageKey: string }> {
   return authRequest<{ assignees: string[]; messageKey: string }>(
     `/email-mailbox/${accountId}/messages/${uid}/assignees`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function setMailboxMessageArchived(
+  token: string,
+  accountId: string,
+  uid: number,
+  body: { folder: MailboxFolder; archived: boolean },
+): Promise<{ archived: boolean; messageKey: string }> {
+  return authRequest<{ archived: boolean; messageKey: string }>(
+    `/email-mailbox/${accountId}/messages/${uid}/archive`,
     {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}` },
@@ -5740,6 +5789,7 @@ export async function searchMessagingContacts(
 export async function previewMessagingMessage(
   token: string,
   data: {
+    invoiceId?: string;
     body: string;
     contactId?: string;
     renewalYear?: number;
@@ -5878,6 +5928,8 @@ export async function cancelScheduledMessage(
 export async function sendMessagingMessages(
   token: string,
   data: {
+    invoiceId?: string;
+    expectedAmountCents?: number;
     contactIds: string[];
     body?: string;
     templateId?: string;
@@ -6486,6 +6538,7 @@ export async function previewEmailMessage(
 export async function sendEmailMessages(
   token: string,
   data: {
+    expectedAmountCents?: number;
     contactIds: string[];
     subject?: string;
     body?: string;
@@ -6551,6 +6604,7 @@ export interface ScheduledEmailItem {
 export async function scheduleEmailMessages(
   token: string,
   data: {
+    expectedAmountCents?: number;
     contactIds: string[];
     subject?: string;
     body?: string;

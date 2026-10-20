@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "@/components/auth/AuthGuard";
 import {
   canToggleInvoiceStatus,
@@ -20,6 +20,7 @@ import {
   ApiError,
   bulkUpdateInvoiceStatus,
   getInvoices,
+  getPendingPayments,
   InvoiceItem,
   markInvoicePaid,
   reopenInvoice,
@@ -86,6 +87,8 @@ export default function OrdersPage() {
 
 function OrdersContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const pendingCompleted = searchParams.get("pending") === "completed";
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const canWrite = useAuthStore((s) => s.hasPermission("contracts:write"));
@@ -127,11 +130,18 @@ function OrdersContent() {
     if (!token) return;
     setLoading(true);
     setError(null);
-    getInvoices(token, {
-      page,
-      pageSize,
-      search: !isCustomer && debounced ? debounced : undefined,
-    })
+    const load = pendingCompleted
+      ? getPendingPayments(token, {
+          page,
+          pageSize,
+          search: !isCustomer && debounced ? debounced : undefined,
+        })
+      : getInvoices(token, {
+          page,
+          pageSize,
+          search: !isCustomer && debounced ? debounced : undefined,
+        });
+    load
       .then(({ invoices: list, total: totalCount }) => {
         setInvoices(list);
         setTotal(totalCount ?? list.length);
@@ -142,7 +152,7 @@ function OrdersContent() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [token, page, pageSize, debounced, isCustomer]);
+  }, [token, page, pageSize, debounced, isCustomer, pendingCompleted]);
 
   const hasOutstanding = invoices.some(
     (invoice) => invoice.status === "open" || invoice.status === "failed",
@@ -320,12 +330,18 @@ function OrdersContent() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-brand-dark">
-            {isCustomer ? "My invoices" : "Invoices"}
+            {isCustomer
+              ? "My invoices"
+              : pendingCompleted
+                ? "Pending payments"
+                : "Invoices"}
           </h1>
           <p className="mt-1 text-sm text-neutral-500">
-            {isCustomer
-              ? "View and pay open invoices for your contracts and work orders."
-              : "All invoices across customers."}
+            {pendingCompleted
+              ? "Unpaid invoices for completed work orders."
+              : isCustomer
+                ? "View and pay open invoices for your contracts and work orders."
+                : "All invoices across customers."}
           </p>
         </div>
         {isCustomer && hasOutstanding ? (

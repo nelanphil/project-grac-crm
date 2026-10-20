@@ -35,7 +35,7 @@ const invoice = {
   number: "INV-100",
   customerId: 1,
   customerRef: "cust-1",
-  sourceType: "manual",
+  sourceType: "work_order",
   contractRef: null,
   workOrderRef: null,
   templateRef: null,
@@ -85,6 +85,12 @@ describe("invoiceEmailHtml", () => {
     assert.match(body, / Due /);
     const withoutDue = invoiceSmsBody({ ...invoice, dueDate: null });
     assert.doesNotMatch(withoutDue, / Due /);
+  });
+
+  it("quotes the payable invoice amount, not a recomputed historical discount", () => {
+    assert.match(invoiceSmsBody({
+      ...invoice, amountCents: 36380, originalAmountCents: 40000, discountCents: 1000,
+    }), /Total due: \$363\.80/);
   });
 
   it("picks the preferred or primary contact with a phone number", () => {

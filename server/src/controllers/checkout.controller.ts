@@ -3,9 +3,11 @@ import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { resolveCheckoutCustomersForAuthUser } from "../utils/resolveCustomerLogin";
 import {
+  assertStablePaymentLinkSelection,
   CheckoutError,
   confirmCustomerCheckout,
   listPayableCart,
+  listPaymentLinkCart,
   previewCheckoutDiscount,
   startCustomerCheckout,
 } from "../services/checkout.service";
@@ -16,6 +18,7 @@ import {
   getOrCreateCheckoutKey,
 } from "../utils/checkoutKey";
 import { Customer } from "../models/mongo/Customer";
+import { assertScopedSelection, isScopedCheckoutKey, loadScopedCheckout } from "../services/checkoutLink.service";
 
 function sessionBody(req: AuthRequest): {
   invoiceIds?: string[];
@@ -87,12 +90,16 @@ export async function getCheckoutByKey(
 ): Promise<void> {
   try {
     const key = String(req.params.key ?? "").trim();
+    if (isScopedCheckoutKey(key)) {
+      res.json((await loadScopedCheckout(key)).cart);
+      return;
+    }
     const customer = await findCustomerByCheckoutKey(key);
     if (!customer) {
       res.status(404).json({ message: "Checkout link not found" });
       return;
     }
-    const cart = await listPayableCart([String(customer._id)]);
+    const cart = await listPaymentLinkCart([String(customer._id)]);
     res.json(cart);
   } catch (err) {
     sendCheckoutError(res, err, "Failed to load checkout");
@@ -105,14 +112,27 @@ export async function startCheckoutByKey(
 ): Promise<void> {
   try {
     const key = String(req.params.key ?? "").trim();
+    if (isScopedCheckoutKey(key)) {
+      const scoped = await loadScopedCheckout(key);
+      const selection = sessionBody(req);
+      assertScopedSelection(scoped.items, selection.invoiceIds, selection.workOrderIds);
+      res.json(await startCustomerCheckout({
+        ...selection,
+        customerIds: [scoped.customerId],
+        expectedItems: scoped.items,
+      }));
+      return;
+    }
     const customer = await findCustomerByCheckoutKey(key);
     if (!customer) {
       res.status(404).json({ message: "Checkout link not found" });
       return;
     }
     const { invoiceIds, workOrderIds, discountCode } = sessionBody(req);
+    const customerId = String(customer._id);
+    await assertStablePaymentLinkSelection(customerId, invoiceIds, workOrderIds);
     const result = await startCustomerCheckout({
-      customerIds: [String(customer._id)],
+      customerIds: [customerId],
       invoiceIds,
       workOrderIds,
       discountCode,
@@ -201,6 +221,20 @@ export async function previewCheckoutByKey(
 ): Promise<void> {
   try {
     const key = String(req.params.key ?? "").trim();
+    if (isScopedCheckoutKey(key)) {
+      const scoped = await loadScopedCheckout(key);
+      const selection = sessionBody(req);
+      assertScopedSelection(scoped.items, selection.invoiceIds, selection.workOrderIds);
+      if (!selection.discountCode) {
+        throw new CheckoutError("Enter a discount code", 400);
+      }
+      res.json(await previewCheckoutDiscount({
+        ...selection,
+        discountCode: selection.discountCode,
+        customerIds: [scoped.customerId],
+      }));
+      return;
+    }
     const customer = await findCustomerByCheckoutKey(key);
     if (!customer) {
       res.status(404).json({ message: "Checkout link not found" });
@@ -211,8 +245,10 @@ export async function previewCheckoutByKey(
       res.status(400).json({ message: "Enter a discount code" });
       return;
     }
+    const customerId = String(customer._id);
+    await assertStablePaymentLinkSelection(customerId, invoiceIds, workOrderIds);
     const quote = await previewCheckoutDiscount({
-      customerIds: [String(customer._id)],
+      customerIds: [customerId],
       invoiceIds,
       workOrderIds,
       discountCode,

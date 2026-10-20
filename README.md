@@ -58,6 +58,7 @@ Client runs at `http://localhost:3009`.
 | `npm run dev:client` | `client/` | Start frontend (port 3009) |
 | `npm run dev` | `server/` or `client/` | Alias for the script in that folder |
 | `npm run build` | `server/` or `client/` | Build that project |
+| `npm run test:checkout` | `server/` | Test invoice-only links, amount snapshots, and payment message rendering |
 
 ## Environment variables
 
@@ -80,6 +81,26 @@ Repo-root `.env` is loaded by the API (`server/src/config/env.ts`).
 **Outbound email** is configured in the dashboard **Control Panel → Email**. Assign the **General notifications** role for password-reset and signup confirmation emails (and **Billing notifications** for future invoice mail). Env `SMTP_*` vars are a last-resort fallback when no matching account is assigned. In non-production, forgot-password may return a `devResetUrl` if mail cannot be sent.
 
 ## API endpoints
+
+### Invoice payment links and communication history
+
+- Texts and emails sent from an invoice use a new, invoice-only checkout link.
+  The server restricts that link to the originating invoice; other outstanding
+  invoices and work orders cannot be added by changing the checkout request.
+- Payment links snapshot the covered item amounts and expire after 30 days.
+  If an amount changes, an item is removed, or an invoice becomes paid/void,
+  checkout stops and asks for a new link instead of charging a different balance.
+  A customer-applied discount can still reduce the displayed payment.
+- General payment-link messages cover a snapshot of the outstanding balance
+  and include the covered total. Later invoices are not added to that link.
+  Existing customer-wide links and authenticated account checkout remain balance
+  checkouts; previously sent links are not retroactively invoice-scoped.
+- Invoice message API requests supply `invoiceId` and `expectedAmountCents`.
+  Scheduled invoice messages preserve both and fail explicitly if the amount
+  changes before delivery. Legacy scheduled invoice payment messages without
+  an expected amount must be recreated.
+- Customer communication emails open the stored CRM email by `emailId` on the
+  Sent Emails tab. Viewing does not depend on a copy in an IMAP Sent folder.
 
 | Method | Path | Description |
 |--------|------|-------------|

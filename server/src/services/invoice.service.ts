@@ -1,5 +1,5 @@
 import { randomInt } from "crypto";
-import { Types } from "mongoose";
+import { PipelineStage, Types } from "mongoose";
 import { Contract, IContract } from "../models/mongo/Contract";
 import { Customer } from "../models/mongo/Customer";
 import { Invoice, IInvoice } from "../models/mongo/Invoice";
@@ -315,6 +315,7 @@ export type WorkOrderInvoiceSource = {
   descPerform?: string;
   number?: string;
   paid?: boolean;
+  completed?: boolean;
   date?: Date | null;
   updatedAt?: Date;
 };
@@ -503,7 +504,56 @@ export function workOrderInvoiceLineItems(wo: {
   return [];
 }
 
-const OPEN_INVOICE_STATUSES = ["open", "draft"] as const;
+const OPEN_INVOICE_STATUSES = ["open", "draft", "failed"] as const;
+const VOIDABLE_INVOICE_STATUSES = ["open", "draft"] as const;
+
+export class WorkOrderNotReadyError extends Error {
+  constructor(
+    message = "Work order must be completed before it can be invoiced",
+  ) {
+    super(message);
+    this.name = "WorkOrderNotReadyError";
+  }
+}
+
+export const WORK_ORDER_REOPENED_REASON = "work_order_reopened";
+
+function invoiceMetadata(invoice: IInvoice): Record<string, unknown> {
+  return invoice.metadata && typeof invoice.metadata === "object"
+    ? { ...invoice.metadata }
+    : {};
+}
+
+async function voidOpenDraftWorkOrderInvoices(
+  workOrderId: Types.ObjectId | string,
+  reason?: string,
+): Promise<IInvoice | undefined> {
+  const open = await Invoice.find({
+    workOrderRef: workOrderId,
+    status: { $in: VOIDABLE_INVOICE_STATUSES },
+  });
+  let last: IInvoice | undefined;
+  for (const invoice of open) {
+    invoice.status = "void";
+    if (reason) {
+      invoice.metadata = { ...invoiceMetadata(invoice), voidReason: reason };
+      invoice.markModified("metadata");
+    }
+    await invoice.save();
+    last = invoice;
+  }
+  return last;
+}
+
+async function findReopenedWorkOrderInvoice(
+  workOrderId: Types.ObjectId | string,
+): Promise<IInvoice | null> {
+  return Invoice.findOne({
+    workOrderRef: workOrderId,
+    status: "void",
+    "metadata.voidReason": WORK_ORDER_REOPENED_REASON,
+  }).sort({ updatedAt: -1, createdAt: -1 });
+}
 
 export async function findOpenInvoiceForWorkOrder(
   workOrderId: Types.ObjectId | string,
@@ -526,6 +576,9 @@ export async function ensureOpenInvoiceForWorkOrder(
     };
   },
 ): Promise<{ invoice: IInvoice; created: boolean }> {
+  if (!wo.completed) {
+    throw new WorkOrderNotReadyError();
+  }
   const customerRef = await resolveCustomerRefForWorkOrder(wo);
   if (customerRef) await persistResolvedCustomerRef(wo, customerRef);
 
@@ -564,6 +617,47 @@ export async function ensureOpenInvoiceForWorkOrder(
     }
     if (existing.isModified()) await existing.save();
     return { invoice: existing, created: false };
+  }
+
+  const reopened = await findReopenedWorkOrderInvoice(wo._id);
+  if (reopened) {
+    const nextAmount =
+      options?.amountCents != null
+        ? options.amountCents
+        : dollarsToCents(wo.total || 0);
+    if (nextAmount <= 0) {
+      throw new InvoiceAmountError(
+        "Work order total must be greater than zero to invoice",
+      );
+    }
+    if (customerRef) reopened.customerRef = customerRef;
+    reopened.status = "open";
+    reopened.lineItems = invoiceLineItemsForWorkOrder(
+      wo,
+      nextAmount,
+      options?.description,
+    );
+    if (typeof reopened.originalAmountCents === "number") {
+      reopened.originalAmountCents = nextAmount;
+      reopened.amountCents = Math.max(
+        nextAmount - (Number(reopened.discountCents) || 0),
+        0,
+      );
+    } else {
+      reopened.amountCents = nextAmount;
+    }
+    if (!reopened.taxOverridden) {
+      const tax = invoiceTaxFromWorkOrder(wo);
+      reopened.taxRatePercent = tax.taxRatePercent;
+      reopened.taxCents = tax.taxCents;
+      reopened.taxOverridden = tax.taxOverridden;
+    }
+    const metadata = invoiceMetadata(reopened);
+    delete metadata.voidReason;
+    reopened.metadata = metadata;
+    reopened.markModified("metadata");
+    await reopened.save();
+    return { invoice: reopened, created: false };
   }
 
   const amountCents =
@@ -623,6 +717,9 @@ export async function createPaidInvoiceForWorkOrder(
   wo: WorkOrderInvoiceSource,
   options?: { backfilled?: boolean },
 ): Promise<IInvoice> {
+  if (!wo.completed) {
+    throw new WorkOrderNotReadyError();
+  }
   const customerRef = await resolveCustomerRefForWorkOrder(wo);
   if (customerRef) await persistResolvedCustomerRef(wo, customerRef);
   if (!customerRef) {
@@ -705,12 +802,23 @@ export async function syncWorkOrderInvoice(
       }
       return { action: "paid", invoice: last };
     }
-    if (amountCents <= 0) return { action: "skipped" };
+    if (!wo.completed || amountCents <= 0) return { action: "skipped" };
     const existing = await Invoice.findOne({
       workOrderRef: wo._id,
       status: { $ne: "void" },
     });
     if (existing) return { action: "skipped", invoice: existing };
+    const reopened = await findReopenedWorkOrderInvoice(wo._id);
+    if (reopened) {
+      const metadata = invoiceMetadata(reopened);
+      delete metadata.voidReason;
+      reopened.metadata = metadata;
+      reopened.markModified("metadata");
+      return {
+        action: "paid",
+        invoice: await markInvoicePaid({ invoice: reopened }),
+      };
+    }
     try {
       const invoice = await createPaidInvoiceForWorkOrder(wo, {
         backfilled: options?.backfilled,
@@ -722,14 +830,14 @@ export async function syncWorkOrderInvoice(
     }
   }
 
-  if (amountCents <= 0) {
-    const open = await findOpenInvoiceForWorkOrder(wo._id);
-    if (open) {
-      open.status = "void";
-      await open.save();
-      return { action: "voided", invoice: open };
-    }
-    return { action: "skipped" };
+  if (!wo.completed || amountCents <= 0) {
+    const voided = await voidOpenDraftWorkOrderInvoices(
+      wo._id,
+      wo.completed ? undefined : WORK_ORDER_REOPENED_REASON,
+    );
+    return voided
+      ? { action: "voided", invoice: voided }
+      : { action: "skipped" };
   }
 
   try {
@@ -784,6 +892,68 @@ export async function syncWorkOrderInvoice(
     if (err instanceof InvoiceAmountError) return { action: "skipped" };
     throw err;
   }
+}
+
+export async function findPendingCompletedWorkOrderInvoices(input?: {
+  number?: RegExp;
+  customerRefs?: Types.ObjectId[];
+  skip?: number;
+  limit?: number;
+}): Promise<{ invoices: Array<Record<string, unknown>>; total: number }> {
+  const match: Record<string, unknown> = {
+    sourceType: "work_order",
+    status: { $in: ["open", "draft", "failed"] },
+    workOrderRef: { $ne: null },
+    amountCents: { $gt: 0 },
+  };
+  if (input?.number || (input?.customerRefs && input.customerRefs.length > 0)) {
+    const or: Record<string, unknown>[] = [];
+    if (input.number) or.push({ number: input.number });
+    if (input.customerRefs && input.customerRefs.length > 0) {
+      or.push({ customerRef: { $in: input.customerRefs } });
+    }
+    match.$or = or;
+  }
+
+  const pipeline = [
+    { $match: match },
+    {
+      $lookup: {
+        from: WorkOrder.collection.name,
+        localField: "workOrderRef",
+        foreignField: "_id",
+        as: "workOrder",
+      },
+    },
+    { $unwind: "$workOrder" },
+    {
+      $match: {
+        "workOrder.completed": true,
+        "workOrder.deletedAt": null,
+      },
+    },
+    { $sort: { dueDate: -1, issuedAt: -1, createdAt: -1 } },
+    { $project: { workOrder: 0 } },
+  ] as PipelineStage[];
+
+  if (input?.limit == null) {
+    const invoices = await Invoice.aggregate(pipeline);
+    return { invoices, total: invoices.length };
+  }
+
+  const [result] = await Invoice.aggregate([
+    ...pipeline,
+    {
+      $facet: {
+        invoices: [{ $skip: input.skip ?? 0 }, { $limit: input.limit }],
+        total: [{ $count: "count" }],
+      },
+    },
+  ]);
+  return {
+    invoices: result?.invoices ?? [],
+    total: result?.total?.[0]?.count ?? 0,
+  };
 }
 
 /** GMOF + MMDDYY + 5-digit suffix, e.g. GMOF08282684721 */

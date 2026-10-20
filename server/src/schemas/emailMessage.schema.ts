@@ -34,6 +34,7 @@ export const emailMessagePreviewSchema = z
   );
 
 const emailMessageSendFields = z.object({
+  expectedAmountCents: z.number().int().nonnegative().optional(),
   contactIds: z.array(z.string().trim().min(1)).min(1).max(200),
   subject: z.string().max(EMAIL_SUBJECT_MAX).optional(),
   body: z.string().max(EMAIL_BODY_MAX).optional(),
@@ -58,9 +59,16 @@ const emailMessageSendFields = z.object({
 });
 
 function refineSendContent(
-  data: { subject?: string; body?: string; templateId?: string },
+  data: { subject?: string; body?: string; templateId?: string; invoiceId?: string; expectedAmountCents?: number },
   ctx: z.RefinementCtx,
 ) {
+  if (data.invoiceId && data.expectedAmountCents === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["expectedAmountCents"],
+      message: "Refresh the invoice before sending its payment link.",
+    });
+  }
   if (
     !data.body?.trim() &&
     !data.subject?.trim() &&

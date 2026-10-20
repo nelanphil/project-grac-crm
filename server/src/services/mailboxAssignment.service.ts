@@ -4,6 +4,56 @@ import { User, activeUserFilter } from "../models/mongo/User";
 import { MailboxError, MailboxFolder } from "./mailbox.service";
 import { newlyTaggedUserIds } from "../utils/mailboxReply";
 
+export async function mailboxMetadataByMessageKey(
+  accountId: Types.ObjectId,
+  messageKeys: string[],
+): Promise<Map<string, { assignees: string[]; archived: boolean }>> {
+  if (messageKeys.length === 0) return new Map();
+  const rows = await MailboxAssignment.find({
+    emailAccountRef: accountId,
+    messageId: { $in: messageKeys },
+  })
+    .select("messageId userRefs archived")
+    .lean();
+  return new Map(
+    rows.map((row) => [
+      row.messageId,
+      {
+        assignees: (row.userRefs ?? []).map((id) => String(id)),
+        archived: Boolean(row.archived),
+      },
+    ]),
+  );
+}
+
+export async function setMailboxArchived(input: {
+  accountId: Types.ObjectId;
+  messageKey: string;
+  folder: MailboxFolder;
+  uid: number;
+  subject?: string;
+  archived: boolean;
+}): Promise<{ archived: boolean; messageKey: string }> {
+  await MailboxAssignment.findOneAndUpdate(
+    { emailAccountRef: input.accountId, messageId: input.messageKey },
+    {
+      $set: {
+        folder: input.folder,
+        uid: input.uid,
+        archived: input.archived,
+        ...(input.subject !== undefined ? { subject: input.subject } : {}),
+      },
+      $setOnInsert: {
+        emailAccountRef: input.accountId,
+        messageId: input.messageKey,
+        userRefs: [],
+      },
+    },
+    { upsert: true, new: true },
+  );
+  return { archived: input.archived, messageKey: input.messageKey };
+}
+
 export async function assigneesByMessageKey(
   accountId: Types.ObjectId,
   messageKeys: string[],

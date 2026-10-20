@@ -52,6 +52,8 @@ import {
   parseFutureScheduledAt,
   ScheduledAtError,
 } from "../utils/scheduledEmail";
+import { CheckoutError } from "../services/checkout.service";
+import { previewPaymentSummary, validateInvoiceMessage } from "../services/checkoutLink.service";
 
 const PAGE_SIZES = new Set([25, 50, 100, 150, 200, 250]);
 const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
@@ -162,6 +164,10 @@ function toPublicScheduledEmail(
 }
 
 function staffEmailErrorResponse(err: unknown, res: Response): boolean {
+  if (err instanceof CheckoutError) {
+    res.status(err.statusCode).json({ message: err.message });
+    return true;
+  }
   if (
     err instanceof StaffEmailBatchError ||
     err instanceof ScheduledAtError ||
@@ -293,6 +299,7 @@ export async function previewEmailMessage(
         chrome.footerHtml,
       );
     let paymentUrl: string | undefined;
+    let paymentSummary = "";
     if (wantsPayLink) {
       const offerId = parsed.data.offerContractTemplateId ?? null;
       const showButton = sample
@@ -304,6 +311,7 @@ export async function previewEmailMessage(
       if (showButton) {
         paymentUrl = samplePayUrl();
         context = { ...context, payment_link: paymentUrl };
+        if (customerRef) paymentSummary = await previewPaymentSummary(customerRef, parsed.data.invoiceId);
       }
     }
 
@@ -328,6 +336,8 @@ export async function previewEmailMessage(
       subject: renderedSubject,
       bodyText: renderedBody,
       paymentUrl,
+      paymentSummary,
+      paymentButtonLabel: parsed.data.invoiceId ? "Pay this invoice" : "Pay outstanding balance",
       chrome: renderedChrome,
       unsubscribeUrl: buildUnsubscribeUrl(previewEmail, "general"),
       invoiceWidget,
@@ -378,6 +388,7 @@ export async function sendEmailMessages(
       renewalMonth: data.renewalMonth,
       includePaymentLink: data.includePaymentLink,
       invoiceId: data.invoiceId,
+      expectedAmountCents: data.expectedAmountCents,
       offerContractTemplateId:
         data.offerContractTemplateId !== undefined
           ? data.offerContractTemplateId
@@ -411,6 +422,7 @@ export async function scheduleEmailMessages(
 
     const data = parsed.data;
     const scheduledAt = parseFutureScheduledAt(data.scheduledAt);
+    await validateInvoiceMessage(data);
     const content = await resolveEmailContent(data);
     if (
       templateUsesInvoice(
@@ -432,6 +444,7 @@ export async function scheduleEmailMessages(
       : null;
 
     const row = await ScheduledEmailSend.create({
+      expectedAmountCents: data.expectedAmountCents,
       contactIds: uniqueContactIds,
       subject: content.subject,
       body: content.body,

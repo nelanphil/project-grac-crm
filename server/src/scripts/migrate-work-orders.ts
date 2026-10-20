@@ -14,7 +14,12 @@ import { connectMongoDB, disconnectMongoDB } from "../config/mongodb";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { Customer } from "../models/mongo/Customer";
 import { Product } from "../models/mongo/Product";
-import { mappedWorkOrderMoneyFields } from "../services/legacyWorkOrderItems";
+import { syncWorkOrderInvoice } from "../services/invoice.service";
+import {
+  mongooseLegacyProductWriter,
+  resolveLegacyWorkOrderMoney,
+  workOrderMoneyFieldsFromMapped,
+} from "../services/legacyWorkOrderItems";
 import { parseWorkOrderDump } from "../services/legacyDumpSync";
 import mongoose from "mongoose";
 
@@ -97,11 +102,14 @@ async function main() {
   }));
   console.log(`Loaded ${catalog.length} products for line-item mapping.`);
 
-  const docs = rows.map((row) => {
+  const writer = mongooseLegacyProductWriter(Product);
+  const docs = [];
+  for (const row of rows) {
     const customer = customerMap.get(row.customerId);
-    return {
+    const mapped = await resolveLegacyWorkOrderMoney(row, catalog, writer);
+    docs.push({
       ...row,
-      ...mappedWorkOrderMoneyFields(row, catalog),
+      ...workOrderMoneyFieldsFromMapped(mapped),
       customerRef: customer
         ? new mongoose.Types.ObjectId(customer.id)
         : undefined,
@@ -111,14 +119,22 @@ async function main() {
       customerZip: customer?.zip ?? "",
       customerPhone: customer?.phone ?? "",
       customerEmail: customer?.email ?? "",
-    };
-  });
+    });
+  }
 
   console.log(`Inserting in batches of ${BATCH_SIZE}...`);
   let inserted = 0;
   for (let i = 0; i < docs.length; i += BATCH_SIZE) {
     const batch = docs.slice(i, i + BATCH_SIZE);
-    await WorkOrder.insertMany(batch, { ordered: false });
+    const insertedDocs = await WorkOrder.insertMany(batch, { ordered: false });
+    for (const doc of insertedDocs) {
+      if ((doc.total ?? 0) <= 0) continue;
+      try {
+        await syncWorkOrderInvoice(doc, { backfilled: true });
+      } catch (err) {
+        console.error(`Invoice sync skipped for legacy ${doc.legacyId}:`, err);
+      }
+    }
     inserted += batch.length;
     console.log(`  Inserted ${inserted}/${docs.length}`);
   }

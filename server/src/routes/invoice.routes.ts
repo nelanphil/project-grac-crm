@@ -9,6 +9,7 @@ import {
   createInvoicePayLink,
   getInvoiceById,
   getInvoices,
+  getPendingPayments,
   markInvoicePaidByStaff,
   reopenInvoiceByStaff,
   startInvoiceCheckout,
@@ -20,6 +21,7 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/", getInvoices);
+router.get("/pending-payments", getPendingPayments);
 router.get("/:id", getInvoiceById);
 
 router.post("/", requirePermission("contracts:write"), createInvoice);

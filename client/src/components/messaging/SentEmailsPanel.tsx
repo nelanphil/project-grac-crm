@@ -8,6 +8,7 @@ import {
   EmailSendAccountItem,
   getEmailSendAccounts,
   getSentEmails,
+  getSentEmail,
 } from "@/lib/api";
 import EmailPreview from "./EmailPreview";
 
@@ -21,9 +22,10 @@ type StatusFilter = "" | "sent" | "failed";
 
 type SentEmailsPanelProps = {
   token: string;
+  initialEmailId?: string;
 };
 
-export default function SentEmailsPanel({ token }: SentEmailsPanelProps) {
+export default function SentEmailsPanel({ token, initialEmailId = "" }: SentEmailsPanelProps) {
   const [rows, setRows] = useState<EmailCommunicationItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -33,6 +35,33 @@ export default function SentEmailsPanel({ token }: SentEmailsPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [linkedEmail, setLinkedEmail] = useState<EmailCommunicationItem | null>(null);
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setLinkedEmail(null);
+      setLinkError(null);
+      setLinkLoading(Boolean(initialEmailId));
+    });
+    if (!initialEmailId) return;
+    getSentEmail(token, initialEmailId)
+      .then(({ email }) => {
+        if (!cancelled) setLinkedEmail(email);
+      })
+      .catch((err) => {
+        if (!cancelled) setLinkError(
+          err instanceof ApiError ? err.message : "Failed to open the stored email.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLinkLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [token, initialEmailId]);
 
   useEffect(() => {
     getEmailSendAccounts(token)
@@ -78,6 +107,30 @@ export default function SentEmailsPanel({ token }: SentEmailsPanelProps) {
 
   return (
     <div className="space-y-4">
+      {linkLoading ? <p className="text-sm text-neutral-500">Opening stored email...</p> : null}
+      {linkError ? <p role="alert" className="text-sm text-red-700">{linkError}</p> : null}
+      {linkedEmail ? (
+        <section className="rounded-xl border border-neutral-200 bg-white p-4">
+          <p className="mb-3 text-xs text-neutral-500">
+            Stored CRM email - {linkedEmail.status} - {formatTime(linkedEmail.createdAt)}
+          </p>
+          {linkedEmail.html ? (
+            <EmailPreview
+              fromLabel={`${linkedEmail.fromName} <${linkedEmail.fromEmail}>`}
+              toLabel={linkedEmail.toEmail}
+              subject={linkedEmail.subject}
+              html={linkedEmail.html}
+            />
+          ) : (
+            <>
+              <h3 className="font-semibold">{linkedEmail.subject || "(no subject)"}</h3>
+              <p className="text-xs text-neutral-500">{linkedEmail.fromEmail} to {linkedEmail.toEmail}</p>
+              <pre className="mt-3 whitespace-pre-wrap text-sm">{linkedEmail.body || "(no text)"}</pre>
+            </>
+          )}
+          {linkedEmail.errorMessage ? <p role="alert" className="mt-2 text-sm text-red-700">{linkedEmail.errorMessage}</p> : null}
+        </section>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-brand-dark">Sent Emails</h2>
         <div className="flex flex-wrap gap-2">

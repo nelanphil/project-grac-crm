@@ -137,6 +137,7 @@ export function useInvoiceCustomerSend(
   const [templatesReady, setTemplatesReady] = useState(false);
   const [defaults, setDefaults] = useState<InvoiceMessageDefaults>(EMPTY_DEFAULTS);
   const [seededFor, setSeededFor] = useState("");
+  const [draftAmountCents, setDraftAmountCents] = useState<number>();
   const [channel, setChannel] = useState<Channel | null>(null);
   const [emailTemplateId, setEmailTemplateId] = useState("");
   const [smsTemplateId, setSmsTemplateId] = useState("");
@@ -192,6 +193,7 @@ export function useInvoiceCustomerSend(
     const email = emailDraft(invoice, emailTemplate);
     const sms = smsDraft(invoice, smsTemplate);
     setSeededFor(invoice._id);
+    setDraftAmountCents(invoice.amountCents);
     setEmailTemplateId(email.templateId);
     setEmailSubject(email.subject);
     setEmailBody(email.body);
@@ -342,6 +344,7 @@ export function useInvoiceCustomerSend(
               setPreviewKey(key);
             })
           : previewMessagingMessage(token, {
+              invoiceId,
               body,
               contactId,
               includePaymentLink: withPayLink,
@@ -372,6 +375,7 @@ export function useInvoiceCustomerSend(
     channel,
     token,
     invoice,
+    invoiceId,
     emailContactId,
     phoneContactId,
     emailSubject,
@@ -495,6 +499,7 @@ export function useInvoiceCustomerSend(
           includePaymentLink: payLink,
           toOverride: emailOverride,
           invoiceId: invoice._id,
+          expectedAmountCents: draftAmountCents,
         });
         const failed = result.results.find((item) => item.status !== "sent");
         if (failed || result.summary.failed > 0) {
@@ -513,6 +518,8 @@ export function useInvoiceCustomerSend(
           fromNumber: smsOption.fromNumber,
           includePaymentLink: payLink,
           toOverride: phoneOverride,
+          invoiceId: invoice._id,
+          expectedAmountCents: draftAmountCents,
         });
         const failed = result.results.find((item) => item.status !== "sent");
         if (failed || result.summary.failed > 0) {
@@ -558,6 +565,7 @@ export function useInvoiceCustomerSend(
       ? !emailSubject.trim() || isEmailBodyEmpty(emailBody)
       : !smsBody.trim() || smsBody.length > SMS_BODY_MAX;
   const previewReady = previewKey === requestKey && !previewError;
+  const amountChanged = Boolean(invoice && draftAmountCents !== invoice.amountCents);
 
   const activeContact = channel === "text" ? phoneContact : emailContact;
   const recipientTo = channel === "text" ? phoneTo : emailTo;
@@ -611,6 +619,12 @@ export function useInvoiceCustomerSend(
     },
     previewLoading,
     previewError,
+    amountChanged,
+    resetDraft: () => {
+      setSent(false);
+      setSendError(null);
+      setSeededFor("");
+    },
     emailPreview,
     smsPreview,
     sending,
@@ -644,7 +658,7 @@ export function useInvoiceCustomerSend(
       else if (channel === "email") setEmailToEdit(null);
     },
     composerOpen: channel !== null,
-    canSend: previewReady && !messageEmpty && !sending && !recipientError,
+    canSend: previewReady && !messageEmpty && !sending && !recipientError && !amountChanged,
     emailDisabledReason: disabledReason("email"),
     textDisabledReason: disabledReason("text"),
     openChannel,
@@ -756,6 +770,14 @@ export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
               Used for this send only. The customer&apos;s contact keeps{" "}
               {send.contactRecipient || "its saved value"}.
             </span>
+          ) : null}
+          {send.amountChanged ? (
+            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <p>The invoice amount changed. Your edits have been preserved; reset the draft before sending.</p>
+              <button type="button" onClick={send.resetDraft} className="mt-2 underline">
+                Reset draft to current invoice (discards message edits)
+              </button>
+            </div>
           ) : null}
           <span className="mt-1 flex gap-3 text-xs">
             <button
@@ -941,7 +963,7 @@ export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
           />
           <span>
             <span className="font-medium text-brand-dark">
-              Include a payment link
+              Include a link to pay only this invoice
             </span>
             <span className="mt-0.5 block text-xs text-neutral-500">
               The link covers their unpaid balance, including this invoice.
@@ -1040,7 +1062,7 @@ export function InvoiceSendPreview({ send }: { send: InvoiceSendController }) {
         {send.previewLoading
           ? "Updating preview…"
           : send.includePaymentLink && send.payable
-            ? "Payment link included for their unpaid balance, including this invoice."
+            ? "Payment link included for this invoice only. Other balances are not included."
             : "No payment link."}
       </p>
       {send.previewError ? (

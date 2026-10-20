@@ -84,7 +84,7 @@ const SMS_PAYMENT_LINK_FIELD: MergeFieldItem = {
   key: "payment_link",
   label: "Payment link",
   description:
-    "Short pay link covering every open invoice and unpaid work order. Included only when the customer has something to pay.",
+    "Payment link for the selected invoice, or an outstanding-balance snapshot when no invoice is selected. Includes the covered total.",
 };
 
 /** SMS always offers {{payment_link}}, even if an older API still marks it email-only. */
@@ -119,6 +119,7 @@ export default function MessagingHub() {
   const searchParams = useSearchParams();
   const initialContactId = searchParams.get("contactId");
   const initialInvoiceId = searchParams.get("invoiceId");
+  const [invoiceAmountCents, setInvoiceAmountCents] = useState<number>();
   const initialTab = searchParams.get("tab");
   const initialInboxView =
     searchParams.get("view") === "email"
@@ -130,6 +131,12 @@ export default function MessagingHub() {
   const [activeTab, setActiveTab] = useState<MessagingTab>(
     messagingTabFromQuery(initialTab),
   );
+  const sentEmailId = searchParams.get("emailId") ?? "";
+  const [appliedSentEmailId, setAppliedSentEmailId] = useState(sentEmailId);
+  if (sentEmailId && sentEmailId !== appliedSentEmailId) {
+    setAppliedSentEmailId(sentEmailId);
+    setActiveTab("sent-emails");
+  }
   const mailboxLink =
     searchParams.get("view") === "email" &&
     searchParams.get("accountId") &&
@@ -365,6 +372,7 @@ export default function MessagingHub() {
     void (async () => {
       try {
         const { invoice } = await getInvoice(token, initialInvoiceId);
+        setInvoiceAmountCents(invoice.amountCents);
         if (cancelled) return;
         if (!invoice.customerRef) {
           setError("This invoice has no customer to email.");
@@ -1315,6 +1323,7 @@ export default function MessagingHub() {
     setEmailScheduleResult(null);
     try {
       const result = await scheduleEmailMessages(token, {
+        expectedAmountCents: invoiceAmountCents,
         contactIds: [...emailSelectedIds],
         subject: emailSubject,
         body: emailBody,
@@ -1718,7 +1727,7 @@ export default function MessagingHub() {
       ) : activeTab === "scheduled-emails" ? (
         <ScheduledEmailsPanel token={token} />
       ) : activeTab === "sent-emails" ? (
-        <SentEmailsPanel token={token} />
+        <SentEmailsPanel token={token} initialEmailId={sentEmailId} />
       ) : (
         <InboxPanel
           token={token}

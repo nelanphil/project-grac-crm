@@ -84,6 +84,7 @@ export const updateMessageTemplateSchema = z
 
 export const messagingPreviewSchema = z
   .object({
+    invoiceId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/).optional(),
     body: z.string().max(1600),
     contactId: z.string().trim().min(1).optional(),
     renewalYear: z.number().int().min(1970).max(2100).optional(),
@@ -102,6 +103,8 @@ export const messagingPreviewSchema = z
   );
 
 const messagingSendObject = z.object({
+  invoiceId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/).optional(),
+  expectedAmountCents: z.number().int().nonnegative().optional(),
   contactIds: z.array(z.string().trim().min(1)).min(1).max(200),
   body: z.string().max(1600).optional(),
   templateId: z.string().trim().min(1).optional(),
@@ -131,9 +134,18 @@ function refineMessagingSend(
     renewalMonth?: number;
     threadId?: string;
     contactIds: string[];
+    invoiceId?: string;
+    expectedAmountCents?: number;
   },
   ctx: z.RefinementCtx,
 ) {
+  if (data.invoiceId && data.expectedAmountCents === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["expectedAmountCents"],
+      message: "Refresh the invoice before sending its payment link.",
+    });
+  }
   if (!data.body?.trim() && !data.templateId) {
     ctx.addIssue({
       code: "custom",

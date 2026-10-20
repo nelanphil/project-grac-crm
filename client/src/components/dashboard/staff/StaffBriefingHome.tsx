@@ -4,11 +4,11 @@ import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   ApiError,
-  getInvoices,
+  getPendingPayments,
   type InvoiceItem,
   type ReminderListItem,
 } from "@/lib/api";
-import { formatDateOnly, parseDateOnly } from "@/lib/contractDates";
+import { formatDateOnly } from "@/lib/contractDates";
 import { invoiceCustomerLabel } from "@/lib/formatName";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useDashboardStore } from "@/store/useDashboardStore";
@@ -57,36 +57,6 @@ function todayLabel(): string {
     month: "long",
     day: "numeric",
   });
-}
-
-function dueTime(invoice: InvoiceItem): number {
-  const parsed = parseDateOnly(invoice.dueDate);
-  return parsed ? parsed.getTime() : Number.NEGATIVE_INFINITY;
-}
-
-function comparePending(a: InvoiceItem, b: InvoiceItem): number {
-  const dueDelta = dueTime(b) - dueTime(a);
-  if (dueDelta !== 0) return dueDelta;
-  return new Date(b.issuedAt).getTime() - new Date(a.issuedAt).getTime();
-}
-
-async function loadInvoicesByStatus(
-  token: string,
-  status: "open" | "failed",
-): Promise<InvoiceItem[]> {
-  const pageSize = 500;
-  const first = await getInvoices(token, { status, page: 1, pageSize });
-  const invoices = [...first.invoices];
-  const total = first.total ?? invoices.length;
-  const pages = Math.ceil(total / pageSize);
-  if (pages <= 1) return invoices;
-  const rest = await Promise.all(
-    Array.from({ length: pages - 1 }, (_, index) =>
-      getInvoices(token, { status, page: index + 2, pageSize }),
-    ),
-  );
-  for (const page of rest) invoices.push(...page.invoices);
-  return invoices;
 }
 
 function BriefingRow({
@@ -224,17 +194,10 @@ export default function StaffBriefingHome() {
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
-    Promise.all([
-      loadInvoicesByStatus(token, "open"),
-      loadInvoicesByStatus(token, "failed"),
-    ])
-      .then(([openInvoices, failedInvoices]) => {
+    getPendingPayments(token)
+      .then(({ invoices }) => {
         if (cancelled) return;
-        setPayments(
-          [...openInvoices, ...failedInvoices]
-            .filter((invoice) => invoice.sourceType !== "contract_renewal")
-            .sort(comparePending),
-        );
+        setPayments(invoices);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -283,7 +246,7 @@ export default function StaffBriefingHome() {
   );
   const paymentsLink = (
     <Link
-      href="/dashboard/orders"
+      href="/dashboard/orders?pending=completed"
       className="text-sm font-medium text-brand-orange hover:underline"
     >
       See all

@@ -41,11 +41,7 @@ export function invoiceEmailSubject(invoice: Pick<InvoiceItem, "number">): strin
 }
 
 function invoiceTotalCents(invoice: InvoiceItem): number {
-  const hasDiscount = Boolean(invoice.discountCents && invoice.discountCents > 0);
-  const subtotalCents = invoice.originalAmountCents ?? invoice.amountCents;
-  return hasDiscount
-    ? Math.max(subtotalCents - (invoice.discountCents ?? 0), 0)
-    : invoice.amountCents;
+  return invoice.amountCents;
 }
 
 export function invoiceSmsBody(invoice: InvoiceItem): string {

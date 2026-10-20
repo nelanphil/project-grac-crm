@@ -34,6 +34,7 @@ import {
   ensureTemporaryContractOffer,
   TemporaryContractOfferError,
 } from "./temporaryContractOffer";
+import { paymentAmountLabel, validateInvoiceMessage } from "./checkoutLink.service";
 
 const SEND_CONCURRENCY = 5;
 
@@ -61,6 +62,7 @@ export type DispatchStaffEmailBatchInput = {
   includePaymentLink?: boolean;
   /** Invoice embedded by {{invoice}}. Omitted when the token is sent with no invoice. */
   invoiceId?: string | null;
+  expectedAmountCents?: number;
   offerContractTemplateId?: string | null;
   offerContractOverrides?: OfferContractOverride[] | null;
   createdByUserId?: string | null;
@@ -198,6 +200,7 @@ export async function loadActiveEmailAccount(
 export async function dispatchStaffEmailBatch(
   input: DispatchStaffEmailBatchInput,
 ): Promise<DispatchStaffEmailBatchResult> {
+  await validateInvoiceMessage(input);
   const account = await loadActiveEmailAccount(input.emailAccountId);
   const sendChrome = mergeEmailChrome(
     input.emailChrome ?? DEFAULT_EMAIL_CHROME,
@@ -246,8 +249,14 @@ export async function dispatchStaffEmailBatch(
       sendChrome.headerHtml,
       sendChrome.footerHtml,
     );
+  if (input.invoiceId && wantsPayLink && input.expectedAmountCents === undefined) {
+    throw new StaffEmailBatchError("Refresh the invoice before sending its payment link.", 409);
+  }
   const paymentLinkForCustomer = wantsPayLink
-    ? createPaymentLinkCache(scope)
+    ? createPaymentLinkCache(scope, {
+        invoiceId: input.invoiceId,
+        expectedAmountCents: input.expectedAmountCents,
+      })
     : null;
   const offerInflight = new Map<string, Promise<unknown>>();
 
@@ -303,13 +312,14 @@ export async function dispatchStaffEmailBatch(
 
       let context = built.context;
       let paymentUrl: string | undefined;
+      let paymentLabel = "";
       if (wantsPayLink && paymentLinkForCustomer) {
         const offerTemplateId = resolveOfferContractTemplateId(
           contactId,
           input.offerContractTemplateId,
           input.offerContractOverrides,
         );
-        if (offerTemplateId && built.contact.customerRef) {
+        if (!input.invoiceId && offerTemplateId && built.contact.customerRef) {
           const offerKey = `${built.contact.customerRef}:${offerTemplateId}`;
           let pending = offerInflight.get(offerKey);
           if (!pending) {
@@ -332,6 +342,7 @@ export async function dispatchStaffEmailBatch(
         const minted = await paymentLinkForCustomer(built.contact.customerRef);
         if (minted) {
           paymentUrl = minted.payUrl;
+          paymentLabel = paymentAmountLabel(minted.totalCents, Boolean(input.invoiceId));
           context = { ...context, payment_link: paymentUrl };
         }
       }
@@ -346,6 +357,8 @@ export async function dispatchStaffEmailBatch(
         subject: renderedSubject,
         bodyText: renderedBody,
         paymentUrl,
+        paymentSummary: paymentLabel,
+        paymentButtonLabel: input.invoiceId ? "Pay this invoice" : "Pay outstanding balance",
         chrome: renderedChrome,
         unsubscribeUrl,
         invoiceWidget,
@@ -373,7 +386,7 @@ export async function dispatchStaffEmailBatch(
           fromEmail: account.fromEmail,
           toEmail,
           subject: wrapped.subject,
-          body: renderedBody,
+          body: wrapped.text,
           html: wrapped.html,
           status: "sent",
           providerMessageId: sent.messageId ?? null,
@@ -399,7 +412,7 @@ export async function dispatchStaffEmailBatch(
           fromEmail: account.fromEmail,
           toEmail,
           subject: wrapped.subject,
-          body: renderedBody,
+          body: wrapped.text,
           html: wrapped.html,
           status: "failed",
           providerMessageId: null,

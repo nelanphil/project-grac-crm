@@ -27,6 +27,8 @@ export interface IScheduledMessageSend extends Document {
   renewalYear?: number | null;
   renewalMonth?: number | null;
   includePaymentLink: boolean;
+  invoiceRef?: Types.ObjectId | null;
+  expectedAmountCents?: number;
   offerContractTemplateId?: Types.ObjectId | null;
   offerContractOverrides: {
     contactId: string;
@@ -69,6 +71,8 @@ const scheduledMessageSendSchema = new Schema<IScheduledMessageSend>(
     renewalYear: { type: Number, default: null },
     renewalMonth: { type: Number, default: null },
     includePaymentLink: { type: Boolean, default: false },
+    invoiceRef: { type: Schema.Types.ObjectId, ref: "Invoice", default: null },
+    expectedAmountCents: { type: Number, min: 0 },
     offerContractTemplateId: {
       type: Schema.Types.ObjectId,
       ref: "ContractTemplate",

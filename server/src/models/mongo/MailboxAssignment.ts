@@ -10,6 +10,7 @@ export interface IMailboxAssignment extends Document {
   uid: number;
   subject: string;
   userRefs: Types.ObjectId[];
+  archived?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,6 +34,7 @@ const mailboxAssignmentSchema = new Schema<IMailboxAssignment>(
       type: [{ type: Schema.Types.ObjectId, ref: "User" }],
       default: [],
     },
+    archived: { type: Boolean, default: false, index: true },
   },
   { timestamps: true },
 );

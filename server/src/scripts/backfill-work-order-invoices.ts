@@ -1,7 +1,7 @@
 /**
- * Creates invoices for existing work orders that have a billable total and no
+ * Creates invoices for completed work orders that have a billable total and no
  * non-void invoice. Unpaid tickets get an open invoice; paid tickets get a
- * paid invoice (metadata.backfilled = true).
+ * paid invoice (metadata.backfilled = true). Incomplete jobs are skipped.
  *
  * Run: npx tsx src/scripts/backfill-work-order-invoices.ts
  * Dry run: npx tsx src/scripts/backfill-work-order-invoices.ts --dry-run
@@ -60,9 +60,9 @@ async function main(): Promise<void> {
   await connectMongoDB();
 
   console.log("Loading billable work orders…");
-  const workOrders = await WorkOrder.find({ total: { $gt: 0 } })
+  const workOrders = await WorkOrder.find({ completed: true, total: { $gt: 0 } })
     .select(
-      "_id number paid total customerId customerRef parts totalLabor miscExp shipping descPerform date updatedAt",
+      "_id number paid completed total customerId customerRef parts totalLabor miscExp shipping descPerform date updatedAt",
     )
     .lean();
   console.log(`Loaded ${workOrders.length} billable work orders.`);
