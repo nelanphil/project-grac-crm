@@ -55,6 +55,7 @@ import {
   formatAddressLine,
   formatLocalDate,
   formatLocalTime,
+  formatLocalClock,
   formatMonthYear,
   formatPrettyDate,
   formatWeekdayDate,
@@ -76,6 +77,7 @@ import WeekBoard, {
 import MonthCalendar from "@/components/schedule/MonthCalendar";
 import MonthTable from "@/components/schedule/MonthTable";
 import SuggestAssigneeModal from "@/components/schedule/SuggestAssigneeModal";
+import GeneracScheduleLoadingOverlay from "@/components/schedule/GeneracScheduleLoadingOverlay";
 import {
   MapRouteToolbar,
   TechnicianRoutePane,
@@ -943,6 +945,14 @@ export default function CalendarTab({
   const [startOptionsLoading, setStartOptionsLoading] = useState(false);
   const [startDraft, setStartDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [dropLoading, setDropLoading] = useState<{
+    workOrder?: WorkOrderListItem | null;
+    technicianName?: string | null;
+    technicianInitials?: string | null;
+    targetTime?: string | null;
+    targetDate?: string | null;
+    message?: string;
+  } | null>(null);
 
   const [suggestions, setSuggestions] = useState<ScheduleSuggestion[] | null>(
     null,
@@ -1493,6 +1503,7 @@ export default function CalendarTab({
     userId: string,
     insertIndex?: number,
     estimatedMinutes?: number,
+    isDragDropManaged = false,
   ): Promise<boolean> {
     if (!token || !canWrite) return false;
     const crew = workOrderCrewIds(job);
@@ -1503,9 +1514,27 @@ export default function CalendarTab({
       workOrderLocalDate(job) === selectedDate;
     if (alreadyScheduled) return false;
     if (!(await confirmTerritory(job, userId))) return false;
+    if (!isDragDropManaged) {
+      const targetStaff = staff.find((s) => s._id === userId);
+      const techName = targetStaff
+        ? `${targetStaff.first_name} ${targetStaff.last_name}`
+        : "Technician";
+      const techInitials =
+        targetStaff?.initials?.trim() ||
+        `${targetStaff?.first_name?.[0] ?? ""}${targetStaff?.last_name?.[0] ?? ""}`.toUpperCase() ||
+        "T";
+      setDropLoading({
+        workOrder: job,
+        technicianName: techName,
+        technicianInitials: techInitials,
+        targetTime: insertIndex !== undefined ? `Slot ${insertIndex + 1}` : undefined,
+        targetDate: selectedDate,
+      });
+    }
     setSaving(true);
     setWarning(null);
     setError(null);
+    const startTime = Date.now();
     try {
       const dur = estimatedMinutes || job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES;
       const result = await suggestScheduleAssignee(token, {
@@ -1572,6 +1601,13 @@ export default function CalendarTab({
       );
       return false;
     } finally {
+      if (!isDragDropManaged) {
+        const elapsed = Date.now() - startTime;
+        if (elapsed < 750) {
+          await new Promise((r) => setTimeout(r, 750 - elapsed));
+        }
+        setDropLoading(null);
+      }
       setSaving(false);
     }
   }
@@ -1675,12 +1711,37 @@ export default function CalendarTab({
       const dropped = jobById.get(workOrderId);
       if (dropped && !(await confirmTerritory(dropped, userId))) return;
       if (dropped) {
-        await assignRailTechnician(
-          dropped,
-          userId,
-          insertIndex,
-          dropped.estimatedMinutes,
-        );
+        const targetStaff = staff.find((s) => s._id === userId);
+        const techName = targetStaff
+          ? `${targetStaff.first_name} ${targetStaff.last_name}`
+          : "Technician";
+        const techInitials =
+          targetStaff?.initials?.trim() ||
+          `${targetStaff?.first_name?.[0] ?? ""}${targetStaff?.last_name?.[0] ?? ""}`.toUpperCase() ||
+          "T";
+        setDropLoading({
+          workOrder: dropped,
+          technicianName: techName,
+          technicianInitials: techInitials,
+          targetTime: `Slot ${insertIndex + 1}`,
+          targetDate: selectedDate,
+        });
+        const startTime = Date.now();
+        try {
+          await assignRailTechnician(
+            dropped,
+            userId,
+            insertIndex,
+            dropped.estimatedMinutes,
+            true,
+          );
+        } finally {
+          const elapsed = Date.now() - startTime;
+          if (elapsed < 750) {
+            await new Promise((r) => setTimeout(r, 750 - elapsed));
+          }
+          setDropLoading(null);
+        }
       }
       return;
     }
@@ -1694,9 +1755,25 @@ export default function CalendarTab({
     const hhmm = minutesToHhMm(minutes);
     const iso = localDateTimeToIso(selectedDate, hhmm);
     if (!token) return;
+    const targetStaff = staff.find((s) => s._id === userId);
+    const techName = targetStaff
+      ? `${targetStaff.first_name} ${targetStaff.last_name}`
+      : "Technician";
+    const techInitials =
+      targetStaff?.initials?.trim() ||
+      `${targetStaff?.first_name?.[0] ?? ""}${targetStaff?.last_name?.[0] ?? ""}`.toUpperCase() ||
+      "T";
+    setDropLoading({
+      workOrder: dropped,
+      technicianName: techName,
+      technicianInitials: techInitials,
+      targetTime: formatLocalClock(new Date(iso)),
+      targetDate: selectedDate,
+    });
     setSaving(true);
     setWarning(null);
     setError(null);
+    const startTime = Date.now();
     try {
       const existing = dropped ? workOrderCrewIds(dropped) : [];
       const nextCrew = existing.includes(userId)
@@ -1721,7 +1798,12 @@ export default function CalendarTab({
         err instanceof ApiError ? err.message : "Failed to place work order.",
       );
     } finally {
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 750) {
+        await new Promise((r) => setTimeout(r, 750 - elapsed));
+      }
       setSaving(false);
+      setDropLoading(null);
     }
   }
 
@@ -2669,6 +2751,17 @@ export default function CalendarTab({
           </div>
         </div>
       ) : null}
+
+      {dropLoading && (
+        <GeneracScheduleLoadingOverlay
+          workOrder={dropLoading.workOrder}
+          technicianName={dropLoading.technicianName}
+          technicianInitials={dropLoading.technicianInitials}
+          targetTime={dropLoading.targetTime}
+          targetDate={dropLoading.targetDate}
+          message={dropLoading.message}
+        />
+      )}
 
       {suggestions && selectedRailJob && !selectedRailJob.scheduledStart && (
         <SuggestAssigneeModal

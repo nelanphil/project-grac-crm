@@ -470,9 +470,43 @@ html[data-theme="dark"] .schedule-day-active {
 @media (prefers-reduced-motion: reduce) {
   .unscheduled-badge,
   .schedule-day-active,
-  html[data-theme="dark"] .schedule-day-active {
+  html[data-theme="dark"] .schedule-day-active,
+  .animate-spin-reverse,
+  .animate-generac-progress {
     animation: none;
   }
+}
+
+@keyframes spin-reverse {
+  from {
+    transform: rotate(360deg);
+  }
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes generac-progress-slide {
+  0% {
+    left: -40%;
+    width: 40%;
+  }
+  50% {
+    left: 25%;
+    width: 50%;
+  }
+  100% {
+    left: 100%;
+    width: 40%;
+  }
+}
+
+.animate-spin-reverse {
+  animation: spin-reverse 5s linear infinite;
+}
+
+.animate-generac-progress {
+  animation: generac-progress-slide 1.4s ease-in-out infinite;
 }
 
 /* Prevents native text-selection/scroll from hijacking the long-press-to-drag gesture. */
