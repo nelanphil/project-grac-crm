@@ -6,6 +6,7 @@ import { WorkOrder } from "../models/mongo/WorkOrder";
 import { Estimate } from "../models/mongo/Estimate";
 import { Customer } from "../models/mongo/Customer";
 import { dollarsToCents } from "../services/invoice.service";
+import { completedPaidWorkOrderFilter } from "../services/completedPaidReport";
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -61,7 +62,7 @@ export async function getFinancialsSummary(
     const estimateMatch: Record<string, unknown> = {};
     inRange(estimateMatch, "createdAt", from, to);
 
-    const [invoices, workOrders, estimates] = await Promise.all([
+    const [invoices, workOrders, estimates, completedPaidOrders] = await Promise.all([
       Invoice.find(invoiceMatch)
         .select("status amountCents dueDate issuedAt paidAt workOrderRef sourceType")
         .lean(),
@@ -70,6 +71,9 @@ export async function getFinancialsSummary(
         .lean(),
       Estimate.find(estimateMatch)
         .select("status total createdAt")
+        .lean(),
+      WorkOrder.find(completedPaidWorkOrderFilter(from, to))
+        .select("total")
         .lean(),
     ]);
 
@@ -112,6 +116,11 @@ export async function getFinancialsSummary(
       }
     }
 
+    let completedPaidCents = 0;
+    for (const wo of completedPaidOrders) {
+      completedPaidCents += dollarsToCents(wo.total || 0);
+    }
+
     const estimateByStatus: Record<string, { count: number; cents: number }> = {
       draft: { count: 0, cents: 0 },
       sent: { count: 0, cents: 0 },
@@ -143,6 +152,8 @@ export async function getFinancialsSummary(
         completedCount: completedWorkOrders,
         unbilledCents,
         laborHours,
+        completedPaidCount: completedPaidOrders.length,
+        completedPaidCents,
       },
       estimates: {
         count: estimates.length,
@@ -352,10 +363,14 @@ export async function getFinancialsRecords(
     if (
       type === "open_work_orders" ||
       type === "unbilled_work" ||
-      type === "labor_hours"
+      type === "labor_hours" ||
+      type === "completed_paid"
     ) {
-      const match: Record<string, unknown> = {};
-      if (from || to) {
+      const match: Record<string, unknown> =
+        type === "completed_paid"
+          ? completedPaidWorkOrderFilter(from, to)
+          : {};
+      if (type !== "completed_paid" && (from || to)) {
         const range: Record<string, Date> = {};
         if (from) range.$gte = from;
         if (to) range.$lte = to;
@@ -411,7 +426,9 @@ export async function getFinancialsRecords(
             ? { laborHours: -1, date: -1, createdAt: -1 }
             : type === "unbilled_work"
               ? { total: -1, date: -1, createdAt: -1 }
-              : { date: -1, createdAt: -1 };
+              : type === "completed_paid"
+                ? { date: 1 }
+                : { date: -1, createdAt: -1 };
       }
 
       const [total, workOrders] = await Promise.all([
@@ -471,7 +488,8 @@ export async function getFinancialsRecords(
           }
         }
 
-        const dateVal = wo.date || wo.createdAt;
+        const dateVal =
+          type === "completed_paid" ? wo.date : wo.date || wo.createdAt;
         return {
           _id: String(wo._id),
           recordType: "work_order" as const,

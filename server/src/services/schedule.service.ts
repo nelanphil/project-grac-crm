@@ -23,6 +23,7 @@ import {
   resolveDayWindow,
   SCHEDULE_TIMEZONE,
   storedTicketDateKey,
+  weeklyHoursNeverEnabled,
   windowToUtcRange,
   type DayWindow,
   type HomeLocation,
@@ -1800,6 +1801,8 @@ export type RecommendedRouteDate = {
   userId: string;
   first_name: string;
   last_name: string;
+  initials: string;
+  scheduleColor?: string;
   distanceMiles: number;
   stopCount: number;
   closestStopCity: string;
@@ -1807,12 +1810,28 @@ export type RecommendedRouteDate = {
   territoryCity?: string;
 };
 
+function staffInitials(user: {
+  first_name?: string;
+  last_name?: string;
+  initials?: string | null;
+}): string {
+  const saved = (user.initials ?? "").trim().toUpperCase();
+  if (saved) return saved;
+  const first = (user.first_name ?? "").trim().charAt(0).toUpperCase();
+  const last = (user.last_name ?? "").trim().charAt(0).toUpperCase();
+  return `${first}${last}` || "?";
+}
+
 function addLocalDays(localDate: string, days: number): string {
   const [year, month, day] = localDate.split("-").map(Number);
   const targetNoon = new Date(
     Date.UTC(year ?? 1970, (month ?? 1) - 1, (day ?? 1) + days, 12),
   );
   return formatLocalDate(targetNoon);
+}
+
+function normalizeCityKey(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function matchTerritoryCity(
@@ -1829,15 +1848,15 @@ function matchTerritoryCity(
   jobState: string,
   jobCoords: LatLng | null,
 ): { tier: 0 | 1 | 2; city: string } {
-  const city = jobCity.trim().toLowerCase();
+  const cityKey = normalizeCityKey(jobCity);
   const state = jobState.trim().toLowerCase();
   const list = cities ?? [];
-  if (city && state) {
-    const exact = list.find(
-      (entry) =>
-        (entry.city ?? "").trim().toLowerCase() === city &&
-        scheduleState({ state: entry.state }).toLowerCase() === state,
-    );
+  if (cityKey) {
+    const exact = list.find((entry) => {
+      if (normalizeCityKey(entry.city) !== cityKey) return false;
+      if (!state || !(entry.state ?? "").trim()) return true;
+      return scheduleState({ state: entry.state }).toLowerCase() === state;
+    });
     if (exact) {
       return { tier: 0, city: (exact.city ?? jobCity).trim() };
     }
@@ -1861,13 +1880,20 @@ function matchTerritoryCity(
   return { tier: 2, city: "" };
 }
 
+function effectiveTechWeeklyHours(
+  weeklyHours: WeeklyHours | null | undefined,
+): WeeklyHours {
+  return weeklyHoursNeverEnabled(weeklyHours)
+    ? defaultWeeklyHours(true)
+    : (weeklyHours ?? defaultWeeklyHours(true));
+}
+
 /**
- * Find future dates where any schedulable (and type-qualified) technician has
- * a scheduled route stop within `maxMiles` (default 10 miles) of the site.
- * When no future scheduled routes are within `maxMiles`, falls back to future
- * dates (starting at least 2 days after today — never today or tomorrow) with
- * technicians whose desired territory (`serviceCities`) covers the site.
- * Sorted chronologically (soonest date first).
+ * Find future dates where any schedulable technician has a scheduled route stop
+ * within `maxMiles` (default 10 miles) of the site, and also fall back to /
+ * include future dates (starting at least 2 days after today — never today or
+ * tomorrow) with technicians whose desired territory (`serviceCities`) covers
+ * the site. Sorted chronologically (soonest date first).
  */
 export async function recommendDatesForSite(opts: {
   startTime?: string;
@@ -1898,7 +1924,7 @@ export async function recommendDatesForSite(opts: {
       ? opts.workOrderTypeRef
       : "";
 
-  const [site, allStaff, workOrderType] = await Promise.all([
+  const [site, staff, workOrderType] = await Promise.all([
     resolveSlotSite(opts),
     listSchedulableStaff(),
     typeId
@@ -1906,22 +1932,16 @@ export async function recommendDatesForSite(opts: {
       : null,
   ]);
 
-  if (allStaff.length === 0 || (!site.coords && !site.city.trim())) {
+  if (staff.length === 0 || (!site.coords && !site.city.trim())) {
     return { dates: [] };
   }
 
-  let staff = allStaff;
   const qualifiedIds = new Set(
     (workOrderType?.qualifiedUserRefs ?? []).map((id) => id.toString()),
   );
-  if (qualifiedIds.size > 0) {
-    const matched = allStaff.filter((tech) =>
-      qualifiedIds.has(String(tech._id)),
-    );
-    if (matched.length > 0) {
-      staff = matched;
-    }
-  }
+  const hasQualified = qualifiedIds.size > 0;
+  const isQualified = (userId: string): boolean =>
+    !hasQualified || qualifiedIds.has(userId);
 
   const staffById = new Map(staff.map((tech) => [String(tech._id), tech]));
   const today = formatLocalDate(new Date());
@@ -2135,12 +2155,13 @@ export async function recommendDatesForSite(opts: {
     return dayHasRoom(range, jobs, minutes);
   };
 
-  const bestByDate = new Map<string, RouteAccumulator>();
+  const matchingRoutes: RouteAccumulator[] = [];
+  const routeDateTechKeys = new Set<string>();
   for (const route of routesByDateTech.values()) {
     if (!Number.isFinite(route.minMiles) || route.minMiles > maxMiles) continue;
 
     const window = resolveDayWindow(
-      route.tech.weeklyHours,
+      effectiveTechWeeklyHours(route.tech.weeklyHours),
       route.tech.scheduleExceptions,
       route.date,
     );
@@ -2149,37 +2170,40 @@ export async function recommendDatesForSite(opts: {
 
     if (!fitsDay(route.date, range, route.jobs)) continue;
 
-    const current = bestByDate.get(route.date);
-    if (
-      !current ||
-      route.minMiles < current.minMiles ||
-      (route.minMiles === current.minMiles &&
-        staffDisplayName(route.tech).localeCompare(
-          staffDisplayName(current.tech),
-        ) < 0)
-    ) {
-      bestByDate.set(route.date, route);
-    }
+    matchingRoutes.push(route);
+    routeDateTechKeys.add(`${route.date}|${String(route.tech._id)}`);
   }
 
-  if (bestByDate.size > 0) {
-    const dates: RecommendedRouteDate[] = [...bestByDate.values()]
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((entry) => ({
-        date: entry.date,
-        userId: String(entry.tech._id),
-        first_name: entry.tech.first_name,
-        last_name: entry.tech.last_name,
-        distanceMiles: Math.round(entry.minMiles * 10) / 10,
-        stopCount: entry.stopCount,
-        closestStopCity: entry.closestStopCity,
-        matchType: "route" as const,
-      }));
-    return { dates };
+  const routeDates: RecommendedRouteDate[] = matchingRoutes
+    .sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      const aQual = isQualified(String(a.tech._id));
+      const bQual = isQualified(String(b.tech._id));
+      if (aQual !== bQual) return aQual ? -1 : 1;
+      if (a.minMiles !== b.minMiles) return a.minMiles - b.minMiles;
+      return staffDisplayName(a.tech).localeCompare(staffDisplayName(b.tech));
+    })
+    .map((entry) => ({
+      date: entry.date,
+      userId: String(entry.tech._id),
+      first_name: entry.tech.first_name,
+      last_name: entry.tech.last_name,
+      initials: staffInitials(entry.tech),
+      scheduleColor: (entry.tech.scheduleColor ?? "").trim() || undefined,
+      distanceMiles: Math.round(entry.minMiles * 10) / 10,
+      stopCount: entry.stopCount,
+      closestStopCity: entry.closestStopCity,
+      matchType: "route" as const,
+    }));
+
+  const uniqueRouteTechIds = new Set(routeDates.map((d) => d.userId));
+  if (routeDates.length > 0 && uniqueRouteTechIds.size >= 2) {
+    return { dates: routeDates };
   }
 
-  // Fallback: recommend future dates (starting after tomorrow, dayOffset >= 2)
-  // for technicians whose desired territory (`serviceCities`) covers the site.
+  // Fallback / supplement: recommend future dates (starting after tomorrow,
+  // dayOffset >= 2 — never today or tomorrow) for technicians whose desired
+  // territory (`serviceCities`) covers the site.
   const territoryMatches = staff
     .map((tech) => {
       const match = matchTerritoryCity(
@@ -2195,32 +2219,29 @@ export async function recommendDatesForSite(opts: {
           : Number.POSITIVE_INFINITY;
       return {
         tech,
+        userId: String(tech._id),
+        qualified: isQualified(String(tech._id)),
         tier: match.tier,
         city: match.city || site.city.trim(),
         homeMiles,
       };
     })
-    .filter((entry) => entry.tier <= 1);
+    .filter((entry) => entry.tier <= 1)
+    .sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      if (a.qualified !== b.qualified) return a.qualified ? -1 : 1;
+      const aKnown = Number.isFinite(a.homeMiles);
+      const bKnown = Number.isFinite(b.homeMiles);
+      if (aKnown !== bKnown) return aKnown ? -1 : 1;
+      if (aKnown && bKnown && a.homeMiles !== b.homeMiles) {
+        return a.homeMiles - b.homeMiles;
+      }
+      return staffDisplayName(a.tech).localeCompare(staffDisplayName(b.tech));
+    });
 
   if (territoryMatches.length === 0) {
-    return { dates: [] };
+    return { dates: routeDates };
   }
-
-  const hasExactTerritory = territoryMatches.some((entry) => entry.tier === 0);
-  const eligibleTerritoryTechs = (
-    hasExactTerritory
-      ? territoryMatches.filter((entry) => entry.tier === 0)
-      : territoryMatches
-  ).sort((a, b) => {
-    if (a.tier !== b.tier) return a.tier - b.tier;
-    const aKnown = Number.isFinite(a.homeMiles);
-    const bKnown = Number.isFinite(b.homeMiles);
-    if (aKnown !== bKnown) return aKnown ? -1 : 1;
-    if (aKnown && bKnown && a.homeMiles !== b.homeMiles) {
-      return a.homeMiles - b.homeMiles;
-    }
-    return staffDisplayName(a.tech).localeCompare(staffDisplayName(b.tech));
-  });
 
   const fallbackDates: RecommendedRouteDate[] = [];
   for (
@@ -2229,25 +2250,30 @@ export async function recommendDatesForSite(opts: {
     dayOffset += 1
   ) {
     const candidateDate = addLocalDays(today, dayOffset);
-    for (const entry of eligibleTerritoryTechs) {
+    for (const entry of territoryMatches) {
+      if (routeDateTechKeys.has(`${candidateDate}|${entry.userId}`)) continue;
+
       const window = resolveDayWindow(
-        entry.tech.weeklyHours,
+        effectiveTechWeeklyHours(entry.tech.weeklyHours),
         entry.tech.scheduleExceptions,
         candidateDate,
       );
       const range = windowToUtcRange(candidateDate, window);
       if (!range) continue;
 
-      const userId = String(entry.tech._id);
-      const existingRoute = routesByDateTech.get(`${candidateDate}|${userId}`);
+      const existingRoute = routesByDateTech.get(
+        `${candidateDate}|${entry.userId}`,
+      );
       const existingJobs = existingRoute?.jobs ?? [];
       if (!fitsDay(candidateDate, range, existingJobs)) continue;
 
       fallbackDates.push({
         date: candidateDate,
-        userId,
+        userId: entry.userId,
         first_name: entry.tech.first_name,
         last_name: entry.tech.last_name,
+        initials: staffInitials(entry.tech),
+        scheduleColor: (entry.tech.scheduleColor ?? "").trim() || undefined,
         distanceMiles: Number.isFinite(entry.homeMiles)
           ? Math.round(entry.homeMiles * 10) / 10
           : 0,
@@ -2259,7 +2285,7 @@ export async function recommendDatesForSite(opts: {
     }
   }
 
-  return { dates: fallbackDates };
+  return { dates: [...routeDates, ...fallbackDates] };
 }
 
 export async function dayRouteForUser(opts: {
@@ -2291,27 +2317,82 @@ export async function dayRouteForUser(opts: {
   }
 
   const { start: dayStart, end: dayEnd } = localDayBounds(opts.date);
+  const utcDayStart = new Date(`${opts.date}T00:00:00.000Z`);
+  const utcDayEnd = new Date(`${opts.date}T23:59:59.999Z`);
   const jobs = (
     await WorkOrder.find({
-      ...assigneeInFilter([user._id]),
-      scheduledStart: { $gte: dayStart, $lt: dayEnd },
+      $and: [
+        assigneeInFilter([user._id]),
+        {
+          $or: [
+            { scheduledStart: { $gte: dayStart, $lt: dayEnd } },
+            {
+              scheduledStart: null,
+              date: { $gte: Math.min(dayStart.getTime(), utcDayStart.getTime()) ? new Date(Math.min(dayStart.getTime(), utcDayStart.getTime())) : dayStart, $lte: new Date(Math.max(dayEnd.getTime(), utcDayEnd.getTime())) },
+            },
+          ],
+        },
+        {
+          $or: [
+            { appointmentCanceledAt: null },
+            { appointmentCanceledAt: { $exists: false } },
+          ],
+        },
+      ],
     })
-      .sort({ scheduledStart: 1 })
+      .sort({ scheduledStart: 1, startTime: 1, date: 1 })
       .lean()
-  ).filter(
-    (job) =>
-      job.scheduledStart instanceof Date &&
-      formatLocalDate(job.scheduledStart) === opts.date,
-  );
+  ).filter((job) => {
+    if (job.scheduledStart instanceof Date) {
+      return formatLocalDate(job.scheduledStart) === opts.date;
+    }
+    return storedTicketDateKey(job.date) === opts.date;
+  });
 
   const enriched = await enrichScheduleWorkOrders(jobs);
-  const home = homeCoords(user.homeLocation);
-  const jobPoints = enriched
-    .map((wo) => ({
-      wo,
-      coords: addressCoords(wo.address),
-    }))
-    .filter((row) => row.coords);
+  const siteCache = new Map<string, SitePoint | null>();
+  const geocodeCache = new Map<string, LatLng | null>();
+  let home = homeCoords(user.homeLocation);
+  if (!home && (user.homeLocation?.address?.trim() || user.homeLocation?.city?.trim())) {
+    home = await geocodeToLatLng(user.homeLocation, geocodeCache);
+  }
+
+  const jobPoints: Array<{
+    wo: EnrichedWorkOrder;
+    coords: LatLng | null;
+  }> = [];
+  for (const wo of enriched) {
+    let coords = addressCoords(wo.address);
+    if (!coords && wo.address?._id) {
+      coords = await ensureAddressPoint(wo.address, siteCache);
+    }
+    if (!coords) {
+      const fallbackAddress =
+        wo.address?.address ||
+        (typeof wo.customerAddress === "string" ? wo.customerAddress : "");
+      const fallbackCity =
+        wo.address?.city ||
+        (typeof wo.customerCity === "string" ? wo.customerCity : "");
+      const fallbackState =
+        wo.address?.state ||
+        (typeof wo.customerState === "string" ? wo.customerState : "");
+      const fallbackZip =
+        wo.address?.zip ||
+        (typeof wo.customerZip === "string" ? wo.customerZip : "");
+      if (fallbackAddress.trim() || fallbackCity.trim()) {
+        coords = await geocodeToLatLng(
+          {
+            address: fallbackAddress,
+            city: fallbackCity,
+            state: fallbackState,
+            zip: fallbackZip,
+          },
+          geocodeCache,
+        );
+      }
+    }
+    jobPoints.push({ wo, coords });
+  }
 
   const stops: Array<{
     kind: "home" | "job";
@@ -2325,8 +2406,8 @@ export async function dayRouteForUser(opts: {
   const jobStops = jobPoints.map((row) => ({
     kind: "job" as const,
     label: row.wo.customerName || "Work order",
-    lat: row.coords!.lat,
-    lng: row.coords!.lng,
+    lat: row.coords?.lat ?? null,
+    lng: row.coords?.lng ?? null,
     workOrderId: String(row.wo._id),
     scheduledStart:
       row.wo.scheduledStart instanceof Date
@@ -2334,7 +2415,7 @@ export async function dayRouteForUser(opts: {
         : ((row.wo.scheduledStart as string | null) ?? null),
   }));
 
-  if (home) {
+  if (home && jobStops.length > 0) {
     stops.push({
       kind: "home",
       label: "Home",
@@ -2343,7 +2424,7 @@ export async function dayRouteForUser(opts: {
     });
   }
   stops.push(...jobStops);
-  if (home) {
+  if (home && jobStops.length > 0) {
     stops.push({
       kind: "home",
       label: "Home (return)",
@@ -2352,7 +2433,9 @@ export async function dayRouteForUser(opts: {
     });
   }
 
-  const intermediates = jobPoints.map((row) => row.coords!);
+  const intermediates = jobPoints
+    .map((row) => row.coords)
+    .filter((c): c is LatLng => c != null);
   let route: Awaited<ReturnType<typeof computeDayRoute>> = null;
   if (home && intermediates.length > 0) {
     route = await computeDayRoute(home, home, intermediates);

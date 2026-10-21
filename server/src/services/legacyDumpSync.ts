@@ -117,6 +117,9 @@ export type ImportSummary = {
   workOrdersSkippedFuzzy: number;
   workOrderOrphans: number;
   workOrdersLineItemsBackfilled: number;
+  workOrdersStatusUpdated: number;
+  workOrdersSkippedDuplicateLegacy: number;
+  workOrdersSkippedUserMismatch: number;
   ascCustomers: number;
   contractsCreated: number;
   contractsUpdated: number;
@@ -562,6 +565,92 @@ function woFuzzyKey(
   return `${customerLegacyId}|${dateKey(date)}|${normalizeDesc(descPerform)}`;
 }
 
+export type LegacyWoMatchCandidate = {
+  userId?: number | null;
+};
+
+export type LegacyWoMatch =
+  | { action: "update" }
+  | { action: "skip"; reason: "none" | "duplicate" | "user_mismatch" };
+
+/** One stored ticket with this legacy id and the same login may be updated. */
+export function matchLegacyWorkOrder(
+  row: { userId: number },
+  candidates: LegacyWoMatchCandidate[],
+): LegacyWoMatch {
+  if (candidates.length === 0) return { action: "skip", reason: "none" };
+  if (candidates.length !== 1) return { action: "skip", reason: "duplicate" };
+  if (candidates[0]?.userId !== row.userId) {
+    return { action: "skip", reason: "user_mismatch" };
+  }
+  return { action: "update" };
+}
+
+export type LegacyStatusSnapshot = {
+  paid?: boolean;
+  completed?: boolean;
+  date?: Date | string | null;
+  total?: number;
+};
+
+export type LegacyStatusDump = {
+  paid: boolean;
+  completed: boolean;
+  date: Date | null;
+  totalParts: number;
+  totalLabor: number;
+  miscExp: number;
+  subtotal: number;
+  shipping: number;
+  total: number;
+};
+
+function sameDumpTotal(existing: number | undefined, dump: number): boolean {
+  return Math.abs((existing ?? 0) - dump) < 0.001;
+}
+
+/**
+ * Fields to write when a uniquely matched legacy ticket differs from the dump.
+ * Returns null when paid, completed, date, and total already match.
+ */
+export function legacyWorkOrderStatusPatch(
+  existing: LegacyStatusSnapshot,
+  row: LegacyStatusDump,
+): Record<string, unknown> | null {
+  const paidChanged = Boolean(existing.paid) !== row.paid;
+  const completedChanged = Boolean(existing.completed) !== row.completed;
+  const existingDate =
+    existing.date instanceof Date
+      ? existing.date
+      : existing.date
+        ? new Date(existing.date)
+        : null;
+  const dateChanged = dateKey(existingDate) !== dateKey(row.date);
+  const totalChanged = !sameDumpTotal(existing.total, row.total);
+  if (!paidChanged && !completedChanged && !dateChanged && !totalChanged) {
+    return null;
+  }
+
+  const $set: Record<string, unknown> = {};
+  if (paidChanged || completedChanged || dateChanged) {
+    $set.paid = row.paid;
+    $set.completed = row.completed;
+    $set.date = row.date;
+  }
+  if (paidChanged || totalChanged) {
+    $set.totalParts = row.totalParts;
+    $set.totalLabor = row.totalLabor;
+    $set.miscExp = row.miscExp;
+    $set.subtotal = row.subtotal;
+    $set.shipping = row.shipping;
+    $set.total = row.total;
+    $set.taxRate = 0;
+    $set.tax = 0;
+    $set.taxOverridden = false;
+  }
+  return $set;
+}
+
 function displayName(c: { first?: string; last?: string; accountName?: string }): string {
   const account = (c.accountName ?? "").trim();
   if (account) return account;
@@ -870,9 +959,11 @@ type ExistingWorkOrder = {
   customerPhone?: string;
   customerEmail?: string;
   number?: string;
+  userId?: number | null;
   date?: Date | null;
   descPerform?: string;
   paid?: boolean;
+  completed?: boolean;
   parts?: Array<{
     lineType?: string;
     partNumber?: string;
@@ -1162,6 +1253,93 @@ async function backfillExistingWorkOrderLineItems(
     });
   }
   return true;
+}
+
+async function syncLegacyBoundInvoiceStatus(
+  models: BoundModels,
+  wo: {
+    _id: Types.ObjectId;
+    customerId: number;
+    customerRef?: Types.ObjectId | null;
+    number?: string;
+    date?: Date | null;
+    descPerform?: string;
+    parts?: LegacyMappedWorkOrderMoney["parts"];
+    totalLabor?: number;
+    miscExp?: number;
+    shipping?: number;
+  },
+  row: WorkOrderRow,
+): Promise<void> {
+  const existing = await models.Invoice.findOne({
+    workOrderRef: wo._id,
+    status: { $ne: "void" },
+  });
+  const issuedAt = row.date instanceof Date ? row.date : new Date();
+  const amountCents = dollarsToCents(row.total);
+  const nextStatus = row.paid ? ("paid" as const) : ("open" as const);
+  const nextPaidAt = row.paid ? issuedAt : null;
+
+  if (existing) {
+    const statusChanged = existing.status !== nextStatus;
+    const amountChanged =
+      amountCents > 0 && existing.amountCents !== amountCents;
+    if (!statusChanged && !amountChanged) return;
+    if (statusChanged) {
+      existing.status = nextStatus;
+      existing.paidAt = nextPaidAt;
+    }
+    if (amountChanged) {
+      existing.amountCents = amountCents;
+      existing.taxRatePercent = 0;
+      existing.taxCents = 0;
+      existing.taxOverridden = false;
+    }
+    if (!existing.customerRef && wo.customerRef) {
+      existing.customerRef = wo.customerRef;
+    }
+    await existing.save();
+    return;
+  }
+
+  if (row.total <= 0 || !wo.customerRef || amountCents <= 0) return;
+  const payload = {
+    customerId: wo.customerId,
+    customerRef: wo.customerRef,
+    sourceType: "work_order" as const,
+    workOrderRef: wo._id,
+    lineItems: workOrderInvoiceLineItems({
+      number: wo.number,
+      descPerform: row.descPerform,
+      parts: wo.parts,
+      totalLabor: row.totalLabor,
+      miscExp: row.miscExp,
+      shipping: row.shipping,
+      total: row.total,
+    }),
+    amountCents,
+    currency: "USD",
+    status: nextStatus,
+    dueDate: null,
+    issuedAt,
+    paidAt: nextPaidAt,
+    metadata: { backfilled: true },
+    taxRatePercent: 0,
+    taxCents: 0,
+    taxOverridden: false,
+  };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await models.Invoice.create({
+        ...payload,
+        number: await nextBoundInvoiceNumber(models, issuedAt),
+      });
+      return;
+    } catch (err) {
+      const code = (err as { code?: number }).code;
+      if (code !== 11000 || attempt === 2) throw err;
+    }
+  }
 }
 
 function allocateInvoiceNumber(issuedAt: Date, reserved: Set<string>): string {
@@ -1883,16 +2061,18 @@ export async function runLegacyDumpSync(options: {
     log("Loading existing work orders…");
     const existingWos = await models.WorkOrder.find()
       .select(
-        "_id legacyId number customerId customerRef customerName customerAddress customerCity customerZip customerPhone customerEmail date descPerform paid parts subtotal shipping total",
+        "_id legacyId userId number customerId customerRef customerName customerAddress customerCity customerZip customerPhone customerEmail date descPerform paid completed parts subtotal shipping total",
       )
       .lean();
     const existingWoLegacyIds = new Set<number>();
-    const existingWoByLegacyId = new Map<number, ExistingWorkOrder>();
+    const wosByLegacyId = new Map<number, ExistingWorkOrder[]>();
     const fuzzyWoKeys = new Set<string>();
     for (const wo of existingWos) {
       if (wo.legacyId != null) {
         existingWoLegacyIds.add(wo.legacyId);
-        existingWoByLegacyId.set(wo.legacyId, wo);
+        const list = wosByLegacyId.get(wo.legacyId) ?? [];
+        list.push(wo);
+        wosByLegacyId.set(wo.legacyId, list);
       }
       fuzzyWoKeys.add(woFuzzyKey(wo.customerId, wo.date, wo.descPerform ?? ""));
     }
@@ -1914,6 +2094,11 @@ export async function runLegacyDumpSync(options: {
     let insertedWos = 0;
     let backfilledWoRefs = 0;
     let backfilledWoLineItems = 0;
+    let statusUpdated = 0;
+    let skippedDuplicateLegacy = 0;
+    let skippedUserMismatch = 0;
+    const duplicateLegacyIds: number[] = [];
+    const userMismatchIds: number[] = [];
     const productCatalog = await loadProductCatalog(models);
     const taxRate = dryRun ? 0 : await boundTaxRate(models);
     if (workOrderRows.length > 0) {
@@ -1925,30 +2110,74 @@ export async function runLegacyDumpSync(options: {
     for (let i = 0; i < workOrderRows.length; i += 1) {
       const row = workOrderRows[i]!;
       try {
-      if (existingWoLegacyIds.has(row.legacyId)) {
+      const legacyMatches = wosByLegacyId.get(row.legacyId) ?? [];
+      if (legacyMatches.length > 0 || existingWoLegacyIds.has(row.legacyId)) {
         skippedWoLegacy += 1;
         audit.wosPresent += 1;
-        const existing = existingWoByLegacyId.get(row.legacyId);
-        if (existing) {
-          const backfilled = await backfillExistingWorkOrderCustomer(
+        const decision = matchLegacyWorkOrder(row, legacyMatches);
+        if (decision.action === "skip") {
+          if (decision.reason === "duplicate") {
+            skippedDuplicateLegacy += 1;
+            duplicateLegacyIds.push(row.legacyId);
+          } else if (decision.reason === "user_mismatch") {
+            skippedUserMismatch += 1;
+            userMismatchIds.push(row.legacyId);
+          }
+          continue;
+        }
+
+        const existing = legacyMatches[0]!;
+        const backfilled = await backfillExistingWorkOrderCustomer(
+          models,
+          existing,
+          row,
+          mysqlToCustomer,
+          index,
+          dryRun,
+          log,
+        );
+        if (backfilled) backfilledWoRefs += 1;
+        const mappedItems = await backfillExistingWorkOrderLineItems(
+          models,
+          existing,
+          row,
+          productCatalog,
+          dryRun,
+          taxRate,
+        );
+        if (mappedItems) backfilledWoLineItems += 1;
+
+        const statusPatch = legacyWorkOrderStatusPatch(existing, row);
+        if (statusPatch) {
+          statusUpdated += 1;
+          if (!dryRun) {
+            await models.WorkOrder.updateOne(
+              { _id: existing._id },
+              { $set: statusPatch },
+            );
+          }
+          if ("paid" in statusPatch) existing.paid = row.paid;
+          if ("completed" in statusPatch) existing.completed = row.completed;
+          if ("date" in statusPatch) existing.date = row.date;
+          if ("total" in statusPatch) existing.total = row.total;
+        }
+        if (!dryRun) {
+          await syncLegacyBoundInvoiceStatus(
             models,
-            existing,
+            {
+              _id: existing._id,
+              customerId: existing.customerId,
+              customerRef: existing.customerRef,
+              number: existing.number,
+              date: existing.date ?? row.date,
+              descPerform: row.descPerform,
+              parts: existing.parts as LegacyMappedWorkOrderMoney["parts"],
+              totalLabor: row.totalLabor,
+              miscExp: row.miscExp,
+              shipping: row.shipping,
+            },
             row,
-            mysqlToCustomer,
-            index,
-            dryRun,
-            log,
           );
-          if (backfilled) backfilledWoRefs += 1;
-          const mappedItems = await backfillExistingWorkOrderLineItems(
-            models,
-            existing,
-            row,
-            productCatalog,
-            dryRun,
-            taxRate,
-          );
-          if (mappedItems) backfilledWoLineItems += 1;
         }
         continue;
       }
@@ -2047,8 +2276,18 @@ export async function runLegacyDumpSync(options: {
     }
 
     log(
-      `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()} ref-backfills=${backfilledWoRefs.toLocaleString()} line-item-backfills=${backfilledWoLineItems.toLocaleString()}.`,
+      `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()} ref-backfills=${backfilledWoRefs.toLocaleString()} line-item-backfills=${backfilledWoLineItems.toLocaleString()} status-updates=${statusUpdated.toLocaleString()} duplicate-legacy=${skippedDuplicateLegacy.toLocaleString()} user-mismatch=${skippedUserMismatch.toLocaleString()}.`,
     );
+    if (duplicateLegacyIds.length > 0) {
+      log(
+        `Skipped duplicate legacy work order ids: ${duplicateLegacyIds.join(", ")}`,
+      );
+    }
+    if (userMismatchIds.length > 0) {
+      log(
+        `Skipped legacy work order ids with a different user: ${userMismatchIds.join(", ")}`,
+      );
+    }
 
     log(
       dryRun
@@ -2087,6 +2326,9 @@ export async function runLegacyDumpSync(options: {
       workOrdersSkippedFuzzy: skippedWoFuzzy,
       workOrderOrphans: orphanWos,
       workOrdersLineItemsBackfilled: backfilledWoLineItems,
+      workOrdersStatusUpdated: statusUpdated,
+      workOrdersSkippedDuplicateLegacy: skippedDuplicateLegacy,
+      workOrdersSkippedUserMismatch: skippedUserMismatch,
       ascCustomers: ascSync.customersWithAsc,
       contractsCreated: dryRun ? 0 : ascSync.contractsCreated,
       contractsUpdated: dryRun ? 0 : ascSync.contractsUpdated,

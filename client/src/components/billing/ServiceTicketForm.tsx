@@ -36,6 +36,7 @@ import {
 import { COMPANY, US_STATE_CODES, US_STATES, toUsStateCode } from "@/lib/constants";
 import { formatCustomerRecordName } from "@/lib/formatName";
 import PhoneInput from "@/components/ui/PhoneInput";
+import DayRoutesModal from "@/components/schedule/DayRoutesModal";
 import {
   DEFAULT_PRODUCT_DISCOUNTS,
   formatDiscountSummary,
@@ -66,6 +67,7 @@ import {
   formatLocalClock,
   formatWeekdayDate,
   normalizeTimeOfDay,
+  resolvedTechnicianColor,
 } from "@/lib/schedule";
 import { isDispatcherRole } from "@/lib/dashboard-role";
 import EquipmentWorkOrderTypeChoice from "@/components/billing/EquipmentWorkOrderTypeChoice";
@@ -158,6 +160,18 @@ function technicianDisplayName(tech: {
   last_name?: string;
 }): string {
   return `${tech.first_name ?? ""} ${tech.last_name ?? ""}`.trim();
+}
+
+function technicianInitials(tech: {
+  first_name?: string;
+  last_name?: string;
+  initials?: string | null;
+}): string {
+  const saved = (tech.initials ?? "").trim().toUpperCase();
+  if (saved) return saved;
+  const f = (tech.first_name ?? "").trim().charAt(0).toUpperCase();
+  const l = (tech.last_name ?? "").trim().charAt(0).toUpperCase();
+  return `${f}${l}` || "?";
 }
 
 function splitPersonName(name: string): { first_name: string; last_name: string } {
@@ -256,6 +270,10 @@ export default function ServiceTicketForm({
   const [recommendedDates, setRecommendedDates] = useState<RecommendedRouteDate[]>([]);
   const [recommendedDatesLoading, setRecommendedDatesLoading] = useState(false);
   const [recommendedDatesPage, setRecommendedDatesPage] = useState(0);
+  const [viewScheduleModal, setViewScheduleModal] = useState<{
+    date: string;
+    techId: string | null;
+  } | null>(null);
   const [workOrderTypes, setWorkOrderTypes] = useState<WorkOrderTypeItem[]>([]);
   const [workOrderTypesLoaded, setWorkOrderTypesLoaded] = useState(false);
   const lastAppliedSiteKey = useRef(
@@ -562,8 +580,21 @@ export default function ServiceTicketForm({
   ]);
 
   const recommendedTech = slotRank?.recommendation ?? null;
+  const hasRecommendedDateSelection = useMemo(
+    () =>
+      Boolean(
+        form.date &&
+          recommendedDates.some((item) => item.date === form.date),
+      ),
+    [form.date, recommendedDates],
+  );
   useEffect(() => {
-    if (variant !== "work-order" || !recommendedTech || techChoiceLocked.current) {
+    if (
+      variant !== "work-order" ||
+      !recommendedTech ||
+      techChoiceLocked.current ||
+      hasRecommendedDateSelection
+    ) {
       return;
     }
     const name = technicianDisplayName(recommendedTech);
@@ -585,7 +616,7 @@ export default function ServiceTicketForm({
         assignedUserRefs: [recommendedTech.userId],
       };
     });
-  }, [recommendedTech, variant]);
+  }, [recommendedTech, variant, hasRecommendedDateSelection]);
 
   useEffect(() => {
     if (!token || !form.customerId) {
@@ -658,25 +689,128 @@ export default function ServiceTicketForm({
   }, [token, form.customerId, form.addressRef, form.equipmentRef]);
 
   const totals = useMemo(() => ticketTotals(form), [form]);
+  const groupedRecommendedDates = useMemo(() => {
+    const groups: Array<{
+      date: string;
+      techs: RecommendedRouteDate[];
+    }> = [];
+    const byDate = new Map<string, RecommendedRouteDate[]>();
+    for (const item of recommendedDates) {
+      let list = byDate.get(item.date);
+      if (!list) {
+        list = [];
+        byDate.set(item.date, list);
+        groups.push({ date: item.date, techs: list });
+      }
+      if (!list.some((t) => t.userId === item.userId)) {
+        list.push(item);
+      }
+    }
+    return groups;
+  }, [recommendedDates]);
+
+  const recommendedTechsForSelectedDate = useMemo(() => {
+    if (!form.date) return new Map<string, RecommendedRouteDate>();
+    const group = groupedRecommendedDates.find((g) => g.date === form.date);
+    if (!group) return new Map<string, RecommendedRouteDate>();
+    return new Map(group.techs.map((t) => [t.userId, t]));
+  }, [groupedRecommendedDates, form.date]);
+
+  const technicianSectionLitUp = Boolean(
+    form.date &&
+      recommendedTechsForSelectedDate.size > 0 &&
+      form.assignedUserRefs.length === 0,
+  );
+  const serviceTypeLabel =
+    form.workOrderTypeLabel.trim() ||
+    workOrderTypes.find((t) => t._id === form.workOrderTypeRef)?.label ||
+    "Service";
+  const recommendedPageSize = 3;
+  const recommendedTotalPages = Math.max(
+    1,
+    Math.ceil(groupedRecommendedDates.length / recommendedPageSize),
+  );
+  const safeRecommendedPage = Math.min(
+    recommendedDatesPage,
+    recommendedTotalPages - 1,
+  );
+  const visibleRecommendedGroups = groupedRecommendedDates.slice(
+    safeRecommendedPage * recommendedPageSize,
+    (safeRecommendedPage + 1) * recommendedPageSize,
+  );
+  const hasRecommendedSite = Boolean(
+    form.addressRef ||
+      form.customerCity.trim() ||
+      form.customerAddress.trim(),
+  );
+
   const technicianRows = useMemo(() => {
+    const baseById = new Map(
+      schedulableTechnicians.map((t) => [t._id, t]),
+    );
+    const buildBadges = (
+      userId: string,
+      fallback: { first_name?: string; last_name?: string; initials?: string | null; scheduleColor?: string | null },
+    ) => {
+      const rec = recommendedTechsForSelectedDate.get(userId);
+      const base = baseById.get(userId);
+      const initials = technicianInitials({
+        first_name: rec?.first_name ?? fallback.first_name ?? base?.first_name,
+        last_name: rec?.last_name ?? fallback.last_name ?? base?.last_name,
+        initials: rec?.initials ?? fallback.initials,
+      });
+      const color = resolvedTechnicianColor(
+        userId,
+        rec?.scheduleColor ?? fallback.scheduleColor,
+      );
+      return {
+        initials,
+        color,
+        isDateOption: Boolean(rec),
+      };
+    };
+
     if (slotRank) {
-      const rows = slotRank.technicians.map((tech) => ({
-        userId: tech.userId,
-        name: technicianDisplayName(tech),
-        reason: tech.reason,
-        recommended: tech.userId === slotRank.recommendation?.userId,
-        fits: tech.fits,
-      }));
+      const rows = slotRank.technicians.map((tech) => {
+        const rec = recommendedTechsForSelectedDate.get(tech.userId);
+        const badges = buildBadges(tech.userId, tech);
+        const fallbackReason = rec
+          ? rec.matchType === "territory"
+            ? `In territory${rec.territoryCity ? ` (${rec.territoryCity})` : ""}`
+            : `${rec.distanceMiles < 0.1 ? "<0.1" : rec.distanceMiles} mi away on route`
+          : "";
+        return {
+          userId: tech.userId,
+          name: technicianDisplayName(tech),
+          reason: tech.reason || fallbackReason,
+          recommended:
+            recommendedTechsForSelectedDate.size > 0
+              ? Boolean(rec)
+              : tech.userId === slotRank.recommendation?.userId,
+          fits: tech.fits,
+          ...badges,
+        };
+      });
       if (
         form.assignedUserRef &&
         !rows.some((row) => row.userId === form.assignedUserRef)
       ) {
+        const badges = buildBadges(form.assignedUserRef, {});
         rows.push({
           userId: form.assignedUserRef,
           name: form.tech.trim() || "Assigned technician",
           reason: "",
           recommended: false,
           fits: true,
+          ...badges,
+        });
+      }
+      if (recommendedTechsForSelectedDate.size > 0) {
+        rows.sort((a, b) => {
+          if (a.isDateOption !== b.isDateOption) {
+            return a.isDateOption ? -1 : 1;
+          }
+          return 0;
         });
       }
       return rows;
@@ -696,14 +830,39 @@ export default function ServiceTicketForm({
       });
     }
     options.sort(compareTechnicianNames);
-    return options.map((tech) => ({
-      userId: tech._id,
-      name: technicianDisplayName(tech),
-      reason: "",
-      recommended: false,
-      fits: true,
-    }));
-  }, [slotRank, schedulableTechnicians, form.assignedUserRef, form.tech]);
+    const rows = options.map((tech) => {
+      const rec = recommendedTechsForSelectedDate.get(tech._id);
+      const badges = buildBadges(tech._id, tech);
+      const reason = rec
+        ? rec.matchType === "territory"
+          ? `In territory${rec.territoryCity ? ` (${rec.territoryCity})` : ""}`
+          : `${rec.distanceMiles < 0.1 ? "<0.1" : rec.distanceMiles} mi away · ${rec.stopCount} ${rec.stopCount === 1 ? "stop" : "stops"}`
+        : "";
+      return {
+        userId: tech._id,
+        name: technicianDisplayName(tech),
+        reason,
+        recommended: Boolean(rec),
+        fits: true,
+        ...badges,
+      };
+    });
+    if (recommendedTechsForSelectedDate.size > 0) {
+      rows.sort((a, b) => {
+        if (a.isDateOption !== b.isDateOption) {
+          return a.isDateOption ? -1 : 1;
+        }
+        return 0;
+      });
+    }
+    return rows;
+  }, [
+    slotRank,
+    schedulableTechnicians,
+    form.assignedUserRef,
+    form.tech,
+    recommendedTechsForSelectedDate,
+  ]);
   const technicianRankHint = useMemo(() => {
     if (variant !== "work-order" || slotRank) return null;
     const missing: string[] = [];
@@ -765,6 +924,19 @@ export default function ServiceTicketForm({
       .map((part) => part.trim())
       .filter(Boolean);
     return known[form.assignedUserRefs.indexOf(userId)] || "";
+  }
+
+  function selectRecommendedDateGroup(date: string) {
+    if (!date) return;
+    setPendingInsertIndex(null);
+    setCollapsedTechId(null);
+    setScheduleError(null);
+    patch({
+      date,
+      tech: "",
+      assignedUserRef: null,
+      assignedUserRefs: [],
+    });
   }
 
   function selectRecommendedDate(item: RecommendedRouteDate) {
@@ -1552,189 +1724,220 @@ export default function ServiceTicketForm({
 
           {variant === "work-order" ? (
             <div>
-              {(() => {
-                const serviceTypeLabel =
-                  form.workOrderTypeLabel.trim() ||
-                  workOrderTypes.find((t) => t._id === form.workOrderTypeRef)?.label ||
-                  "Service";
-                const pageSize = 3;
-                const totalPages = Math.max(
-                  1,
-                  Math.ceil(recommendedDates.length / pageSize),
-                );
-                const safePage = Math.min(recommendedDatesPage, totalPages - 1);
-                const visibleDates = recommendedDates.slice(
-                  safePage * pageSize,
-                  (safePage + 1) * pageSize,
-                );
-                const hasSite = Boolean(
-                  form.addressRef ||
-                    form.customerCity.trim() ||
-                    form.customerAddress.trim(),
-                );
-
-                return (
-                  <div className="mb-5">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Recommended {serviceTypeLabel} Date
-                    </p>
-                    {!hasSite ? (
-                      <p className="mb-2 text-xs text-neutral-500">
-                        Add an address to see recommended dates within 10 miles of scheduled routes.
-                      </p>
-                    ) : null}
-                    <div className="overflow-hidden rounded-md border border-neutral-200">
-                      <table className="w-full text-left text-sm">
-                        <thead className="bg-neutral-50 text-[11px] uppercase tracking-wide text-neutral-500">
-                          <tr>
-                            <th className="w-8 px-2 py-2">
-                              <span className="sr-only">Select</span>
-                            </th>
-                            <th className="px-2 py-2 font-semibold">Date</th>
-                            <th className="px-2 py-2 font-semibold">Technician</th>
-                            <th className="px-2 py-2 font-semibold">Route Proximity</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {recommendedDatesLoading ? (
-                            <tr>
-                              <td
-                                colSpan={4}
-                                className="px-2 py-3 text-xs text-neutral-500"
-                              >
-                                Checking scheduled routes and territories…
+              <div className="mb-5">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  Recommended {serviceTypeLabel} Date
+                </p>
+                {!hasRecommendedSite ? (
+                  <p className="mb-2 text-xs text-neutral-500">
+                    Add an address to see recommended dates within 10 miles of scheduled routes.
+                  </p>
+                ) : null}
+                <div className="overflow-hidden rounded-md border border-neutral-200">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-neutral-50 text-[11px] uppercase tracking-wide text-neutral-500">
+                      <tr>
+                        <th className="w-8 px-2 py-2">
+                          <span className="sr-only">Select</span>
+                        </th>
+                        <th className="px-2 py-2 font-semibold">Date</th>
+                        <th className="px-2 py-2 font-semibold">Technician</th>
+                        <th className="px-2 py-2 font-semibold">Route Proximity</th>
+                        <th className="px-2 py-2 text-right font-semibold">
+                          <span className="sr-only">Schedule</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recommendedDatesLoading ? (
+                        <tr>
+                          <td
+                            colSpan={5}
+                            className="px-2 py-3 text-xs text-neutral-500"
+                          >
+                            Checking scheduled routes and territories…
+                          </td>
+                        </tr>
+                      ) : visibleRecommendedGroups.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={5}
+                            className="px-2 py-3 text-xs text-neutral-500"
+                          >
+                            {hasRecommendedSite
+                              ? "No scheduled technician routes within 10 miles or matching territories on future dates."
+                              : "No recommended dates yet."}
+                          </td>
+                        </tr>
+                      ) : (
+                        visibleRecommendedGroups.map((group) => {
+                          const selected = form.date === group.date;
+                          const primary = group.techs[0]!;
+                          const milesText =
+                            primary.distanceMiles < 0.1
+                              ? "<0.1 mi"
+                              : `${primary.distanceMiles} mi`;
+                          const territoryCity =
+                            primary.territoryCity || primary.closestStopCity;
+                          const totalStops = group.techs.reduce(
+                            (sum, t) => sum + t.stopCount,
+                            0,
+                          );
+                          return (
+                            <tr
+                              key={group.date}
+                              className={`cursor-pointer border-t border-neutral-200 ${
+                                selected ? "bg-neutral-50" : "hover:bg-neutral-50"
+                              }`}
+                              onClick={() => selectRecommendedDateGroup(group.date)}
+                            >
+                              <td className="px-2 py-2">
+                                <input
+                                  type="radio"
+                                  name="work-order-recommended-date"
+                                  value={group.date}
+                                  checked={selected}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onChange={() => selectRecommendedDateGroup(group.date)}
+                                  aria-label={`Select ${formatWeekdayDate(group.date)}`}
+                                />
                               </td>
-                            </tr>
-                          ) : visibleDates.length === 0 ? (
-                            <tr>
-                              <td
-                                colSpan={4}
-                                className="px-2 py-3 text-xs text-neutral-500"
-                              >
-                                {hasSite
-                                  ? "No scheduled technician routes within 10 miles or matching territories on future dates."
-                                  : "No recommended dates yet."}
+                              <td className="px-2 py-2 font-medium text-brand-dark">
+                                {formatWeekdayDate(group.date)}
                               </td>
-                            </tr>
-                          ) : (
-                            visibleDates.map((item) => {
-                              const selected =
-                                form.date === item.date &&
-                                (form.assignedUserRefs.includes(item.userId) ||
-                                  (form.assignedUserRefs.length === 0 &&
-                                    recommendedDates.filter(
-                                      (d) => d.date === item.date,
-                                    ).length === 1));
-                              const techName = technicianDisplayName(item);
-                              const milesText =
-                                item.distanceMiles < 0.1
-                                  ? "<0.1 mi"
-                                  : `${item.distanceMiles} mi`;
-                              const territoryCity =
-                                item.territoryCity || item.closestStopCity;
-                              return (
-                                <tr
-                                  key={`${item.date}-${item.userId}`}
-                                  className={`cursor-pointer border-t border-neutral-200 ${
-                                    selected ? "bg-neutral-50" : "hover:bg-neutral-50"
-                                  }`}
-                                  onClick={() => selectRecommendedDate(item)}
+                              <td className="px-2 py-2 text-brand-dark">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {group.techs.map((tech) => {
+                                    const initials = technicianInitials(tech);
+                                    const fullName = technicianDisplayName(tech);
+                                    const color = resolvedTechnicianColor(
+                                      tech.userId,
+                                      tech.scheduleColor,
+                                    );
+                                    return (
+                                      <span
+                                        key={tech.userId}
+                                        title={fullName}
+                                        className="inline-flex h-6 min-w-6 items-center justify-center rounded px-1.5 text-[11px] font-bold text-white shadow-2xs"
+                                        style={{ backgroundColor: color }}
+                                      >
+                                        {initials}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+                              <td className="px-2 py-2 text-xs text-neutral-500">
+                                {primary.matchType === "territory" ? (
+                                  <>
+                                    In territory
+                                    {territoryCity
+                                      ? ` (${territoryCity})`
+                                      : ""}
+                                    {totalStops > 0
+                                      ? ` · ${totalStops} ${
+                                          totalStops === 1
+                                            ? "stop"
+                                            : "stops"
+                                        }`
+                                      : ""}
+                                  </>
+                                ) : (
+                                  <>
+                                    {milesText} away · {primary.stopCount}{" "}
+                                    {primary.stopCount === 1 ? "stop" : "stops"}
+                                    {primary.closestStopCity
+                                      ? ` (${primary.closestStopCity})`
+                                      : ""}
+                                  </>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 text-right">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setViewScheduleModal({
+                                      date: group.date,
+                                      techId: null,
+                                    });
+                                  }}
+                                  className="whitespace-nowrap rounded border border-neutral-300 bg-white px-2 py-0.5 text-xs font-medium text-brand-dark hover:bg-neutral-50"
                                 >
-                                  <td className="px-2 py-2">
-                                    <input
-                                      type="radio"
-                                      name="work-order-recommended-date"
-                                      value={`${item.date}-${item.userId}`}
-                                      checked={selected}
-                                      onClick={(event) => event.stopPropagation()}
-                                      onChange={() => selectRecommendedDate(item)}
-                                      aria-label={`Select ${formatWeekdayDate(item.date)} with ${techName}`}
-                                    />
-                                  </td>
-                                  <td className="px-2 py-2 font-medium text-brand-dark">
-                                    {formatWeekdayDate(item.date)}
-                                  </td>
-                                  <td className="px-2 py-2 text-brand-dark">
-                                    {techName}
-                                  </td>
-                                  <td className="px-2 py-2 text-xs text-neutral-500">
-                                    {item.matchType === "territory" ? (
-                                      <>
-                                        In territory
-                                        {territoryCity
-                                          ? ` (${territoryCity})`
-                                          : ""}
-                                        {item.stopCount > 0
-                                          ? ` · ${item.stopCount} ${
-                                              item.stopCount === 1
-                                                ? "stop"
-                                                : "stops"
-                                            }`
-                                          : ""}
-                                      </>
-                                    ) : (
-                                      <>
-                                        {milesText} away · {item.stopCount}{" "}
-                                        {item.stopCount === 1 ? "stop" : "stops"}
-                                        {item.closestStopCity
-                                          ? ` (${item.closestStopCity})`
-                                          : ""}
-                                      </>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })
-                          )}
-                        </tbody>
-                      </table>
+                                  View schedule
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {groupedRecommendedDates.length > recommendedPageSize ? (
+                  <div className="mt-2 flex items-center justify-between text-xs text-neutral-500">
+                    <span>
+                      Showing {safeRecommendedPage * recommendedPageSize + 1}–
+                      {Math.min(
+                        (safeRecommendedPage + 1) * recommendedPageSize,
+                        groupedRecommendedDates.length,
+                      )}{" "}
+                      of {groupedRecommendedDates.length} dates
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={safeRecommendedPage <= 0}
+                        onClick={() =>
+                          setRecommendedDatesPage((p) => Math.max(0, p - 1))
+                        }
+                        className="rounded border border-neutral-300 bg-white px-2 py-0.5 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        disabled={safeRecommendedPage >= recommendedTotalPages - 1}
+                        onClick={() =>
+                          setRecommendedDatesPage((p) =>
+                            Math.min(recommendedTotalPages - 1, p + 1),
+                          )
+                        }
+                        className="rounded border border-neutral-300 bg-white px-2 py-0.5 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                      >
+                        Next
+                      </button>
                     </div>
-                    {recommendedDates.length > pageSize ? (
-                      <div className="mt-2 flex items-center justify-between text-xs text-neutral-500">
-                        <span>
-                          Showing {safePage * pageSize + 1}–
-                          {Math.min(
-                            (safePage + 1) * pageSize,
-                            recommendedDates.length,
-                          )}{" "}
-                          of {recommendedDates.length} dates
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            disabled={safePage <= 0}
-                            onClick={() =>
-                              setRecommendedDatesPage((p) => Math.max(0, p - 1))
-                            }
-                            className="rounded border border-neutral-300 bg-white px-2 py-0.5 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
-                          >
-                            Previous
-                          </button>
-                          <button
-                            type="button"
-                            disabled={safePage >= totalPages - 1}
-                            onClick={() =>
-                              setRecommendedDatesPage((p) =>
-                                Math.min(totalPages - 1, p + 1),
-                              )
-                            }
-                            className="rounded border border-neutral-300 bg-white px-2 py-0.5 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
-                          >
-                            Next
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
                   </div>
-                );
-              })()}
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Technician
-              </p>
+                ) : null}
+              </div>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p
+                  className={`text-xs font-semibold uppercase tracking-wide ${
+                    technicianSectionLitUp
+                      ? "text-brand-orange"
+                      : "text-neutral-500"
+                  }`}
+                >
+                  Technician
+                </p>
+                {technicianSectionLitUp ? (
+                  <span className="rounded-full bg-brand-orange/15 px-2.5 py-0.5 text-[11px] font-semibold text-brand-orange">
+                    Select a recommended technician for{" "}
+                    {formatWeekdayDate(form.date)}
+                  </span>
+                ) : null}
+              </div>
               {technicianRankHint ? (
                 <p className="mb-2 text-xs text-neutral-500">{technicianRankHint}</p>
               ) : null}
-              <div className="overflow-hidden rounded-md border border-neutral-200">
+              <div
+                className={`overflow-hidden rounded-md border transition-all ${
+                  technicianSectionLitUp
+                    ? "border-brand-orange ring-2 ring-brand-orange/30"
+                    : "border-neutral-200"
+                }`}
+              >
                 <table className="w-full text-left text-sm">
                   <thead className="bg-neutral-50 text-[11px] uppercase tracking-wide text-neutral-500">
                     <tr>
@@ -1758,11 +1961,17 @@ export default function ServiceTicketForm({
                         const showConflict = selected && !row.fits;
                         const dayOpen = selected && collapsedTechId !== row.userId;
                         const dayItems = technicianDayRows(dayStops, recordId);
+                        const highlightOption =
+                          technicianSectionLitUp && row.isDateOption;
                         return (
                           <Fragment key={row.userId}>
                             <tr
-                              className={`cursor-pointer border-t border-neutral-200 ${
-                                selected ? "bg-neutral-50" : "hover:bg-neutral-50"
+                              className={`cursor-pointer border-t border-neutral-200 transition-colors ${
+                                selected
+                                  ? "bg-neutral-50"
+                                  : highlightOption
+                                    ? "bg-brand-orange/10 hover:bg-brand-orange/20"
+                                    : "hover:bg-neutral-50"
                               }`}
                               onClick={() => toggleWorkOrderTechnician(row.userId)}
                             >
@@ -1778,9 +1987,21 @@ export default function ServiceTicketForm({
                                 />
                               </td>
                               <td className="px-2 py-2 text-brand-dark">
-                                {row.name}
+                                <span
+                                  className="mr-2 inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-[10px] font-bold text-white align-middle"
+                                  style={{ backgroundColor: row.color }}
+                                >
+                                  {row.initials}
+                                </span>
+                                <span className="align-middle">{row.name}</span>
                                 {row.recommended ? (
-                                  <span className="ml-2 rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-dark">
+                                  <span
+                                    className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide align-middle ${
+                                      highlightOption
+                                        ? "bg-brand-orange text-white"
+                                        : "bg-neutral-200 text-brand-dark"
+                                    }`}
+                                  >
                                     Recommended
                                   </span>
                                 ) : null}
@@ -2087,6 +2308,23 @@ export default function ServiceTicketForm({
           </div>
         </div>
       </article>
+      <DayRoutesModal
+        open={viewScheduleModal !== null}
+        initialDate={viewScheduleModal?.date ?? ""}
+        initialTechId={viewScheduleModal?.techId ?? null}
+        onClose={() => setViewScheduleModal(null)}
+        onSelectDateAndTech={(date, tech) => {
+          selectRecommendedDate({
+            date,
+            userId: tech._id,
+            first_name: tech.first_name,
+            last_name: tech.last_name,
+            distanceMiles: 0,
+            stopCount: 0,
+            closestStopCity: "",
+          });
+        }}
+      />
     </form>
   );
 }

@@ -205,6 +205,9 @@ async function main(): Promise<void> {
     log(`  Work orders skipped (same job):${result.summary.workOrdersSkippedFuzzy}`);
     log(`  Work order orphans:            ${result.summary.workOrderOrphans}`);
     log(`  Work order line items mapped:  ${result.summary.workOrdersLineItemsBackfilled}`);
+    log(`  Work order status updates:     ${result.summary.workOrdersStatusUpdated}`);
+    log(`  Work orders skipped (duplicate legacy id): ${result.summary.workOrdersSkippedDuplicateLegacy}`);
+    log(`  Work orders skipped (user mismatch): ${result.summary.workOrdersSkippedUserMismatch}`);
     log(`  Customers with ASC product:    ${result.summary.ascCustomers}`);
     log(`  ASC contracts created:         ${result.summary.contractsCreated}`);
     log(`  ASC contracts updated:         ${result.summary.contractsUpdated}`);

@@ -2577,6 +2577,8 @@ export interface RecommendedRouteDate {
   userId: string;
   first_name: string;
   last_name: string;
+  initials?: string;
+  scheduleColor?: string;
   distanceMiles: number;
   stopCount: number;
   closestStopCity: string;
@@ -4218,6 +4220,8 @@ export interface FinancialsSummary {
     completedCount: number;
     unbilledCents: number;
     laborHours: number;
+    completedPaidCount: number;
+    completedPaidCents: number;
   };
   estimates: {
     count: number;
@@ -4250,6 +4254,7 @@ export type FinancialFilterType =
   | "open_work_orders"
   | "unbilled_work"
   | "labor_hours"
+  | "completed_paid"
   | "estimates";
 
 export interface FinancialRecordItem {
@@ -6985,6 +6990,9 @@ export type LegacyDumpImportSummary = {
   workOrdersSkippedFuzzy: number;
   workOrderOrphans: number;
   workOrdersLineItemsBackfilled?: number;
+  workOrdersStatusUpdated?: number;
+  workOrdersSkippedDuplicateLegacy?: number;
+  workOrdersSkippedUserMismatch?: number;
   ascCustomers?: number;
   contractsCreated?: number;
   contractsUpdated?: number;

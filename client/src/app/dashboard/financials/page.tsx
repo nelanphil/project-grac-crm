@@ -39,7 +39,7 @@ function formatMoney(cents: number): string {
   }).format((cents || 0) / 100);
 }
 
-function formatDate(iso?: string | null): string {
+function formatDate(iso?: string | null, timeZone?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
@@ -47,7 +47,17 @@ function formatDate(iso?: string | null): string {
     month: "short",
     day: "numeric",
     year: "numeric",
+    ...(timeZone ? { timeZone } : {}),
   });
+}
+
+function showsWorkOrderColumns(filter: FinancialFilterType): boolean {
+  return (
+    filter === "open_work_orders" ||
+    filter === "unbilled_work" ||
+    filter === "labor_hours" ||
+    filter === "completed_paid"
+  );
 }
 
 type Period = "month" | "last-month" | "ytd" | "all";
@@ -58,10 +68,16 @@ function periodBounds(period: Period): { from?: string; to?: string } {
   const m = now.getUTCMonth();
   if (period === "all") return {};
   if (period === "ytd") {
-    return { from: new Date(Date.UTC(y, 0, 1)).toISOString() };
+    return {
+      from: new Date(Date.UTC(y, 0, 1)).toISOString(),
+      to: now.toISOString(),
+    };
   }
   if (period === "month") {
-    return { from: new Date(Date.UTC(y, m, 1)).toISOString() };
+    return {
+      from: new Date(Date.UTC(y, m, 1)).toISOString(),
+      to: new Date(Date.UTC(y, m + 1, 1)).toISOString(),
+    };
   }
   const last = m === 0 ? 11 : m - 1;
   const lastYear = m === 0 ? y - 1 : y;
@@ -118,6 +134,13 @@ const FILTER_META: Record<FinancialFilterType, FilterMeta> = {
   labor_hours: {
     title: "Labor Hours",
     description: "Work orders logging technician labor hours",
+    externalHref: "/dashboard/work-orders",
+    externalLabel: "Work Orders",
+  },
+  completed_paid: {
+    title: "Completed & Paid",
+    description:
+      "Work orders marked completed and paid, by the work-order date",
     externalHref: "/dashboard/work-orders",
     externalLabel: "Work Orders",
   },
@@ -312,6 +335,8 @@ function FinancialsContent() {
 
   const bounds = useMemo(() => periodBounds(period), [period]);
   const meta = FILTER_META[activeFilter];
+  const reportTimeZone =
+    activeFilter === "completed_paid" ? "UTC" : undefined;
 
   // Debounce search input
   useEffect(() => {
@@ -415,6 +440,9 @@ function FinancialsContent() {
     } else if (filter === "unbilled_work") {
       setSortKey("total");
       setSortDir("desc");
+    } else if (filter === "completed_paid") {
+      setSortKey("date");
+      setSortDir("asc");
     } else {
       setSortKey("date");
       setSortDir("desc");
@@ -597,6 +625,13 @@ function FinancialsContent() {
               onClick={() => handleSelectFilter("labor_hours")}
             />
             <KpiCard
+              label="Completed & paid"
+              value={formatMoney(summary.workOrders.completedPaidCents)}
+              hint={`${summary.workOrders.completedPaidCount} result(s)`}
+              isSelected={activeFilter === "completed_paid"}
+              onClick={() => handleSelectFilter("completed_paid")}
+            />
+            <KpiCard
               label="Estimates"
               value={String(summary.estimates.count)}
               hint="All estimate pipeline"
@@ -723,7 +758,7 @@ function FinancialsContent() {
                           <>
                             <DataField
                               label="Date"
-                              value={formatDate(r.date)}
+                              value={formatDate(r.date, reportTimeZone)}
                             />
                             {r.recordType === "invoice" && r.dueDate ? (
                               <DataField
@@ -731,7 +766,7 @@ function FinancialsContent() {
                                 value={formatDate(r.dueDate)}
                               />
                             ) : null}
-                            {r.recordType === "work_order" &&
+                            {showsWorkOrderColumns(activeFilter) &&
                             r.laborHours != null &&
                             r.laborHours > 0 ? (
                               <DataField
@@ -772,9 +807,7 @@ function FinancialsContent() {
                             label={
                               activeFilter === "estimates"
                                 ? "Estimate #"
-                                : activeFilter.includes("work_order") ||
-                                    activeFilter === "unbilled_work" ||
-                                    activeFilter === "labor_hours"
+                                : showsWorkOrderColumns(activeFilter)
                                   ? "Work Order #"
                                   : "Invoice #"
                             }
@@ -797,9 +830,7 @@ function FinancialsContent() {
                             sortDir={sortDir}
                             onSort={handleSort}
                           />
-                          {activeFilter.includes("work_order") ||
-                          activeFilter === "unbilled_work" ||
-                          activeFilter === "labor_hours" ? (
+                          {showsWorkOrderColumns(activeFilter) ? (
                             <>
                               <SortHeader
                                 label="Labor Hours"
@@ -880,11 +911,9 @@ function FinancialsContent() {
                                 {r.customerName || "—"}
                               </td>
                               <td className="px-6 py-4 text-neutral-500">
-                                {formatDate(r.date)}
+                                {formatDate(r.date, reportTimeZone)}
                               </td>
-                              {activeFilter.includes("work_order") ||
-                              activeFilter === "unbilled_work" ||
-                              activeFilter === "labor_hours" ? (
+                              {showsWorkOrderColumns(activeFilter) ? (
                                 <>
                                   <td className="px-6 py-4">
                                     {r.laborHours != null &&
