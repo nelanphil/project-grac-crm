@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
+import { createPortal } from "react-dom";
 import { MessageSquare } from "lucide-react";
 import {
   ApiError,
@@ -37,6 +38,8 @@ export function TextScheduleButton({
         type="button"
         disabled={disabled || !userId}
         aria-label="Text Schedule"
+        title="Text schedule"
+        onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
           event.preventDefault();
@@ -124,9 +127,9 @@ function TextScheduleDialog({
     ? `Text schedule to ${preview.technicianName}?`
     : "Text schedule";
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 p-4 sm:items-center"
       onClick={() => {
         if (phase !== "sending") onClose();
       }}
@@ -181,6 +184,7 @@ function TextScheduleDialog({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

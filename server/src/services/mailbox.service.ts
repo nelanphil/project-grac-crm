@@ -279,7 +279,7 @@ function openMailboxClient(
   connectionTimeout = 15_000,
   extra?: { socketTimeout?: number; maxIdleTime?: number },
 ): ImapFlow {
-  return new ImapFlow({
+  const client = new ImapFlow({
     host,
     port: account.imapPort || 993,
     secure: account.imapSecure !== false,
@@ -290,6 +290,15 @@ function openMailboxClient(
     socketTimeout: extra?.socketTimeout ?? connectionTimeout,
     maxIdleTime: extra?.maxIdleTime,
   });
+  // Socket-level failures (e.g. ETIMEDOUT) are emitted as 'error' events; without
+  // a listener Node treats them as fatal and crashes the process. ImapFlow closes
+  // the connection afterwards, so pending commands reject and callers retry.
+  client.on("error", (err: Error & { code?: string }) => {
+    console.error(
+      `[imap] ${account.username}@${host}: ${err?.code ?? ""} ${err?.message ?? err}`.trim(),
+    );
+  });
+  return client;
 }
 
 const IDLE_SOCKET_TIMEOUT_MS = 15 * 60 * 1000;

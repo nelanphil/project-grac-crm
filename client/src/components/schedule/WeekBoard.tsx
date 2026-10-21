@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 import { useDndContext, useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { Check, GripVertical, MapPin } from "lucide-react";
+import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 import {
   getScheduleRoute,
   type ScheduleRecommendation,
@@ -1141,6 +1142,7 @@ function StaffColumn({
   staff,
   jobs,
   gaps,
+  selectedDate,
   onJobClick,
   onMap,
   dispatcher,
@@ -1149,6 +1151,7 @@ function StaffColumn({
   staff: ScheduleStaffMember;
   jobs: WorkOrderListItem[];
   gaps: DriveGap[];
+  selectedDate: string;
   onJobClick: (job: WorkOrderListItem) => void;
   onMap: () => void;
   dispatcher: boolean;
@@ -1347,6 +1350,12 @@ function StaffColumn({
             </ul>
           </div>
         ) : null}
+        <TextScheduleButton
+          userId={staff._id}
+          date={selectedDate}
+          variant="icon"
+          className="shrink-0 rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-brand-orange disabled:cursor-not-allowed disabled:opacity-40"
+        />
         <button
           type="button"
           onClick={onMap}
@@ -1450,8 +1459,10 @@ export default function WeekBoard({
       .map((part) => part.slice(0, part.indexOf("=")))
       .filter(Boolean);
     if (!token || ids.length === 0) {
-      setRoutes({});
-      setLoadedKey(routeKey);
+      queueMicrotask(() => {
+        setRoutes({});
+        setLoadedKey(routeKey);
+      });
       return;
     }
     let cancelled = false;
@@ -1523,6 +1534,7 @@ export default function WeekBoard({
                     )
                   : []
               }
+              selectedDate={selectedDate}
               dispatcher={dispatcher}
               draggingJob={draggingJob}
               onJobClick={onJobClick}

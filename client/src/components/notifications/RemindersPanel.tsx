@@ -90,8 +90,7 @@ export default function RemindersPanel({ token }: { token: string }) {
   }, [search]);
 
   useEffect(() => {
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
     getReminders(token, {
       page,
       pageSize,
@@ -101,13 +100,22 @@ export default function RemindersPanel({ token }: { token: string }) {
       showCompleted,
     })
       .then((res) => {
+        if (cancelled) return;
         setItems(res.reminders);
         setTotal(res.total);
+        setError(null);
       })
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : "Failed to load reminders."),
-      )
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "Failed to load reminders.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token, page, pageSize, debounced, sortKey, sortDir, showCompleted]);
 
   function handleSort(key: SortKey) {

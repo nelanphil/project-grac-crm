@@ -105,9 +105,11 @@ export default function CustomerBillToCard({
     [token, customerRef, workOrderRef, page],
   );
 
-  useEffect(() => {
+  const [prevRefreshKey, setPrevRefreshKey] = useState(refreshKey);
+  if (prevRefreshKey !== refreshKey) {
+    setPrevRefreshKey(refreshKey);
     setPage(1);
-  }, [refreshKey]);
+  }
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect

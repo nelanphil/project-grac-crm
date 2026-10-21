@@ -441,9 +441,11 @@ export default function MessagingHub() {
     };
   }, [token, initialInvoiceId, initialContactId]);
 
-  useEffect(() => {
+  const [prevHasPaymentToken, setPrevHasPaymentToken] = useState(emailHasPaymentLinkToken);
+  if (prevHasPaymentToken !== emailHasPaymentLinkToken) {
+    setPrevHasPaymentToken(emailHasPaymentLinkToken);
     if (emailHasPaymentLinkToken) setIncludePaymentLink(true);
-  }, [emailHasPaymentLinkToken]);
+  }
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);

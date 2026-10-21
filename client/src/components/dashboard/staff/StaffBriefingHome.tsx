@@ -149,9 +149,9 @@ const tabClass = (active: boolean) =>
 export default function StaffBriefingHome() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
-  const canSeeInbox =
-    useAuthStore((s) => s.hasRole("admin", "super-admin")) &&
-    useAuthStore((s) => s.hasPermission("messages:read"));
+  const canSeeInbox = useAuthStore(
+    (s) => s.hasRole("admin", "super-admin") && s.hasPermission("messages:read"),
+  );
   const firstName = user?.first_name?.trim() || "";
 
   const [tab, setTab] = useState<BriefingTab>(

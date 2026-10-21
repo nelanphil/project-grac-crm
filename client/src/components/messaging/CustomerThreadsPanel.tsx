@@ -137,7 +137,7 @@ export default function CustomerThreadsPanel({
     if (initialThreadId) {
       const match = contactThreads.find((t) => t._id === initialThreadId);
       if (match) {
-        setSelectedThreadId(match._id);
+        queueMicrotask(() => setSelectedThreadId(match._id));
         return;
       }
     }
@@ -145,7 +145,7 @@ export default function CustomerThreadsPanel({
       const match = contactThreads.find(
         (t) => t.contactRef === initialContactId,
       );
-      if (match) setSelectedThreadId(match._id);
+      if (match) queueMicrotask(() => setSelectedThreadId(match._id));
     }
   }, [contactThreads, initialThreadId, initialContactId]);
 

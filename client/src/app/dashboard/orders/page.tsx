@@ -119,17 +119,22 @@ function OrdersContent() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => {
+  const [prevParams, setPrevParams] = useState({ page, pageSize, debounced });
+  if (
+    prevParams.page !== page ||
+    prevParams.pageSize !== pageSize ||
+    prevParams.debounced !== debounced
+  ) {
+    setPrevParams({ page, pageSize, debounced });
     setSelectedIds(new Set());
     setPendingStatusId(null);
     setBulkIntent(null);
     setActionError(null);
-  }, [page, pageSize, debounced]);
+  }
 
   useEffect(() => {
     if (!token) return;
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
     const load = pendingCompleted
       ? getPendingPayments(token, {
           page,
@@ -143,15 +148,24 @@ function OrdersContent() {
         });
     load
       .then(({ invoices: list, total: totalCount }) => {
+        if (cancelled) return;
         setInvoices(list);
         setTotal(totalCount ?? list.length);
+        setError(null);
       })
-      .catch((err) =>
-        setError(
-          err instanceof ApiError ? err.message : "Failed to load invoices.",
-        ),
-      )
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!cancelled) {
+          setError(
+            err instanceof ApiError ? err.message : "Failed to load invoices.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token, page, pageSize, debounced, isCustomer, pendingCompleted]);
 
   const hasOutstanding = invoices.some(

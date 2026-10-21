@@ -636,18 +636,28 @@ function ScheduleHeader({
                     type="button"
                     aria-pressed={selected}
                     onClick={() => onSelectDay(day)}
-                    className={`flex flex-col items-center rounded-lg border px-1 py-1.5 text-center transition-colors ${
+                    className={`relative flex flex-col items-center rounded-lg border px-1 py-1.5 text-center transition-all ${
                       selected
-                        ? "border-neutral-300 bg-neutral-100 shadow-sm"
+                        ? "schedule-day-active z-10"
                         : "border-transparent hover:bg-neutral-50"
                     }`}
                   >
-                    <span className="text-[11px] text-neutral-500">
+                    <span
+                      className={`text-[11px] ${
+                        selected
+                          ? "font-semibold text-brand-orange"
+                          : "text-neutral-500"
+                      }`}
+                    >
                       {WEEKDAY_SHORT[index]}
                     </span>
                     <span
-                      className={`text-sm font-semibold tabular-nums ${
-                        isToday ? "text-brand-orange" : "text-brand-dark"
+                      className={`text-sm tabular-nums ${
+                        selected
+                          ? "font-bold text-brand-orange"
+                          : isToday
+                            ? "font-semibold text-brand-orange"
+                            : "font-semibold text-brand-dark"
                       }`}
                     >
                       {Number(day.slice(8))}
@@ -752,7 +762,7 @@ function ScheduleSplit({
   useEffect(() => {
     const stored = readRailWidth();
     memoryRailWidth = stored;
-    setWidth(stored);
+    queueMicrotask(() => setWidth(stored));
   }, []);
 
   useEffect(() => {
@@ -862,7 +872,7 @@ export default function CalendarTab({
     surface === "calendar";
 
   useEffect(() => {
-    setStaffOrder(readStaffOrder());
+    queueMicrotask(() => setStaffOrder(readStaffOrder()));
   }, []);
 
   useEffect(() => {
@@ -873,14 +883,16 @@ export default function CalendarTab({
     const date =
       initialDate ??
       (stored?.date && SCHEDULE_DATE_RE.test(stored.date) ? stored.date : null);
-    if (viewChoice) setView(viewChoice);
-    if (layoutChoice) setMonthMode(layoutChoice);
-    if (surfaceChoice) setSurface(surfaceChoice);
-    if (date) {
-      setAnchorDate(date);
-      setSelectedDate(date);
-    }
-    setViewReady(true);
+    queueMicrotask(() => {
+      if (viewChoice) setView(viewChoice);
+      if (layoutChoice) setMonthMode(layoutChoice);
+      if (surfaceChoice) setSurface(surfaceChoice);
+      if (date) {
+        setAnchorDate(date);
+        setSelectedDate(date);
+      }
+      setViewReady(true);
+    });
   }, [initialDate]);
 
   useEffect(() => {
@@ -963,10 +975,6 @@ export default function CalendarTab({
   const [viewingError, setViewingError] = useState<string | null>(null);
   const planSeq = useRef(0);
   const optimizeLock = useRef(false);
-  const railOrderRef = useRef<{ date: string; ids: string[] }>({
-    date: "",
-    ids: [],
-  });
   const effectiveTechId = !dispatcher && user?.id ? user.id : routeTechId;
   const [territoryFeatures, setTerritoryFeatures] = useState<
     CityBoundaryCollection["features"]
@@ -986,7 +994,7 @@ export default function CalendarTab({
 
   useEffect(() => {
     if (!token || territoryCities.length === 0) {
-      setTerritoryFeatures([]);
+      queueMicrotask(() => setTerritoryFeatures([]));
       return;
     }
     const states = [
@@ -1030,14 +1038,18 @@ export default function CalendarTab({
 
   useEffect(() => {
     if (!token || !canEditStart || !editingId || !editingStart) {
-      setStartOptions(null);
-      setStartDraft("");
-      setStartOptionsLoading(false);
+      queueMicrotask(() => {
+        setStartOptions(null);
+        setStartDraft("");
+        setStartOptionsLoading(false);
+      });
       return;
     }
     let cancelled = false;
-    setStartOptionsLoading(true);
-    setStartOptions(null);
+    queueMicrotask(() => {
+      setStartOptionsLoading(true);
+      setStartOptions(null);
+    });
     void getScheduleStartOptions(token, editingId)
       .then((opts) => {
         if (cancelled) return;
@@ -1076,14 +1088,18 @@ export default function CalendarTab({
 
   useEffect(() => {
     if (!token || !viewingWorkOrderId) {
-      setViewingOrder(null);
-      setViewingError(null);
-      setViewingLoading(false);
+      queueMicrotask(() => {
+        setViewingOrder(null);
+        setViewingError(null);
+        setViewingLoading(false);
+      });
       return;
     }
     let cancelled = false;
-    setViewingLoading(true);
-    setViewingError(null);
+    queueMicrotask(() => {
+      setViewingLoading(true);
+      setViewingError(null);
+    });
     getWorkOrder(token, viewingWorkOrderId)
       .then((next) => {
         if (!cancelled) setViewingOrder(next);
@@ -1141,23 +1157,7 @@ export default function CalendarTab({
       (job) => workOrderLocalDate(job) === selectedDate,
     );
     const undated = railJobs.filter((job) => !workOrderLocalDate(job));
-    const byId = new Map(incoming.map((job) => [job._id, job]));
-    const sameDay = railOrderRef.current.date === selectedDate;
-    const kept = (sameDay ? railOrderRef.current.ids : []).filter((id) =>
-      byId.has(id),
-    );
-    const seen = new Set(kept);
-    const newcomers = incoming
-      .filter((job) => !seen.has(job._id))
-      .sort(compareWithinDay);
-    const dated = [
-      ...kept.map((id) => byId.get(id)!),
-      ...newcomers,
-    ];
-    railOrderRef.current = {
-      date: selectedDate,
-      ids: dated.map((job) => job._id),
-    };
+    const dated = incoming.slice().sort(compareWithinDay);
     return { dated, undated };
   }, [railJobs, railScheduled, selectedDate]);
   const railRecommendationKey = useMemo(
@@ -1372,13 +1372,15 @@ export default function CalendarTab({
   useEffect(() => {
     if (!viewReady) return;
     if (!token || !dispatcher) {
-      setRailJobs([]);
-      setRailScheduled([]);
-      setRailLoading(false);
+      queueMicrotask(() => {
+        setRailJobs([]);
+        setRailScheduled([]);
+        setRailLoading(false);
+      });
       return;
     }
     let cancelled = false;
-    setRailLoading(true);
+    queueMicrotask(() => setRailLoading(true));
     void (async () => {
       try {
         const data = await fetchRailDay(token, selectedDate);
@@ -2046,8 +2048,10 @@ export default function CalendarTab({
 
   useEffect(() => {
     if (!token || !dispatcher || !canWrite || !monthRecommendationKey) {
-      setMonthRecommendedByJobId({});
-      setMonthRecommendedNames({});
+      queueMicrotask(() => {
+        setMonthRecommendedByJobId({});
+        setMonthRecommendedNames({});
+      });
       return;
     }
     let cancelled = false;

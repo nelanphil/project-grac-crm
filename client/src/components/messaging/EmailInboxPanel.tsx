@@ -274,25 +274,35 @@ export default function EmailInboxPanel({
     deepLinkFromProps(initialAccountId, initialFolder, initialUid, initialMessageId),
   );
   const [appliedLink, setAppliedLink] = useState(incomingLink);
-  if (incomingLink && incomingLink !== appliedLink) {
-    const next = deepLinkFromProps(
-      initialAccountId,
-      initialFolder,
-      initialUid,
-      initialMessageId,
-    );
-    setAppliedLink(incomingLink);
-    setAccountId(initialAccountId);
-    setFolder(initialFolder);
-    setLinkError(null);
-    setOpeningLink(Boolean(next.messageId));
-    setSelectedThreadKey(next.messageId ? "opening" : null);
-    deepLinkRef.current = next;
-  }
+  useEffect(() => {
+    if (incomingLink && incomingLink !== appliedLink) {
+      const next = deepLinkFromProps(
+        initialAccountId,
+        initialFolder,
+        initialUid,
+        initialMessageId,
+      );
+      queueMicrotask(() => {
+        setAppliedLink(incomingLink);
+        setAccountId(initialAccountId);
+        setFolder(initialFolder);
+        setLinkError(null);
+        setOpeningLink(Boolean(next.messageId));
+        setSelectedThreadKey(next.messageId ? "opening" : null);
+        deepLinkRef.current = next;
+      });
+    }
+  }, [
+    incomingLink,
+    appliedLink,
+    initialAccountId,
+    initialFolder,
+    initialUid,
+    initialMessageId,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
-    setLoadingAccounts(true);
     getEmailAccounts(token)
       .then(({ accounts: list }) => {
         if (cancelled) return;
@@ -379,14 +389,16 @@ export default function EmailInboxPanel({
       return latest && threadKeyOf(latest) === selectedThreadKey;
     });
     if (!isVisible) {
-      if (threads.length > 0 && threads[0]?.[0]) {
-        const first = threads[0][0];
-        setSelectedThreadKey(threadKeyOf(first));
-        setFocusedUid(first.uid);
-      } else {
-        setSelectedThreadKey(null);
-        setFocusedUid(null);
-      }
+      queueMicrotask(() => {
+        if (threads.length > 0 && threads[0]?.[0]) {
+          const first = threads[0][0];
+          setSelectedThreadKey(threadKeyOf(first));
+          setFocusedUid(first.uid);
+        } else {
+          setSelectedThreadKey(null);
+          setFocusedUid(null);
+        }
+      });
     }
   }, [threads, selectedThreadKey]);
 
@@ -394,28 +406,32 @@ export default function EmailInboxPanel({
     const link = deepLinkRef.current;
     const locating = Boolean(link.messageId && !link.uid && !link.applied);
     if (!mailboxReady || !accountId) {
-      setMessages([]);
+      queueMicrotask(() => {
+        setMessages([]);
+        setListError(null);
+        if (!locating) {
+          setSelectedThreadKey(null);
+          setFocusedUid(null);
+          setThread(null);
+        }
+      });
+      return;
+    }
+
+    let cancelled = false;
+    queueMicrotask(() => {
+      setLoadingMessages(true);
       setListError(null);
       if (!locating) {
         setSelectedThreadKey(null);
         setFocusedUid(null);
         setThread(null);
+        setThreadError(null);
+        setComposeMode(null);
+        setReplyNotice(null);
+        setTaggingOpen(false);
       }
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingMessages(true);
-    setListError(null);
-    if (!locating) {
-      setSelectedThreadKey(null);
-      setFocusedUid(null);
-      setThread(null);
-      setThreadError(null);
-      setComposeMode(null);
-      setReplyNotice(null);
-      setTaggingOpen(false);
-    }
+    });
     getMailboxMessages(token, accountId, folder)
       .then(({ messages: list }) => {
         if (cancelled) return;
@@ -471,9 +487,11 @@ export default function EmailInboxPanel({
     if (!mailboxReady) return;
 
     let cancelled = false;
-    setOpeningLink(true);
-    setLinkError(null);
-    setSelectedThreadKey("opening");
+    queueMicrotask(() => {
+      setOpeningLink(true);
+      setLinkError(null);
+      setSelectedThreadKey("opening");
+    });
     locateMailboxMessage(token, link.accountId, link.messageId)
       .then((found) => {
         if (cancelled || deepLinkRef.current.applied) return;
@@ -515,14 +533,16 @@ export default function EmailInboxPanel({
 
   useEffect(() => {
     if (!mailboxReady || !accountId || focusedUid == null) {
-      setThread(null);
+      queueMicrotask(() => setThread(null));
       return;
     }
 
     let cancelled = false;
-    setLoadingThread(true);
-    setThreadError(null);
-    setComposeMode(null);
+    queueMicrotask(() => {
+      setLoadingThread(true);
+      setThreadError(null);
+      setComposeMode(null);
+    });
     getMailboxThread(token, accountId, focusedUid, folder)
       .then(({ messages: list }) => {
         if (cancelled) return;

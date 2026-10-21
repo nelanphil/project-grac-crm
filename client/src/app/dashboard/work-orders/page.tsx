@@ -87,8 +87,7 @@ function WorkOrdersContent() {
 
   useEffect(() => {
     if (!token) return;
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
     getWorkOrders(token, {
       page,
       pageSize,
@@ -104,17 +103,26 @@ function WorkOrdersContent() {
       deleted: showingDeleted,
     })
       .then((res) => {
+        if (cancelled) return;
         setOrders(res.workOrders);
         setTotal(res.total);
         if (res.stats) {
           setStats(res.stats);
           setStatsLoading(false);
         }
+        setError(null);
       })
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : "Failed to load work orders."),
-      )
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "Failed to load work orders.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token, page, pageSize, debounced, paidFilter, showingDeleted]);
 
   const { safePage, totalPages, rangeStart, rangeEnd } = paginationRange(

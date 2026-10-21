@@ -168,14 +168,17 @@ function SquareSection({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!editing) return;
-    setProductionId(square.app?.productionApplicationId ?? "");
-    setSandboxId(square.app?.sandboxApplicationId ?? "");
-    setProductionSecret("");
-    setSandboxSecret("");
-    setSaveError(null);
-  }, [editing, square]);
+  const [prevSquare, setPrevSquare] = useState({ editing, square });
+  if (prevSquare.editing !== editing || prevSquare.square !== square) {
+    setPrevSquare({ editing, square });
+    if (editing) {
+      setProductionId(square.app?.productionApplicationId ?? "");
+      setSandboxId(square.app?.sandboxApplicationId ?? "");
+      setProductionSecret("");
+      setSandboxSecret("");
+      setSaveError(null);
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -357,16 +360,19 @@ function StripeSection({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!editing) return;
-    setProductionPublishableKey(stripe.productionPublishableKey);
-    setSandboxPublishableKey(stripe.sandboxPublishableKey);
-    setProductionClientId(stripe.productionClientId);
-    setSandboxClientId(stripe.sandboxClientId);
-    setProductionSecretKey("");
-    setSandboxSecretKey("");
-    setSaveError(null);
-  }, [editing, stripe]);
+  const [prevStripe, setPrevStripe] = useState({ editing, stripe });
+  if (prevStripe.editing !== editing || prevStripe.stripe !== stripe) {
+    setPrevStripe({ editing, stripe });
+    if (editing) {
+      setProductionPublishableKey(stripe.productionPublishableKey);
+      setSandboxPublishableKey(stripe.sandboxPublishableKey);
+      setProductionClientId(stripe.productionClientId);
+      setSandboxClientId(stripe.sandboxClientId);
+      setProductionSecretKey("");
+      setSandboxSecretKey("");
+      setSaveError(null);
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -535,14 +541,17 @@ function PayPalSection({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!editing) return;
-    setProductionClientId(paypal.productionClientId);
-    setSandboxClientId(paypal.sandboxClientId);
-    setProductionClientSecret("");
-    setSandboxClientSecret("");
-    setSaveError(null);
-  }, [editing, paypal]);
+  const [prevPaypal, setPrevPaypal] = useState({ editing, paypal });
+  if (prevPaypal.editing !== editing || prevPaypal.paypal !== paypal) {
+    setPrevPaypal({ editing, paypal });
+    if (editing) {
+      setProductionClientId(paypal.productionClientId);
+      setSandboxClientId(paypal.sandboxClientId);
+      setProductionClientSecret("");
+      setSandboxClientSecret("");
+      setSaveError(null);
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

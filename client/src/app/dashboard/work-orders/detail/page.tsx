@@ -44,7 +44,7 @@ function WorkOrderDetailContent() {
   const user = useAuthStore((s) => s.user);
   const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
   const [order, setOrder] = useState<WorkOrderListItem | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(id));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -54,17 +54,26 @@ function WorkOrderDetailContent() {
   const [invoiceListVersion, setInvoiceListVersion] = useState(0);
 
   useEffect(() => {
-    if (!token || !id) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
+    if (!token || !id) return;
+    let cancelled = false;
     getWorkOrder(token, id)
-      .then(setOrder)
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : "Failed to load work order."),
-      )
-      .finally(() => setLoading(false));
+      .then((res) => {
+        if (!cancelled) {
+          setOrder(res);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "Failed to load work order.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token, id]);
 
   useEffect(() => {
@@ -172,7 +181,9 @@ function WorkOrderDetailContent() {
     payload: ReturnType<typeof ticketToPayload> & { scheduleInsertIndex?: number },
   ) {
     if (!token || !order) throw new Error("Work order is not loaded.");
-    const { assignedUserRef, scheduleInsertIndex: _insert, ...rest } = payload;
+    const { assignedUserRef, ...remaining } = payload;
+    const rest = { ...remaining } as Omit<typeof remaining, "scheduleInsertIndex">;
+    delete (rest as { scheduleInsertIndex?: number }).scheduleInsertIndex;
     const nextAssigned = assignedUserRef ?? null;
     const prevAssigned = order.assignedUserRef ?? null;
     return updateWorkOrder(token, order._id, {

@@ -38,22 +38,29 @@ function EstimateDetailContent() {
   const canWrite = useAuthStore((s) => s.hasPermission("estimates:write"));
   const canDelete = useAuthStore((s) => s.hasPermission("estimates:delete"));
   const [estimate, setEstimate] = useState<EstimateItem | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(id));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [converting, setConverting] = useState(false);
 
   useEffect(() => {
-    if (!token || !id) {
-      setLoading(false);
-      return;
-    }
+    if (!token || !id) return;
+    let cancelled = false;
     getEstimate(token, id)
-      .then(({ estimate: item }) => setEstimate(item))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : "Failed to load estimate."),
-      )
-      .finally(() => setLoading(false));
+      .then(({ estimate: item }) => {
+        if (!cancelled) setEstimate(item);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "Failed to load estimate.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token, id]);
 
   if (loading) return <p className="text-sm text-neutral-500">Loading estimate…</p>;

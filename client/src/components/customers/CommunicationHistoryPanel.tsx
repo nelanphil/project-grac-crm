@@ -102,10 +102,12 @@ export default function CommunicationHistoryPanel({
   const [error, setError] = useState<string | null>(null);
   const [callingContactId, setCallingContactId] = useState<string | null>(null);
 
-  useEffect(() => {
+  const [prevChannel, setPrevChannel] = useState(channel);
+  if (prevChannel !== channel) {
+    setPrevChannel(channel);
     setAccountId("");
     setPage(1);
-  }, [channel]);
+  }
 
   useEffect(() => {
     if (!isAdmin) return;

@@ -182,8 +182,30 @@ function DiscountCodesContent() {
   }
 
   useEffect(() => {
-    void reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    if (!token) return;
+    getDiscountCodes(token, {
+      search: debouncedSearch || undefined,
+    })
+      .then(({ discountCodes }) => {
+        if (!cancelled) {
+          setCodes(discountCodes);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(
+            err instanceof ApiError ? err.message : "Failed to load discount codes.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token, debouncedSearch]);
 
   const filtered = useMemo(

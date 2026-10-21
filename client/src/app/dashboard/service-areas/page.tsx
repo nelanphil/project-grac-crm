@@ -48,18 +48,29 @@ function ServiceAreasEditor() {
 
   useEffect(() => {
     if (!token) return;
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
     getServiceAreas(token)
-      .then(({ areas: list }) => setAreas(toDraft(list)))
-      .catch((err) =>
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : "Failed to load service areas.",
-        ),
-      )
-      .finally(() => setLoading(false));
+      .then(({ areas: list }) => {
+        if (!cancelled) {
+          setAreas(toDraft(list));
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(
+            err instanceof ApiError
+              ? err.message
+              : "Failed to load service areas.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token]);
 
   function updateArea(key: string, patch: Partial<DraftArea>) {

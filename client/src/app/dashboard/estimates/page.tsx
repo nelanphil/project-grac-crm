@@ -72,8 +72,7 @@ function EstimatesContent() {
 
   useEffect(() => {
     if (!token) return;
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
     getEstimates(token, {
       page,
       pageSize,
@@ -81,17 +80,26 @@ function EstimatesContent() {
       statusGroup: statusGroup === "all" ? undefined : statusGroup,
     })
       .then((res) => {
+        if (cancelled) return;
         setEstimates(res.estimates);
         setTotal(res.total);
         if (res.stats) {
           setStats(res.stats);
           setStatsLoading(false);
         }
+        setError(null);
       })
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : "Failed to load estimates."),
-      )
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "Failed to load estimates.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token, page, pageSize, debounced, statusGroup]);
 
   const { safePage, totalPages, rangeStart, rangeEnd } = paginationRange(

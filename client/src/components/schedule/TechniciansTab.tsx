@@ -54,9 +54,11 @@ function InlineInitialsEditor({
   const [error, setError] = useState<string | null>(null);
   const skipBlurSave = useRef(false);
 
-  useEffect(() => {
+  const [prevInitials, setPrevInitials] = useState(savedInitials);
+  if (prevInitials !== savedInitials) {
+    setPrevInitials(savedInitials);
     setValue(savedInitials);
-  }, [savedInitials]);
+  }
 
   async function save(next: string) {
     if (!token || saving) return;
@@ -145,9 +147,11 @@ function InlinePhoneEditor({
   const [error, setError] = useState<string | null>(null);
   const skipBlurSave = useRef(false);
 
-  useEffect(() => {
+  const [prevPhone, setPrevPhone] = useState(savedPhone);
+  if (prevPhone !== savedPhone) {
+    setPrevPhone(savedPhone);
     setValue(savedPhone);
-  }, [savedPhone]);
+  }
 
   async function save(next: string) {
     if (!token || saving) return;
@@ -230,9 +234,11 @@ function ColorPicker({
   const [error, setError] = useState<string | null>(null);
   const saveTimer = useRef<number | null>(null);
 
-  useEffect(() => {
+  const [prevColorKey, setPrevColorKey] = useState({ userId, savedColor });
+  if (prevColorKey.userId !== userId || prevColorKey.savedColor !== savedColor) {
+    setPrevColorKey({ userId, savedColor });
     setValue(resolvedTechnicianColor(userId, savedColor));
-  }, [savedColor, userId]);
+  }
 
   useEffect(
     () => () => {

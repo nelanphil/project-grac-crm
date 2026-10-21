@@ -142,7 +142,7 @@ export async function geocodeAddressGoogle(
       c.componentType === "administrative_area_level_2" ||
       c.componentType === "county",
   );
-  let county = normalizeCountyName(countyComponent?.componentName?.text ?? "");
+  const county = normalizeCountyName(countyComponent?.componentName?.text ?? "");
 
   const normalized: NormalizedAddress = {
     address: toTitleCase(streetLine),

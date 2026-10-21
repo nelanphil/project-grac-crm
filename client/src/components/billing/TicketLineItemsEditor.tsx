@@ -931,7 +931,7 @@ export default function TicketLineItemsEditor({
     if (!token || activePartId == null) return;
     const row = parts.find((part) => part.id === activePartId);
     if (!row || row.lineType === "agreement") {
-      setProductResults([]);
+      queueMicrotask(() => setProductResults([]));
       return;
     }
     const q = (productQuery[activePartId] ?? "").trim();

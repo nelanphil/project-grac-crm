@@ -92,9 +92,15 @@ export default function DatabaseHealthSection({
   );
   const [page, setPage] = useState<DatabaseDocumentsPage | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(token));
   const [lookup, setLookup] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  const [prevNav, setPrevNav] = useState({ target, collection });
+  if (prevNav.target !== target || prevNav.collection !== collection) {
+    setPrevNav({ target, collection });
+    setExpanded(null);
+  }
 
   function replaceNav(next: {
     target?: DatabaseInspectTarget | null;
@@ -111,14 +117,8 @@ export default function DatabaseHealthSection({
   }
 
   useEffect(() => {
-    if (!token) {
-      setLoading(false);
-      return;
-    }
+    if (!token) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setExpanded(null);
 
     async function load() {
       try {

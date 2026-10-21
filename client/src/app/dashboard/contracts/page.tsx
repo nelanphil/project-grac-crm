@@ -89,9 +89,15 @@ function ContractsContent() {
     [contracts, search, typeFilter],
   );
 
-  useEffect(() => {
+  const [prevFilters, setPrevFilters] = useState({ search, typeFilter, standingFilter });
+  if (
+    prevFilters.search !== search ||
+    prevFilters.typeFilter !== typeFilter ||
+    prevFilters.standingFilter !== standingFilter
+  ) {
+    setPrevFilters({ search, typeFilter, standingFilter });
     setPage(1);
-  }, [search, typeFilter, standingFilter]);
+  }
 
   const { safePage, totalPages, rangeStart, rangeEnd } = paginationRange(
     page,

@@ -267,13 +267,15 @@ export default function ServiceTicketForm({
     stateTouched.current = false;
     techChoiceLocked.current = Boolean(initial?.assignedUserRef);
     autoAppliedTechId.current = null;
-    if (recordId) {
-      setShowEquipment(Boolean(initial && hasSavedEquipment(initial)));
-    }
-    if (initial) {
-      setForm(initial);
-      lastAppliedSiteKey.current = ticketSiteKey(initial);
-    }
+    queueMicrotask(() => {
+      if (recordId) {
+        setShowEquipment(Boolean(initial && hasSavedEquipment(initial)));
+      }
+      if (initial) {
+        setForm(initial);
+        lastAppliedSiteKey.current = ticketSiteKey(initial);
+      }
+    });
   }, [initial, autoSaving, recordId]);
 
   useEffect(() => {
@@ -346,7 +348,7 @@ export default function ServiceTicketForm({
 
   useEffect(() => {
     if (!token || customerQuery.trim().length < 2) {
-      setCustomerResults([]);
+      queueMicrotask(() => setCustomerResults([]));
       return;
     }
     const t = setTimeout(() => {
@@ -421,7 +423,7 @@ export default function ServiceTicketForm({
     const startTime = normalizeTimeOfDay(form.desiredStartTime);
     const startBy = normalizeTimeOfDay(form.desiredStartBy);
     if (!form.date || !hasSite || (startTime && startBy && startBy <= startTime)) {
-      setSlotRank(null);
+      queueMicrotask(() => setSlotRank(null));
       return;
     }
     let cancelled = false;
@@ -798,7 +800,7 @@ export default function ServiceTicketForm({
 
   useEffect(() => {
     if (autosave.status !== "saved") return;
-    setDayStopsNonce((nonce) => nonce + 1);
+    queueMicrotask(() => setDayStopsNonce((nonce) => nonce + 1));
   }, [autosave.status]);
 
   useEffect(() => {
@@ -807,12 +809,14 @@ export default function ServiceTicketForm({
         ? collapsedTechId
         : form.assignedUserRefs[0] || form.assignedUserRef || "";
     if (variant !== "work-order" || !token || !scheduleTechId || !form.date) {
-      setDayStops([]);
-      setDayStopsLoading(false);
+      queueMicrotask(() => {
+        setDayStops([]);
+        setDayStopsLoading(false);
+      });
       return;
     }
     let cancelled = false;
-    setDayStopsLoading(true);
+    queueMicrotask(() => setDayStopsLoading(true));
     getScheduleStaff(token, form.date, form.date, scheduleTechId)
       .then((board) => {
         if (cancelled) return;

@@ -27,7 +27,17 @@ function normalizeSlug(value: unknown): string {
     .toLowerCase();
 }
 
-function toPublic(doc: any) {
+function toPublic(doc: {
+  _id: unknown;
+  slug?: unknown;
+  title?: unknown;
+  mimeType?: unknown;
+  publicUrl?: unknown;
+  isActive?: unknown;
+  uploadedBy?: unknown;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}) {
   return {
     _id: doc._id,
     slug: doc.slug,
@@ -53,7 +63,7 @@ export async function uploadPublicAsset(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
-  const file = (req as any).file as Express.Multer.File | undefined;
+  const file = (req as unknown as { file?: Express.Multer.File }).file;
   const rawSlug = (req.body?.slug ?? "").toString().trim();
   const title =
     (req.body?.title ?? "Public image").toString().trim() || "Public image";

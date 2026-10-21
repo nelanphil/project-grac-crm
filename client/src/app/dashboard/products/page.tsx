@@ -141,9 +141,11 @@ function ProductsContent() {
     return () => clearTimeout(t);
   }, [search]);
 
-  useEffect(() => {
+  const [prevShowInactive, setPrevShowInactive] = useState(showInactive);
+  if (prevShowInactive !== showInactive) {
+    setPrevShowInactive(showInactive);
     setPage(1);
-  }, [showInactive]);
+  }
 
   async function reload() {
     if (!token) return;
@@ -163,8 +165,29 @@ function ProductsContent() {
   }
 
   useEffect(() => {
-    void reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!token) return;
+    let cancelled = false;
+    getProducts(token, {
+      search: debouncedSearch || undefined,
+      active: showInactive ? undefined : true,
+    })
+      .then(({ products: list }) => {
+        if (!cancelled) {
+          setProducts(list);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "Failed to load products.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token, debouncedSearch, showInactive]);
 
   useEffect(() => {

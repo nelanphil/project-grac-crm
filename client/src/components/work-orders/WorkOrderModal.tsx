@@ -5,21 +5,16 @@ import {
   useEffect,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
-  Check,
   Clock,
-  Download,
   ExternalLink,
   Loader2,
   Maximize2,
   Minimize2,
   Printer,
-  Sparkles,
-  User,
   Wrench,
   X,
 } from "lucide-react";
@@ -38,7 +33,6 @@ import {
   getWorkOrder,
   restoreWorkOrder,
   updateWorkOrder,
-  type InvoiceItem,
   type WorkOrderListItem,
 } from "@/lib/api";
 import { isDispatcherRole, type RoleLike } from "@/lib/dashboard-role";
@@ -170,12 +164,14 @@ export default function WorkOrderModal({
   // Fetch complete fresh work order document
   useEffect(() => {
     if (!token || !workOrderId) {
-      setLoading(false);
+      queueMicrotask(() => setLoading(false));
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    queueMicrotask(() => {
+      setLoading(true);
+      setError(null);
+    });
     getWorkOrder(token, workOrderId)
       .then((loaded) => {
         if (!cancelled) {
@@ -358,7 +354,9 @@ export default function WorkOrderModal({
     payload: ReturnType<typeof ticketToPayload> & { scheduleInsertIndex?: number },
   ) {
     if (!token || !order) return;
-    const { assignedUserRef, scheduleInsertIndex: _insert, ...rest } = payload;
+    const { assignedUserRef, ...remaining } = payload;
+    const rest = { ...remaining } as Omit<typeof remaining, "scheduleInsertIndex">;
+    delete (rest as { scheduleInsertIndex?: number }).scheduleInsertIndex;
     const nextAssigned = assignedUserRef ?? null;
     const prevAssigned = order.assignedUserRef ?? null;
     const updated = await updateWorkOrder(token, order._id, {

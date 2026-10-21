@@ -48,8 +48,8 @@ export default function MentionTextarea({
   const [suggestions, setSuggestions] = useState<MentionableUser[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [caret, setCaret] = useState(0);
   const areaRef = useRef<HTMLTextAreaElement>(null);
-  const caretRef = useRef(0);
 
   useEffect(() => {
     if (query == null) return;
@@ -66,9 +66,9 @@ export default function MentionTextarea({
     return () => clearTimeout(handle);
   }, [query, token]);
 
-  function syncQuery(next: string, caret: number) {
-    caretRef.current = caret;
-    const before = next.slice(0, caret);
+  function syncQuery(next: string, nextCaret: number) {
+    setCaret(nextCaret);
+    const before = next.slice(0, nextCaret);
     const match = before.match(/(^|\s)@([^\s@]*)$/);
     const nextQuery = match ? match[2] : null;
     setQuery((current) => {
@@ -85,12 +85,12 @@ export default function MentionTextarea({
 
   function insertAt(label: string) {
     const area = areaRef.current;
-    const caret = area?.selectionStart ?? caretRef.current;
-    const before = value.slice(0, caret);
+    const caretPos = area?.selectionStart ?? caret;
+    const before = value.slice(0, caretPos);
     const match = before.match(/(^|\s)@([^\s@]*)$/);
     if (!match) return;
     const atIndex = before.length - match[2].length - 1;
-    const next = `${value.slice(0, atIndex)}${label} ${value.slice(caret)}`;
+    const next = `${value.slice(0, atIndex)}${label} ${value.slice(caretPos)}`;
     const cursor = atIndex + label.length + 1;
     return { next, cursor };
   }
@@ -132,7 +132,6 @@ export default function MentionTextarea({
     });
   }
 
-  const caret = caretRef.current;
   const beforeCaret = value.slice(0, caret);
   const activeAt = beforeCaret.match(/(^|\s)@([^\s@]*)$/);
   const textBeforeAt = activeAt
