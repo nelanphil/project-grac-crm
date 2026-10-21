@@ -89,6 +89,8 @@ import {
   buildOwnerCustomerFilter,
 } from "../utils/ownerTerritory";
 import { User } from "../models/mongo/User";
+import { userHasCapability } from "../utils/jobRoles";
+import { isOrgAdminRole } from "../utils/roles";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
 import { geocodeSitePoint } from "../utils/siteGeocode";
 import { mintCheckoutKey } from "../utils/checkoutKey";
@@ -340,6 +342,7 @@ async function findActiveCustomerOr404(
   zip: string;
   county: string;
   ownerUserRef?: mongoose.Types.ObjectId | null;
+  ownerManual?: boolean;
   generatorModel: string;
   serial: string;
   atsSerial: string;
@@ -1440,55 +1443,179 @@ export async function updateCustomer(
       return;
     }
 
-    const accountName =
-      parsed.data.accountName ||
-      `${(customer.first ?? "").trim()} ${(customer.last ?? "").trim()}`.trim();
-    const accountNameMatches = await findAccountNameMatches(
-      accountName,
-      customer._id.toString(),
-    );
-    if (accountNameMatches.length > 0) {
-      res.status(409).json({
-        message: DUPLICATE_ACCOUNT_NAME,
-        matches: accountNameMatches,
+    const updateFields: Record<string, unknown> = {};
+
+    let accountName = customer.accountName;
+    if (parsed.data.accountName !== undefined) {
+      accountName =
+        parsed.data.accountName ||
+        `${(customer.first ?? "").trim()} ${(customer.last ?? "").trim()}`.trim();
+      const accountNameMatches = await findAccountNameMatches(
+        accountName,
+        customer._id.toString(),
+      );
+      if (accountNameMatches.length > 0) {
+        res.status(409).json({
+          message: DUPLICATE_ACCOUNT_NAME,
+          matches: accountNameMatches,
+        });
+        return;
+      }
+      updateFields.accountName = accountName;
+    }
+
+    let ownerChanged = false;
+    let nextOwnerUserRef = customer.ownerUserRef ?? null;
+    let nextOwnerManual = customer.ownerManual ?? false;
+
+    if (
+      parsed.data.ownerUserId !== undefined ||
+      parsed.data.ownerManual !== undefined
+    ) {
+      const isOwnerOrAdmin =
+        req.user &&
+        (isOrgAdminRole(req.user) ||
+          (await userHasCapability(req.user, "territoryOwner")));
+      if (!isOwnerOrAdmin) {
+        res.status(403).json({
+          message: "Only territory owners and admins can assign customer owners",
+        });
+        return;
+      }
+
+      if (parsed.data.ownerUserId !== undefined) {
+        const reqOwner = parsed.data.ownerUserId;
+        if (reqOwner && reqOwner.trim() !== "") {
+          if (!mongoose.Types.ObjectId.isValid(reqOwner.trim())) {
+            res.status(400).json({ message: "Invalid owner user ID" });
+            return;
+          }
+          const targetOwner = await User.findById(reqOwner.trim())
+            .select("_id first_name last_name email jobRoles userType deletedAt")
+            .lean();
+          if (!targetOwner || targetOwner.deletedAt != null) {
+            res.status(400).json({
+              message: "Selected owner user not found or inactive",
+            });
+            return;
+          }
+          const hasOwnerCap = await userHasCapability(
+            targetOwner,
+            "territoryOwner",
+          );
+          if (!hasOwnerCap) {
+            res.status(400).json({
+              message:
+                "Selected user does not have territory-owner capability",
+            });
+            return;
+          }
+          nextOwnerUserRef = targetOwner._id as mongoose.Types.ObjectId;
+          nextOwnerManual = parsed.data.ownerManual ?? true;
+          ownerChanged = true;
+        } else {
+          // null or empty string
+          if (parsed.data.ownerManual === false) {
+            nextOwnerManual = false;
+            ownerChanged = true;
+          } else {
+            nextOwnerUserRef = null;
+            nextOwnerManual = true;
+            ownerChanged = true;
+          }
+        }
+      } else if (parsed.data.ownerManual !== undefined) {
+        nextOwnerManual = parsed.data.ownerManual;
+        ownerChanged = true;
+      }
+
+      updateFields.ownerUserRef = nextOwnerUserRef;
+      updateFields.ownerManual = nextOwnerManual;
+    }
+
+    if (Object.keys(updateFields).length > 0) {
+      await Customer.findByIdAndUpdate(customer._id, {
+        $set: updateFields,
       });
+    }
+
+    if (ownerChanged && nextOwnerManual === false) {
+      // Revert to auto-assign by territory: re-resolve from address
+      await assignCustomerOwner(customer._id, { force: true });
+    }
+
+    const updatedCustomer = await Customer.findById(customer._id).lean();
+    if (!updatedCustomer) {
+      res.status(404).json({ message: "Customer not found" });
       return;
     }
-    await Customer.findByIdAndUpdate(customer._id, {
-      $set: { accountName },
-    });
+
+    let owner: {
+      _id: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+    } | null = null;
+    if (updatedCustomer.ownerUserRef) {
+      const ownerDoc = await User.findById(updatedCustomer.ownerUserRef)
+        .select("_id first_name last_name email")
+        .lean();
+      if (ownerDoc) {
+        owner = {
+          _id: String(ownerDoc._id),
+          first_name: ownerDoc.first_name,
+          last_name: ownerDoc.last_name,
+          email: ownerDoc.email,
+        };
+      }
+    }
 
     const custName = customerDisplayName({
-      accountName,
-      first: customer.first,
-      last: customer.last,
+      accountName: updatedCustomer.accountName,
+      first: updatedCustomer.first,
+      last: updatedCustomer.last,
     });
     logNotificationAsync({
       entityType: "customer",
       action: "updated",
       entityId: String(customer._id),
       customerRef: customer._id,
-      summary: `Customer ${custName} updated`,
-      metadata: { customerName: custName, accountName },
+      summary: ownerChanged
+        ? `Customer ${custName} owner updated${owner ? ` to ${owner.first_name} ${owner.last_name}` : ""}`
+        : `Customer ${custName} updated`,
+      metadata: {
+        customerName: custName,
+        accountName: updatedCustomer.accountName,
+        ownerUserId: updatedCustomer.ownerUserRef
+          ? String(updatedCustomer.ownerUserRef)
+          : null,
+        ownerManual: Boolean(updatedCustomer.ownerManual),
+      },
       ...actorFromRequest(req.user),
     });
 
     res.status(200).json({
       customer: {
-        _id: customer._id.toString(),
-        legacyId: customer.legacyId,
-        accountName,
-        first: customer.first,
-        last: customer.last,
-        email: customer.email,
-        phone: customer.phone,
-        address: customer.address,
-        city: customer.city,
-        state: customer.state,
-        zip: customer.zip,
-        generatorModel: customer.generatorModel ?? "",
-        lastSvc: customer.lastSvc ? customer.lastSvc.toISOString() : null,
-        deletedAt: customer.deletedAt ? customer.deletedAt.toISOString() : null,
+        _id: updatedCustomer._id.toString(),
+        legacyId: updatedCustomer.legacyId,
+        accountName: updatedCustomer.accountName,
+        first: updatedCustomer.first,
+        last: updatedCustomer.last,
+        email: updatedCustomer.email,
+        phone: updatedCustomer.phone,
+        address: updatedCustomer.address,
+        city: updatedCustomer.city,
+        state: updatedCustomer.state,
+        zip: updatedCustomer.zip,
+        county: updatedCustomer.county ?? "",
+        ownerUserRef: updatedCustomer.ownerUserRef
+          ? String(updatedCustomer.ownerUserRef)
+          : null,
+        ownerManual: Boolean(updatedCustomer.ownerManual),
+        owner,
+        generatorModel: updatedCustomer.generatorModel ?? "",
+        lastSvc: updatedCustomer.lastSvc ? updatedCustomer.lastSvc.toISOString() : null,
+        deletedAt: updatedCustomer.deletedAt ? updatedCustomer.deletedAt.toISOString() : null,
       },
     });
   } catch (err) {
@@ -1763,8 +1890,9 @@ export async function getCustomerById(
     // Lazy ZIP→county + owner fill so detail never stays blank after imports
     // when bulk Recalculate hasn't finished yet.
     if (
-      !String(customer.county ?? "").trim() ||
-      customer.ownerUserRef == null
+      (!String(customer.county ?? "").trim() ||
+        customer.ownerUserRef == null) &&
+      !customer.ownerManual
     ) {
       await assignCustomerOwner(customer._id, {
         fillMissingCounty: true,
@@ -1774,6 +1902,7 @@ export async function getCustomerById(
       if (refreshed) {
         customer.county = refreshed.county ?? "";
         customer.ownerUserRef = refreshed.ownerUserRef ?? null;
+        customer.ownerManual = refreshed.ownerManual ?? false;
         customer.zip = refreshed.zip ?? customer.zip;
         customer.city = refreshed.city ?? customer.city;
         customer.state = refreshed.state ?? customer.state;
@@ -1813,6 +1942,7 @@ export async function getCustomerById(
         ownerUserRef: customer.ownerUserRef
           ? String(customer.ownerUserRef)
           : null,
+        ownerManual: Boolean(customer.ownerManual),
         owner,
         lastSvc: customer.lastSvc ? customer.lastSvc.toISOString() : null,
         mergedIntoRef: null,

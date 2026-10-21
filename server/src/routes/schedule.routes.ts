@@ -12,7 +12,10 @@ import {
   postScheduleSuggest,
   postScheduleRecommendations,
   postScheduleTechnicianRecommendation,
+  postScheduleRecommendedDates,
   postSchedulePlace,
+  postSchedulePreviewOptimalPlacement,
+  postScheduleAssignAndOptimize,
   getScheduleStartOptions,
   postScheduleGeocodeMissing,
   getScheduleRoute,
@@ -58,8 +61,29 @@ router.post(
     postScheduleTechnicianRecommendation(req as AuthRequest, res),
 );
 
+router.post(
+  "/recommended-dates",
+  requireAnyPermission("jobs:read", "estimates:read"),
+  (req, res: Response) =>
+    postScheduleRecommendedDates(req as AuthRequest, res),
+);
+
 router.post("/place", requirePermission("jobs:write"), (req, res: Response) =>
   postSchedulePlace(req as AuthRequest, res),
+);
+
+router.post(
+  "/preview-optimal-placement",
+  requireAnyPermission("jobs:read", "estimates:read"),
+  (req, res: Response) =>
+    postSchedulePreviewOptimalPlacement(req as AuthRequest, res),
+);
+
+router.post(
+  "/assign-and-optimize",
+  requirePermission("jobs:write"),
+  (req, res: Response) =>
+    postScheduleAssignAndOptimize(req as AuthRequest, res),
 );
 
 router.get(

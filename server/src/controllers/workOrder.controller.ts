@@ -5,6 +5,7 @@ import {
   includingDeletedWorkOrders,
   WorkOrder,
 } from "../models/mongo/WorkOrder";
+import { WorkOrderNote } from "../models/mongo/WorkOrderNote";
 import { Estimate } from "../models/mongo/Estimate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
@@ -23,6 +24,7 @@ import {
 import { publishDashboardChanged } from "../services/dashboardLive";
 import {
   applyAssignmentSideEffects,
+  assignAndOptimizeTechnician,
   availabilityWarning,
   enrichScheduleWorkOrders,
   estimatedMinutesForWorkOrder,
@@ -31,6 +33,7 @@ import {
   rangeUtc,
   scheduleDesiredWindow,
 } from "../services/schedule.service";
+import { parseNoteTimeTags } from "../utils/noteTimeTags";
 import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
 import { resolveTicketWorkOrderType } from "../services/ticketWorkOrderType";
@@ -485,6 +488,35 @@ export async function createWorkOrder(
       return;
     }
 
+    if (data.notes && data.notes.length > 0) {
+      let winningDesiredStartTime = "";
+      let winningDesiredStartBy = "";
+      for (const initialNote of data.notes) {
+        const text = initialNote.content.trim();
+        if (!text) continue;
+        const parsedTags = parseNoteTimeTags(text);
+        const tags = parsedTags.ok ? parsedTags : { desiredStartTime: "", desiredStartBy: "" };
+        if (tags.desiredStartTime) {
+          winningDesiredStartTime = tags.desiredStartTime;
+          winningDesiredStartBy = tags.desiredStartBy;
+        }
+        await WorkOrderNote.create({
+          workOrderRef: workOrder._id,
+          authorId: req.user ? req.user.id : undefined,
+          content: text,
+          visibleToCustomer: Boolean(initialNote.visibleToCustomer),
+          isReminder: Boolean(initialNote.isReminder),
+          mentionUserIds: initialNote.mentionUserIds ?? [],
+          desiredStartTime: tags.desiredStartTime || undefined,
+          desiredStartBy: tags.desiredStartBy || undefined,
+        });
+      }
+      if (winningDesiredStartTime) {
+        workOrder.desiredStartTime = winningDesiredStartTime;
+        workOrder.desiredStartBy = winningDesiredStartBy;
+      }
+    }
+
     await workOrder.save();
 
     const placementWarnings: string[] = [];
@@ -495,17 +527,12 @@ export async function createWorkOrder(
       createdDate
     ) {
       try {
-        const createdCrew = crewIdStrings(workOrder);
-        const placed = await scheduleDesiredWindow({
+        const assigned = await assignAndOptimizeTechnician({
           workOrderId: String(workOrder._id),
-          userIds: createdCrew,
+          userId: String(workOrder.assignedUserRef),
           date: createdDate,
-          desiredStartTime: workOrder.desiredStartTime,
-          desiredStartBy: workOrder.desiredStartBy,
-          fallbackStartTime: workOrder.startTime,
-          estimatedMinutes: workOrder.estimatedMinutes,
         });
-        placementWarnings.push(...placed.warnings);
+        placementWarnings.push(...assigned.warnings);
         const fresh = await WorkOrder.findById(workOrder._id);
         if (fresh) {
           workOrder.scheduledStart = fresh.scheduledStart;
@@ -518,12 +545,39 @@ export async function createWorkOrder(
           workOrder.assignedUserRef = fresh.assignedUserRef;
           workOrder.assignedUserRefs = fresh.assignedUserRefs;
         }
-      } catch (err) {
-        const status = (err as { status?: number }).status;
-        const message =
-          err instanceof Error ? err.message : "Could not schedule this work order";
-        if (!status || status >= 500) throw err;
-        placementWarnings.push(message);
+      } catch {
+        // Fallback to scheduleDesiredWindow if assignAndOptimizeTechnician encountered an issue
+        try {
+          const createdCrew = crewIdStrings(workOrder);
+          const placed = await scheduleDesiredWindow({
+            workOrderId: String(workOrder._id),
+            userIds: createdCrew,
+            date: createdDate,
+            desiredStartTime: workOrder.desiredStartTime,
+            desiredStartBy: workOrder.desiredStartBy,
+            fallbackStartTime: workOrder.startTime,
+            estimatedMinutes: workOrder.estimatedMinutes,
+          });
+          placementWarnings.push(...placed.warnings);
+          const fresh = await WorkOrder.findById(workOrder._id);
+          if (fresh) {
+            workOrder.scheduledStart = fresh.scheduledStart;
+            workOrder.scheduledEnd = fresh.scheduledEnd;
+            workOrder.date = fresh.date;
+            workOrder.startTime = fresh.startTime;
+            workOrder.endTime = fresh.endTime;
+            workOrder.tech = fresh.tech;
+            workOrder.estimatedMinutes = fresh.estimatedMinutes;
+            workOrder.assignedUserRef = fresh.assignedUserRef;
+            workOrder.assignedUserRefs = fresh.assignedUserRefs;
+          }
+        } catch (fallbackErr) {
+          const status = (fallbackErr as { status?: number }).status;
+          const message =
+            fallbackErr instanceof Error ? fallbackErr.message : "Could not schedule this work order";
+          if (!status || status >= 500) throw fallbackErr;
+          placementWarnings.push(message);
+        }
       }
     }
 

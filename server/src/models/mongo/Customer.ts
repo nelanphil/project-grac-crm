@@ -16,6 +16,8 @@ export interface ICustomer extends Document {
   county: string;
   /** Territory owner resolved from primary site location. */
   ownerUserRef?: Types.ObjectId | null;
+  /** True when owner was manually assigned and should not be overridden by territory changes. */
+  ownerManual?: boolean;
   phone: string;
   /** Denormalized digits-only phone for indexed duplicate detection. */
   phoneDigits: string;
@@ -62,6 +64,7 @@ const customerSchema = new Schema<ICustomer>(
       default: null,
       index: true,
     },
+    ownerManual: { type: Boolean, default: false, index: true },
     phone: { type: String, default: "" },
     phoneDigits: { type: String, default: "", index: true },
     email: { type: String, default: "", index: true },

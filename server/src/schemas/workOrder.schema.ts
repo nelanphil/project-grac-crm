@@ -10,6 +10,10 @@ import {
 const objectIdOrNull = z.union([z.string().trim(), z.null()]).optional();
 
 const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
+const requiredDate = z
+  .string({ message: "Date is required" })
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}/, "Date is required");
 
 const optionalTime = z
   .union([
@@ -42,7 +46,7 @@ export const createWorkOrderSchema = z
     estimateRef: objectIdOrNull,
     descPerform: z.string().optional(),
     descPerformed: z.string().optional(),
-    date: z.union([z.string(), z.null()]).optional(),
+    date: requiredDate,
     startTime: optionalTime,
     endTime: optionalTime,
     tech: z.string().optional(),
@@ -55,6 +59,21 @@ export const createWorkOrderSchema = z
     completed: z.boolean().optional(),
     certify: z.boolean().optional(),
     parts: z.array(ticketPartSchema).optional(),
+    notes: z
+      .array(
+        z.object({
+          content: z
+            .string()
+            .trim()
+            .min(1, "Note content is required")
+            .max(5000, "Note must be 5000 characters or fewer"),
+          visibleToCustomer: z.boolean().optional().default(false),
+          templateId: z.string().optional(),
+          isReminder: z.boolean().optional().default(false),
+          mentionUserIds: z.array(z.string()).max(20).optional(),
+        }),
+      )
+      .optional(),
   })
   .merge(ticketSnapshotSchema)
   .merge(ticketMoneySchema)

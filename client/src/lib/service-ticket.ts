@@ -174,10 +174,12 @@ export function emptyNoteRow(): TicketPartRow {
   };
 }
 
-export function emptyTicketForm(): TicketFormState {
+export function emptyTicketForm(
+  variant: TicketVariant = "work-order",
+): TicketFormState {
   return {
     number: "",
-    date: new Date().toISOString().slice(0, 10),
+    date: variant === "estimate" ? new Date().toISOString().slice(0, 10) : "",
     startTime: "",
     endTime: "",
     desiredStartTime: "",
@@ -760,7 +762,7 @@ export function ticketFromRecord(record: {
   return {
     ...base,
     number: record.number ?? "",
-    date: ticketDateFromRecord(record) || base.date,
+    date: ticketDateFromRecord(record),
     startTime:
       record.startTime?.trim() ||
       (record.scheduledStart

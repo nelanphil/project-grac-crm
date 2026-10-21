@@ -165,10 +165,15 @@ async function resolveCountyForAddress(
 /** Set/clear customer.ownerUserRef from primary address location. */
 export async function assignCustomerOwner(
   customerId: Types.ObjectId | string,
-  options?: { fillMissingCounty?: boolean; allowCensus?: boolean },
+  options?: {
+    fillMissingCounty?: boolean;
+    allowCensus?: boolean;
+    force?: boolean;
+  },
 ): Promise<Types.ObjectId | null> {
   const fillMissingCounty = options?.fillMissingCounty !== false;
   const allowCensus = options?.allowCensus !== false;
+  const force = options?.force === true;
 
   const primary =
     (await CustomerAddress.findOne({
@@ -181,7 +186,7 @@ export async function assignCustomerOwner(
 
   // Fall back to denormalized customer fields when no address doc exists.
   const customer = await Customer.findById(customerId)
-    .select("county zip state address city ownerUserRef")
+    .select("county zip state address city ownerUserRef ownerManual")
     .lean();
 
   let county = normalizeCountyName(primary?.county || customer?.county);
@@ -236,6 +241,11 @@ export async function assignCustomerOwner(
         await Customer.findByIdAndUpdate(customerId, { $set: { county } });
       }
     }
+  }
+
+  // Preserve manual owner assignment unless explicitly forced
+  if (customer?.ownerManual && !force) {
+    return (customer.ownerUserRef as Types.ObjectId) ?? null;
   }
 
   const ownerId = await resolveOwnerForLocation({ county, zip, state });
@@ -306,6 +316,7 @@ export async function reassignOwnersForTerritoryChange(options: {
     const customers = await Customer.find({
       deletedAt: null,
       ...notMergedFilter,
+      ownerManual: { $ne: true },
     })
       .select("_id")
       .lean();
@@ -342,6 +353,7 @@ export async function reassignOwnersForTerritoryChange(options: {
     const customers = await Customer.find({
       deletedAt: null,
       ...notMergedFilter,
+      ownerManual: { $ne: true },
       $or: or,
     })
       .select("_id")

@@ -1017,6 +1017,7 @@ export interface CustomerListItem {
   zip: string;
   county?: string;
   ownerUserRef?: string | null;
+  ownerManual?: boolean;
   owner?: CustomerOwnerSummary | null;
   generatorModel: string;
   lastSvc: string | null;
@@ -1132,9 +1133,13 @@ export async function createCustomer(
 export async function updateCustomer(
   token: string,
   id: string,
-  body: { accountName: string },
-): Promise<{ customer: CustomerListItem }> {
-  return authRequest<{ customer: CustomerListItem }>(`/customers/${id}`, {
+  body: {
+    accountName?: string;
+    ownerUserId?: string | null;
+    ownerManual?: boolean;
+  },
+): Promise<{ customer: CustomerDetail }> {
+  return authRequest<{ customer: CustomerDetail }>(`/customers/${id}`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -1230,6 +1235,7 @@ export interface CustomerDetail {
   zip: string;
   county?: string;
   ownerUserRef?: string | null;
+  ownerManual?: boolean;
   owner?: CustomerOwnerSummary | null;
   phone: string;
   email: string;
@@ -2160,9 +2166,16 @@ export type ServiceTicketPayload = {
   exerciseTime?: string;
   signatureDataUrl?: string | null;
   signedByName?: string;
-  status?: "draft" | "sent" | "accepted" | "declined" | "converted";
   contractRef?: string | null;
   contractDiscount?: TicketContractDiscount | null;
+  status?: "draft" | "sent" | "accepted" | "declined" | "converted";
+  notes?: Array<{
+    content: string;
+    visibleToCustomer?: boolean;
+    isReminder?: boolean;
+    mentionUserIds?: string[];
+    templateId?: string;
+  }>;
 };
 
 export async function getWorkOrders(
@@ -2559,6 +2572,43 @@ export interface SlotTechnicianRecommendation {
   reason: string;
 }
 
+export interface RecommendedRouteDate {
+  date: string;
+  userId: string;
+  first_name: string;
+  last_name: string;
+  distanceMiles: number;
+  stopCount: number;
+  closestStopCity: string;
+  matchType?: "route" | "territory";
+  territoryCity?: string;
+}
+
+export async function getRecommendedRouteDates(
+  token: string,
+  data: {
+    startTime?: string;
+    startBy?: string;
+    estimatedMinutes?: number;
+    addressRef?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    workOrderTypeRef?: string;
+    excludeWorkOrderId?: string;
+    maxMiles?: number;
+  },
+): Promise<{
+  dates: RecommendedRouteDate[];
+}> {
+  return authRequest("/schedule/recommended-dates", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
 export async function recommendTechnicianForSlot(
   token: string,
   data: {
@@ -2660,6 +2710,62 @@ export async function placeScheduleWorkOrder(
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
+}
+
+export interface PreviewOptimalPlacementResult {
+  insertIndex: number;
+  scheduledStart: string;
+  startTime: string;
+  endTime: string;
+  estimatedMinutes: number;
+  warnings: string[];
+}
+
+export async function previewOptimalPlacement(
+  token: string,
+  data: {
+    userId: string;
+    date: string;
+    addressRef?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    desiredStartTime?: string | null;
+    desiredStartBy?: string | null;
+    estimatedMinutes?: number;
+    objective?: "time" | "distance";
+    roundTrip?: boolean;
+  },
+): Promise<PreviewOptimalPlacementResult> {
+  return authRequest<PreviewOptimalPlacementResult>(
+    `/schedule/preview-optimal-placement`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function assignAndOptimizeTechnician(
+  token: string,
+  data: {
+    workOrderId: string;
+    userId: string;
+    date: string;
+    objective?: "time" | "distance";
+    roundTrip?: boolean;
+  },
+): Promise<{ workOrder: WorkOrderListItem; warnings: string[] }> {
+  return authRequest<{ workOrder: WorkOrderListItem; warnings: string[] }>(
+    `/schedule/assign-and-optimize`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
 }
 
 export interface ScheduleRouteStop {

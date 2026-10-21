@@ -49,7 +49,9 @@ export const createCustomerSchema = z.object({
 });
 
 export const updateCustomerSchema = z.object({
-  accountName: z.string().trim().max(200),
+  accountName: z.string().trim().max(200).optional(),
+  ownerUserId: z.union([z.string().trim(), z.null()]).optional(),
+  ownerManual: z.boolean().optional(),
 });
 
 export const checkCustomerDuplicatesSchema = z.object({

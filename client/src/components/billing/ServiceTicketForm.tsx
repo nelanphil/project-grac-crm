@@ -13,19 +13,24 @@ import {
 import {
   CustomerDetail,
   CustomerListItem,
+  RecommendedRouteDate,
   SlotTechnicianRecommendation,
   TechnicianListItem,
   ApiError,
   getContractsForCustomer,
   getCustomer,
   getCustomers,
+  getRecommendedRouteDates,
   getScheduleStaff,
   getTaxSettings,
   getTechnicians,
   getWorkOrderTypes,
   placeScheduleWorkOrder,
+  previewOptimalPlacement,
+  assignAndOptimizeTechnician,
   recommendTechnicianForSlot,
   WorkOrderListItem,
+  WorkOrderNote,
   WorkOrderTypeItem,
 } from "@/lib/api";
 import { COMPANY, US_STATE_CODES, US_STATES, toUsStateCode } from "@/lib/constants";
@@ -212,7 +217,16 @@ export default function ServiceTicketForm({
   submitting?: boolean;
   submitLabel: string;
   onSubmit: (
-    payload: ReturnType<typeof ticketToPayload> & { scheduleInsertIndex?: number },
+    payload: ReturnType<typeof ticketToPayload> & {
+      scheduleInsertIndex?: number;
+      notes?: Array<{
+        content: string;
+        visibleToCustomer?: boolean;
+        isReminder?: boolean;
+        mentionUserIds?: string[];
+        templateId?: string;
+      }>;
+    },
   ) => void | Promise<void>;
   extraActions?: ReactNode;
   invoiceAction?: ReactNode;
@@ -226,7 +240,9 @@ export default function ServiceTicketForm({
   const user = useAuthStore((s) => s.user);
   const canWriteJobs = useAuthStore((s) => s.hasPermission("jobs:write"));
   const canWriteEstimates = useAuthStore((s) => s.hasPermission("estimates:write"));
-  const [form, setForm] = useState<TicketFormState>(initial ?? emptyTicketForm());
+  const [form, setForm] = useState<TicketFormState>(
+    initial ?? emptyTicketForm(variant),
+  );
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerResults, setCustomerResults] = useState<CustomerListItem[]>([]);
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
@@ -237,10 +253,13 @@ export default function ServiceTicketForm({
     technicians: SlotTechnicianRecommendation[];
     recommendation: SlotTechnicianRecommendation | null;
   } | null>(null);
+  const [recommendedDates, setRecommendedDates] = useState<RecommendedRouteDate[]>([]);
+  const [recommendedDatesLoading, setRecommendedDatesLoading] = useState(false);
+  const [recommendedDatesPage, setRecommendedDatesPage] = useState(0);
   const [workOrderTypes, setWorkOrderTypes] = useState<WorkOrderTypeItem[]>([]);
   const [workOrderTypesLoaded, setWorkOrderTypesLoaded] = useState(false);
   const lastAppliedSiteKey = useRef(
-    ticketSiteKey(initial ?? emptyTicketForm()),
+    ticketSiteKey(initial ?? emptyTicketForm(variant)),
   );
   const stateTouched = useRef(false);
   const initialAppliedFor = useRef<string | undefined>(undefined);
@@ -249,6 +268,7 @@ export default function ServiceTicketForm({
   const [showEquipment, setShowEquipment] = useState(() =>
     Boolean(recordId && initial && hasSavedEquipment(initial)),
   );
+  const [draftNotes, setDraftNotes] = useState<WorkOrderNote[]>([]);
   const [dayStops, setDayStops] = useState<WorkOrderListItem[]>([]);
   const [dayStopsLoading, setDayStopsLoading] = useState(false);
   const [dayStopsNonce, setDayStopsNonce] = useState(0);
@@ -415,6 +435,75 @@ export default function ServiceTicketForm({
       cancelled = true;
     };
   }, [token, variant]);
+
+  useEffect(() => {
+    if (!token || variant !== "work-order") return;
+    const city = form.customerCity.trim();
+    const address = form.customerAddress.trim();
+    const hasSite = Boolean(form.addressRef || city || address);
+    const startTime = normalizeTimeOfDay(form.desiredStartTime);
+    const startBy = normalizeTimeOfDay(form.desiredStartBy);
+    if (!hasSite || (startTime && startBy && startBy <= startTime)) {
+      queueMicrotask(() => {
+        setRecommendedDates([]);
+        setRecommendedDatesLoading(false);
+        setRecommendedDatesPage(0);
+      });
+      return;
+    }
+    let cancelled = false;
+    queueMicrotask(() => setRecommendedDatesLoading(true));
+    const timer = setTimeout(() => {
+      getRecommendedRouteDates(token, {
+        ...(startTime
+          ? {
+              startTime,
+              estimatedMinutes: rankingMinutes(form.laborHours),
+              ...(startBy ? { startBy } : {}),
+            }
+          : {
+              estimatedMinutes: rankingMinutes(form.laborHours),
+            }),
+        addressRef: form.addressRef || undefined,
+        address: address || undefined,
+        city: city || undefined,
+        state: form.customerState.trim() || undefined,
+        zip: form.customerZip.trim() || undefined,
+        workOrderTypeRef: form.workOrderTypeRef || undefined,
+        excludeWorkOrderId: recordId,
+      })
+        .then((res) => {
+          if (cancelled) return;
+          setRecommendedDates(res.dates);
+          setRecommendedDatesPage(0);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setRecommendedDates([]);
+          setRecommendedDatesPage(0);
+        })
+        .finally(() => {
+          if (!cancelled) setRecommendedDatesLoading(false);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    token,
+    variant,
+    form.desiredStartTime,
+    form.desiredStartBy,
+    form.laborHours,
+    form.addressRef,
+    form.customerAddress,
+    form.customerCity,
+    form.customerState,
+    form.customerZip,
+    form.workOrderTypeRef,
+    recordId,
+  ]);
 
   useEffect(() => {
     if (!token || variant !== "work-order") return;
@@ -678,31 +767,263 @@ export default function ServiceTicketForm({
     return known[form.assignedUserRefs.indexOf(userId)] || "";
   }
 
+  function selectRecommendedDate(item: RecommendedRouteDate) {
+    techChoiceLocked.current = true;
+    autoAppliedTechId.current = item.userId;
+    setCollapsedTechId(null);
+    const name = technicianDisplayName(item) || technicianName(item.userId);
+    patch({
+      date: item.date,
+      tech: name,
+      assignedUserRef: item.userId,
+      assignedUserRefs: [item.userId],
+    });
+
+    if (!recordId) {
+      if (token && item.date) {
+        setScheduleError(null);
+        previewOptimalPlacement(token, {
+          userId: item.userId,
+          date: item.date,
+          addressRef: form.addressRef || undefined,
+          address: form.customerAddress.trim() || undefined,
+          city: form.customerCity.trim() || undefined,
+          state: form.customerState.trim() || undefined,
+          zip: form.customerZip.trim() || undefined,
+          desiredStartTime: form.desiredStartTime || undefined,
+          desiredStartBy: form.desiredStartBy || undefined,
+          estimatedMinutes: rankingMinutes(form.laborHours),
+        })
+          .then((res) => {
+            setPendingInsertIndex(res.insertIndex);
+            patch({
+              startTime: res.startTime,
+              endTime: res.endTime,
+            });
+            if (res.warnings.length > 0) {
+              setScheduleError(res.warnings.join(" "));
+            } else {
+              setScheduleError(null);
+            }
+            setDayStopsNonce((n) => n + 1);
+          })
+          .catch((err) => {
+            setPendingInsertIndex(null);
+            setScheduleError(
+              err instanceof ApiError
+                ? err.message
+                : "Couldn't preview optimal schedule placement.",
+            );
+          });
+      }
+      return;
+    }
+
+    if (recordId && token && dispatcher) {
+      setPlacingIndex(0);
+      setScheduleError(null);
+      assignAndOptimizeTechnician(token, {
+        workOrderId: recordId,
+        userId: item.userId,
+        date: item.date,
+      })
+        .then((result) => {
+          const mine = result.workOrder;
+          setForm((prev) => ({
+            ...prev,
+            date: ticketDateFromRecord(mine) || prev.date,
+            startTime: mine.startTime?.trim() || prev.startTime,
+            endTime: mine.endTime?.trim() || prev.endTime,
+            tech: mine.tech || prev.tech,
+            assignedUserRef:
+              mine.assignedUserRefs?.[0] ||
+              mine.assignedUserRef ||
+              prev.assignedUserRef,
+            assignedUserRefs:
+              mine.assignedUserRefs && mine.assignedUserRefs.length > 0
+                ? mine.assignedUserRefs
+                : mine.assignedUserRef
+                  ? [mine.assignedUserRef]
+                  : prev.assignedUserRefs,
+          }));
+          if (result.warnings.length > 0) {
+            setScheduleError(result.warnings.join(" "));
+          }
+          setDayStopsNonce((n) => n + 1);
+        })
+        .catch((err) => {
+          setScheduleError(
+            err instanceof ApiError
+              ? err.message
+              : "Couldn't assign and optimize technician.",
+          );
+        })
+        .finally(() => {
+          setPlacingIndex(null);
+        });
+    }
+  }
+
   function toggleWorkOrderTechnician(userId: string) {
-    setPendingInsertIndex(null);
-    if (!userId) {
+    if (!userId || form.assignedUserRefs.includes(userId)) {
       techChoiceLocked.current = false;
       autoAppliedTechId.current = null;
+      setPendingInsertIndex(null);
+      setCollapsedTechId(null);
+      setScheduleError(null);
       patch({ tech: "", assignedUserRef: null, assignedUserRefs: [] });
       return;
     }
-    const current = form.assignedUserRefs.length
-      ? form.assignedUserRefs
-      : form.assignedUserRef
-        ? [form.assignedUserRef]
-        : [];
-    const next = current.includes(userId)
-      ? current.filter((id) => id !== userId)
-      : [...current, userId];
-    techChoiceLocked.current = next.length > 0;
-    if (next.length === 0) autoAppliedTechId.current = null;
-    const names = next.map((id) => technicianName(id)).filter(Boolean);
+
+    techChoiceLocked.current = true;
+    autoAppliedTechId.current = userId;
+    setCollapsedTechId(null);
+    const name = technicianName(userId);
     patch({
-      tech: names.join(", "),
-      assignedUserRef: next[0] ?? null,
-      assignedUserRefs: next,
+      tech: name,
+      assignedUserRef: userId,
+      assignedUserRefs: [userId],
     });
+
+    if (!recordId) {
+      if (token && form.date) {
+        setScheduleError(null);
+        previewOptimalPlacement(token, {
+          userId,
+          date: form.date,
+          addressRef: form.addressRef || undefined,
+          address: form.customerAddress.trim() || undefined,
+          city: form.customerCity.trim() || undefined,
+          state: form.customerState.trim() || undefined,
+          zip: form.customerZip.trim() || undefined,
+          desiredStartTime: form.desiredStartTime || undefined,
+          desiredStartBy: form.desiredStartBy || undefined,
+          estimatedMinutes: rankingMinutes(form.laborHours),
+        })
+          .then((res) => {
+            setPendingInsertIndex(res.insertIndex);
+            patch({
+              startTime: res.startTime,
+              endTime: res.endTime,
+            });
+            if (res.warnings.length > 0) {
+              setScheduleError(res.warnings.join(" "));
+            } else {
+              setScheduleError(null);
+            }
+            setDayStopsNonce((n) => n + 1);
+          })
+          .catch((err) => {
+            setPendingInsertIndex(null);
+            setScheduleError(
+              err instanceof ApiError
+                ? err.message
+                : "Couldn't preview route placement.",
+            );
+          });
+      }
+      return;
+    }
+
+    if (token && dispatcher && form.date) {
+      setPlacingIndex(0);
+      setScheduleError(null);
+      assignAndOptimizeTechnician(token, {
+        workOrderId: recordId,
+        userId,
+        date: form.date,
+      })
+        .then((result) => {
+          const mine = result.workOrder;
+          setForm((prev) => ({
+            ...prev,
+            date: ticketDateFromRecord(mine) || prev.date,
+            startTime: mine.startTime?.trim() || prev.startTime,
+            endTime: mine.endTime?.trim() || prev.endTime,
+            tech: mine.tech || prev.tech,
+            assignedUserRef:
+              mine.assignedUserRefs?.[0] || mine.assignedUserRef || prev.assignedUserRef,
+            assignedUserRefs:
+              mine.assignedUserRefs && mine.assignedUserRefs.length > 0
+                ? mine.assignedUserRefs
+                : mine.assignedUserRef
+                  ? [mine.assignedUserRef]
+                  : prev.assignedUserRefs,
+          }));
+          if (result.warnings.length > 0) {
+            setScheduleError(result.warnings.join(" "));
+          }
+          setDayStopsNonce((n) => n + 1);
+        })
+        .catch((err) => {
+          setScheduleError(
+            err instanceof ApiError
+              ? err.message
+              : "Couldn't assign and optimize technician.",
+          );
+        })
+        .finally(() => {
+          setPlacingIndex(null);
+        });
+    }
   }
+
+  useEffect(() => {
+    if (
+      recordId ||
+      variant !== "work-order" ||
+      !token ||
+      !form.assignedUserRef ||
+      !form.date
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      previewOptimalPlacement(token, {
+        userId: form.assignedUserRef!,
+        date: form.date,
+        addressRef: form.addressRef || undefined,
+        address: form.customerAddress.trim() || undefined,
+        city: form.customerCity.trim() || undefined,
+        state: form.customerState.trim() || undefined,
+        zip: form.customerZip.trim() || undefined,
+        desiredStartTime: form.desiredStartTime || undefined,
+        desiredStartBy: form.desiredStartBy || undefined,
+        estimatedMinutes: rankingMinutes(form.laborHours),
+      })
+        .then((res) => {
+          if (cancelled) return;
+          setPendingInsertIndex(res.insertIndex);
+          patch({
+            startTime: res.startTime,
+            endTime: res.endTime,
+          });
+          setDayStopsNonce((n) => n + 1);
+        })
+        .catch(() => {
+          /* ignore error */
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    recordId,
+    variant,
+    token,
+    form.assignedUserRef,
+    form.date,
+    form.desiredStartTime,
+    form.desiredStartBy,
+    form.addressRef,
+    form.customerAddress,
+    form.customerCity,
+    form.customerState,
+    form.customerZip,
+    form.laborHours,
+  ]);
 
   function applyAddress(addressId: string) {
     const site = customer?.addresses.find((a) => a._id === addressId);
@@ -741,6 +1062,7 @@ export default function ServiceTicketForm({
       return;
     }
     if (!form.customerId) return;
+    if (variant === "work-order" && !form.date.trim()) return;
     if (
       workOrderTypeSaveIssue({
         variant,
@@ -755,6 +1077,16 @@ export default function ServiceTicketForm({
     await onSubmit({
       ...ticketToPayload(form),
       ...(pendingInsertIndex != null ? { scheduleInsertIndex: pendingInsertIndex } : {}),
+      ...(draftNotes.length > 0
+        ? {
+            notes: draftNotes.map((n) => ({
+              content: n.content,
+              visibleToCustomer: n.visibleToCustomer,
+              isReminder: n.isReminder,
+              mentionUserIds: n.mentionUserIds,
+            })),
+          }
+        : {}),
     });
   }
 
@@ -777,9 +1109,12 @@ export default function ServiceTicketForm({
     types: workOrderTypes,
     typesLoaded: workOrderTypesLoaded,
   });
+  const missingRequiredDate = variant === "work-order" && !form.date.trim();
   const autosaveBlockedReason = !form.customerId
     ? "choose a customer."
-    : typeSaveIssue.blocked
+    : missingRequiredDate
+      ? "choose a date."
+      : typeSaveIssue.blocked
         ? typeSaveIssue.message || "loading work order types…"
         : null;
 
@@ -995,9 +1330,10 @@ export default function ServiceTicketForm({
           <Field label={variant === "estimate" ? "Estimate No" : "Work Order No"}>
             <input value={form.number || "Assigned on save"} disabled className={inputClass} />
           </Field>
-          <Field label="Date">
+          <Field label={variant === "work-order" ? "Date *" : "Date"}>
             <input
               type="date"
+              required={variant === "work-order"}
               value={form.date}
               onChange={(e) => patch({ date: e.target.value })}
               className={inputClass}
@@ -1178,7 +1514,7 @@ export default function ServiceTicketForm({
             </div>
 
             <div className="mt-5 border-t border-neutral-200 pt-4">
-              {token && user && recordId ? (
+              {token && user && (recordId || variant === "work-order") ? (
                 <WorkOrderNotesPanel
                   token={token}
                   recordId={recordId}
@@ -1186,6 +1522,8 @@ export default function ServiceTicketForm({
                   userId={user.id}
                   canWrite={variant === "estimate" ? canWriteEstimates : canWriteJobs}
                   userRole={user}
+                  draftNotes={draftNotes}
+                  onDraftNotesChange={setDraftNotes}
                   onDesiredWindowChange={
                     variant === "work-order"
                       ? (window) =>
@@ -1214,6 +1552,182 @@ export default function ServiceTicketForm({
 
           {variant === "work-order" ? (
             <div>
+              {(() => {
+                const serviceTypeLabel =
+                  form.workOrderTypeLabel.trim() ||
+                  workOrderTypes.find((t) => t._id === form.workOrderTypeRef)?.label ||
+                  "Service";
+                const pageSize = 3;
+                const totalPages = Math.max(
+                  1,
+                  Math.ceil(recommendedDates.length / pageSize),
+                );
+                const safePage = Math.min(recommendedDatesPage, totalPages - 1);
+                const visibleDates = recommendedDates.slice(
+                  safePage * pageSize,
+                  (safePage + 1) * pageSize,
+                );
+                const hasSite = Boolean(
+                  form.addressRef ||
+                    form.customerCity.trim() ||
+                    form.customerAddress.trim(),
+                );
+
+                return (
+                  <div className="mb-5">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      Recommended {serviceTypeLabel} Date
+                    </p>
+                    {!hasSite ? (
+                      <p className="mb-2 text-xs text-neutral-500">
+                        Add an address to see recommended dates within 10 miles of scheduled routes.
+                      </p>
+                    ) : null}
+                    <div className="overflow-hidden rounded-md border border-neutral-200">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-neutral-50 text-[11px] uppercase tracking-wide text-neutral-500">
+                          <tr>
+                            <th className="w-8 px-2 py-2">
+                              <span className="sr-only">Select</span>
+                            </th>
+                            <th className="px-2 py-2 font-semibold">Date</th>
+                            <th className="px-2 py-2 font-semibold">Technician</th>
+                            <th className="px-2 py-2 font-semibold">Route Proximity</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {recommendedDatesLoading ? (
+                            <tr>
+                              <td
+                                colSpan={4}
+                                className="px-2 py-3 text-xs text-neutral-500"
+                              >
+                                Checking scheduled routes and territories…
+                              </td>
+                            </tr>
+                          ) : visibleDates.length === 0 ? (
+                            <tr>
+                              <td
+                                colSpan={4}
+                                className="px-2 py-3 text-xs text-neutral-500"
+                              >
+                                {hasSite
+                                  ? "No scheduled technician routes within 10 miles or matching territories on future dates."
+                                  : "No recommended dates yet."}
+                              </td>
+                            </tr>
+                          ) : (
+                            visibleDates.map((item) => {
+                              const selected =
+                                form.date === item.date &&
+                                (form.assignedUserRefs.includes(item.userId) ||
+                                  (form.assignedUserRefs.length === 0 &&
+                                    recommendedDates.filter(
+                                      (d) => d.date === item.date,
+                                    ).length === 1));
+                              const techName = technicianDisplayName(item);
+                              const milesText =
+                                item.distanceMiles < 0.1
+                                  ? "<0.1 mi"
+                                  : `${item.distanceMiles} mi`;
+                              const territoryCity =
+                                item.territoryCity || item.closestStopCity;
+                              return (
+                                <tr
+                                  key={`${item.date}-${item.userId}`}
+                                  className={`cursor-pointer border-t border-neutral-200 ${
+                                    selected ? "bg-neutral-50" : "hover:bg-neutral-50"
+                                  }`}
+                                  onClick={() => selectRecommendedDate(item)}
+                                >
+                                  <td className="px-2 py-2">
+                                    <input
+                                      type="radio"
+                                      name="work-order-recommended-date"
+                                      value={`${item.date}-${item.userId}`}
+                                      checked={selected}
+                                      onClick={(event) => event.stopPropagation()}
+                                      onChange={() => selectRecommendedDate(item)}
+                                      aria-label={`Select ${formatWeekdayDate(item.date)} with ${techName}`}
+                                    />
+                                  </td>
+                                  <td className="px-2 py-2 font-medium text-brand-dark">
+                                    {formatWeekdayDate(item.date)}
+                                  </td>
+                                  <td className="px-2 py-2 text-brand-dark">
+                                    {techName}
+                                  </td>
+                                  <td className="px-2 py-2 text-xs text-neutral-500">
+                                    {item.matchType === "territory" ? (
+                                      <>
+                                        In territory
+                                        {territoryCity
+                                          ? ` (${territoryCity})`
+                                          : ""}
+                                        {item.stopCount > 0
+                                          ? ` · ${item.stopCount} ${
+                                              item.stopCount === 1
+                                                ? "stop"
+                                                : "stops"
+                                            }`
+                                          : ""}
+                                      </>
+                                    ) : (
+                                      <>
+                                        {milesText} away · {item.stopCount}{" "}
+                                        {item.stopCount === 1 ? "stop" : "stops"}
+                                        {item.closestStopCity
+                                          ? ` (${item.closestStopCity})`
+                                          : ""}
+                                      </>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    {recommendedDates.length > pageSize ? (
+                      <div className="mt-2 flex items-center justify-between text-xs text-neutral-500">
+                        <span>
+                          Showing {safePage * pageSize + 1}–
+                          {Math.min(
+                            (safePage + 1) * pageSize,
+                            recommendedDates.length,
+                          )}{" "}
+                          of {recommendedDates.length} dates
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={safePage <= 0}
+                            onClick={() =>
+                              setRecommendedDatesPage((p) => Math.max(0, p - 1))
+                            }
+                            className="rounded border border-neutral-300 bg-white px-2 py-0.5 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                          >
+                            Previous
+                          </button>
+                          <button
+                            type="button"
+                            disabled={safePage >= totalPages - 1}
+                            onClick={() =>
+                              setRecommendedDatesPage((p) =>
+                                Math.min(totalPages - 1, p + 1),
+                              )
+                            }
+                            className="rounded border border-neutral-300 bg-white px-2 py-0.5 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })()}
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Technician
               </p>
@@ -1343,7 +1857,7 @@ export default function ServiceTicketForm({
                                                 className={`block w-full rounded border border-dashed px-2 py-1 text-left text-xs ${
                                                   pendingInsertIndex === item.insertIndex &&
                                                   !recordId
-                                                    ? "border-brand-blue bg-white font-medium text-brand-dark"
+                                                    ? "border-brand-blue bg-blue-50 font-medium text-brand-dark ring-1 ring-brand-blue"
                                                     : "border-neutral-300 text-neutral-500 hover:border-neutral-400 hover:text-brand-dark"
                                                 }`}
                                               >
@@ -1351,7 +1865,7 @@ export default function ServiceTicketForm({
                                                   ? "Placing…"
                                                   : pendingInsertIndex === item.insertIndex &&
                                                       !recordId
-                                                    ? "This work order will be placed here"
+                                                    ? "✓ Auto-placed here (optimized)"
                                                     : item.insertIndex === 0
                                                       ? "Place first"
                                                       : item.insertIndex ===
@@ -1559,7 +2073,12 @@ export default function ServiceTicketForm({
             {autoSave ? null : (
               <button
                 type="submit"
-                disabled={submitting || !form.customerId || typeSaveIssue.blocked}
+                disabled={
+                  submitting ||
+                  !form.customerId ||
+                  missingRequiredDate ||
+                  typeSaveIssue.blocked
+                }
                 className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
               >
                 {submitting ? "Saving…" : submitLabel}

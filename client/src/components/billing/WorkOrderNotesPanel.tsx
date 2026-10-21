@@ -17,7 +17,11 @@ import {
 } from "@/lib/api";
 import { isAdminRole, type RoleLike } from "@/lib/dashboard-role";
 import MentionTextarea, { NoteBody } from "@/components/billing/MentionTextarea";
-import { noteTimeTagMessage, winningDesiredWindow } from "@/lib/noteTimeTags";
+import {
+  noteTimeTagMessage,
+  parseNoteTimeTags,
+  winningDesiredWindow,
+} from "@/lib/noteTimeTags";
 
 function formatNoteDate(date: string): string {
   return new Date(date).toLocaleString(undefined, {
@@ -39,9 +43,11 @@ export default function WorkOrderNotesPanel({
   fallbackContent,
   visibilityLabel = "Show on work order & invoice",
   onDesiredWindowChange,
+  draftNotes,
+  onDraftNotesChange,
 }: {
   token: string;
-  recordId: string;
+  recordId?: string;
   source?: TicketNoteSource;
   userId: string;
   canWrite: boolean;
@@ -52,10 +58,12 @@ export default function WorkOrderNotesPanel({
     desiredStartTime: string;
     desiredStartBy: string;
   }) => void;
+  draftNotes?: WorkOrderNote[];
+  onDraftNotesChange?: (notes: WorkOrderNote[]) => void;
 }) {
   const isAdmin = isAdminRole(userRole);
-  const [notes, setNotes] = useState<WorkOrderNote[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [notes, setNotes] = useState<WorkOrderNote[]>(draftNotes ?? []);
+  const [loading, setLoading] = useState(Boolean(recordId));
   const [error, setError] = useState<string | null>(null);
 
   const [content, setContent] = useState("");
@@ -83,6 +91,10 @@ export default function WorkOrderNotesPanel({
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
   const loadNotes = useCallback(async () => {
+    if (!recordId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -104,6 +116,8 @@ export default function WorkOrderNotesPanel({
     }
   }, [token]);
 
+  const effectiveNotes = !recordId && draftNotes ? draftNotes : notes;
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadNotes();
@@ -112,8 +126,8 @@ export default function WorkOrderNotesPanel({
 
   useEffect(() => {
     if (source !== "work-order") return;
-    onDesiredWindowChange?.(winningDesiredWindow(notes));
-  }, [notes, onDesiredWindowChange, source]);
+    onDesiredWindowChange?.(winningDesiredWindow(effectiveNotes));
+  }, [effectiveNotes, onDesiredWindowChange, source]);
 
   const globalTemplates = useMemo(
     () => templates.filter((t) => t.scope === "global"),
@@ -148,6 +162,40 @@ export default function WorkOrderNotesPanel({
       setError(timeError);
       return;
     }
+
+    if (!recordId) {
+      const parsedTags = parseNoteTimeTags(text);
+      const draftNote: WorkOrderNote = {
+        _id: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        workOrderRef: "",
+        content: text,
+        visibleToCustomer,
+        isReminder,
+        mentionUserIds: mentionIds,
+        mentions,
+        desiredStartTime: parsedTags.ok ? parsedTags.desiredStartTime : "",
+        desiredStartBy: parsedTags.ok ? parsedTags.desiredStartBy : "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        author: {
+          first_name: "",
+          last_name: "",
+        },
+      };
+      const next = [...effectiveNotes, draftNote];
+      setNotes(next);
+      onDraftNotesChange?.(next);
+      setContent("");
+      setTemplateId("");
+      setVisibleToCustomer(false);
+      setIsReminder(false);
+      setMentionIds([]);
+      setMentions([]);
+      setShowSaveTemplate(false);
+      setTemplateName("");
+      return;
+    }
+
     setAdding(true);
     setError(null);
     try {
@@ -239,6 +287,30 @@ export default function WorkOrderNotesPanel({
       setError(timeError);
       return;
     }
+
+    if (!recordId) {
+      const parsedTags = parseNoteTimeTags(text);
+      const next = effectiveNotes.map((item) =>
+        item._id === noteId
+          ? {
+              ...item,
+              content: text,
+              visibleToCustomer: editVisible,
+              isReminder: editReminder,
+              mentionUserIds: editMentionIds,
+              mentions: editMentions,
+              desiredStartTime: parsedTags.ok ? parsedTags.desiredStartTime : "",
+              desiredStartBy: parsedTags.ok ? parsedTags.desiredStartBy : "",
+              updatedAt: new Date().toISOString(),
+            }
+          : item,
+      );
+      setNotes(next);
+      onDraftNotesChange?.(next);
+      setEditingNoteId(null);
+      return;
+    }
+
     setSavingEdit(true);
     setError(null);
     try {
@@ -267,6 +339,16 @@ export default function WorkOrderNotesPanel({
   }
 
   async function handleDelete(noteId: string) {
+    if (!recordId) {
+      const next = effectiveNotes.filter((item) => item._id !== noteId);
+      setNotes(next);
+      onDraftNotesChange?.(next);
+      setDeletingNoteId(null);
+      setConfirmingDeleteId(null);
+      if (editingNoteId === noteId) setEditingNoteId(null);
+      return;
+    }
+
     setDeletingNoteId(noteId);
     setError(null);
     try {
@@ -285,7 +367,7 @@ export default function WorkOrderNotesPanel({
   }
 
   const showFallback =
-    notes.length === 0 && Boolean(fallbackContent?.trim()) && !loading;
+    effectiveNotes.length === 0 && Boolean(fallbackContent?.trim()) && !loading;
 
   return (
     <div>
@@ -303,7 +385,7 @@ export default function WorkOrderNotesPanel({
         <p className="mt-2 text-sm text-neutral-500 print:hidden">
           Loading notes…
         </p>
-      ) : notes.length === 0 && !showFallback ? (
+      ) : effectiveNotes.length === 0 && !showFallback ? (
         <p className="mt-2 text-sm text-neutral-500">No notes yet.</p>
       ) : (
         <ul className="mt-2 space-y-3">
@@ -312,7 +394,7 @@ export default function WorkOrderNotesPanel({
               {fallbackContent}
             </li>
           ) : null}
-          {notes.map((note) => {
+          {effectiveNotes.map((note) => {
             const canEdit =
               canWrite && (note.authorId === userId || isAdmin);
             return (

@@ -15,7 +15,6 @@ const router = Router();
 router.get(
   "/",
   authenticate,
-  requireRole("admin", "super-admin"),
   (req, res: Response) => listTerritories(req as AuthRequest, res),
 );
 

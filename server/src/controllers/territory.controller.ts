@@ -62,7 +62,11 @@ export async function listTerritories(
   res: Response,
 ): Promise<void> {
   try {
-    if (!req.user || !isDispatcherRole(req.user)) {
+    if (
+      !req.user ||
+      (!isDispatcherRole(req.user) &&
+        !(await userHasCapability(req.user, "territoryOwner")))
+    ) {
       res.status(403).json({ message: "Insufficient role" });
       return;
     }

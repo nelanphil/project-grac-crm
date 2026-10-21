@@ -15,7 +15,10 @@ import {
   suggestAssignees,
   recommendAssignees,
   recommendTechnicianForSlot,
+  recommendDatesForSite,
   placeWorkOrder,
+  previewOptimalPlacement,
+  assignAndOptimizeTechnician,
   startOptionsForWorkOrder,
   toPublicStaff,
   enrichScheduleWorkOrders,
@@ -120,6 +123,54 @@ const technicianRecommendationSchema = z
       });
     }
     if (!data.addressRef?.trim() && !data.city?.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A city or address is required",
+        path: ["city"],
+      });
+    }
+    for (const field of ["addressRef", "workOrderTypeRef", "excludeWorkOrderId"] as const) {
+      const value = data[field]?.trim();
+      if (value && !mongoose.Types.ObjectId.isValid(value)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `Invalid ${field}`,
+          path: [field],
+        });
+      }
+    }
+  });
+
+export const recommendedDatesSchema = z
+  .object({
+    startTime: z.string().regex(hhmmRe, "startTime must be HH:mm").optional(),
+    startBy: z.string().regex(hhmmRe, "startBy must be HH:mm").optional(),
+    estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
+    addressRef: z.string().optional(),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    zip: z.string().optional(),
+    workOrderTypeRef: z.string().optional(),
+    excludeWorkOrderId: z.string().optional(),
+    maxMiles: z.number().positive().max(250).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.startBy && !data.startTime) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A start window needs a start time",
+        path: ["startTime"],
+      });
+    }
+    if (data.startBy && data.startTime && data.startBy <= data.startTime) {
+      ctx.addIssue({
+        code: "custom",
+        message: "The latest start must be after the earliest start",
+        path: ["startBy"],
+      });
+    }
+    if (!data.addressRef?.trim() && !data.city?.trim() && !data.address?.trim()) {
       ctx.addIssue({
         code: "custom",
         message: "A city or address is required",
@@ -443,6 +494,38 @@ export async function postScheduleTechnicianRecommendation(
   }
 }
 
+export async function postScheduleRecommendedDates(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const permissions = req.user?.permissions ?? [];
+    if (
+      !permissions.includes("jobs:read") &&
+      !permissions.includes("estimates:read")
+    ) {
+      res.status(403).json({
+        message: "Missing permission: jobs:read or estimates:read",
+      });
+      return;
+    }
+
+    const parsed = recommendedDatesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const result = await recommendDatesForSite(parsed.data);
+    res.json(result);
+  } catch (err) {
+    console.error("POST /schedule/recommended-dates error:", err);
+    res.status(500).json({ message: "Failed to recommend dates" });
+  }
+}
+
 export async function postSchedulePlace(
   req: AuthRequest,
   res: Response,
@@ -674,6 +757,101 @@ export async function postScheduleRouteApply(
     }
     console.error("POST /schedule/route/apply error:", err);
     res.status(500).json({ message: "Failed to apply route" });
+  }
+}
+
+export const previewOptimalPlacementSchema = z.object({
+  userId: z.string().min(1),
+  date: z.string().regex(localDateRe),
+  addressRef: z.string().optional(),
+  address: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  zip: z.string().optional(),
+  desiredStartTime: z.string().optional(),
+  desiredStartBy: z.string().optional(),
+  estimatedMinutes: z.number().int().min(15).max(24 * 60).optional(),
+  objective: z.enum(["time", "distance"]).optional(),
+  roundTrip: z.boolean().optional(),
+});
+
+export async function postSchedulePreviewOptimalPlacement(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!req.user?.permissions.includes("jobs:read")) {
+      res.status(403).json({ message: "Missing permission: jobs:read" });
+      return;
+    }
+
+    const parsed = previewOptimalPlacementSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const result = await previewOptimalPlacement(parsed.data);
+    res.json(result);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    if (status !== 500) {
+      res.status(status).json({ message: (err as Error).message });
+      return;
+    }
+    console.error("POST /schedule/preview-optimal-placement error:", err);
+    res.status(500).json({ message: "Failed to preview optimal placement" });
+  }
+}
+
+export const assignAndOptimizeSchema = z.object({
+  workOrderId: z.string().min(1),
+  userId: z.string().min(1),
+  date: z.string().regex(localDateRe),
+  objective: z.enum(["time", "distance"]).optional(),
+  roundTrip: z.boolean().optional(),
+});
+
+export async function postScheduleAssignAndOptimize(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isDispatcherRole(req.user)) {
+      res.status(403).json({ message: "Insufficient role" });
+      return;
+    }
+    if (!req.user?.permissions.includes("jobs:write")) {
+      res.status(403).json({ message: "Missing permission: jobs:write" });
+      return;
+    }
+
+    const parsed = assignAndOptimizeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const result = await assignAndOptimizeTechnician(parsed.data);
+    const enriched = await enrichScheduleWorkOrders([
+      result.workOrder.toObject() as unknown as Record<string, unknown>,
+    ]);
+    res.json({
+      workOrder: enriched[0] ?? result.workOrder,
+      warnings: result.warnings,
+    });
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    if (status !== 500) {
+      res.status(status).json({ message: (err as Error).message });
+      return;
+    }
+    console.error("POST /schedule/assign-and-optimize error:", err);
+    res.status(500).json({ message: "Failed to assign and optimize technician" });
   }
 }
 

@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Pencil, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   isOrgAdminRole,
@@ -113,6 +113,10 @@ export default function PaymentProvidersCard() {
   const [oauthOwnerUserId, setOauthOwnerUserId] = useState("");
   const [oauthConnecting, setOauthConnecting] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
+  const [disconnectModalAccount, setDisconnectModalAccount] =
+    useState<PaymentProviderAccountItem | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const editingAccount = useMemo(
@@ -370,6 +374,51 @@ export default function PaymentProvidersCard() {
     }
   }
 
+  async function handleDisconnectAccount(account: PaymentProviderAccountItem) {
+    if (!token) return;
+    setDisconnecting(true);
+    setDisconnectError(null);
+    try {
+      await deletePaymentProviderAccount(token, account._id);
+      setAccounts((prev) => prev.filter((a) => a._id !== account._id));
+      if (editingId === account._id) closeForm();
+      setDisconnectModalAccount(null);
+    } catch (err) {
+      setDisconnectError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to disconnect Square account.",
+      );
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  async function handleUnlinkOwner(account: PaymentProviderAccountItem) {
+    if (!token) return;
+    setDisconnecting(true);
+    setDisconnectError(null);
+    try {
+      const { account: updated } = await updatePaymentProviderAccount(
+        token,
+        account._id,
+        {
+          ownerUserId: null,
+        },
+      );
+      upsertAccountInList(updated);
+      setDisconnectModalAccount(null);
+    } catch (err) {
+      setDisconnectError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to unlink owner from Square account.",
+      );
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
   async function handleConnectSquare() {
     if (!token) return;
     setOauthConnecting(true);
@@ -488,9 +537,31 @@ export default function PaymentProvidersCard() {
                     {account.locationId ? ` · Location ${account.locationId}` : ""}
                   </p>
                 </div>
-                <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
-                  Connected
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
+                    Connected
+                  </span>
+                  {isOrgAdmin ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDisconnectError(null);
+                        setDisconnectModalAccount(account);
+                      }}
+                      className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 shadow-sm hover:bg-red-50 hover:border-red-300 transition-colors"
+                      title={
+                        account.owner
+                          ? `Remove Square account from ${ownerLabel(account.owner)}`
+                          : "Disconnect Square account"
+                      }
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>
+                        {account.owner ? "Remove from owner" : "Disconnect"}
+                      </span>
+                    </button>
+                  ) : null}
+                </div>
               </li>
             ))}
           </ul>
@@ -1222,6 +1293,95 @@ export default function PaymentProvidersCard() {
               </div>
             }
           />
+        </div>
+      )}
+
+      {disconnectModalAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl border border-neutral-200 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5 text-red-600">
+                <AlertTriangle className="h-5 w-5 shrink-0" />
+                <h3 className="text-base font-semibold text-brand-dark">
+                  {disconnectModalAccount.owner
+                    ? `Remove Square Account from ${ownerLabel(disconnectModalAccount.owner)}`
+                    : "Disconnect Square Account"}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDisconnectModalAccount(null)}
+                disabled={disconnecting}
+                className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="text-sm text-neutral-600 space-y-2">
+              <p>
+                Are you sure you want to disconnect{" "}
+                <span className="font-semibold text-neutral-800">
+                  {disconnectModalAccount.friendlyName}
+                </span>
+                {disconnectModalAccount.owner ? (
+                  <>
+                    {" "}
+                    from{" "}
+                    <span className="font-semibold text-neutral-800">
+                      {ownerLabel(disconnectModalAccount.owner)}
+                    </span>
+                  </>
+                ) : null}
+                ?
+              </p>
+              <p className="text-xs text-neutral-500">
+                Disconnecting will revoke authorization with Square and remove
+                this seller connection. Invoices for this owner&apos;s customers
+                will automatically fall back to the global account.
+              </p>
+            </div>
+
+            {disconnectError && (
+              <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                {disconnectError}
+              </div>
+            )}
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2 pt-2">
+              <button
+                type="button"
+                disabled={disconnecting}
+                onClick={() => setDisconnectModalAccount(null)}
+                className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                Cancel
+              </button>
+
+              {disconnectModalAccount.ownerUserRef ? (
+                <button
+                  type="button"
+                  disabled={disconnecting}
+                  onClick={() => void handleUnlinkOwner(disconnectModalAccount)}
+                  className="rounded-md border border-neutral-300 bg-neutral-100 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-200 disabled:opacity-60"
+                  title="Keep the Square account credentials connected as a global fallback instead of deleting them"
+                >
+                  Unlink owner only
+                </button>
+              ) : null}
+
+              <button
+                type="button"
+                disabled={disconnecting}
+                onClick={() =>
+                  void handleDisconnectAccount(disconnectModalAccount)
+                }
+                className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {disconnecting ? "Disconnecting…" : "Disconnect & Delete"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

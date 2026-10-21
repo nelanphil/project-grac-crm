@@ -28,6 +28,7 @@ import {
   getWorkOrdersForCustomer,
   getContractsForCustomer,
   getCustomerCheckoutLink,
+  getTerritories,
   updateCustomer,
   updateWorkOrder,
   deleteWorkOrder,
@@ -37,6 +38,7 @@ import {
   CustomerDetail,
   WorkOrderListItem,
   ContractListItem,
+  TerritoryOwner,
   ApiError,
 } from "@/lib/api";
 import { formatCustomerRecordName } from "@/lib/formatName";
@@ -115,6 +117,12 @@ function CustomerDetailContent() {
       s.hasRole("admin", "super-admin") ||
       Boolean(s.user?.capabilities?.territoryOwner),
   );
+  const isOwnerOrAdmin = useAuthStore(
+    (s) =>
+      s.hasRole("admin", "super-admin") ||
+      Boolean(s.user?.capabilities?.territoryOwner),
+  );
+  const canEditOwner = isOwnerOrAdmin && canWrite;
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [workOrders, setWorkOrders] = useState<WorkOrderListItem[]>([]);
@@ -129,6 +137,12 @@ function CustomerDetailContent() {
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [editingOwner, setEditingOwner] = useState(false);
+  const [ownerDraft, setOwnerDraft] = useState<string>("auto");
+  const [savingOwner, setSavingOwner] = useState(false);
+  const [ownerError, setOwnerError] = useState<string | null>(null);
+  const [territoryOwners, setTerritoryOwners] = useState<TerritoryOwner[]>([]);
+  const [loadingOwners, setLoadingOwners] = useState(false);
   const [promoting, setPromoting] = useState(false);
   const [promoteError, setPromoteError] = useState<string | null>(null);
   const [copyingCheckout, setCopyingCheckout] = useState(false);
@@ -357,6 +371,46 @@ function CustomerDetailContent() {
     }
   }
 
+  async function handleSaveOwner() {
+    if (!token || !customer) return;
+    setSavingOwner(true);
+    setOwnerError(null);
+
+    let payload: { ownerUserId?: string | null; ownerManual?: boolean } = {};
+    if (ownerDraft === "auto") {
+      payload = { ownerUserId: null, ownerManual: false };
+    } else if (ownerDraft === "unassigned") {
+      payload = { ownerUserId: null, ownerManual: true };
+    } else {
+      payload = { ownerUserId: ownerDraft, ownerManual: true };
+    }
+
+    try {
+      const { customer: updated } = await updateCustomer(
+        token,
+        customer._id,
+        payload,
+      );
+      setCustomer((prev) =>
+        prev
+          ? {
+              ...prev,
+              ownerUserRef: updated.ownerUserRef,
+              ownerManual: updated.ownerManual,
+              owner: updated.owner,
+            }
+          : prev,
+      );
+      setEditingOwner(false);
+    } catch (err) {
+      setOwnerError(
+        err instanceof ApiError ? err.message : "Failed to update owner.",
+      );
+    } finally {
+      setSavingOwner(false);
+    }
+  }
+
   if (!user) return null;
 
   if (loading) {
@@ -485,13 +539,109 @@ function CustomerDetailContent() {
           <p className="mt-1 hidden text-sm text-neutral-500 sm:block">
             Customer details, addresses, and work order history
           </p>
-          <div className="mt-2 flex flex-col gap-1 text-sm text-neutral-600 sm:flex-row sm:flex-wrap sm:gap-x-3">
-            <p>
-              <span className="font-medium text-neutral-500">Owner:</span>{" "}
-              {customer.owner
-                ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
-                : "Unassigned"}
-            </p>
+          <div className="mt-2 flex flex-col gap-2 text-sm text-neutral-600 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
+            {editingOwner ? (
+              <div className="flex flex-col gap-1 w-full sm:w-auto">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-neutral-500">Owner:</span>
+                  <select
+                    value={ownerDraft}
+                    onChange={(e) => setOwnerDraft(e.target.value)}
+                    disabled={savingOwner || loadingOwners}
+                    className="rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-sm font-medium text-brand-dark focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+                  >
+                    <option value="auto">Auto-assign by territory</option>
+                    <option value="unassigned">Unassigned (Manual)</option>
+                    {territoryOwners.length > 0 && (
+                      <optgroup label="Territory Owners">
+                        {territoryOwners.map((o) => {
+                          const name =
+                            `${o.first_name} ${o.last_name}`.trim() || o.email;
+                          return (
+                            <option key={o._id} value={o._id}>
+                              {name} ({o.email})
+                            </option>
+                          );
+                        })}
+                      </optgroup>
+                    )}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={savingOwner || loadingOwners}
+                    onClick={() => void handleSaveOwner()}
+                    className="rounded-md bg-brand-dark p-1.5 text-white hover:bg-brand-dark/90 disabled:opacity-60"
+                    aria-label="Save owner"
+                    title="Save owner"
+                  >
+                    {savingOwner ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Check className="h-4 w-4" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingOwner}
+                    onClick={() => {
+                      setEditingOwner(false);
+                      setOwnerError(null);
+                    }}
+                    className="rounded-md border border-neutral-200 p-1.5 text-neutral-600 hover:bg-neutral-50"
+                    aria-label="Cancel owner edit"
+                    title="Cancel"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                {ownerError ? (
+                  <p className="text-xs text-red-600">{ownerError}</p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-medium text-neutral-500">Owner:</span>
+                <span className="font-medium text-neutral-800">
+                  {customer.owner
+                    ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
+                    : "Unassigned"}
+                </span>
+                {customer.ownerManual ? (
+                  <span
+                    className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 border border-amber-200"
+                    title="Owner manually assigned. Automated territory recalculations will not overwrite this."
+                  >
+                    Manual override
+                  </span>
+                ) : null}
+                {canEditOwner ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingOwner(true);
+                      setOwnerDraft(
+                        customer.ownerManual
+                          ? customer.ownerUserRef || "unassigned"
+                          : "auto",
+                      );
+                      setOwnerError(null);
+                      if (territoryOwners.length === 0 && token) {
+                        setLoadingOwners(true);
+                        getTerritories(token)
+                          .then((res) => setTerritoryOwners(res.owners))
+                          .catch(() => {})
+                          .finally(() => setLoadingOwners(false));
+                      }
+                    }}
+                    className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-brand-dark"
+                    aria-label="Edit owner"
+                    title="Edit owner"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
+            )}
             <p>
               <span className="font-medium text-neutral-500">County:</span>{" "}
               {customer.county?.trim() || "—"}

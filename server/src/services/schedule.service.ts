@@ -6,6 +6,7 @@ import { WorkOrderType } from "../models/mongo/WorkOrderType";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { customerDisplayName } from "./notification.service";
+import { publishDashboardChanged } from "./dashboardLive";
 import {
   addMinutes,
   DEFAULT_DAY_END,
@@ -21,6 +22,7 @@ import {
   sharedGaps,
   resolveDayWindow,
   SCHEDULE_TIMEZONE,
+  storedTicketDateKey,
   windowToUtcRange,
   type DayWindow,
   type HomeLocation,
@@ -1788,6 +1790,478 @@ export async function recommendTechnicianForSlot(opts: {
   return { technicians, recommendation };
 }
 
+export const DEFAULT_RECOMMENDED_DATE_MAX_MILES = 10;
+/** Territory fallback must never recommend today (0) or tomorrow (1). */
+export const TERRITORY_FALLBACK_MIN_DAY_OFFSET = 2;
+const TERRITORY_FALLBACK_DAYS = 14;
+
+export type RecommendedRouteDate = {
+  date: string;
+  userId: string;
+  first_name: string;
+  last_name: string;
+  distanceMiles: number;
+  stopCount: number;
+  closestStopCity: string;
+  matchType?: "route" | "territory";
+  territoryCity?: string;
+};
+
+function addLocalDays(localDate: string, days: number): string {
+  const [year, month, day] = localDate.split("-").map(Number);
+  const targetNoon = new Date(
+    Date.UTC(year ?? 1970, (month ?? 1) - 1, (day ?? 1) + days, 12),
+  );
+  return formatLocalDate(targetNoon);
+}
+
+function matchTerritoryCity(
+  cities:
+    | Array<{
+        city?: string;
+        state?: string;
+        lat?: unknown;
+        lng?: unknown;
+      }>
+    | null
+    | undefined,
+  jobCity: string,
+  jobState: string,
+  jobCoords: LatLng | null,
+): { tier: 0 | 1 | 2; city: string } {
+  const city = jobCity.trim().toLowerCase();
+  const state = jobState.trim().toLowerCase();
+  const list = cities ?? [];
+  if (city && state) {
+    const exact = list.find(
+      (entry) =>
+        (entry.city ?? "").trim().toLowerCase() === city &&
+        scheduleState({ state: entry.state }).toLowerCase() === state,
+    );
+    if (exact) {
+      return { tier: 0, city: (exact.city ?? jobCity).trim() };
+    }
+  }
+  if (jobCoords) {
+    let bestCity = "";
+    let bestMiles = Number.POSITIVE_INFINITY;
+    for (const entry of list) {
+      const coords = latLngFrom(entry);
+      if (!coords) continue;
+      const miles = haversineMiles(jobCoords, coords);
+      if (miles <= TERRITORY_NEAR_MILES && miles < bestMiles) {
+        bestMiles = miles;
+        bestCity = (entry.city ?? jobCity).trim();
+      }
+    }
+    if (bestMiles <= TERRITORY_NEAR_MILES) {
+      return { tier: 1, city: bestCity };
+    }
+  }
+  return { tier: 2, city: "" };
+}
+
+/**
+ * Find future dates where any schedulable (and type-qualified) technician has
+ * a scheduled route stop within `maxMiles` (default 10 miles) of the site.
+ * When no future scheduled routes are within `maxMiles`, falls back to future
+ * dates (starting at least 2 days after today — never today or tomorrow) with
+ * technicians whose desired territory (`serviceCities`) covers the site.
+ * Sorted chronologically (soonest date first).
+ */
+export async function recommendDatesForSite(opts: {
+  startTime?: string;
+  startBy?: string;
+  estimatedMinutes?: number;
+  addressRef?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  workOrderTypeRef?: string;
+  excludeWorkOrderId?: string;
+  maxMiles?: number;
+}): Promise<{ dates: RecommendedRouteDate[] }> {
+  const maxMiles =
+    typeof opts.maxMiles === "number" && opts.maxMiles > 0
+      ? opts.maxMiles
+      : DEFAULT_RECOMMENDED_DATE_MAX_MILES;
+  const minutes =
+    typeof opts.estimatedMinutes === "number" && opts.estimatedMinutes > 0
+      ? opts.estimatedMinutes
+      : DEFAULT_ESTIMATED_MINUTES;
+  const timed = Boolean(opts.startTime && isHhMm(opts.startTime));
+
+  const typeId =
+    opts.workOrderTypeRef &&
+    mongoose.Types.ObjectId.isValid(opts.workOrderTypeRef)
+      ? opts.workOrderTypeRef
+      : "";
+
+  const [site, allStaff, workOrderType] = await Promise.all([
+    resolveSlotSite(opts),
+    listSchedulableStaff(),
+    typeId
+      ? WorkOrderType.findById(typeId).select("qualifiedUserRefs").lean()
+      : null,
+  ]);
+
+  if (allStaff.length === 0 || (!site.coords && !site.city.trim())) {
+    return { dates: [] };
+  }
+
+  let staff = allStaff;
+  const qualifiedIds = new Set(
+    (workOrderType?.qualifiedUserRefs ?? []).map((id) => id.toString()),
+  );
+  if (qualifiedIds.size > 0) {
+    const matched = allStaff.filter((tech) =>
+      qualifiedIds.has(String(tech._id)),
+    );
+    if (matched.length > 0) {
+      staff = matched;
+    }
+  }
+
+  const staffById = new Map(staff.map((tech) => [String(tech._id), tech]));
+  const today = formatLocalDate(new Date());
+  const { end: todayEnd } = rangeUtc(today, today);
+  const utcTodayEnd = new Date(`${today}T23:59:59.999Z`);
+  const excludeId =
+    opts.excludeWorkOrderId &&
+    mongoose.Types.ObjectId.isValid(opts.excludeWorkOrderId)
+      ? opts.excludeWorkOrderId
+      : "";
+
+  const futureJobs = await WorkOrder.find({
+    $and: [
+      assigneeInFilter(staff.map((tech) => tech._id)),
+      {
+        completed: { $ne: true },
+        ...(excludeId
+          ? { _id: { $ne: new mongoose.Types.ObjectId(excludeId) } }
+          : {}),
+      },
+      {
+        $or: [
+          { scheduledStart: { $gt: todayEnd } },
+          {
+            scheduledStart: null,
+            date: { $gt: utcTodayEnd },
+          },
+        ],
+      },
+      {
+        $or: [
+          { appointmentCanceledAt: null },
+          { appointmentCanceledAt: { $exists: false } },
+        ],
+      },
+    ],
+  })
+    .select(
+      "assignedUserRef assignedUserRefs scheduledStart scheduledEnd startTime endTime desiredStartTime desiredStartBy estimatedMinutes laborHours date addressRef customerAddress customerCity customerState customerZip",
+    )
+    .sort({ scheduledStart: 1, date: 1 })
+    .lean();
+
+  const addressIds = [
+    ...new Set(
+      futureJobs
+        .map((job) => job.addressRef?.toString())
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const addresses =
+    addressIds.length > 0
+      ? await CustomerAddress.find({ _id: { $in: addressIds } })
+          .select(ADDRESS_POINT_FIELDS)
+          .lean()
+      : [];
+
+  const coordsByAddressId = new Map<string, LatLng | null>();
+  const cityByAddressId = new Map<string, string>();
+  const siteCache = new Map<string, SitePoint | null>();
+  const geocodeCache = new Map<string, LatLng | null>();
+
+  for (const addr of addresses) {
+    const id = addr._id.toString();
+    cityByAddressId.set(id, (addr.city ?? "").trim());
+    const stored = addressCoords(addr);
+    if (stored && shouldKeepStoredSitePoint(addr)) {
+      coordsByAddressId.set(id, stored);
+    } else {
+      const resolved = await ensureAddressPoint(addr, siteCache);
+      coordsByAddressId.set(id, resolved);
+    }
+  }
+
+  type RouteAccumulator = {
+    date: string;
+    tech: LeanUser;
+    minMiles: number;
+    stopCount: number;
+    closestStopCity: string;
+    jobs: Array<{
+      scheduledStart: Date | null;
+      scheduledEnd: Date | null;
+      driveMinutes: number;
+    }>;
+  };
+
+  const routesByDateTech = new Map<string, RouteAccumulator>();
+
+  for (const job of futureJobs) {
+    const localDate = job.scheduledStart
+      ? formatLocalDate(new Date(job.scheduledStart))
+      : storedTicketDateKey(job.date);
+    if (!localDate || localDate <= today) continue;
+
+    const fallbackStartHhMm =
+      job.startTime && isHhMm(job.startTime.trim())
+        ? job.startTime.trim()
+        : job.desiredStartTime && isHhMm(job.desiredStartTime.trim())
+          ? job.desiredStartTime.trim()
+          : "";
+    const jobStart = job.scheduledStart
+      ? new Date(job.scheduledStart)
+      : fallbackStartHhMm
+        ? localDateToUtc(localDate, fallbackStartHhMm)
+        : null;
+    const jobEnd = job.scheduledEnd
+      ? new Date(job.scheduledEnd)
+      : job.endTime && isHhMm(job.endTime.trim())
+        ? localDateToUtc(localDate, job.endTime.trim())
+        : jobStart
+          ? addMinutes(jobStart, estimatedMinutesForWorkOrder(job))
+          : null;
+
+    const addrId = job.addressRef?.toString() ?? "";
+    let jobCoords: LatLng | null = addrId
+      ? (coordsByAddressId.get(addrId) ?? null)
+      : null;
+    const stopCity =
+      (addrId ? cityByAddressId.get(addrId) : "") ||
+      (job.customerCity ?? "").trim();
+
+    if (
+      site.coords &&
+      !jobCoords &&
+      (job.customerAddress?.trim() || job.customerCity?.trim())
+    ) {
+      jobCoords = await geocodeToLatLng(
+        {
+          address: job.customerAddress,
+          city: job.customerCity,
+          state: job.customerState,
+          zip: job.customerZip,
+        },
+        geocodeCache,
+      );
+    }
+
+    const miles =
+      site.coords && jobCoords
+        ? haversineMiles(site.coords, jobCoords)
+        : Number.POSITIVE_INFINITY;
+    const driveMinutes =
+      site.coords && jobCoords
+        ? haversineDriveMinutes(site.coords, jobCoords)
+        : 0;
+
+    for (const userId of crewIdStrings(job)) {
+      const tech = staffById.get(userId);
+      if (!tech) continue;
+      const key = `${localDate}|${userId}`;
+      const existing = routesByDateTech.get(key);
+      if (!existing) {
+        routesByDateTech.set(key, {
+          date: localDate,
+          tech,
+          minMiles: miles,
+          stopCount: 1,
+          closestStopCity: Number.isFinite(miles) ? stopCity : "",
+          jobs: [{ scheduledStart: jobStart, scheduledEnd: jobEnd, driveMinutes }],
+        });
+      } else {
+        existing.stopCount += 1;
+        existing.jobs.push({
+          scheduledStart: jobStart,
+          scheduledEnd: jobEnd,
+          driveMinutes,
+        });
+        if (miles < existing.minMiles) {
+          existing.minMiles = miles;
+          existing.closestStopCity = stopCity;
+        }
+      }
+    }
+  }
+
+  const fitsDay = (
+    localDate: string,
+    range: { start: Date; end: Date },
+    jobs: Array<{
+      scheduledStart: Date | null;
+      scheduledEnd: Date | null;
+      driveMinutes: number;
+    }>,
+  ): boolean => {
+    if (timed && opts.startTime) {
+      const earliest = localDateToUtc(localDate, opts.startTime);
+      const latest =
+        opts.startBy && isHhMm(opts.startBy)
+          ? localDateToUtc(localDate, opts.startBy)
+          : earliest;
+      const busy = jobs
+        .filter((j) => j.scheduledStart && j.scheduledEnd)
+        .map((j) => {
+          const padMs = j.driveMinutes * 60_000;
+          return {
+            start: j.scheduledStart!.getTime() - padMs,
+            end: j.scheduledEnd!.getTime() + padMs,
+          };
+        });
+      const open = earliestStartMs({
+        earliest: earliest.getTime(),
+        latest: latest.getTime(),
+        durationMs: minutes * 60_000,
+        windowStart: range.start.getTime(),
+        windowEnd: range.end.getTime(),
+        busy,
+      });
+      return open != null;
+    }
+    return dayHasRoom(range, jobs, minutes);
+  };
+
+  const bestByDate = new Map<string, RouteAccumulator>();
+  for (const route of routesByDateTech.values()) {
+    if (!Number.isFinite(route.minMiles) || route.minMiles > maxMiles) continue;
+
+    const window = resolveDayWindow(
+      route.tech.weeklyHours,
+      route.tech.scheduleExceptions,
+      route.date,
+    );
+    const range = windowToUtcRange(route.date, window);
+    if (!range) continue;
+
+    if (!fitsDay(route.date, range, route.jobs)) continue;
+
+    const current = bestByDate.get(route.date);
+    if (
+      !current ||
+      route.minMiles < current.minMiles ||
+      (route.minMiles === current.minMiles &&
+        staffDisplayName(route.tech).localeCompare(
+          staffDisplayName(current.tech),
+        ) < 0)
+    ) {
+      bestByDate.set(route.date, route);
+    }
+  }
+
+  if (bestByDate.size > 0) {
+    const dates: RecommendedRouteDate[] = [...bestByDate.values()]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((entry) => ({
+        date: entry.date,
+        userId: String(entry.tech._id),
+        first_name: entry.tech.first_name,
+        last_name: entry.tech.last_name,
+        distanceMiles: Math.round(entry.minMiles * 10) / 10,
+        stopCount: entry.stopCount,
+        closestStopCity: entry.closestStopCity,
+        matchType: "route" as const,
+      }));
+    return { dates };
+  }
+
+  // Fallback: recommend future dates (starting after tomorrow, dayOffset >= 2)
+  // for technicians whose desired territory (`serviceCities`) covers the site.
+  const territoryMatches = staff
+    .map((tech) => {
+      const match = matchTerritoryCity(
+        tech.serviceCities,
+        site.city,
+        site.state,
+        site.coords,
+      );
+      const home = homeCoords(tech.homeLocation);
+      const homeMiles =
+        site.coords && home
+          ? haversineMiles(site.coords, home)
+          : Number.POSITIVE_INFINITY;
+      return {
+        tech,
+        tier: match.tier,
+        city: match.city || site.city.trim(),
+        homeMiles,
+      };
+    })
+    .filter((entry) => entry.tier <= 1);
+
+  if (territoryMatches.length === 0) {
+    return { dates: [] };
+  }
+
+  const hasExactTerritory = territoryMatches.some((entry) => entry.tier === 0);
+  const eligibleTerritoryTechs = (
+    hasExactTerritory
+      ? territoryMatches.filter((entry) => entry.tier === 0)
+      : territoryMatches
+  ).sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier;
+    const aKnown = Number.isFinite(a.homeMiles);
+    const bKnown = Number.isFinite(b.homeMiles);
+    if (aKnown !== bKnown) return aKnown ? -1 : 1;
+    if (aKnown && bKnown && a.homeMiles !== b.homeMiles) {
+      return a.homeMiles - b.homeMiles;
+    }
+    return staffDisplayName(a.tech).localeCompare(staffDisplayName(b.tech));
+  });
+
+  const fallbackDates: RecommendedRouteDate[] = [];
+  for (
+    let dayOffset = TERRITORY_FALLBACK_MIN_DAY_OFFSET;
+    dayOffset < TERRITORY_FALLBACK_MIN_DAY_OFFSET + TERRITORY_FALLBACK_DAYS;
+    dayOffset += 1
+  ) {
+    const candidateDate = addLocalDays(today, dayOffset);
+    for (const entry of eligibleTerritoryTechs) {
+      const window = resolveDayWindow(
+        entry.tech.weeklyHours,
+        entry.tech.scheduleExceptions,
+        candidateDate,
+      );
+      const range = windowToUtcRange(candidateDate, window);
+      if (!range) continue;
+
+      const userId = String(entry.tech._id);
+      const existingRoute = routesByDateTech.get(`${candidateDate}|${userId}`);
+      const existingJobs = existingRoute?.jobs ?? [];
+      if (!fitsDay(candidateDate, range, existingJobs)) continue;
+
+      fallbackDates.push({
+        date: candidateDate,
+        userId,
+        first_name: entry.tech.first_name,
+        last_name: entry.tech.last_name,
+        distanceMiles: Number.isFinite(entry.homeMiles)
+          ? Math.round(entry.homeMiles * 10) / 10
+          : 0,
+        stopCount: existingRoute?.stopCount ?? 0,
+        closestStopCity: entry.city,
+        matchType: "territory",
+        territoryCity: entry.city,
+      });
+    }
+  }
+
+  return { dates: fallbackDates };
+}
+
 export async function dayRouteForUser(opts: {
   userId: string;
   date: string;
@@ -3478,4 +3952,399 @@ export async function listNextAvailableSlots(opts?: {
   }
 
   return slots;
+}
+
+export type PreviewOptimalPlacementOpts = {
+  userId: string;
+  date: string;
+  addressRef?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  desiredStartTime?: string | null;
+  desiredStartBy?: string | null;
+  estimatedMinutes?: number;
+  objective?: RouteObjective;
+  roundTrip?: boolean;
+};
+
+export type PreviewOptimalPlacementResult = {
+  insertIndex: number;
+  scheduledStart: string;
+  startTime: string;
+  endTime: string;
+  estimatedMinutes: number;
+  warnings: string[];
+};
+
+export async function previewOptimalPlacement(
+  opts: PreviewOptimalPlacementOpts,
+): Promise<PreviewOptimalPlacementResult> {
+  const user = await loadRouteAssignee(opts.userId);
+  const home = await ensureRouteHome(user);
+  const dayWindow = resolveDayWindow(
+    user.weeklyHours,
+    user.scheduleExceptions,
+    opts.date,
+  );
+  const workRange = windowToUtcRange(opts.date, dayWindow);
+  const windowStart = workRange?.start ?? localDateToUtc(opts.date, DEFAULT_DAY_START);
+  const duration =
+    typeof opts.estimatedMinutes === "number" && opts.estimatedMinutes > 0
+      ? opts.estimatedMinutes
+      : DEFAULT_ESTIMATED_MINUTES;
+
+  const site = await resolveSlotSite({
+    addressRef: opts.addressRef,
+    address: opts.address,
+    city: opts.city,
+    state: opts.state,
+    zip: opts.zip,
+  });
+
+  const dayStart = localDateToUtc(opts.date, "00:00");
+  const dayEnd = localDateToUtc(opts.date, "23:59");
+  const existing = await WorkOrder.find({
+    ...assigneeInFilter([user._id]),
+    scheduledStart: { $gte: dayStart, $lte: dayEnd },
+    completed: { $ne: true },
+    $or: [
+      { appointmentCanceledAt: null },
+      { appointmentCanceledAt: { $exists: false } },
+    ],
+  }).sort({ scheduledStart: 1 });
+
+  const desiredStartHhMm = opts.desiredStartTime?.trim() ?? "";
+  const hasDesiredStart = Boolean(desiredStartHhMm && isHhMm(desiredStartHhMm));
+
+  if (existing.length === 0) {
+    let start: Date;
+    if (hasDesiredStart) {
+      start = localDateToUtc(opts.date, desiredStartHhMm);
+    } else {
+      const driveMinutes = site.coords
+        ? (await computeDriveMinutes(home, site.coords)).minutes
+        : 0;
+      start = addMinutes(windowStart, driveMinutes);
+    }
+    const end = addMinutes(start, duration);
+    return {
+      insertIndex: 0,
+      scheduledStart: start.toISOString(),
+      startTime: formatLocalTime(start),
+      endTime: formatLocalTime(end),
+      estimatedMinutes: duration,
+      warnings: [],
+    };
+  }
+
+  // If candidate site cannot be geocoded, place based on desired time or at the end
+  if (!site.coords) {
+    if (hasDesiredStart) {
+      const desiredUtc = localDateToUtc(opts.date, desiredStartHhMm);
+      let idx = 0;
+      while (
+        idx < existing.length &&
+        existing[idx]!.scheduledStart &&
+        existing[idx]!.scheduledStart!.getTime() < desiredUtc.getTime()
+      ) {
+        idx += 1;
+      }
+      const end = addMinutes(desiredUtc, duration);
+      return {
+        insertIndex: idx,
+        scheduledStart: desiredUtc.toISOString(),
+        startTime: formatLocalTime(desiredUtc),
+        endTime: formatLocalTime(end),
+        estimatedMinutes: duration,
+        warnings: ["Candidate address has no coordinates; placed chronologically."],
+      };
+    }
+    const last = existing[existing.length - 1]!;
+    const start = last.scheduledEnd ?? addMinutes(last.scheduledStart ?? windowStart, estimatedMinutesForWorkOrder(last));
+    const end = addMinutes(start, duration);
+    return {
+      insertIndex: existing.length,
+      scheduledStart: start.toISOString(),
+      startTime: formatLocalTime(start),
+      endTime: formatLocalTime(end),
+      estimatedMinutes: duration,
+      warnings: ["Candidate address has no coordinates; placed at end of day."],
+    };
+  }
+
+  // Multi-stop route optimization including candidate stop
+  const addressIds = existing
+    .map((j) => j.addressRef?.toString())
+    .filter((id): id is string => Boolean(id));
+  const coordsMap = await coordsByAddressId([...new Set(addressIds)]);
+  const existingCoords = existing.map(
+    (j) => (j.addressRef ? coordsMap.get(j.addressRef.toString()) : null) ?? home,
+  );
+
+  const points = [home, ...existingCoords, site.coords];
+  const candidateIndex = existing.length + 1; // 1-based index in cost matrix
+
+  const cells = await fullDriveMatrix(points);
+  const cost = denseRouteCost(points, cells, opts.objective ?? "time");
+  const driveMinutes = denseDriveMinutes(points, cells);
+  const serviceMinutes = [
+    0,
+    ...existing.map((j) => estimatedMinutesForWorkOrder(j)),
+    duration,
+  ];
+
+  const lockedOffsetMinutes: Array<number | null> = [
+    null,
+    ...existing.map((job) => {
+      const locked =
+        job.desiredStartTime && isHhMm(job.desiredStartTime.trim())
+          ? localDateToUtc(opts.date, job.desiredStartTime.trim())
+          : crewIdStrings(job).length > 1 && job.scheduledStart
+            ? job.scheduledStart
+            : null;
+      if (!locked || !workRange) return null;
+      return Math.round((locked.getTime() - workRange.start.getTime()) / 60000);
+    }),
+  ];
+
+  if (hasDesiredStart && workRange) {
+    const candLocked = localDateToUtc(opts.date, desiredStartHhMm);
+    lockedOffsetMinutes.push(
+      Math.round((candLocked.getTime() - workRange.start.getTime()) / 60000),
+    );
+  } else {
+    lockedOffsetMinutes.push(null);
+  }
+
+  const order = optimizeAroundLocks({
+    cost,
+    driveMinutes,
+    serviceMinutes,
+    lockedOffsetMinutes,
+    roundTrip: opts.roundTrip ?? false,
+  });
+
+  const candidatePos = order.indexOf(candidateIndex);
+  const existingBefore = order
+    .slice(0, candidatePos)
+    .filter((idx) => idx >= 1 && idx <= existing.length);
+  const insertIndex = existingBefore.length;
+
+  let cursor = workRange ? workRange.start : windowStart;
+  let prevNode = 0;
+  let candidateStart: Date | null = null;
+  for (const node of order) {
+    const drive = driveMinutes[prevNode]?.[node] ?? 0;
+    let arrival = addMinutes(cursor, drive);
+    const lockOffset = lockedOffsetMinutes[node];
+    if (lockOffset != null && workRange) {
+      const lockedTime = addMinutes(workRange.start, lockOffset);
+      if (lockedTime.getTime() > arrival.getTime()) {
+        arrival = lockedTime;
+      }
+    }
+    const departure = addMinutes(arrival, serviceMinutes[node] ?? 0);
+    cursor = departure;
+    prevNode = node;
+    if (node === candidateIndex) {
+      candidateStart = arrival;
+      break;
+    }
+  }
+
+  const finalStart = candidateStart ?? windowStart;
+  const finalEnd = addMinutes(finalStart, duration);
+
+  return {
+    insertIndex,
+    scheduledStart: finalStart.toISOString(),
+    startTime: formatLocalTime(finalStart),
+    endTime: formatLocalTime(finalEnd),
+    estimatedMinutes: duration,
+    warnings: [],
+  };
+}
+
+export type AssignAndOptimizeOpts = {
+  workOrderId: string;
+  userId: string;
+  date: string;
+  objective?: RouteObjective;
+  roundTrip?: boolean;
+};
+
+export async function assignAndOptimizeTechnician(
+  opts: AssignAndOptimizeOpts,
+): Promise<{ workOrder: InstanceType<typeof WorkOrder>; warnings: string[] }> {
+  if (!mongoose.Types.ObjectId.isValid(opts.workOrderId)) {
+    throw Object.assign(new Error("Invalid workOrderId"), { status: 400 });
+  }
+  if (!mongoose.Types.ObjectId.isValid(opts.userId)) {
+    throw Object.assign(new Error("Invalid userId"), { status: 400 });
+  }
+
+  const job = await WorkOrder.findById(opts.workOrderId);
+  if (!job) {
+    throw Object.assign(new Error("Work order not found"), { status: 404 });
+  }
+  if (job.completed) {
+    throw Object.assign(new Error("Completed work orders cannot be rescheduled"), {
+      status: 400,
+    });
+  }
+
+  const prevCrew = crewIdStrings(job);
+  const prevTechId = prevCrew[0] ?? null;
+  const isSameTech = prevTechId === opts.userId;
+  const prevDate = job.scheduledStart
+    ? formatLocalDate(job.scheduledStart)
+    : job.date
+      ? formatLocalDate(job.date)
+      : "";
+
+  // Reassign to target technician and reset scheduledStart so assertJobCanJoinRoute passes
+  applyCrewIds(job, [opts.userId]);
+  job.date = localDateToUtc(opts.date, "00:00");
+  job.scheduledStart = null;
+  job.appointmentCanceledAt = null;
+  job.appointmentCanceledBy = null;
+  await job.save();
+
+  const dayStart = localDateToUtc(opts.date, "00:00");
+  const dayEnd = localDateToUtc(opts.date, "23:59");
+  const targetJobs = await WorkOrder.find({
+    $or: [
+      { _id: job._id },
+      {
+        ...assigneeInFilter([new mongoose.Types.ObjectId(opts.userId)]),
+        scheduledStart: { $gte: dayStart, $lte: dayEnd },
+        completed: { $ne: true },
+        $or: [
+          { appointmentCanceledAt: null },
+          { appointmentCanceledAt: { $exists: false } },
+        ],
+      },
+    ],
+  });
+
+  const lockedStops: Array<{ workOrderId: string; arrival: string }> = [];
+  for (const row of targetJobs) {
+    if (row.desiredStartTime && isHhMm(row.desiredStartTime.trim())) {
+      lockedStops.push({
+        workOrderId: String(row._id),
+        arrival: localDateToUtc(opts.date, row.desiredStartTime.trim()).toISOString(),
+      });
+    } else if (crewIdStrings(row).length > 1 && row.scheduledStart) {
+      lockedStops.push({
+        workOrderId: String(row._id),
+        arrival: row.scheduledStart.toISOString(),
+      });
+    }
+  }
+
+  let warnings: string[] = [];
+  if (targetJobs.length > 1) {
+    const plan = await planRouteForUser({
+      userId: opts.userId,
+      date: opts.date,
+      workOrderIds: targetJobs.map((j) => String(j._id)),
+      roundTrip: opts.roundTrip ?? false,
+      objective: opts.objective ?? "time",
+      optimize: true,
+      lockedStops,
+    });
+    const applied = await applyPlannedRoute({
+      userId: opts.userId,
+      date: opts.date,
+      orderedWorkOrderIds: plan.orderedWorkOrderIds,
+      lockedStops,
+    });
+    warnings = [...plan.warnings, ...(applied.warnings ?? [])];
+  } else {
+    const placed = await placeWorkOrder({
+      workOrderId: String(job._id),
+      assignedUserRef: opts.userId,
+      date: opts.date,
+      scheduledStart: job.desiredStartTime && isHhMm(job.desiredStartTime.trim())
+        ? localDateToUtc(opts.date, job.desiredStartTime.trim())
+        : undefined,
+      estimatedMinutes: job.estimatedMinutes,
+    });
+    warnings = placed.warnings;
+  }
+
+  // Re-optimize and compact remaining stops for previous technician if different
+  const targetDateForPrev = prevDate || opts.date;
+  if (prevTechId && (!isSameTech || prevDate !== opts.date)) {
+    const prevDayStart = localDateToUtc(targetDateForPrev, "00:00");
+    const prevDayEnd = localDateToUtc(targetDateForPrev, "23:59");
+    const remainingPrevJobs = await WorkOrder.find({
+      ...assigneeInFilter([new mongoose.Types.ObjectId(prevTechId)]),
+      scheduledStart: { $gte: prevDayStart, $lte: prevDayEnd },
+      _id: { $ne: job._id },
+      completed: { $ne: true },
+      $or: [
+        { appointmentCanceledAt: null },
+        { appointmentCanceledAt: { $exists: false } },
+      ],
+    }).sort({ scheduledStart: 1 });
+
+    if (remainingPrevJobs.length > 1) {
+      const prevLocks: Array<{ workOrderId: string; arrival: string }> = [];
+      for (const rj of remainingPrevJobs) {
+        if (rj.desiredStartTime && isHhMm(rj.desiredStartTime.trim())) {
+          prevLocks.push({
+            workOrderId: String(rj._id),
+            arrival: localDateToUtc(targetDateForPrev, rj.desiredStartTime.trim()).toISOString(),
+          });
+        } else if (crewIdStrings(rj).length > 1 && rj.scheduledStart) {
+          prevLocks.push({
+            workOrderId: String(rj._id),
+            arrival: rj.scheduledStart.toISOString(),
+          });
+        }
+      }
+      try {
+        const prevPlan = await planRouteForUser({
+          userId: prevTechId,
+          date: targetDateForPrev,
+          workOrderIds: remainingPrevJobs.map((j) => String(j._id)),
+          roundTrip: opts.roundTrip ?? false,
+          objective: opts.objective ?? "time",
+          optimize: true,
+          lockedStops: prevLocks,
+        });
+        await applyPlannedRoute({
+          userId: prevTechId,
+          date: targetDateForPrev,
+          orderedWorkOrderIds: prevPlan.orderedWorkOrderIds,
+          lockedStops: prevLocks,
+        });
+      } catch {
+        // Best effort re-optimization for previous tech
+      }
+    } else if (remainingPrevJobs.length === 1) {
+      const single = remainingPrevJobs[0]!;
+      try {
+        await placeWorkOrder({
+          workOrderId: String(single._id),
+          assignedUserRef: prevTechId,
+          date: targetDateForPrev,
+          scheduledStart:
+            single.desiredStartTime && isHhMm(single.desiredStartTime.trim())
+              ? localDateToUtc(targetDateForPrev, single.desiredStartTime.trim())
+              : undefined,
+          estimatedMinutes: single.estimatedMinutes,
+        });
+      } catch {
+        // Best effort
+      }
+    }
+  }
+
+  const fresh = await WorkOrder.findById(job._id);
+  publishDashboardChanged();
+  return { workOrder: fresh ?? job, warnings };
 }

@@ -101,7 +101,7 @@ function CreateEstimateContent() {
 
   const initial = useMemo(() => {
     const form = {
-      ...emptyTicketForm(),
+      ...emptyTicketForm("estimate"),
       ...customerPatch,
     };
     return applyEstimateTemplate(form, selectedTemplate);

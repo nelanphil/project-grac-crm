@@ -51,8 +51,8 @@ function CreateWorkOrderContent() {
     if (estimateId) {
       getEstimate(token, estimateId)
         .then(({ estimate }) =>
-          setInitial(
-            ticketFromRecord({
+          setInitial({
+            ...ticketFromRecord({
               ...estimate,
               number: "",
               paid: false,
@@ -61,7 +61,8 @@ function CreateWorkOrderContent() {
               signatureDataUrl: "",
               signedByName: "",
             }),
-          ),
+            date: "",
+          }),
         )
         .catch(() => undefined);
       return;
@@ -127,6 +128,7 @@ function CreateWorkOrderContent() {
               estimateRef: estimateId,
             });
             if (
+              !created.scheduledStart &&
               typeof scheduleInsertIndex === "number" &&
               isDispatcherRole(user) &&
               created.assignedUserRef
