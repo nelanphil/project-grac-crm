@@ -30,7 +30,7 @@
     "multer": "^2.2.0",
     "mysql2": "^3.12.0",
     "node-cron": "^4.6.0",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.2.1",
     "polygon-clipping": "^0.15.7",
     "sanitize-html": "^2.17.7",
     "square": "^45.0.1",
