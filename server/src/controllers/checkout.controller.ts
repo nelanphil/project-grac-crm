@@ -15,10 +15,14 @@ import {
   buildCheckoutUrl,
   findCheckoutKeyByPayCode,
   findCustomerByCheckoutKey,
-  getOrCreateCheckoutKey,
 } from "../utils/checkoutKey";
 import { Customer } from "../models/mongo/Customer";
-import { assertScopedSelection, isScopedCheckoutKey, loadScopedCheckout } from "../services/checkoutLink.service";
+import {
+  assertScopedSelection,
+  createScopedPaymentLink,
+  isScopedCheckoutKey,
+  loadScopedCheckout,
+} from "../services/checkoutLink.service";
 
 function sessionBody(req: AuthRequest): {
   invoiceIds?: string[];
@@ -308,8 +312,16 @@ export async function getCustomerCheckoutLink(
       res.status(404).json({ message: "Customer not found" });
       return;
     }
-    const key = await getOrCreateCheckoutKey(customerId);
-    res.json({ checkoutUrl: buildCheckoutUrl(key) });
+    const link = await createScopedPaymentLink(customerId);
+    if (!link) {
+      res.status(404).json({ message: "No invoice is available to pay" });
+      return;
+    }
+    res.json({
+      checkoutUrl: link.payUrl,
+      invoiceId: link.invoiceId,
+      totalCents: link.totalCents,
+    });
   } catch (err) {
     sendCheckoutError(res, err, "Failed to create checkout link");
   }

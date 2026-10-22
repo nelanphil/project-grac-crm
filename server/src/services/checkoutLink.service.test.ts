@@ -8,14 +8,18 @@ import { CheckoutLink, type ICheckoutLink } from "../models/mongo/CheckoutLink";
 import { Invoice } from "../models/mongo/Invoice";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerContact } from "../models/mongo/CustomerContact";
+import { Contract } from "../models/mongo/Contract";
+import { ContractTemplate } from "../models/mongo/ContractTemplate";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import {
   assertScopedSelection,
   createScopedPaymentLink,
   loadScopedCheckout,
   paymentAmountLabel,
+  previewPaymentSummary,
   validateInvoiceMessage,
 } from "./checkoutLink.service";
+import { mintPaymentLinkForCustomer } from "../utils/paymentLinkForCustomer";
 import { getCheckoutByKey, previewCheckoutByKey, startCheckoutByKey } from "../controllers/checkout.controller";
 import { startCustomerCheckout } from "./checkout.service";
 import { hashPayToken } from "../utils/payToken";
@@ -107,6 +111,72 @@ describe("scoped checkout links", () => {
     assert.equal(stored?.items.length, 1);
     assert.equal(stored?.items[0]?.id, String(old._id));
     assert.match(paymentAmountLabel(result.totalCents, false), /Latest eligible invoice total: \$321\.00/);
+    assert.equal(result.invoiceId, String(old._id));
+    assert.match(new URL(result.payUrl).searchParams.get("c") ?? "", /^q_/);
+  });
+
+  it("keeps a general payment link on the invoice chosen at send time", async () => {
+    const result = await mintPaymentLinkForCustomer(String(customerId));
+    assert.ok(result);
+    assert.equal(result.totalCents, 32100);
+    assert.equal(result.invoiceId, String(old._id));
+    const key = new URL(result.payUrl).searchParams.get("c");
+    assert.match(key ?? "", /^q_/);
+    assert.equal(new URL(result.payUrl).searchParams.get("p"), null);
+    extra = new Invoice({
+      customerRef: customerId, customerId: 1579, number: "NEW",
+      sourceType: "contract_renewal", amountCents: 99999, status: "open",
+      issuedAt: new Date(),
+    });
+    const { cart } = await loadScopedCheckout(key!);
+    assert.equal(cart.totalCents, 32100);
+    assert.deepEqual(cart.items.map((item) => item.id), [String(old._id)]);
+  });
+
+  it("charges the named offer invoice when a newer invoice exists", async () => {
+    extra = new Invoice({
+      customerRef: customerId, customerId: 1579, number: "NEWER",
+      sourceType: "contract_renewal", amountCents: 99999, status: "open",
+      issuedAt: new Date("2099-01-02"),
+    });
+    const result = await createScopedPaymentLink(String(customerId), {
+      invoiceId: String(current._id),
+    });
+    assert.ok(result);
+    assert.equal(result.totalCents, 36380);
+    assert.equal(result.invoiceId, String(current._id));
+    const key = new URL(result.payUrl).searchParams.get("c");
+    assert.match(key ?? "", /^q_/);
+    const { cart } = await loadScopedCheckout(key!);
+    assert.equal(cart.totalCents, 36380);
+    assert.deepEqual(cart.items.map((item) => item.id), [String(current._id)]);
+  });
+
+  it("previews an offer at the template price instead of a newer invoice", async () => {
+    mock.method(ContractTemplate, "findById", () => query({ cost: 200, deletedAt: null }));
+    mock.method(Contract, "findOne", () => query(null));
+    const label = await previewPaymentSummary(
+      String(customerId),
+      undefined,
+      String(new Types.ObjectId()),
+    );
+    assert.match(label, /Invoice total: \$200\.00/);
+  });
+
+  it("previews an existing open offer invoice instead of the template price", async () => {
+    mock.method(ContractTemplate, "findById", () => query({ cost: 200, deletedAt: null }));
+    mock.method(Contract, "findOne", () => query({ _id: new Types.ObjectId() }));
+    mock.method(Invoice, "find", () => query([{
+      status: "open",
+      sourceType: "contract_initial",
+      amountCents: 15000,
+    }]));
+    const label = await previewPaymentSummary(
+      String(customerId),
+      undefined,
+      String(new Types.ObjectId()),
+    );
+    assert.match(label, /Invoice total: \$150\.00/);
   });
 
   it("does not add invoices created after a link was sent", async () => {

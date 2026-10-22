@@ -73,9 +73,6 @@ export default function CheckoutCartView({
         next.add(key);
       }
     }
-    if (preselect.size > 0 && next.size === 0) {
-      for (const item of cart.items) next.add(itemKey(item));
-    }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelected(next);
   }, [cart, preselectInvoiceId, preselectWorkOrderId]);

@@ -31,7 +31,6 @@ import {
   getScheduleRecommendations,
   getScheduleStaff,
   getScheduleStartOptions,
-  getWorkOrder,
   applyScheduleRoute,
   placeScheduleWorkOrder,
   planScheduleRoute,
@@ -952,7 +951,18 @@ export default function CalendarTab({
     targetTime?: string | null;
     targetDate?: string | null;
     message?: string;
+    completing?: boolean;
   } | null>(null);
+
+  async function completeDropLoading(startTime: number) {
+    const elapsed = Date.now() - startTime;
+    if (elapsed < 500) {
+      await new Promise((r) => setTimeout(r, 500 - elapsed));
+    }
+    setDropLoading((prev) => (prev ? { ...prev, completing: true } : null));
+    await new Promise((r) => setTimeout(r, 250));
+    setDropLoading(null);
+  }
 
   const [suggestions, setSuggestions] = useState<ScheduleSuggestion[] | null>(
     null,
@@ -981,8 +991,6 @@ export default function CalendarTab({
   const [viewingOrder, setViewingOrder] = useState<WorkOrderListItem | null>(
     null,
   );
-  const [viewingLoading, setViewingLoading] = useState(false);
-  const [viewingError, setViewingError] = useState<string | null>(null);
   const planSeq = useRef(0);
   const optimizeLock = useRef(false);
   const effectiveTechId = !dispatcher && user?.id ? user.id : routeTechId;
@@ -1096,38 +1104,6 @@ export default function CalendarTab({
     };
   }, [token, canEditStart, editingId, editingStart]);
 
-  useEffect(() => {
-    if (!token || !viewingWorkOrderId) {
-      queueMicrotask(() => {
-        setViewingOrder(null);
-        setViewingError(null);
-        setViewingLoading(false);
-      });
-      return;
-    }
-    let cancelled = false;
-    queueMicrotask(() => {
-      setViewingLoading(true);
-      setViewingError(null);
-    });
-    getWorkOrder(token, viewingWorkOrderId)
-      .then((next) => {
-        if (!cancelled) setViewingOrder(next);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setViewingOrder(null);
-        setViewingError(
-          err instanceof ApiError ? err.message : "Failed to load work order.",
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setViewingLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [token, viewingWorkOrderId]);
 
   const laterChoices = useMemo(() => {
     if (!startOptions || startOptions.isFirst || !startOptions.earliestStart) {
@@ -1300,13 +1276,6 @@ export default function CalendarTab({
         ];
       }),
     [routeStopIds, routeLocks, selectedDate],
-  );
-  const unscheduledPins = useMemo(
-    () =>
-      uniqueJobs(calendarUnscheduled, railJobs).filter(
-        (job) => !job.scheduledStart && !job.completed,
-      ),
-    [calendarUnscheduled, railJobs],
   );
   const routableStopIds = useMemo(
     () => routeStopIds.filter((id) => !jobById.get(id)?.completed),
@@ -1513,7 +1482,7 @@ export default function CalendarTab({
       crew.includes(userId) &&
       workOrderLocalDate(job) === selectedDate;
     if (alreadyScheduled) return false;
-    if (!(await confirmTerritory(job, userId))) return false;
+    if (!isDragDropManaged && !(await confirmTerritory(job, userId))) return false;
     if (!isDragDropManaged) {
       const targetStaff = staff.find((s) => s._id === userId);
       const techName = targetStaff
@@ -1537,31 +1506,34 @@ export default function CalendarTab({
     const startTime = Date.now();
     try {
       const dur = estimatedMinutes || job.estimatedMinutes || DEFAULT_ESTIMATED_MINUTES;
-      const result = await suggestScheduleAssignee(token, {
-        workOrderId: job._id,
-        date: selectedDate,
-        estimatedMinutes: dur,
-      });
-      const suggestion = result.suggestions.find((item) => item.userId === userId);
-      if (!suggestion?.proposedStart && insertIndex === undefined) {
-        setError(
-          suggestion?.reason || "This technician is not available that day.",
-        );
-        return false;
-      }
-      let scheduledStart = suggestion?.proposedStart;
-      const windowStart = normalizeTimeOfDay(job.desiredStartTime);
-      const windowEnd = normalizeTimeOfDay(job.desiredStartBy);
-      if (windowStart && scheduledStart) {
-        const windowIso = localDateTimeToIso(selectedDate, windowStart);
-        if (new Date(windowIso).getTime() > new Date(scheduledStart).getTime()) {
-          scheduledStart = windowIso;
+      let scheduledStart: string | undefined;
+      if (insertIndex === undefined) {
+        const result = await suggestScheduleAssignee(token, {
+          workOrderId: job._id,
+          date: selectedDate,
+          estimatedMinutes: dur,
+        });
+        const suggestion = result.suggestions.find((item) => item.userId === userId);
+        if (!suggestion?.proposedStart) {
+          setError(
+            suggestion?.reason || "This technician is not available that day.",
+          );
+          return false;
         }
-      }
-      if (windowEnd && scheduledStart) {
-        const capIso = localDateTimeToIso(selectedDate, windowEnd);
-        if (new Date(scheduledStart).getTime() > new Date(capIso).getTime()) {
-          scheduledStart = capIso;
+        scheduledStart = suggestion.proposedStart;
+        const windowStart = normalizeTimeOfDay(job.desiredStartTime);
+        const windowEnd = normalizeTimeOfDay(job.desiredStartBy);
+        if (windowStart && scheduledStart) {
+          const windowIso = localDateTimeToIso(selectedDate, windowStart);
+          if (new Date(windowIso).getTime() > new Date(scheduledStart).getTime()) {
+            scheduledStart = windowIso;
+          }
+        }
+        if (windowEnd && scheduledStart) {
+          const capIso = localDateTimeToIso(selectedDate, windowEnd);
+          if (new Date(scheduledStart).getTime() > new Date(capIso).getTime()) {
+            scheduledStart = capIso;
+          }
         }
       }
       const nextCrew =
@@ -1602,11 +1574,7 @@ export default function CalendarTab({
       return false;
     } finally {
       if (!isDragDropManaged) {
-        const elapsed = Date.now() - startTime;
-        if (elapsed < 750) {
-          await new Promise((r) => setTimeout(r, 750 - elapsed));
-        }
-        setDropLoading(null);
+        await completeDropLoading(startTime);
       }
       setSaving(false);
     }
@@ -1736,11 +1704,7 @@ export default function CalendarTab({
             true,
           );
         } finally {
-          const elapsed = Date.now() - startTime;
-          if (elapsed < 750) {
-            await new Promise((r) => setTimeout(r, 750 - elapsed));
-          }
-          setDropLoading(null);
+          await completeDropLoading(startTime);
         }
       }
       return;
@@ -1798,12 +1762,8 @@ export default function CalendarTab({
         err instanceof ApiError ? err.message : "Failed to place work order.",
       );
     } finally {
-      const elapsed = Date.now() - startTime;
-      if (elapsed < 750) {
-        await new Promise((r) => setTimeout(r, 750 - elapsed));
-      }
+      await completeDropLoading(startTime);
       setSaving(false);
-      setDropLoading(null);
     }
   }
 
@@ -2701,7 +2661,7 @@ export default function CalendarTab({
 
       {territoryPrompt ? (
         <div
-          className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+          className="fixed inset-0 z-[95] flex items-end justify-center bg-black/40 p-4 sm:items-center"
           onClick={() => {
             territoryPrompt.resolve(false);
             setTerritoryPrompt(null);
@@ -2760,6 +2720,7 @@ export default function CalendarTab({
           targetTime={dropLoading.targetTime}
           targetDate={dropLoading.targetDate}
           message={dropLoading.message}
+          completing={dropLoading.completing}
         />
       )}
 
@@ -2887,7 +2848,10 @@ export default function CalendarTab({
           token={token}
           user={user}
           canWrite={canWrite}
-          onClose={() => setViewingWorkOrderId(null)}
+          onClose={() => {
+            setViewingWorkOrderId(null);
+            setViewingOrder(null);
+          }}
           onSaved={(updated) => void handleViewingSaved(updated)}
         />
       )}

@@ -3,12 +3,6 @@ import { Customer } from "../models/mongo/Customer";
 import { Invoice, IInvoice } from "../models/mongo/Invoice";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { type WorkOrderInvoiceSource } from "../services/invoice.service";
-import {
-  buildCheckoutUrl,
-  buildShortPaymentUrl,
-  getOrCreateCheckoutKey,
-  getOrCreatePayCode,
-} from "./checkoutKey";
 import type { RenewalScope } from "./messagingContext";
 import { createScopedPaymentLink } from "../services/checkoutLink.service";
 import { pickAvailableInvoicesForCustomers } from "../services/paymentLinkCart";
@@ -112,83 +106,76 @@ export async function payableInvoiceCustomerIds(
   return new Set(picked.keys());
 }
 
+type MintedPaymentLink = {
+  payUrl: string;
+  invoiceId: string;
+  totalCents: number;
+} | null;
+
+export type PaymentLinkForCustomer = (
+  customerId: string,
+  explicitInvoiceId?: string | null,
+) => Promise<MintedPaymentLink>;
+
 /**
- * Stable customer checkout URL. Does not remint pay tokens or create invoices.
+ * Snapshot of the latest eligible invoice. The URL is a scoped checkout link,
+ * so a later invoice cannot change the amount.
  */
 export async function mintPaymentLinkForCustomer(
   customerId: string,
   _scope?: RenewalScope,
-): Promise<{ payUrl: string; invoiceId: string; totalCents: number } | null> {
-  const picked = await pickAvailableInvoicesForCustomers([customerId]);
-  const invoice = picked.get(customerId);
-  if (!invoice) return null;
-
-  const key = await getOrCreateCheckoutKey(customerId);
-  return {
-    payUrl: buildCheckoutUrl(key),
-    invoiceId: String(invoice._id),
-    totalCents: invoice.amountCents || 0,
-  };
+): Promise<MintedPaymentLink> {
+  return createScopedPaymentLink(customerId);
 }
 
 /**
- * Stable short payment URL (`/checkout/?p={payCode}`) for SMS. Same payable rules as
- * the full checkout link. Does not remint the code on later sends.
+ * SMS uses the same scoped snapshot as email. Existing short `/p/` codes still
+ * resolve for links that were already sent.
  */
 export async function mintShortPaymentLinkForCustomer(
   customerId: string,
-  _scope?: RenewalScope,
-): Promise<{ payUrl: string; invoiceId: string; totalCents: number } | null> {
-  const picked = await pickAvailableInvoicesForCustomers([customerId]);
-  const invoice = picked.get(customerId);
-  if (!invoice) return null;
+  scope?: RenewalScope,
+): Promise<MintedPaymentLink> {
+  return mintPaymentLinkForCustomer(customerId, scope);
+}
 
-  const code = await getOrCreatePayCode(customerId);
-  return {
-    payUrl: buildShortPaymentUrl(code),
-    invoiceId: String(invoice._id),
-    totalCents: invoice.amountCents || 0,
+function paymentLinkCache(
+  options?: { invoiceId?: string | null; expectedAmountCents?: number },
+): PaymentLinkForCustomer {
+  const inflight = new Map<string, Promise<MintedPaymentLink>>();
+
+  return function paymentLinkForCustomer(
+    customerId: string,
+    explicitInvoiceId?: string | null,
+  ) {
+    const invoiceId =
+      options?.invoiceId?.trim() || explicitInvoiceId?.trim() || "";
+    const cacheKey = `${customerId}:${invoiceId}`;
+    const existing = inflight.get(cacheKey);
+    if (existing) return existing;
+    const pending = createScopedPaymentLink(customerId, {
+      invoiceId: invoiceId || undefined,
+      expectedAmountCents: options?.invoiceId
+        ? options.expectedAmountCents
+        : undefined,
+    });
+    inflight.set(cacheKey, pending);
+    return pending;
   };
 }
 
 export function createPaymentLinkCache(
   _scope?: RenewalScope,
   options?: { invoiceId?: string | null; expectedAmountCents?: number },
-) {
-  const inflight = new Map<
-    string,
-    Promise<{ payUrl: string; invoiceId: string; totalCents: number } | null>
-  >();
-
-  return function paymentLinkForCustomer(customerId: string) {
-    const existing = inflight.get(customerId);
-    if (existing) return existing;
-    const pending = options?.invoiceId
-      ? createScopedPaymentLink(customerId, options)
-      : mintPaymentLinkForCustomer(customerId);
-    inflight.set(customerId, pending);
-    return pending;
-  };
+): PaymentLinkForCustomer {
+  return paymentLinkCache(options);
 }
 
 export function createShortPaymentLinkCache(
   _scope?: RenewalScope,
   options?: { invoiceId?: string | null; expectedAmountCents?: number },
-) {
-  const inflight = new Map<
-    string,
-    Promise<{ payUrl: string; invoiceId: string; totalCents: number } | null>
-  >();
-
-  return function paymentLinkForCustomer(customerId: string) {
-    const existing = inflight.get(customerId);
-    if (existing) return existing;
-    const pending = options?.invoiceId
-      ? createScopedPaymentLink(customerId, options)
-      : mintShortPaymentLinkForCustomer(customerId);
-    inflight.set(customerId, pending);
-    return pending;
-  };
+): PaymentLinkForCustomer {
+  return paymentLinkCache(options);
 }
 
 export function paymentNoteForInvoiceIds(ids: string[]): string {

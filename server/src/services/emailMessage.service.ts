@@ -258,7 +258,7 @@ export async function dispatchStaffEmailBatch(
         expectedAmountCents: input.expectedAmountCents,
       })
     : null;
-  const offerInflight = new Map<string, Promise<unknown>>();
+  const offerInflight = new Map<string, Promise<{ invoiceId: string }>>();
 
   const sendFromName = input.fromName?.trim() || account.fromName;
   const replyTo = input.replyTo?.trim() || undefined;
@@ -319,6 +319,7 @@ export async function dispatchStaffEmailBatch(
           input.offerContractTemplateId,
           input.offerContractOverrides,
         );
+        let offerInvoiceId: string | undefined;
         if (!input.invoiceId && offerTemplateId && built.contact.customerRef) {
           const offerKey = `${built.contact.customerRef}:${offerTemplateId}`;
           let pending = offerInflight.get(offerKey);
@@ -330,7 +331,7 @@ export async function dispatchStaffEmailBatch(
             offerInflight.set(offerKey, pending);
           }
           try {
-            await pending;
+            offerInvoiceId = (await pending).invoiceId;
           } catch (err) {
             if (!(err instanceof TemporaryContractOfferError)) throw err;
             console.error(
@@ -339,10 +340,16 @@ export async function dispatchStaffEmailBatch(
             );
           }
         }
-        const minted = await paymentLinkForCustomer(built.contact.customerRef);
+        const minted = await paymentLinkForCustomer(
+          built.contact.customerRef,
+          offerInvoiceId,
+        );
         if (minted) {
           paymentUrl = minted.payUrl;
-          paymentLabel = paymentAmountLabel(minted.totalCents, Boolean(input.invoiceId));
+          paymentLabel = paymentAmountLabel(
+            minted.totalCents,
+            Boolean(input.invoiceId) || Boolean(offerInvoiceId),
+          );
           context = { ...context, payment_link: paymentUrl };
         }
       }

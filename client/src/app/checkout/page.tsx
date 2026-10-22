@@ -24,8 +24,6 @@ function PublicCheckoutContent() {
   const searchParams = useSearchParams();
   const queryKey = (searchParams.get("c") ?? "").trim();
   const payCode = (searchParams.get("p") ?? "").trim();
-  const preselectInvoiceId = searchParams.get("invoiceId") ?? undefined;
-  const preselectWorkOrderId = searchParams.get("workOrderId") ?? undefined;
 
   const [resolved, setResolved] = useState<{ code: string; key: string } | null>(
     null,
@@ -131,8 +129,6 @@ function PublicCheckoutContent() {
         loading={loading}
         error={error}
         paying={paying}
-        preselectInvoiceId={preselectInvoiceId}
-        preselectWorkOrderId={preselectWorkOrderId}
         onPay={handlePay}
         previewDiscount={({ code, invoiceIds, workOrderIds }) =>
           previewCheckoutDiscountByKey(key, { code, invoiceIds, workOrderIds })

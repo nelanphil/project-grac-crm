@@ -472,7 +472,10 @@ html[data-theme="dark"] .schedule-day-active {
   .schedule-day-active,
   html[data-theme="dark"] .schedule-day-active,
   .animate-spin-reverse,
-  .animate-generac-progress {
+  .animate-generac-progress,
+  .animate-race-track-lines,
+  .animate-race-exhaust,
+  .animate-race-rumble {
     animation: none;
   }
 }
@@ -501,12 +504,55 @@ html[data-theme="dark"] .schedule-day-active {
   }
 }
 
+@keyframes race-track-scroll {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -36;
+  }
+}
+
+@keyframes race-exhaust-flicker {
+  0%,
+  100% {
+    transform: scaleX(1) scaleY(1);
+    opacity: 0.95;
+  }
+  50% {
+    transform: scaleX(1.3) scaleY(0.88);
+    opacity: 0.75;
+  }
+}
+
+@keyframes race-car-rumble {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-1.2px);
+  }
+}
+
 .animate-spin-reverse {
   animation: spin-reverse 5s linear infinite;
 }
 
 .animate-generac-progress {
   animation: generac-progress-slide 1.4s ease-in-out infinite;
+}
+
+.animate-race-track-lines {
+  animation: race-track-scroll 0.28s linear infinite;
+}
+
+.animate-race-exhaust {
+  animation: race-exhaust-flicker 0.14s ease-in-out infinite;
+}
+
+.animate-race-rumble {
+  animation: race-car-rumble 0.16s ease-in-out infinite;
 }
 
 /* Prevents native text-selection/scroll from hijacking the long-press-to-drag gesture. */

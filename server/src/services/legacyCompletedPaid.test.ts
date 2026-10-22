@@ -8,6 +8,12 @@ import {
   completedPaidWorkOrderFilter,
   workOrderMatchesCompletedPaid,
 } from "./completedPaidReport";
+import { legacyOwnerForUserId } from "./legacyLoginOwners";
+import {
+  ownerWorkOrderMongoFilter,
+  resolveFinancialsOwnerRequest,
+  workOrderBelongsToOwner,
+} from "./financialsOwnerScope";
 
 const dump = {
   paid: true,
@@ -158,6 +164,106 @@ describe("completedPaidWorkOrderFilter", () => {
         novemberStart,
       ),
       false,
+    );
+  });
+});
+
+describe("legacyOwnerForUserId", () => {
+  it("assigns website user 1 to Christopher and user 2 to Dustin", () => {
+    assert.deepEqual(legacyOwnerForUserId(1), {
+      legacyUserId: 1,
+      firstName: "Christopher",
+      lastName: "Hatton",
+    });
+    assert.deepEqual(legacyOwnerForUserId(2), {
+      legacyUserId: 2,
+      firstName: "Dustin",
+      lastName: "Hatton",
+    });
+    assert.equal(legacyOwnerForUserId(6), null);
+  });
+});
+
+describe("owner financials scope", () => {
+  const christopher = "christopher-id";
+  const dustin = "dustin-id";
+
+  it("keeps a mapped login on that owner and native tickets on the customer owner", () => {
+    const owned = new Set(["customer-a"]);
+    assert.equal(
+      workOrderBelongsToOwner({ userId: 1, customerRef: "other" }, 1, owned),
+      true,
+    );
+    assert.equal(
+      workOrderBelongsToOwner({ userId: 2, customerRef: "customer-a" }, 1, owned),
+      false,
+    );
+    assert.equal(
+      workOrderBelongsToOwner({ userId: null, customerRef: "customer-a" }, 1, owned),
+      true,
+    );
+    assert.equal(
+      workOrderBelongsToOwner({ customerRef: "customer-a" }, null, owned),
+      true,
+    );
+    assert.deepEqual(ownerWorkOrderMongoFilter(1, []), { userId: 1 });
+    const both = ownerWorkOrderMongoFilter(2, ["customer-a"]) as {
+      $or: Array<Record<string, unknown>>;
+    };
+    assert.deepEqual(both.$or[0], { userId: 2 });
+  });
+
+  it("lets admin roles and admin job roles choose an owner", () => {
+    assert.deepEqual(
+      resolveFinancialsOwnerRequest({
+        roles: ["admin"],
+        territoryOwner: true,
+        selfId: christopher,
+        requestedOwnerId: dustin,
+      }),
+      { canChoose: true, ownerId: dustin },
+    );
+    assert.deepEqual(
+      resolveFinancialsOwnerRequest({
+        roles: ["agent"],
+        jobRoleLabels: ["Super Admin"],
+        territoryOwner: false,
+        selfId: christopher,
+        requestedOwnerId: "",
+      }),
+      { canChoose: true, ownerId: null },
+    );
+    assert.deepEqual(
+      resolveFinancialsOwnerRequest({
+        roles: ["manager"],
+        jobRoleSlugs: ["administrator"],
+        territoryOwner: false,
+        selfId: dustin,
+        requestedOwnerId: christopher,
+      }),
+      { canChoose: true, ownerId: christopher },
+    );
+  });
+
+  it("forces a territory owner who is not an admin onto their own book", () => {
+    assert.deepEqual(
+      resolveFinancialsOwnerRequest({
+        roles: ["agent"],
+        jobRoleSlugs: ["territory-owner"],
+        territoryOwner: true,
+        selfId: dustin,
+        requestedOwnerId: christopher,
+      }),
+      { canChoose: false, ownerId: dustin },
+    );
+    assert.deepEqual(
+      resolveFinancialsOwnerRequest({
+        roles: ["agent"],
+        territoryOwner: false,
+        selfId: dustin,
+        requestedOwnerId: christopher,
+      }),
+      { canChoose: false, ownerId: null },
     );
   });
 });

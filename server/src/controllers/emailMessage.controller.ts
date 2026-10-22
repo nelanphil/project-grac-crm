@@ -311,7 +311,13 @@ export async function previewEmailMessage(
       if (showButton) {
         paymentUrl = samplePayUrl();
         context = { ...context, payment_link: paymentUrl };
-        if (customerRef) paymentSummary = await previewPaymentSummary(customerRef, parsed.data.invoiceId);
+        if (customerRef) {
+          paymentSummary = await previewPaymentSummary(
+            customerRef,
+            parsed.data.invoiceId,
+            offerId,
+          );
+        }
       }
     }
 

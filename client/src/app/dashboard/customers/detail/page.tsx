@@ -693,12 +693,23 @@ function CustomerDetailContent() {
                 setCopyingCheckout(true);
                 setCheckoutLinkMessage(null);
                 try {
-                  const { checkoutUrl } = await getCustomerCheckoutLink(
+                  const { checkoutUrl, totalCents } = await getCustomerCheckoutLink(
                     token,
                     customer._id,
                   );
                   await navigator.clipboard?.writeText(checkoutUrl);
-                  setCheckoutLinkMessage("Checkout link copied");
+                  const total =
+                    typeof totalCents === "number"
+                      ? new Intl.NumberFormat("en-US", {
+                          style: "currency",
+                          currency: "USD",
+                        }).format(totalCents / 100)
+                      : null;
+                  setCheckoutLinkMessage(
+                    total
+                      ? `Checkout link copied for ${total}`
+                      : "Checkout link copied",
+                  );
                 } catch (err) {
                   setCheckoutLinkMessage(
                     err instanceof ApiError

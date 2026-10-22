@@ -437,7 +437,7 @@ export default function TechnicianHomeDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [token, jobs]);
+  }, [token, jobs, updateJobs]);
 
   useEffect(() => {
     if (!token || !selectedId) return;

@@ -3711,8 +3711,8 @@ export async function createPortalContact(
 export async function getCustomerCheckoutLink(
   token: string,
   customerId: string,
-): Promise<{ checkoutUrl: string }> {
-  return authRequest<{ checkoutUrl: string }>(
+): Promise<{ checkoutUrl: string; invoiceId?: string; totalCents?: number }> {
+  return authRequest<{ checkoutUrl: string; invoiceId?: string; totalCents?: number }>(
     `/customers/${customerId}/checkout-link`,
     {
       method: "GET",
@@ -4202,9 +4202,31 @@ export async function deleteEstimateTemplate(
   });
 }
 
+export interface FinancialsOwnerOption {
+  id: string;
+  name: string;
+}
+
+export interface FinancialsOwnersResponse {
+  canChoose: boolean;
+  ownerId: string | null;
+  owners: FinancialsOwnerOption[];
+}
+
+export async function getFinancialsOwners(
+  token: string,
+): Promise<FinancialsOwnersResponse> {
+  return authRequest<FinancialsOwnersResponse>("/financials/owners", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export interface FinancialsSummary {
   from: string | null;
   to: string | null;
+  ownerScoped?: boolean;
+  ownerId?: string | null;
   invoices: {
     count: number;
     invoicedCents: number;
@@ -4231,11 +4253,12 @@ export interface FinancialsSummary {
 
 export async function getFinancialsSummary(
   token: string,
-  opts?: { from?: string; to?: string },
+  opts?: { from?: string; to?: string; owner?: string },
 ): Promise<FinancialsSummary> {
   const params = new URLSearchParams();
   if (opts?.from) params.set("from", opts.from);
   if (opts?.to) params.set("to", opts.to);
+  if (opts?.owner) params.set("owner", opts.owner);
   const qs = params.toString();
   return authRequest<FinancialsSummary>(
     `/financials/summary${qs ? `?${qs}` : ""}`,
@@ -4289,6 +4312,7 @@ export async function getFinancialsRecords(
     type: FinancialFilterType;
     from?: string;
     to?: string;
+    owner?: string;
     search?: string;
     page?: number;
     pageSize?: number;
@@ -4300,6 +4324,7 @@ export async function getFinancialsRecords(
   params.set("type", opts.type);
   if (opts.from) params.set("from", opts.from);
   if (opts.to) params.set("to", opts.to);
+  if (opts.owner) params.set("owner", opts.owner);
   if (opts.search) params.set("search", opts.search);
   if (opts.page != null) params.set("page", String(opts.page));
   if (opts.pageSize != null) params.set("pageSize", String(opts.pageSize));
@@ -6028,6 +6053,8 @@ export async function scheduleMessagingMessages(
     renewalYear?: number;
     renewalMonth?: number;
     includePaymentLink?: boolean;
+    invoiceId?: string;
+    expectedAmountCents?: number;
     offerContractTemplateId?: string | null;
     offerContractOverrides?: {
       contactId: string;

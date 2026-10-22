@@ -1,10 +1,11 @@
+import Image from "next/image";
 import { SYSTEM_INCLUDES, UPGRADES } from "@/lib/constants";
 
 export default function SystemIncludesSection() {
   return (
     <section>
       <div className="bg-white pt-10 px-4 sm:px-6 lg:px-8">
-        <img
+        <Image
           src="/images/generac-product-lineup.jpg"
           alt="Generac home standby and portable generators"
           width={1024}

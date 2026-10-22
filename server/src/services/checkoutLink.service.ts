@@ -4,8 +4,12 @@ import { CheckoutLink, type CheckoutLinkItem } from "../models/mongo/CheckoutLin
 import { Invoice } from "../models/mongo/Invoice";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerContact } from "../models/mongo/CustomerContact";
+import { Contract } from "../models/mongo/Contract";
+import { ContractTemplate } from "../models/mongo/ContractTemplate";
 import { hashPayToken } from "../utils/payToken";
+import { reusableOfferInvoice } from "../utils/temporaryContractOffer";
 import { buildCheckoutUrl } from "../utils/checkoutKey";
+import { dollarsToCents } from "./invoice.service";
 import {
   CHANGED_CHECKOUT_MESSAGE,
   checkoutScopeMatches,
@@ -42,10 +46,48 @@ export async function validateInvoiceMessage(input: {
   }
 }
 
+/** Offer price for a preview. Uses an existing open offer invoice, otherwise the template cost. */
+async function offerPreviewAmountCents(
+  customerId: string,
+  templateId: string,
+): Promise<number | null> {
+  if (!Types.ObjectId.isValid(customerId) || !Types.ObjectId.isValid(templateId)) {
+    return null;
+  }
+  const template = await ContractTemplate.findById(templateId)
+    .select("cost deletedAt")
+    .lean();
+  if (!template || template.deletedAt || !(template.cost > 0)) return null;
+
+  const contract = await Contract.findOne({
+    customerRef: customerId,
+    templateId,
+    temporary: true,
+  })
+    .select("_id")
+    .lean();
+  if (contract) {
+    const invoices = await Invoice.find({
+      contractRef: contract._id,
+      sourceType: "contract_initial",
+    })
+      .select("status sourceType amountCents")
+      .lean();
+    const open = reusableOfferInvoice(invoices);
+    if (open && typeof open.amountCents === "number") return open.amountCents;
+  }
+  return dollarsToCents(template.cost);
+}
+
 export async function previewPaymentSummary(
   customerId: string,
   invoiceId?: string,
+  offerContractTemplateId?: string | null,
 ): Promise<string> {
+  if (!invoiceId && offerContractTemplateId) {
+    const cents = await offerPreviewAmountCents(customerId, offerContractTemplateId);
+    return cents == null ? "" : paymentAmountLabel(cents, true);
+  }
   const cart = invoiceId
     ? await listPayableCart([customerId])
     : await listPaymentLinkCart([customerId]);
@@ -92,7 +134,9 @@ export async function createScopedPaymentLink(
     items: items.map(({ id, kind, amountCents }) => ({ id, kind, amountCents })),
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
   });
-  return { payUrl: buildCheckoutUrl(key), invoiceId: invoiceId ?? "", totalCents };
+  const snapshotInvoiceId =
+    invoiceId ?? items.find((item) => item.kind === "invoice")?.id ?? "";
+  return { payUrl: buildCheckoutUrl(key), invoiceId: snapshotInvoiceId, totalCents };
 }
 
 export async function loadScopedCheckout(key: string): Promise<{

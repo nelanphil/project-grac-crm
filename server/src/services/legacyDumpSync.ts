@@ -23,6 +23,7 @@ import {
   syncAscContractsFromRecords,
   type AscContractSyncSummary,
 } from "./ascContractSync";
+import { LEGACY_LOGIN_OWNERS } from "./legacyLoginOwners";
 import {
   legacyWorkOrderHasBillableMoney,
   ensureLegacyCatalogProducts,
@@ -1255,6 +1256,40 @@ async function backfillExistingWorkOrderLineItems(
   return true;
 }
 
+type BoundInvoiceSnapshot = {
+  _id: Types.ObjectId;
+  status: string;
+  amountCents: number;
+  customerRef?: Types.ObjectId | null;
+};
+
+async function loadBoundInvoiceSnapshots(
+  models: BoundModels,
+  workOrderIds: Types.ObjectId[],
+): Promise<Map<string, BoundInvoiceSnapshot | null>> {
+  const cache = new Map<string, BoundInvoiceSnapshot | null>();
+  for (const id of workOrderIds) cache.set(String(id), null);
+  if (workOrderIds.length === 0) return cache;
+
+  const docs = await models.Invoice.find({
+    workOrderRef: { $in: workOrderIds },
+    status: { $ne: "void" },
+  })
+    .select("_id workOrderRef status amountCents customerRef")
+    .lean();
+  for (const doc of docs) {
+    const key = String(doc.workOrderRef);
+    if (cache.get(key)) continue;
+    cache.set(key, {
+      _id: doc._id as Types.ObjectId,
+      status: doc.status,
+      amountCents: doc.amountCents ?? 0,
+      customerRef: (doc.customerRef as Types.ObjectId | null | undefined) ?? null,
+    });
+  }
+  return cache;
+}
+
 async function syncLegacyBoundInvoiceStatus(
   models: BoundModels,
   wo: {
@@ -1270,11 +1305,9 @@ async function syncLegacyBoundInvoiceStatus(
     shipping?: number;
   },
   row: WorkOrderRow,
+  known: BoundInvoiceSnapshot | null,
 ): Promise<void> {
-  const existing = await models.Invoice.findOne({
-    workOrderRef: wo._id,
-    status: { $ne: "void" },
-  });
+  const existing = known;
   const issuedAt = row.date instanceof Date ? row.date : new Date();
   const amountCents = dollarsToCents(row.total);
   const nextStatus = row.paid ? ("paid" as const) : ("open" as const);
@@ -1285,20 +1318,23 @@ async function syncLegacyBoundInvoiceStatus(
     const amountChanged =
       amountCents > 0 && existing.amountCents !== amountCents;
     if (!statusChanged && !amountChanged) return;
+    const $set: Record<string, unknown> = {};
     if (statusChanged) {
-      existing.status = nextStatus;
-      existing.paidAt = nextPaidAt;
+      $set.status = nextStatus;
+      $set.paidAt = nextPaidAt;
     }
     if (amountChanged) {
-      existing.amountCents = amountCents;
-      existing.taxRatePercent = 0;
-      existing.taxCents = 0;
-      existing.taxOverridden = false;
+      $set.amountCents = amountCents;
+      $set.taxRatePercent = 0;
+      $set.taxCents = 0;
+      $set.taxOverridden = false;
     }
     if (!existing.customerRef && wo.customerRef) {
-      existing.customerRef = wo.customerRef;
+      $set.customerRef = wo.customerRef;
     }
-    await existing.save();
+    if (Object.keys($set).length > 0) {
+      await models.Invoice.updateOne({ _id: existing._id }, { $set });
+    }
     return;
   }
 
@@ -1913,12 +1949,60 @@ export async function runLegacyDumpSync(options: {
       log("Matching dump customers…");
     }
 
+    const loginOwners = new Map<number, Types.ObjectId>();
+    if (customerRows.length > 0) {
+      for (const owner of LEGACY_LOGIN_OWNERS) {
+        const matches = await conn
+          .collection("users")
+          .find({
+            first_name: new RegExp(`^${owner.firstName}$`, "i"),
+            last_name: new RegExp(`^${owner.lastName}$`, "i"),
+            deletedAt: null,
+          })
+          .project({ _id: 1 })
+          .toArray();
+        if (matches.length !== 1) {
+          log(
+            `Legacy user ${owner.legacyUserId} owner ${owner.firstName} ${owner.lastName} matched ${matches.length} users; leaving those customers unchanged.`,
+          );
+          continue;
+        }
+        loginOwners.set(owner.legacyUserId, matches[0]!._id as Types.ObjectId);
+        log(
+          `Legacy user ${owner.legacyUserId} customers will be owned by ${owner.firstName} ${owner.lastName}.`,
+        );
+      }
+    }
+
     const mysqlToCustomer = new Map<number, MappedCustomer>();
     let skippedLegacy = 0;
     let skippedIdentity = 0;
     let collisions = 0;
     let insertedCustomers = 0;
     let contactsCreated = 0;
+    let ownersAssigned = 0;
+
+    const ownerWrites: Array<{
+      updateOne: {
+        filter: { _id: Types.ObjectId };
+        update: { $set: { ownerUserRef: Types.ObjectId; ownerManual: true } };
+      };
+    }> = [];
+    const assignLegacyOwner = (
+      customerId: Types.ObjectId | null,
+      userId: number,
+    ) => {
+      const ownerId = loginOwners.get(userId);
+      if (!ownerId) return;
+      ownersAssigned += 1;
+      if (dryRun || !customerId) return;
+      ownerWrites.push({
+        updateOne: {
+          filter: { _id: customerId },
+          update: { $set: { ownerUserRef: ownerId, ownerManual: true } },
+        },
+      });
+    };
 
     const audit: AuditReport = {
       customersPresent: 0,
@@ -1942,6 +2026,7 @@ export async function runLegacyDumpSync(options: {
         mysqlToCustomer.set(row.legacyId, sameIdMatch);
         skippedLegacy += 1;
         audit.customersPresent += 1;
+        assignLegacyOwner(sameIdMatch._id, row.userId);
         continue;
       }
 
@@ -1958,6 +2043,7 @@ export async function runLegacyDumpSync(options: {
           mongoLegacyId: identityMatch.customer.legacyId,
           mongoName: displayName(identityMatch.customer),
         });
+        assignLegacyOwner(identityMatch.customer._id, row.userId);
         continue;
       }
 
@@ -1993,6 +2079,7 @@ export async function runLegacyDumpSync(options: {
           indexIdentity(index, fake);
           insertedCustomers += 1;
           contactsCreated += 1;
+          assignLegacyOwner(null, row.userId);
           continue;
         }
 
@@ -2006,6 +2093,7 @@ export async function runLegacyDumpSync(options: {
         });
         insertedCustomers += 1;
         contactsCreated += 1;
+        assignLegacyOwner(created._id, row.userId);
         continue;
       }
 
@@ -2036,6 +2124,7 @@ export async function runLegacyDumpSync(options: {
         indexIdentity(index, fake);
         insertedCustomers += 1;
         contactsCreated += 1;
+        assignLegacyOwner(null, row.userId);
         continue;
       }
 
@@ -2049,13 +2138,18 @@ export async function runLegacyDumpSync(options: {
       });
       insertedCustomers += 1;
       contactsCreated += 1;
+      assignLegacyOwner(created._id, row.userId);
       } finally {
         heartbeat(i + 1, customerRows.length, "customers");
       }
     }
 
+    if (!dryRun && ownerWrites.length > 0) {
+      await models.Customer.bulkWrite(ownerWrites, { ordered: true });
+    }
+
     log(
-      `Customers: present=${audit.customersPresent.toLocaleString()} identity-linked=${audit.customersIdentityLinked.length.toLocaleString()} missing=${audit.customersMissing.length.toLocaleString()} collisions=${audit.customersCollisions.length.toLocaleString()}.`,
+      `Customers: present=${audit.customersPresent.toLocaleString()} identity-linked=${audit.customersIdentityLinked.length.toLocaleString()} missing=${audit.customersMissing.length.toLocaleString()} collisions=${audit.customersCollisions.length.toLocaleString()} owners-assigned=${ownersAssigned.toLocaleString()}.`,
     );
 
     log("Loading existing work orders…");
@@ -2077,9 +2171,19 @@ export async function runLegacyDumpSync(options: {
       fuzzyWoKeys.add(woFuzzyKey(wo.customerId, wo.date, wo.descPerform ?? ""));
     }
 
-    log(
-      `Loaded ${existingWos.length.toLocaleString()} work orders.`,
-    );
+    const invoiceByWorkOrder = dryRun
+      ? new Map<string, BoundInvoiceSnapshot | null>()
+      : await loadBoundInvoiceSnapshots(
+          models,
+          existingWos.map((wo) => wo._id as Types.ObjectId),
+        );
+    if (!dryRun) {
+      log(
+        `Loaded ${existingWos.length.toLocaleString()} work orders and ${[...invoiceByWorkOrder.values()].filter(Boolean).length.toLocaleString()} invoices.`,
+      );
+    } else {
+      log(`Loaded ${existingWos.length.toLocaleString()} work orders.`);
+    }
     if (workOrderRows.length > 0) {
       log(dryRun ? "Matching dump work orders…" : "Importing dump work orders…");
     }
@@ -2177,6 +2281,7 @@ export async function runLegacyDumpSync(options: {
               shipping: row.shipping,
             },
             row,
+            invoiceByWorkOrder.get(String(existing._id)) ?? null,
           );
         }
         continue;

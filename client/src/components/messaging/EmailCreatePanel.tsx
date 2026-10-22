@@ -501,9 +501,11 @@ export default function EmailCreatePanel({
           {showPaymentLinkColumn ? (
             <p className="mb-2 text-xs text-neutral-500">
               “Will send” means this contact has an eligible invoice, or a
-              temporary contract offer is selected. General links cover only
-              the latest eligible invoice, not a combined balance. Future-due
-              invoices and incomplete work orders are excluded.
+              temporary contract offer is selected. General links lock the
+              latest eligible invoice when the message is sent. A temporary
+              contract locks that contract invoice instead. Other balances are
+              not included. Future-due invoices and incomplete work orders are
+              excluded.
             </p>
           ) : null}
 
@@ -1009,9 +1011,10 @@ export default function EmailCreatePanel({
               <p className="mb-3 text-xs text-neutral-500">
                 Recipients marked “No button” have no eligible invoice or
                 temporary offer selected. Their email omits the payment button.
-                Temporary offers create a contract and invoice when sending.
-                General links cover only the latest eligible invoice; messages
-                sent from an invoice cover only that specific invoice.
+                Temporary offers create a contract and invoice when sending,
+                and the link locks that contract invoice. General links lock
+                the latest eligible invoice when the message is sent. Messages
+                sent from an invoice cover only that invoice.
               </p>
             ) : null}
             {selectedContacts.length === 0 ? (

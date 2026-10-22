@@ -889,7 +889,8 @@ export default function CreatePanel({
                 </span>
                 <span className="mt-0.5 block text-xs text-neutral-500">
                   Adds a link and total for one eligible invoice, even without
-                  inserting {"{{payment_link}}"}. Other balances are not included.
+                  inserting {"{{payment_link}}"}. The amount is locked when the
+                  message is sent. Other balances are not included.
                 </span>
               </span>
             </label>
@@ -903,9 +904,9 @@ export default function CreatePanel({
               <span className="mt-0.5 block text-xs text-neutral-500">
                 When this message includes a payment link, each recipient gets
                 a temporary contract and an open invoice for the catalog
-                contract you pick. The link covers only the latest eligible
-                invoice, not a combined balance. Paying the contract invoice
-                makes the contract permanent.
+                contract you pick. The link is locked to that contract invoice
+                and its amount. Other balances are not included. Paying the
+                contract invoice makes the contract permanent.
               </span>
               <select
                 value={offerContractTemplateId ?? ""}

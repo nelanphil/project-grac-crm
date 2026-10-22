@@ -204,7 +204,11 @@ export async function previewMessage(
           : Boolean(offerId);
       if (showLink) paymentUrl = sampleShortPaymentUrl();
       if (customerRef && paymentUrl) {
-        paymentSummary = await previewPaymentSummary(customerRef, parsed.data.invoiceId);
+        paymentSummary = await previewPaymentSummary(
+          customerRef,
+          parsed.data.invoiceId,
+          offerId,
+        );
       }
     }
 
@@ -338,7 +342,7 @@ export async function dispatchMessagingBatch(
           expectedAmountCents: data.expectedAmountCents,
         })
       : null;
-    const offerInflight = new Map<string, Promise<unknown>>();
+    const offerInflight = new Map<string, Promise<{ invoiceId: string }>>();
 
     const results = await mapWithConcurrency(
       uniqueContactIds,
@@ -373,9 +377,14 @@ export async function dispatchMessagingBatch(
             customerId: built.contact.customerRef,
             offerContractTemplateId: data.invoiceId ? null : offerContractTemplateId,
             offerContractOverrides: data.invoiceId ? [] : data.offerContractOverrides,
-            paymentLinkForCustomer: async (customerId) => {
-              const link = await paymentLinkForCustomer(customerId);
-              if (link) paymentLabel = paymentAmountLabel(link.totalCents, Boolean(data.invoiceId));
+            paymentLinkForCustomer: async (customerId, explicitInvoiceId) => {
+              const link = await paymentLinkForCustomer(customerId, explicitInvoiceId);
+              if (link) {
+                paymentLabel = paymentAmountLabel(
+                  link.totalCents,
+                  Boolean(data.invoiceId) || Boolean(explicitInvoiceId),
+                );
+              }
               return link;
             },
             offerInflight,

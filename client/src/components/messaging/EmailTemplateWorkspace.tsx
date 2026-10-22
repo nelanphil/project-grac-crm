@@ -233,7 +233,8 @@ export default function EmailTemplateWorkspace({
               </span>
               <span className="mt-0.5 block text-xs text-neutral-500">
                 Adds a button and total for one invoice, even without inserting
-                {"{{payment_link}}"}. Other balances are not included.
+                {"{{payment_link}}"}. The amount is locked when the message is
+                sent. Other balances are not included.
               </span>
             </span>
           </label>
@@ -247,9 +248,10 @@ export default function EmailTemplateWorkspace({
             <span className="mt-0.5 block text-xs text-neutral-500">
               When this email includes a payment link, each recipient gets a
               temporary contract and an open invoice for the catalog contract
-              you pick. General links cover only the latest eligible invoice,
-              not a combined balance. Invoice-originated messages do not create
-              temporary offers. Paying the contract invoice makes it permanent.
+              you pick. The link is locked to that contract invoice and its
+              amount. Other balances are not included. Invoice-originated
+              messages do not create temporary offers. Paying the contract
+              invoice makes it permanent.
             </span>
             <select
               value={offerContractTemplateId ?? ""}

@@ -234,7 +234,10 @@ export default function CustomerThreadsPanel({
 
   const contactRef =
     replyThread?.contactRef ?? threadDetail?.thread.contactRef ?? null;
-  const conversationMessages = threadDetail?.messages ?? [];
+  const conversationMessages = useMemo(
+    () => threadDetail?.messages ?? [],
+    [threadDetail?.messages],
+  );
   const latestInbound = latestInboundText(conversationMessages);
   const readReceipt = latestInbound
     ? readReceiptLabel(latestInbound, threadsById)

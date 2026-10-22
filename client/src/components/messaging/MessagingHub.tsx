@@ -85,7 +85,7 @@ const SMS_PAYMENT_LINK_FIELD: MergeFieldItem = {
   key: "payment_link",
   label: "Payment link",
   description:
-    "Payment link for the selected invoice, or the latest eligible invoice when none is selected. Includes the covered total.",
+    "Payment link for the selected invoice, or the latest eligible invoice when none is selected. The amount is locked when the message is sent.",
 };
 
 /** SMS always offers {{payment_link}}, even if an older API still marks it email-only. */
@@ -748,6 +748,7 @@ export default function MessagingHub() {
         renewalMonth: useRenewalsFilter ? viewMonth + 1 : undefined,
         includePaymentLink: smsIncludePaymentLink,
         offerContractTemplateId: previewOffer,
+        invoiceId: initialInvoiceId ?? undefined,
       })
         .then((res) => {
           if (cancelled) return;
@@ -786,6 +787,7 @@ export default function MessagingHub() {
     smsIncludePaymentLink,
     smsOfferContractTemplateId,
     smsOfferContractOverrides,
+    initialInvoiceId,
   ]);
 
   useEffect(() => {
@@ -1301,6 +1303,8 @@ export default function MessagingHub() {
         renewalYear: useRenewalsFilter ? viewYear : undefined,
         renewalMonth: useRenewalsFilter ? viewMonth + 1 : undefined,
         includePaymentLink: smsIncludePaymentLink,
+        invoiceId: initialInvoiceId ?? undefined,
+        expectedAmountCents: invoiceAmountCents,
         offerContractTemplateId: smsOfferContractTemplateId,
         offerContractOverrides: Object.entries(smsOfferContractOverrides).map(
           ([contactId, contractTemplateId]) => ({

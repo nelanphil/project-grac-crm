@@ -10,6 +10,7 @@ import {
   FinancialFilterType,
   FinancialRecordItem,
   FinancialsSummary,
+  getFinancialsOwners,
   getFinancialsRecords,
   getFinancialsSummary,
 } from "@/lib/api";
@@ -51,12 +52,16 @@ function formatDate(iso?: string | null, timeZone?: string): string {
   });
 }
 
-function showsWorkOrderColumns(filter: FinancialFilterType): boolean {
+function showsWorkOrderColumns(
+  filter: FinancialFilterType,
+  websitePaid: boolean,
+): boolean {
   return (
     filter === "open_work_orders" ||
     filter === "unbilled_work" ||
     filter === "labor_hours" ||
-    filter === "completed_paid"
+    filter === "completed_paid" ||
+    (filter === "paid" && websitePaid)
   );
 }
 
@@ -309,6 +314,12 @@ function FinancialsContent() {
   const token = useAuthStore((s) => s.token);
   const canRead = useAuthStore((s) => s.hasPermission("reports:read"));
   const [period, setPeriod] = useState<Period>("month");
+  const [ownersReady, setOwnersReady] = useState(false);
+  const [canChooseOwner, setCanChooseOwner] = useState(false);
+  const [ownerChoices, setOwnerChoices] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [ownerId, setOwnerId] = useState("");
   const [summary, setSummary] = useState<FinancialsSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(() =>
     Boolean(token && canRead),
@@ -334,9 +345,46 @@ function FinancialsContent() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const bounds = useMemo(() => periodBounds(period), [period]);
-  const meta = FILTER_META[activeFilter];
+  const websitePaid = Boolean(summary?.ownerScoped);
+  const workOrderColumns = showsWorkOrderColumns(activeFilter, websitePaid);
+  const meta =
+    activeFilter === "paid" && websitePaid
+      ? {
+          ...FILTER_META.paid,
+          description:
+            "Completed and paid work orders for this owner, by service date",
+        }
+      : FILTER_META[activeFilter];
   const reportTimeZone =
-    activeFilter === "completed_paid" ? "UTC" : undefined;
+    activeFilter === "completed_paid" || (activeFilter === "paid" && websitePaid)
+      ? "UTC"
+      : undefined;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!token || !canRead) return;
+
+    void (async () => {
+      try {
+        const data = await getFinancialsOwners(token);
+        if (cancelled) return;
+        setCanChooseOwner(data.canChoose);
+        setOwnerChoices(data.owners);
+        setOwnerId(data.canChoose ? "" : data.ownerId ?? "");
+      } catch {
+        if (!cancelled) {
+          setCanChooseOwner(false);
+          setOwnerChoices([]);
+        }
+      } finally {
+        if (!cancelled) setOwnersReady(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, canRead]);
 
   // Debounce search input
   useEffect(() => {
@@ -350,11 +398,14 @@ function FinancialsContent() {
   // Load KPI summary
   useEffect(() => {
     let cancelled = false;
-    if (!token || !canRead) return;
+    if (!token || !canRead || !ownersReady) return;
 
     void (async () => {
       try {
-        const data = await getFinancialsSummary(token, bounds);
+        const data = await getFinancialsSummary(token, {
+          ...bounds,
+          owner: ownerId || undefined,
+        });
         if (!cancelled) {
           setSummary(data);
           setSummaryError(null);
@@ -375,12 +426,12 @@ function FinancialsContent() {
     return () => {
       cancelled = true;
     };
-  }, [token, canRead, bounds]);
+  }, [token, canRead, bounds, ownersReady, ownerId]);
 
   // Load records for active filter
   useEffect(() => {
     let cancelled = false;
-    if (!token || !canRead) return;
+    if (!token || !canRead || !ownersReady) return;
 
     void (async () => {
       try {
@@ -388,6 +439,7 @@ function FinancialsContent() {
           type: activeFilter,
           from: bounds.from,
           to: bounds.to,
+          owner: ownerId || undefined,
           search: debouncedSearch || undefined,
           page,
           pageSize,
@@ -418,6 +470,8 @@ function FinancialsContent() {
     canRead,
     activeFilter,
     bounds,
+    ownersReady,
+    ownerId,
     debouncedSearch,
     page,
     pageSize,
@@ -440,7 +494,7 @@ function FinancialsContent() {
     } else if (filter === "unbilled_work") {
       setSortKey("total");
       setSortDir("desc");
-    } else if (filter === "completed_paid") {
+    } else if (filter === "completed_paid" || (filter === "paid" && ownerId)) {
       setSortKey("date");
       setSortDir("asc");
     } else {
@@ -527,7 +581,34 @@ function FinancialsContent() {
             any card to view detailed records below.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {canChooseOwner ? (
+            <label className="flex items-center gap-2 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+              Owner
+              <select
+                value={ownerId}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setOwnerId(next);
+                  setSummaryLoading(true);
+                  setRecordsLoading(true);
+                  setPage(1);
+                  if (activeFilter === "paid" && next) {
+                    setSortKey("date");
+                    setSortDir("asc");
+                  }
+                }}
+                className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-brand-dark dark:border-neutral-700 dark:bg-neutral-900"
+              >
+                <option value="">All owners</option>
+                {ownerChoices.map((owner) => (
+                  <option key={owner.id} value={owner.id}>
+                    {owner.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {(
             [
               ["month", "This month"],
@@ -580,8 +661,16 @@ function FinancialsContent() {
             />
             <KpiCard
               label="Paid"
-              value={formatMoney(summary.invoices.paidCents)}
-              hint={`${summary.invoices.paidCount} paid`}
+              value={formatMoney(
+                websitePaid
+                  ? summary.workOrders.completedPaidCents
+                  : summary.invoices.paidCents,
+              )}
+              hint={
+                websitePaid
+                  ? `${summary.workOrders.completedPaidCount} result(s)`
+                  : `${summary.invoices.paidCount} paid`
+              }
               isSelected={activeFilter === "paid"}
               onClick={() => handleSelectFilter("paid")}
             />
@@ -766,7 +855,7 @@ function FinancialsContent() {
                                 value={formatDate(r.dueDate)}
                               />
                             ) : null}
-                            {showsWorkOrderColumns(activeFilter) &&
+                            {workOrderColumns &&
                             r.laborHours != null &&
                             r.laborHours > 0 ? (
                               <DataField
@@ -807,7 +896,7 @@ function FinancialsContent() {
                             label={
                               activeFilter === "estimates"
                                 ? "Estimate #"
-                                : showsWorkOrderColumns(activeFilter)
+                                : workOrderColumns
                                   ? "Work Order #"
                                   : "Invoice #"
                             }
@@ -830,7 +919,7 @@ function FinancialsContent() {
                             sortDir={sortDir}
                             onSort={handleSort}
                           />
-                          {showsWorkOrderColumns(activeFilter) ? (
+                          {workOrderColumns ? (
                             <>
                               <SortHeader
                                 label="Labor Hours"
@@ -913,7 +1002,7 @@ function FinancialsContent() {
                               <td className="px-6 py-4 text-neutral-500">
                                 {formatDate(r.date, reportTimeZone)}
                               </td>
-                              {showsWorkOrderColumns(activeFilter) ? (
+                              {workOrderColumns ? (
                                 <>
                                   <td className="px-6 py-4">
                                     {r.laborHours != null &&

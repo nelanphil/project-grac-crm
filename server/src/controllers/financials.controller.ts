@@ -5,8 +5,17 @@ import { Invoice } from "../models/mongo/Invoice";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { Estimate } from "../models/mongo/Estimate";
 import { Customer } from "../models/mongo/Customer";
+import { JobRole } from "../models/mongo/JobRole";
+import { User, activeUserFilter } from "../models/mongo/User";
 import { dollarsToCents } from "../services/invoice.service";
 import { completedPaidWorkOrderFilter } from "../services/completedPaidReport";
+import {
+  mergeMongoFilters,
+  ownerWorkOrderMongoFilter,
+  resolveFinancialsOwnerRequest,
+} from "../services/financialsOwnerScope";
+import { legacyUserIdForOwnerName } from "../services/legacyLoginOwners";
+import { territoryOwnerUserFilter, userHasCapability } from "../utils/jobRoles";
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -31,6 +40,146 @@ function parseBound(value: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+type AppliedOwnerScope = {
+  ownerId: string;
+  legacyUserId: number | null;
+  customerIds: Types.ObjectId[];
+  workOrderIds: Types.ObjectId[];
+  workOrderFilter: Record<string, unknown>;
+};
+
+async function viewerJobRoles(ids: string[]): Promise<{
+  slugs: string[];
+  labels: string[];
+  territoryOwner: boolean;
+}> {
+  const valid = ids.filter((id) => Types.ObjectId.isValid(id));
+  if (valid.length === 0) {
+    return { slugs: [], labels: [], territoryOwner: false };
+  }
+  const roles = await JobRole.find({
+    _id: { $in: valid },
+    deletedAt: null,
+  })
+    .select("slug label capabilities")
+    .lean();
+  return {
+    slugs: roles.map((role) => role.slug),
+    labels: roles.map((role) => role.label),
+    territoryOwner: roles.some((role) => role.capabilities?.territoryOwner),
+  };
+}
+
+async function resolveAppliedOwner(
+  req: AuthRequest,
+): Promise<{ error?: string; canChoose: boolean; scope: AppliedOwnerScope | null }> {
+  const user = req.user;
+  if (!user) return { error: "Unauthorized", canChoose: false, scope: null };
+
+  const names = await viewerJobRoles(user.jobRoles ?? []);
+  const requested = typeof req.query.owner === "string" ? req.query.owner : "";
+  const decision = resolveFinancialsOwnerRequest({
+    roles: user.roles,
+    jobRoleSlugs: names.slugs,
+    jobRoleLabels: names.labels,
+    territoryOwner: names.territoryOwner,
+    selfId: user.id,
+    requestedOwnerId: requested,
+  });
+  if (!decision.ownerId) return { canChoose: decision.canChoose, scope: null };
+  if (!Types.ObjectId.isValid(decision.ownerId)) {
+    return {
+      error: "Choose a territory owner",
+      canChoose: decision.canChoose,
+      scope: null,
+    };
+  }
+
+  const owner = await User.findOne({
+    _id: decision.ownerId,
+    ...activeUserFilter,
+  })
+    .select("first_name last_name jobRoles")
+    .lean();
+  if (!owner || !(await userHasCapability(owner, "territoryOwner"))) {
+    return {
+      error: "Choose a territory owner",
+      canChoose: decision.canChoose,
+      scope: null,
+    };
+  }
+
+  const legacyUserId = legacyUserIdForOwnerName(owner.first_name, owner.last_name);
+  const customers = await Customer.find({
+    deletedAt: null,
+    mergedIntoRef: null,
+    $or: [
+      { ownerUserRef: owner._id },
+      ...(legacyUserId != null ? [{ userId: legacyUserId }] : []),
+    ],
+  })
+    .select("_id")
+    .lean();
+  const customerIds = customers.map((customer) => customer._id as Types.ObjectId);
+  const workOrderFilter = ownerWorkOrderMongoFilter(legacyUserId, customerIds);
+  const workOrders = await WorkOrder.find(workOrderFilter).select("_id").lean();
+
+  return {
+    canChoose: decision.canChoose,
+    scope: {
+      ownerId: String(owner._id),
+      legacyUserId,
+      customerIds,
+      workOrderIds: workOrders.map((workOrder) => workOrder._id as Types.ObjectId),
+      workOrderFilter,
+    },
+  };
+}
+
+export async function getFinancialsOwners(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const user = req.user;
+    if (!user) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+    const names = await viewerJobRoles(user.jobRoles ?? []);
+    const decision = resolveFinancialsOwnerRequest({
+      roles: user.roles,
+      jobRoleSlugs: names.slugs,
+      jobRoleLabels: names.labels,
+      territoryOwner: names.territoryOwner,
+      selfId: user.id,
+      requestedOwnerId: null,
+    });
+
+    const owners = decision.canChoose
+      ? await User.find({
+          ...activeUserFilter,
+          ...(await territoryOwnerUserFilter()),
+        })
+          .select("first_name last_name")
+          .sort({ last_name: 1, first_name: 1 })
+          .lean()
+      : [];
+
+    res.json({
+      canChoose: decision.canChoose,
+      ownerId: decision.ownerId,
+      owners: owners.map((owner) => ({
+        id: String(owner._id),
+        name: `${owner.first_name ?? ""} ${owner.last_name ?? ""}`.trim(),
+      })),
+    });
+  } catch (err) {
+    console.error("GET /financials/owners error:", err);
+    res.status(500).json({ message: "Failed to load financials owners" });
+  }
+}
+
 function inRange(filter: Record<string, unknown>, field: string, from: Date | null, to: Date | null) {
   if (!from && !to) return;
   const range: Record<string, Date> = {};
@@ -47,20 +196,36 @@ export async function getFinancialsSummary(
     const from = parseBound(req.query.from);
     const to = parseBound(req.query.to);
     const now = new Date();
+    const applied = await resolveAppliedOwner(req);
+    if (applied.error) {
+      res.status(applied.error === "Unauthorized" ? 401 : 400).json({
+        message: applied.error,
+      });
+      return;
+    }
+    const scope = applied.scope;
 
     const invoiceMatch: Record<string, unknown> = {};
     inRange(invoiceMatch, "issuedAt", from, to);
+    if (scope) invoiceMatch.workOrderRef = { $in: scope.workOrderIds };
 
-    const woMatch: Record<string, unknown> = {};
+    const woDate: Record<string, unknown> = {};
     if (from || to) {
       const range: Record<string, Date> = {};
       if (from) range.$gte = from;
       if (to) range.$lte = to;
-      woMatch.$or = [{ date: range }, { createdAt: range }];
+      woDate.$or = [{ date: range }, { createdAt: range }];
     }
 
     const estimateMatch: Record<string, unknown> = {};
     inRange(estimateMatch, "createdAt", from, to);
+    if (scope) estimateMatch.customerRef = { $in: scope.customerIds };
+
+    const woMatch = mergeMongoFilters(woDate, scope?.workOrderFilter);
+    const completedPaidMatch = mergeMongoFilters(
+      completedPaidWorkOrderFilter(from, to),
+      scope?.workOrderFilter,
+    );
 
     const [invoices, workOrders, estimates, completedPaidOrders] = await Promise.all([
       Invoice.find(invoiceMatch)
@@ -72,7 +237,7 @@ export async function getFinancialsSummary(
       Estimate.find(estimateMatch)
         .select("status total createdAt")
         .lean(),
-      WorkOrder.find(completedPaidWorkOrderFilter(from, to))
+      WorkOrder.find(completedPaidMatch)
         .select("total")
         .lean(),
     ]);
@@ -121,6 +286,11 @@ export async function getFinancialsSummary(
       completedPaidCents += dollarsToCents(wo.total || 0);
     }
 
+    if (scope) {
+      paidCents = completedPaidCents;
+      paidInvoiceCount = completedPaidOrders.length;
+    }
+
     const estimateByStatus: Record<string, { count: number; cents: number }> = {
       draft: { count: 0, cents: 0 },
       sent: { count: 0, cents: 0 },
@@ -137,6 +307,8 @@ export async function getFinancialsSummary(
     res.json({
       from: from?.toISOString() ?? null,
       to: to?.toISOString() ?? null,
+      ownerScoped: Boolean(scope),
+      ownerId: scope?.ownerId ?? null,
       invoices: {
         count: invoices.length,
         invoicedCents,
@@ -188,16 +360,27 @@ export async function getFinancialsRecords(
     const startOfToday = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
     );
+    const applied = await resolveAppliedOwner(req);
+    if (applied.error) {
+      res.status(applied.error === "Unauthorized" ? 401 : 400).json({
+        message: applied.error,
+      });
+      return;
+    }
+    const scope = applied.scope;
+    const paidAsTickets = type === "paid" && scope != null;
 
     // Group 1: Invoices
     if (
-      type === "invoiced" ||
-      type === "paid" ||
-      type === "outstanding" ||
-      type === "past_due"
+      !paidAsTickets &&
+      (type === "invoiced" ||
+        type === "paid" ||
+        type === "outstanding" ||
+        type === "past_due")
     ) {
       const match: Record<string, unknown> = {};
       inRange(match, "issuedAt", from, to);
+      if (scope) match.workOrderRef = { $in: scope.workOrderIds };
 
       if (type === "paid") {
         match.status = "paid";
@@ -361,31 +544,33 @@ export async function getFinancialsRecords(
 
     // Group 2: Work Orders
     if (
+      paidAsTickets ||
       type === "open_work_orders" ||
       type === "unbilled_work" ||
       type === "labor_hours" ||
       type === "completed_paid"
     ) {
-      const match: Record<string, unknown> =
-        type === "completed_paid"
+      const baseMatch: Record<string, unknown> =
+        type === "completed_paid" || paidAsTickets
           ? completedPaidWorkOrderFilter(from, to)
           : {};
-      if (type !== "completed_paid" && (from || to)) {
+      if (type !== "completed_paid" && !paidAsTickets && (from || to)) {
         const range: Record<string, Date> = {};
         if (from) range.$gte = from;
         if (to) range.$lte = to;
-        match.$or = [{ date: range }, { createdAt: range }];
+        baseMatch.$or = [{ date: range }, { createdAt: range }];
       }
 
       if (type === "open_work_orders") {
-        match.completed = false;
+        baseMatch.completed = false;
       } else if (type === "unbilled_work") {
-        match.paid = false;
-        match.total = { $gt: 0 };
+        baseMatch.paid = false;
+        baseMatch.total = { $gt: 0 };
       } else if (type === "labor_hours") {
-        match.laborHours = { $gt: 0 };
+        baseMatch.laborHours = { $gt: 0 };
       }
 
+      const searchMatch: Record<string, unknown> = {};
       if (search) {
         const re = new RegExp(escapeRegex(search), "i");
         const orConditions: Record<string, unknown>[] = [
@@ -397,13 +582,14 @@ export async function getFinancialsRecords(
         if (!Number.isNaN(num)) {
           orConditions.push({ legacyId: num });
         }
-        if (match.$or) {
-          match.$and = [{ $or: match.$or }, { $or: orConditions }];
-          delete match.$or;
-        } else {
-          match.$or = orConditions;
-        }
+        searchMatch.$or = orConditions;
       }
+
+      const match = mergeMongoFilters(
+        baseMatch,
+        searchMatch,
+        scope?.workOrderFilter,
+      );
 
       let sort: Record<string, 1 | -1>;
       if (sortBy === "number") {
@@ -426,7 +612,7 @@ export async function getFinancialsRecords(
             ? { laborHours: -1, date: -1, createdAt: -1 }
             : type === "unbilled_work"
               ? { total: -1, date: -1, createdAt: -1 }
-              : type === "completed_paid"
+              : type === "completed_paid" || paidAsTickets
                 ? { date: 1 }
                 : { date: -1, createdAt: -1 };
       }
@@ -489,7 +675,9 @@ export async function getFinancialsRecords(
         }
 
         const dateVal =
-          type === "completed_paid" ? wo.date : wo.date || wo.createdAt;
+          type === "completed_paid" || paidAsTickets
+            ? wo.date
+            : wo.date || wo.createdAt;
         return {
           _id: String(wo._id),
           recordType: "work_order" as const,
@@ -522,6 +710,7 @@ export async function getFinancialsRecords(
     if (type === "estimates") {
       const match: Record<string, unknown> = {};
       inRange(match, "createdAt", from, to);
+      if (scope) match.customerRef = { $in: scope.customerIds };
 
       if (search) {
         const re = new RegExp(escapeRegex(search), "i");
