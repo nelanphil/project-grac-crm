@@ -4,8 +4,10 @@ import { computeTicketTotals } from "./serviceTicket";
 import {
   applyTaxToPreTaxCents,
   companyTaxForUnpaidWorkOrder,
+  contractChargeFromPreTaxCents,
   computeTaxAmount,
   DEFAULT_TAX_RATE_PERCENT,
+  effectiveTaxRatePercent,
   invoiceEligibleForCompanyTaxRate,
   normalizeTaxRatePercent,
   preTaxCents,
@@ -16,6 +18,24 @@ import {
 describe("taxSettings", () => {
   it("defaults a missing company rate to 7%", () => {
     assert.equal(DEFAULT_TAX_RATE_PERCENT, 7);
+    assert.equal(effectiveTaxRatePercent(undefined), 7);
+    assert.equal(effectiveTaxRatePercent(null), 7);
+    assert.equal(effectiveTaxRatePercent(0), 7);
+    assert.equal(effectiveTaxRatePercent(-3), 7);
+    assert.equal(effectiveTaxRatePercent(8), 8);
+  });
+
+  it("prices a catalog charge with the company rate or the 7% fallback", () => {
+    assert.deepEqual(contractChargeFromPreTaxCents(10000, 0), {
+      taxRatePercent: 7,
+      taxCents: 700,
+      amountCents: 10700,
+    });
+    assert.deepEqual(contractChargeFromPreTaxCents(10000, 8), {
+      taxRatePercent: 8,
+      taxCents: 800,
+      amountCents: 10800,
+    });
   });
 
   it("normalizes rates into a 0–100 percent range", () => {

@@ -26,6 +26,7 @@ import { hashPayToken } from "../utils/payToken";
 import { messagingScheduleSchema, messagingSendSchema } from "../schemas/messageTemplate.schema";
 import { emailMessageScheduleSchema, emailMessageSendSchema } from "../schemas/emailMessage.schema";
 import { PaymentProviderAccount } from "../models/mongo/PaymentProviderAccount";
+import { TaxSettings } from "../models/mongo/TaxSettings";
 import { squareAdapter } from "../payments/square.adapter";
 import type { CreateCheckoutInput } from "../payments/types";
 
@@ -75,6 +76,9 @@ describe("scoped checkout links", () => {
     });
     mock.method(CheckoutLink, "findOne", (filter: { tokenHash: string }) =>
       query(stored?.tokenHash === filter.tokenHash ? stored : null));
+    mock.method(CheckoutLink, "updateOne", async () => ({ acknowledged: true }));
+    mock.method(Invoice, "updateOne", async () => ({ acknowledged: true }));
+    mock.method(TaxSettings, "findOne", () => query(null));
   });
 
   afterEach(() => mock.restoreAll());
@@ -106,11 +110,11 @@ describe("scoped checkout links", () => {
   it("snapshots only the latest invoice available today for a general link", async () => {
     const result = await createScopedPaymentLink(String(customerId));
     assert.ok(result);
-    assert.equal(result.totalCents, 32100);
+    assert.equal(result.totalCents, 34347);
     assert.equal(stored?.invoiceOnly, false);
     assert.equal(stored?.items.length, 1);
     assert.equal(stored?.items[0]?.id, String(old._id));
-    assert.match(paymentAmountLabel(result.totalCents, false), /Latest eligible invoice total: \$321\.00/);
+    assert.match(paymentAmountLabel(result.totalCents, false), /Latest eligible invoice total: \$343\.47/);
     assert.equal(result.invoiceId, String(old._id));
     assert.match(new URL(result.payUrl).searchParams.get("c") ?? "", /^q_/);
   });
@@ -118,7 +122,7 @@ describe("scoped checkout links", () => {
   it("keeps a general payment link on the invoice chosen at send time", async () => {
     const result = await mintPaymentLinkForCustomer(String(customerId));
     assert.ok(result);
-    assert.equal(result.totalCents, 32100);
+    assert.equal(result.totalCents, 34347);
     assert.equal(result.invoiceId, String(old._id));
     const key = new URL(result.payUrl).searchParams.get("c");
     assert.match(key ?? "", /^q_/);
@@ -129,7 +133,7 @@ describe("scoped checkout links", () => {
       issuedAt: new Date(),
     });
     const { cart } = await loadScopedCheckout(key!);
-    assert.equal(cart.totalCents, 32100);
+    assert.equal(cart.totalCents, 34347);
     assert.deepEqual(cart.items.map((item) => item.id), [String(old._id)]);
   });
 
@@ -153,14 +157,14 @@ describe("scoped checkout links", () => {
   });
 
   it("previews an offer at the template price instead of a newer invoice", async () => {
-    mock.method(ContractTemplate, "findById", () => query({ cost: 200, deletedAt: null }));
+    mock.method(ContractTemplate, "findById", () => query({ cost: 100, deletedAt: null }));
     mock.method(Contract, "findOne", () => query(null));
     const label = await previewPaymentSummary(
       String(customerId),
       undefined,
       String(new Types.ObjectId()),
     );
-    assert.match(label, /Invoice total: \$200\.00/);
+    assert.match(label, /Invoice total: \$107\.00/);
   });
 
   it("previews an existing open offer invoice instead of the template price", async () => {
@@ -176,7 +180,26 @@ describe("scoped checkout links", () => {
       undefined,
       String(new Types.ObjectId()),
     );
-    assert.match(label, /Invoice total: \$150\.00/);
+    assert.match(label, /Invoice total: \$160\.50/);
+  });
+
+  it("updates an already-sent contract link from the catalog price to the taxed total", async () => {
+    old.amountCents = 10000;
+    old.taxCents = 0;
+    old.taxRatePercent = 0;
+    const key = `q_${"a".repeat(24)}`;
+    stored = {
+      tokenHash: hashPayToken(key),
+      customerRef: customerId,
+      invoiceOnly: false,
+      items: [{ id: String(old._id), kind: "invoice", amountCents: 10000 }],
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const { cart } = await loadScopedCheckout(key);
+    assert.equal(old.amountCents, 10700);
+    assert.equal(old.taxCents, 700);
+    assert.equal(cart.totalCents, 10700);
+    assert.equal(stored?.items[0]?.amountCents, 10700);
   });
 
   it("does not add invoices created after a link was sent", async () => {
@@ -189,7 +212,7 @@ describe("scoped checkout links", () => {
       sourceType: "work_order", amountCents: 99999, status: "open",
     });
     const { cart } = await loadScopedCheckout(key);
-    assert.equal(cart.totalCents, 32100);
+    assert.equal(cart.totalCents, 34347);
     assert.equal(cart.items.length, 1);
     assert.equal(cart.items[0]?.id, String(old._id));
   });

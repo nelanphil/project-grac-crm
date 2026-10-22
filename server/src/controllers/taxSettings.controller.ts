@@ -7,13 +7,12 @@ import {
 import { saveTaxSettingsSchema } from "../schemas/taxSettings.schema";
 import {
   applyCompanyTaxRateToUnpaidInvoices,
-  DEFAULT_TAX_RATE_PERCENT,
+  effectiveTaxRatePercent,
   getTaxRatePercent,
-  normalizeTaxRatePercent,
 } from "../services/taxSettings";
 
-function toPublic(ratePercent: number) {
-  return { ratePercent: normalizeTaxRatePercent(ratePercent) };
+function toPublic(ratePercent: unknown) {
+  return { ratePercent: effectiveTaxRatePercent(ratePercent) };
 }
 
 export async function getTaxSettings(
@@ -23,7 +22,7 @@ export async function getTaxSettings(
   try {
     const doc = await TaxSettings.findOne({ slug: TAX_SETTINGS_SLUG }).lean();
     res.json({
-      settings: toPublic(doc?.ratePercent ?? DEFAULT_TAX_RATE_PERCENT),
+      settings: toPublic(doc?.ratePercent),
     });
   } catch (err) {
     console.error("GET /tax-settings error:", err);
@@ -46,7 +45,7 @@ export async function saveTaxSettings(
 
   try {
     const previous = await getTaxRatePercent();
-    const ratePercent = normalizeTaxRatePercent(parsed.data.ratePercent);
+    const ratePercent = effectiveTaxRatePercent(parsed.data.ratePercent);
     const doc = await TaxSettings.findOneAndUpdate(
       { slug: TAX_SETTINGS_SLUG },
       { $set: { slug: TAX_SETTINGS_SLUG, ratePercent } },

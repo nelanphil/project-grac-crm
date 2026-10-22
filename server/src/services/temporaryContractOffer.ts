@@ -9,6 +9,11 @@ import {
   TEMPORARY_CONTRACT_DURATION_MONTHS,
 } from "../utils/temporaryContractOffer";
 import { dollarsToCents, nextInvoiceNumber } from "./invoice.service";
+import {
+  contractChargeFromPreTaxCents,
+  ensureContractInvoiceIncludesTax,
+  getTaxRatePercent,
+} from "./taxSettings";
 
 export class TemporaryContractOfferError extends Error {
   status: number;
@@ -95,9 +100,10 @@ export async function ensureTemporaryContractOffer(
   const existingInvoices = await Invoice.find({
     contractRef: contract._id,
     sourceType: "contract_initial",
-  }).select("status sourceType");
+  });
   const open = reusableOfferInvoice(existingInvoices);
   if (open) {
+    await ensureContractInvoiceIncludesTax(open);
     return {
       contractId: String(contract._id),
       invoiceId: String(open._id),
@@ -105,12 +111,16 @@ export async function ensureTemporaryContractOffer(
     };
   }
 
-  const amountCents = dollarsToCents(template.cost);
-  if (amountCents <= 0) {
+  const preTaxCents = dollarsToCents(template.cost);
+  if (preTaxCents <= 0) {
     throw new TemporaryContractOfferError(
       "Contract template must have a cost greater than zero",
     );
   }
+  const priced = contractChargeFromPreTaxCents(
+    preTaxCents,
+    await getTaxRatePercent(),
+  );
 
   const issuedAt = new Date();
   const invoice = await Invoice.create({
@@ -123,10 +133,10 @@ export async function ensureTemporaryContractOffer(
     lineItems: [
       {
         description: `Contract: ${template.label}`,
-        amountCents,
+        amountCents: preTaxCents,
       },
     ],
-    amountCents,
+    amountCents: priced.amountCents,
     currency: "USD",
     status: "open",
     issuedAt,
@@ -135,6 +145,9 @@ export async function ensureTemporaryContractOffer(
       templateLabel: template.label,
       temporaryContract: true,
     },
+    taxRatePercent: priced.taxRatePercent,
+    taxCents: priced.taxCents,
+    taxOverridden: false,
   });
 
   return {

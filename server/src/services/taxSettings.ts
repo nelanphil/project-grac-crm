@@ -1,3 +1,4 @@
+import { Types } from "mongoose";
 import { Invoice } from "../models/mongo/Invoice";
 import {
   TAX_SETTINGS_SLUG,
@@ -21,6 +22,25 @@ export function normalizeTaxRatePercent(value: unknown): number {
   return Math.min(100, Math.round(n * 10000) / 10000);
 }
 
+/** Missing, invalid, or non-positive rates use the hardcoded 7% fallback. */
+export function effectiveTaxRatePercent(value: unknown): number {
+  if (value == null || value === "") return DEFAULT_TAX_RATE_PERCENT;
+  const rate = normalizeTaxRatePercent(value);
+  return rate > 0 ? rate : DEFAULT_TAX_RATE_PERCENT;
+}
+
+export function contractChargeFromPreTaxCents(
+  preTaxCents: number,
+  ratePercent: number,
+): { taxRatePercent: number; taxCents: number; amountCents: number } {
+  const taxRatePercent = effectiveTaxRatePercent(ratePercent);
+  const taxable = Math.max(0, Math.round(preTaxCents));
+  const taxCents = taxCentsFromDollars(
+    computeTaxAmount(taxable / 100, taxRatePercent),
+  );
+  return { taxRatePercent, taxCents, amountCents: taxable + taxCents };
+}
+
 export function computeTaxAmount(
   taxable: number,
   ratePercent: number,
@@ -34,7 +54,7 @@ export async function getTaxRatePercent(): Promise<number> {
   const doc = await TaxSettings.findOne({ slug: TAX_SETTINGS_SLUG })
     .select("ratePercent")
     .lean();
-  return normalizeTaxRatePercent(doc?.ratePercent ?? DEFAULT_TAX_RATE_PERCENT);
+  return effectiveTaxRatePercent(doc?.ratePercent);
 }
 
 export function taxCentsFromDollars(amount: number): number {
@@ -371,4 +391,87 @@ export async function applyCompanyTaxRateToOpenDocuments(): Promise<number> {
   const invoices = await applyCompanyTaxRateToUnpaidInvoices(rate);
   const workOrders = await applyCompanyTaxRateToUnpaidWorkOrders(rate);
   return invoices + workOrders;
+}
+
+const CONTRACT_CHARGE_SOURCE_TYPES = new Set([
+  "contract_initial",
+  "contract_renewal",
+]);
+
+export type ContractChargeInvoice = {
+  _id?: unknown;
+  sourceType?: string | null;
+  status: string;
+  taxOverridden?: boolean | null;
+  amountCents?: number | null;
+  originalAmountCents?: number | null;
+  discountCents?: number | null;
+  taxCents?: number | null;
+  taxRatePercent?: number | null;
+};
+
+/** Add company tax to an unpaid contract charge that was stored at the catalog price. */
+export async function ensureContractInvoiceIncludesTax(
+  invoice: ContractChargeInvoice,
+  ratePercent?: number,
+): Promise<boolean> {
+  if (!invoice.sourceType || !CONTRACT_CHARGE_SOURCE_TYPES.has(invoice.sourceType)) {
+    return false;
+  }
+  const rate = ratePercent ?? (await getTaxRatePercent());
+  const next = recomputeUnpaidInvoiceTax(
+    {
+      status: invoice.status,
+      taxOverridden: invoice.taxOverridden,
+      amountCents: invoice.amountCents,
+      originalAmountCents: invoice.originalAmountCents,
+      discountCents: invoice.discountCents,
+      taxCents: invoice.taxCents,
+      taxRatePercent: invoice.taxRatePercent,
+      workOrder: null,
+    },
+    rate,
+  );
+  if (!next) return false;
+
+  invoice.taxRatePercent = next.taxRatePercent;
+  invoice.taxCents = next.taxCents;
+  invoice.amountCents = next.amountCents;
+  if (typeof next.originalAmountCents === "number") {
+    invoice.originalAmountCents = next.originalAmountCents;
+  }
+  if (invoice._id) {
+    await Invoice.updateOne(
+      { _id: invoice._id },
+      {
+        $set: {
+          taxRatePercent: next.taxRatePercent,
+          taxCents: next.taxCents,
+          amountCents: next.amountCents,
+          ...(typeof next.originalAmountCents === "number"
+            ? { originalAmountCents: next.originalAmountCents }
+            : {}),
+        },
+      },
+    );
+  }
+  return true;
+}
+
+/** Reprice every unpaid contract invoice for a customer before a payment link uses it. */
+export async function ensureCustomerContractChargesIncludeTax(
+  customerId: string,
+): Promise<ContractChargeInvoice[]> {
+  if (!Types.ObjectId.isValid(customerId)) return [];
+  const rate = await getTaxRatePercent();
+  const invoices = await Invoice.find({
+    customerRef: customerId,
+    sourceType: { $in: [...CONTRACT_CHARGE_SOURCE_TYPES] },
+    status: { $in: [...UNPAID_INVOICE_STATUSES] },
+    taxOverridden: { $ne: true },
+  });
+  for (const invoice of invoices) {
+    await ensureContractInvoiceIncludesTax(invoice, rate);
+  }
+  return invoices;
 }

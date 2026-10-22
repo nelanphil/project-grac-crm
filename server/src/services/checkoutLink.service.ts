@@ -11,6 +11,13 @@ import { reusableOfferInvoice } from "../utils/temporaryContractOffer";
 import { buildCheckoutUrl } from "../utils/checkoutKey";
 import { dollarsToCents } from "./invoice.service";
 import {
+  contractChargeFromPreTaxCents,
+  ensureContractInvoiceIncludesTax,
+  ensureCustomerContractChargesIncludeTax,
+  getTaxRatePercent,
+  type ContractChargeInvoice,
+} from "./taxSettings";
+import {
   CHANGED_CHECKOUT_MESSAGE,
   checkoutScopeMatches,
   checkoutSelectionAllowed,
@@ -33,6 +40,7 @@ export async function validateInvoiceMessage(input: {
   if (!Types.ObjectId.isValid(input.invoiceId)) throw new CheckoutError("Invalid invoice", 400);
   const invoice = await Invoice.findById(input.invoiceId).lean();
   if (!invoice?.customerRef) throw new CheckoutError("Invoice not found", 404);
+  await ensureContractInvoiceIncludesTax(invoice);
   const contacts = await CustomerContact.find({
     _id: { $in: input.contactIds },
   }).select("customerRef").lean();
@@ -70,13 +78,18 @@ async function offerPreviewAmountCents(
     const invoices = await Invoice.find({
       contractRef: contract._id,
       sourceType: "contract_initial",
-    })
-      .select("status sourceType amountCents")
-      .lean();
+    }).lean();
     const open = reusableOfferInvoice(invoices);
-    if (open && typeof open.amountCents === "number") return open.amountCents;
+    if (open && typeof open.amountCents === "number") {
+      await ensureContractInvoiceIncludesTax(open);
+      return Math.round(Number(open.amountCents) || 0);
+    }
   }
-  return dollarsToCents(template.cost);
+  const priced = contractChargeFromPreTaxCents(
+    dollarsToCents(template.cost),
+    await getTaxRatePercent(),
+  );
+  return priced.amountCents;
 }
 
 export async function previewPaymentSummary(
@@ -88,6 +101,7 @@ export async function previewPaymentSummary(
     const cents = await offerPreviewAmountCents(customerId, offerContractTemplateId);
     return cents == null ? "" : paymentAmountLabel(cents, true);
   }
+  await ensureCustomerContractChargesIncludeTax(customerId);
   const cart = invoiceId
     ? await listPayableCart([customerId])
     : await listPaymentLinkCart([customerId]);
@@ -111,6 +125,7 @@ export async function createScopedPaymentLink(
   options?: { invoiceId?: string | null; expectedAmountCents?: number },
 ): Promise<{ payUrl: string; invoiceId: string; totalCents: number } | null> {
   const invoiceId = options?.invoiceId;
+  await ensureCustomerContractChargesIncludeTax(customerId);
   const cart = invoiceId
     ? await listPayableCart([customerId])
     : await listPaymentLinkCart([customerId]);
@@ -139,6 +154,34 @@ export async function createScopedPaymentLink(
   return { payUrl: buildCheckoutUrl(key), invoiceId: snapshotInvoiceId, totalCents };
 }
 
+const CONTRACT_CHARGE_SOURCES = new Set(["contract_initial", "contract_renewal"]);
+
+/** Point an already-sent link at the taxed total when it still stores the pre-tax price. */
+export function repairContractTaxOnLinkItems(
+  items: CheckoutLinkItem[],
+  invoices: ContractChargeInvoice[],
+): boolean {
+  const byId = new Map(
+    invoices.flatMap((invoice) =>
+      invoice._id ? [[String(invoice._id), invoice] as const] : [],
+    ),
+  );
+  let changed = false;
+  for (const item of items) {
+    if (item.kind !== "invoice") continue;
+    const invoice = byId.get(item.id);
+    if (!invoice || invoice.taxOverridden) continue;
+    if (!invoice.sourceType || !CONTRACT_CHARGE_SOURCES.has(invoice.sourceType)) continue;
+    const amount = Math.round(Number(invoice.amountCents) || 0);
+    const tax = Math.round(Number(invoice.taxCents) || 0);
+    if (tax > 0 && item.amountCents === amount - tax && item.amountCents !== amount) {
+      item.amountCents = amount;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 export async function loadScopedCheckout(key: string): Promise<{
   customerId: string;
   items: CheckoutLinkItem[];
@@ -152,6 +195,13 @@ export async function loadScopedCheckout(key: string): Promise<{
   const customerId = String(link.customerRef);
   const customer = await Customer.exists({ _id: link.customerRef, deletedAt: null, mergedIntoRef: null });
   if (!customer) throw new CheckoutError("Customer not found", 404);
+  const taxed = await ensureCustomerContractChargesIncludeTax(customerId);
+  if (repairContractTaxOnLinkItems(link.items, taxed)) {
+    await CheckoutLink.updateOne(
+      { tokenHash: link.tokenHash },
+      { $set: { items: link.items } },
+    );
+  }
   // Check the exact stored invoice documents, including ones no longer payable.
   const invoices = await Invoice.find({
     _id: { $in: link.items.filter((item) => item.kind === "invoice").map((item) => item.id) },
