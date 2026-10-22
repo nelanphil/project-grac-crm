@@ -58,4 +58,12 @@ export const MIGRATIONS: MigrationEntry[] = [
     id: "2026-10-08-work-order-service-type",
     file: "backfill-work-order-service-type",
   },
+  {
+    id: "2026-10-22-person-names",
+    file: "backfill-person-names",
+  },
+  {
+    id: "2026-10-22-customer-activity",
+    file: "backfill-customer-activity",
+  },
 ];

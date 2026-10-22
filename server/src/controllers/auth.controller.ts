@@ -19,7 +19,11 @@ import {
   resetPasswordSchema,
 } from "../schemas/user.schema";
 import { User, UserRole, activeUserFilter } from "../models/mongo/User";
-import { findPrimaryContactForUserEmail } from "../utils/resolveCustomerLogin";
+import {
+  findPrimaryContactForUserEmail,
+  resolveCustomerRefsForUser,
+} from "../utils/resolveCustomerLogin";
+import { recordCustomerActivityAsync } from "../services/customerActivity.service";
 import { PasswordResetToken } from "../models/mongo/PasswordResetToken";
 import { getPermissionsForRoles } from "../models/mongo/RolePermission";
 import { AuthRequest } from "../middleware/auth.middleware";
@@ -62,6 +66,39 @@ import {
   primaryRole,
   type UserType,
 } from "../utils/roles";
+
+function recordPortalAuth(
+  user: {
+    _id: unknown;
+    role?: string | null;
+    roles?: string[] | null;
+    userType?: string | null;
+  },
+  input: {
+    action: string;
+    summary: string;
+    ip?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+): void {
+  if (!isCustomerRole(user)) return;
+  void (async () => {
+    const refs = await resolveCustomerRefsForUser(String(user._id));
+    for (const customerRef of refs) {
+      recordCustomerActivityAsync({
+        customerRef,
+        category: "auth",
+        action: input.action,
+        summary: input.summary,
+        actorKind: "customer",
+        actorUserId: String(user._id),
+        source: "portal",
+        ip: input.ip ?? null,
+        metadata: input.metadata,
+      });
+    }
+  })();
+}
 
 function toIsoOrNull(value: Date | string | null | undefined): string | null {
   if (!value) return null;
@@ -390,6 +427,14 @@ export async function acceptLegalConsent(
       await syncEmptyContactPhone(user.email, parsed.data.phone);
     }
 
+    recordPortalAuth(user, {
+      action: "consent_accepted",
+      summary: parsed.data.smsOptIn
+        ? "Accepted terms, privacy, and SMS messages"
+        : "Accepted terms and privacy",
+      ip: req.ip,
+    });
+
     const permissions = await permissionsForUser(user);
     res.status(200).json({
       user: await toUserPayload({ ...user.toObject(), permissions }),
@@ -478,6 +523,15 @@ export async function login(req: Request, res: Response): Promise<void> {
     );
 
     const permissions = await permissionsForUser(matchedUser);
+
+    recordPortalAuth(matchedUser, {
+      action: "logged_in",
+      summary: "Signed in",
+      ip: req.ip,
+      metadata: lastLoginLocation
+        ? { location: lastLoginLocation }
+        : undefined,
+    });
 
     const token = jwt.sign(
       {
@@ -869,6 +923,12 @@ export async function forgotPassword(
       expiresAt,
     });
 
+    recordPortalAuth(user, {
+      action: "password_reset_requested",
+      summary: "Requested a password reset",
+      ip: req.ip,
+    });
+
     const resetUrl = buildPasswordResetUrl(rawToken);
     const exposeDevLink = process.env.NODE_ENV !== "production";
     let mailSent = false;
@@ -969,6 +1029,12 @@ export async function resetPassword(
 
     record.usedAt = new Date();
     await record.save();
+
+    recordPortalAuth(user, {
+      action: "password_reset",
+      summary: "Reset their password",
+      ip: req.ip,
+    });
 
     // Invalidate any other outstanding tokens for this user
     await PasswordResetToken.updateMany(

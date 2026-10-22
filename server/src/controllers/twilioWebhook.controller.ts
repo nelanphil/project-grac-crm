@@ -19,6 +19,7 @@ import {
 } from "../utils/messageThreads";
 import { toE164 } from "../utils/messagingContext";
 import { publishDashboardChanged } from "../services/dashboardLive";
+import { recordCustomerActivityAsync } from "../services/customerActivity.service";
 import { normalizePhoneDigits } from "../utils/customerSites";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
 import {
@@ -197,6 +198,43 @@ export async function inboundMessageWebhook(
       body,
       at: doc?.createdAt ?? new Date(),
     });
+    if (customerRef && doc) {
+      const preview = body.trim().slice(0, 80);
+      recordCustomerActivityAsync({
+        customerRef,
+        category: "communication",
+        action: "received",
+        summary: preview
+          ? `Received a text: ${preview}`
+          : "Received a text message",
+        actorKind: "customer",
+        actorName: "Customer",
+        entityType: "twilio_communication",
+        entityId: String(doc._id),
+        source: "webhook",
+        sourceEventId: `twilio:${twilioSid}`,
+        metadata: { channel, fromNumber, threadId: String(threadRef) },
+      });
+      const keyword = body.trim().toUpperCase();
+      if (
+        ["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"].includes(
+          keyword,
+        )
+      ) {
+        recordCustomerActivityAsync({
+          customerRef,
+          category: "communication",
+          action: "opted_out",
+          summary: "Opted out of text messages",
+          actorKind: "customer",
+          actorName: "Customer",
+          entityType: "twilio_communication",
+          entityId: String(doc._id),
+          source: "webhook",
+          sourceEventId: `twilio:${twilioSid}:optout`,
+        });
+      }
+    }
     publishDashboardChanged();
 
     res.status(200).type("text/xml").send(EMPTY_TWIML);
@@ -417,6 +455,37 @@ async function ingestInboundVoice(opts: {
 
   const preview =
     (typeof $set.body === "string" && $set.body) || inboundVoiceBody(mergedTranscript);
+
+  if (customerRef && doc && !existing) {
+    recordCustomerActivityAsync({
+      customerRef,
+      category: "communication",
+      action: "called",
+      summary: `Received a call from ${fromNumber || "an unknown number"}`,
+      actorKind: "customer",
+      actorName: "Customer",
+      entityType: "twilio_communication",
+      entityId: String(doc._id),
+      source: "webhook",
+      sourceEventId: `twilio:call:${canonicalSid}`,
+      metadata: { fromNumber, toNumber, threadId: String(threadRef) },
+    });
+  }
+  if (customerRef && doc && opts.recordingUrl) {
+    recordCustomerActivityAsync({
+      customerRef,
+      category: "communication",
+      action: "recorded",
+      summary: "A call recording was saved",
+      actorKind: "system",
+      actorName: "System",
+      entityType: "twilio_communication",
+      entityId: String(doc._id),
+      source: "webhook",
+      sourceEventId: `twilio:recording:${canonicalSid}`,
+      metadata: { threadId: String(threadRef) },
+    });
+  }
 
   if (!alreadyOnThread) {
     await touchThreadAfterMessage(threadRef, {

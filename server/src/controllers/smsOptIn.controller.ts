@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import { getMongoStatus } from "../config/mongodb";
 import { SmsOptIn } from "../models/mongo/SmsOptIn";
 import { User, activeUserFilter } from "../models/mongo/User";
+import { CustomerContact } from "../models/mongo/CustomerContact";
+import { recordCustomerActivityAsync } from "../services/customerActivity.service";
 import { submitSmsOptInSchema } from "../schemas/smsOptIn.schema";
 import { canonicalPhoneDigits } from "../utils/customerSites";
 
@@ -57,6 +59,32 @@ export async function submitSmsOptIn(
       { ...activeUserFilter, phone: { $regex: digitPattern } },
       { $set: { smsOptIn: true, smsOptInAt: now } },
     );
+
+    const contacts = await CustomerContact.find({
+      deletedAt: null,
+      phone: { $regex: digitPattern },
+    })
+      .select("customerRef")
+      .lean();
+    const seen = new Set<string>();
+    for (const contact of contacts) {
+      if (!contact.customerRef) continue;
+      const id = String(contact.customerRef);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      recordCustomerActivityAsync({
+        customerRef: contact.customerRef,
+        category: "communication",
+        action: "opted_in",
+        summary: "Opted in to text messages",
+        actorKind: "customer",
+        actorName: "Customer",
+        entityType: "sms_opt_in",
+        entityId: digits,
+        source: "portal",
+        ip,
+      });
+    }
 
     res.json({
       message:

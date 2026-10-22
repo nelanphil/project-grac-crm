@@ -2,6 +2,8 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { Maximize2 } from "lucide-react";
+import CustomerHistoryPanel from "@/components/customers/CustomerHistoryPanel";
 import {
   ApiError,
   getPendingPayments,
@@ -16,7 +18,7 @@ import TechnicianHomeDashboard from "@/components/dashboard/staff/TechnicianHome
 
 const NOTE_PREVIEW = 4;
 
-type BriefingTab = "reminders" | "notes" | "inbox";
+type BriefingTab = "reminders" | "notes" | "inbox" | "history";
 
 function ticketHref(item: ReminderListItem): string {
   return item.source === "estimate"
@@ -152,6 +154,8 @@ export default function StaffBriefingHome() {
   const canSeeInbox = useAuthStore(
     (s) => s.hasRole("admin", "super-admin") && s.hasPermission("messages:read"),
   );
+  const canSeeHistory = useAuthStore((s) => s.hasRole("admin", "super-admin"));
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const firstName = user?.first_name?.trim() || "";
 
   const [tab, setTab] = useState<BriefingTab>(
@@ -261,8 +265,22 @@ export default function StaffBriefingHome() {
     </Link>
   );
 
+  const historyExpand = (
+    <button
+      type="button"
+      onClick={() => setHistoryExpanded(true)}
+      title="Expand customer history to full screen"
+      aria-label="Expand customer history to full screen"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-600 shadow-2xs transition-colors hover:bg-neutral-100 hover:text-brand-dark"
+    >
+      <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+      <span className="hidden sm:inline">Expand</span>
+    </button>
+  );
   const tabAction =
-    tab === "reminders" ? (
+    tab === "history" ? (
+      historyExpand
+    ) : tab === "reminders" ? (
       remindersLink
     ) : tab === "inbox" ? (
       inboxLink
@@ -332,6 +350,19 @@ export default function StaffBriefingHome() {
                 >
                   Recent notes
                 </button>
+                {canSeeHistory ? (
+                  <button
+                    type="button"
+                    role="tab"
+                    id="briefing-tab-history"
+                    aria-selected={tab === "history"}
+                    aria-controls="briefing-panel"
+                    onClick={() => setTab("history")}
+                    className={tabClass(tab === "history")}
+                  >
+                    Customer History
+                  </button>
+                ) : null}
               </div>
               <div className="shrink-0">{tabAction}</div>
             </>
@@ -345,10 +376,23 @@ export default function StaffBriefingHome() {
                 ? "briefing-tab-reminders"
                 : tab === "inbox"
                   ? "briefing-tab-inbox"
-                  : "briefing-tab-notes"
+                  : tab === "history"
+                    ? "briefing-tab-history"
+                    : "briefing-tab-notes"
             }
           >
-            {tab === "reminders" ? (
+            {tab === "history" && canSeeHistory && token ? (
+              <div className="px-3 py-3">
+                <CustomerHistoryPanel
+                  scope="all"
+                  token={token}
+                  active
+                  showHeader={false}
+                  expanded={historyExpanded}
+                  onExpandedChange={setHistoryExpanded}
+                />
+              </div>
+            ) : tab === "reminders" ? (
               reminderError ? (
                 <p className="px-4 py-6 text-sm text-red-700">{reminderError}</p>
               ) : !reminders ? (

@@ -16,6 +16,7 @@ import workOrderTypeRoutes from "./workOrderType.routes";
 import noteTemplateRoutes from "./noteTemplate.routes";
 import scheduleRoutes from "./schedule.routes";
 import customerRoutes from "./customer.routes";
+import customerActivityRoutes from "./customerActivity.routes";
 import contractRoutes from "./contract.routes";
 import contractTemplateRoutes from "./contractTemplate.routes";
 import twilioAccountRoutes from "./twilioAccount.routes";
@@ -55,6 +56,7 @@ import legacyDumpRoutes from "./legacyDump.routes";
 import databaseInspectRoutes from "./databaseInspect.routes";
 import reminderRoutes from "./reminder.routes";
 import crashReportRoutes from "./crashReport.routes";
+import nameReportRoutes from "./nameReport.routes";
 import dashboardLiveRoutes from "./dashboardLive.routes";
 
 const router = Router();
@@ -118,6 +120,8 @@ router.use("/contact-submissions", contactFormSubmissionRoutes);
 router.use("/legacy-dumps", legacyDumpRoutes);
 router.use("/databases", databaseInspectRoutes);
 router.use("/crash-reports", crashReportRoutes);
+router.use("/name-reports", nameReportRoutes);
 router.use("/dashboard", dashboardLiveRoutes);
+router.use("/customer-activity", customerActivityRoutes);
 
 export default router;

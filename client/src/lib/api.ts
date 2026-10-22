@@ -350,6 +350,106 @@ export async function updateCrashReport(
   });
 }
 
+export interface CustomerNameRow {
+  id: string;
+  accountName: string;
+  first: string;
+  last: string;
+}
+
+export interface ContactNameRow {
+  id: string;
+  first: string;
+  last: string;
+  isPrimary: boolean;
+  customerId: string;
+  customerName: string;
+}
+
+export interface NameReportPage<T> {
+  rows: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+function nameReportQuery(options?: {
+  page?: number;
+  pageSize?: number;
+  q?: string;
+}): string {
+  const params = new URLSearchParams();
+  if (options?.page !== undefined) params.set("page", String(options.page));
+  if (options?.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
+  if (options?.q?.trim()) params.set("q", options.q.trim());
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export async function listCustomerNames(
+  token: string,
+  options?: { page?: number; pageSize?: number; q?: string },
+): Promise<NameReportPage<CustomerNameRow>> {
+  return authRequest<NameReportPage<CustomerNameRow>>(
+    `/name-reports/customers${nameReportQuery(options)}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function updateCustomerName(
+  token: string,
+  id: string,
+  data: { accountName?: string; first?: string; last?: string },
+): Promise<{
+  row: CustomerNameRow;
+  contact: { id: string; first: string; last: string; isPrimary: boolean } | null;
+}> {
+  return authRequest<{
+    row: CustomerNameRow;
+    contact: { id: string; first: string; last: string; isPrimary: boolean } | null;
+  }>(
+    `/name-reports/customers/${id}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function listContactNames(
+  token: string,
+  options?: { page?: number; pageSize?: number; q?: string },
+): Promise<NameReportPage<ContactNameRow>> {
+  return authRequest<NameReportPage<ContactNameRow>>(
+    `/name-reports/contacts${nameReportQuery(options)}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function updateContactName(
+  token: string,
+  id: string,
+  data: { first?: string; last?: string },
+): Promise<{ row: ContactNameRow; customer: CustomerNameRow | null }> {
+  return authRequest<{ row: ContactNameRow; customer: CustomerNameRow | null }>(
+    `/name-reports/contacts/${id}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
 function parseSseBlock(block: string): { event: string; data: unknown } | null {
   const normalized = block.replace(/\r/g, "");
   if (!normalized.trim()) return null;
@@ -1730,6 +1830,89 @@ export async function getCustomerAttention(
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+export interface CustomerActivityChange {
+  field: string;
+  from: unknown;
+  to: unknown;
+}
+
+export interface CustomerActivityItem {
+  id: string;
+  customerRef: string;
+  category: string;
+  action: string;
+  actorKind: "staff" | "customer" | "system";
+  actorUserId: string | null;
+  actorName: string;
+  entityType: string | null;
+  entityId: string | null;
+  summary: string;
+  changes: CustomerActivityChange[];
+  metadata: Record<string, unknown>;
+  source: string;
+  ip: string | null;
+  backfilled: boolean;
+  createdAt: string;
+  customerName?: string | null;
+}
+
+export async function getAllCustomerActivity(
+  token: string,
+  opts: {
+    before?: string;
+    after?: string;
+    limit?: number;
+    categories?: string[];
+    actorKind?: string | null;
+  } = {},
+): Promise<{ items: CustomerActivityItem[]; nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (opts.before) params.set("before", opts.before);
+  if (opts.after) params.set("after", opts.after);
+  if (opts.limit) params.set("limit", String(opts.limit));
+  if (opts.categories && opts.categories.length > 0) {
+    params.set("categories", opts.categories.join(","));
+  }
+  if (opts.actorKind) params.set("actorKind", opts.actorKind);
+  const query = params.toString();
+  return authRequest<{ items: CustomerActivityItem[]; nextCursor: string | null }>(
+    `/customer-activity${query ? `?${query}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function getCustomerActivity(
+  token: string,
+  customerId: string,
+  opts: {
+    before?: string;
+    after?: string;
+    limit?: number;
+    categories?: string[];
+    actorKind?: string | null;
+  } = {},
+): Promise<{ items: CustomerActivityItem[]; nextCursor: string | null }> {
+  const params = new URLSearchParams();
+  if (opts.before) params.set("before", opts.before);
+  if (opts.after) params.set("after", opts.after);
+  if (opts.limit) params.set("limit", String(opts.limit));
+  if (opts.categories && opts.categories.length > 0) {
+    params.set("categories", opts.categories.join(","));
+  }
+  if (opts.actorKind) params.set("actorKind", opts.actorKind);
+  const query = params.toString();
+  return authRequest<{ items: CustomerActivityItem[]; nextCursor: string | null }>(
+    `/customers/${customerId}/activity${query ? `?${query}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export interface WorkOrderNoteAuthor {

@@ -14,15 +14,20 @@ export function formatCustomerName(
   return [toProperCase(first), toProperCase(last)].filter(Boolean).join(" ");
 }
 
-/** Prefer durable account name; fall back to primary-contact first/last. */
+/**
+ * Prefer the durable account name. An all-lowercase account name is title-cased
+ * for display so a person stored as "alex golovkov" reads "Alex Golovkov".
+ * Names that already contain capitals (GRAC, ABC LLC) stay as stored.
+ */
 export function formatCustomerRecordName(customer: {
   accountName?: string | null;
   first?: string | null;
   last?: string | null;
 }): string {
   const account = customer.accountName?.trim();
-  if (account) return account;
-  return formatCustomerName(customer.first, customer.last);
+  if (!account) return formatCustomerName(customer.first, customer.last);
+  if (!/\p{Lu}/u.test(account)) return toProperCase(account);
+  return account;
 }
 
 /** Account name, plus contact when it differs. Falls back to an em dash. */

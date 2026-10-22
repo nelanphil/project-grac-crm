@@ -7,6 +7,7 @@ import {
   normalizePhoneDigits,
 } from "./customerSites";
 import { mintCheckoutKey } from "./checkoutKey";
+import { toProperCase } from "./formatName";
 import { isCustomerRole } from "./roles";
 
 export const EMAIL_CONFLICT_ADMIN =
@@ -210,8 +211,8 @@ export async function provisionCrmCustomerForUser(
   created: boolean;
 }> {
   const email = normalizeAccountEmail(user.email);
-  const first = (user.first_name ?? "").trim() || "Customer";
-  const last = (user.last_name ?? "").trim() || "User";
+  const first = toProperCase(user.first_name) || "Customer";
+  const last = toProperCase(user.last_name) || "User";
   const phone = (opts?.phone ?? user.phone ?? "").trim();
   const emailRx = accountEmailRegex(email);
 

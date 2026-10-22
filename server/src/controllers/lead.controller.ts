@@ -22,6 +22,7 @@ import {
   normalizeAddressKey,
   normalizePhoneDigits,
 } from "../utils/customerSites";
+import { toProperCase } from "../utils/formatName";
 
 
 const LEAD_PAGE_SIZES = [25, 50, 150, 250, 500];
@@ -361,10 +362,12 @@ export async function convertLead(
     }
 
     const phoneDigits = normalizePhoneDigits(lead.phone);
+    const first = toProperCase(lead.firstName);
+    const last = toProperCase(lead.lastName);
     const customer = await Customer.create({
-      accountName: `${lead.firstName} ${lead.lastName}`.trim(),
-      first: lead.firstName,
-      last: lead.lastName,
+      accountName: `${first} ${last}`.trim(),
+      first,
+      last,
       address: lead.addressLine1 ?? "",
       city: lead.city ?? "",
       state: lead.state ?? "",
@@ -392,8 +395,8 @@ export async function convertLead(
 
     await CustomerContact.create({
       customerRef: customer._id,
-      first: lead.firstName,
-      last: lead.lastName,
+      first,
+      last,
       phone: lead.phone ?? "",
       email: lead.email,
       label: "",

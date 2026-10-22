@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { personNameSchema, requiredPersonNameSchema } from "./personName";
 
 export const propertyTypeSchema = z.enum(["residential", "commercial"]);
 
@@ -47,8 +48,8 @@ export const updateEquipmentSchema = z.object({
 });
 
 export const createCustomerContactSchema = z.object({
-  first: z.string().trim().max(120).optional().default(""),
-  last: z.string().trim().max(120).optional().default(""),
+  first: personNameSchema.optional().default(""),
+  last: personNameSchema.optional().default(""),
   phone: z.string().trim().max(40).optional().default(""),
   email: z
     .string()
@@ -64,8 +65,8 @@ export const createCustomerContactSchema = z.object({
 });
 
 export const updateCustomerContactSchema = z.object({
-  first: z.string().trim().max(120).optional(),
-  last: z.string().trim().max(120).optional(),
+  first: personNameSchema.optional(),
+  last: personNameSchema.optional(),
   phone: z.string().trim().max(40).optional(),
   email: z
     .string()
@@ -89,8 +90,8 @@ export const portalUpdateAddressSchema = z.object({
 });
 
 export const portalUpdateContactSchema = z.object({
-  first: z.string().trim().max(120).optional(),
-  last: z.string().trim().max(120).optional(),
+  first: personNameSchema.optional(),
+  last: personNameSchema.optional(),
   phone: z.string().trim().max(40).optional(),
   email: z
     .string()
@@ -114,8 +115,8 @@ export const portalCreateAddressSchema = z.object({
 });
 
 export const portalCreateContactSchema = z.object({
-  first: z.string().trim().min(1, "First name is required").max(120),
-  last: z.string().trim().max(120).optional().default(""),
+  first: requiredPersonNameSchema,
+  last: personNameSchema.optional().default(""),
   phone: z.string().trim().max(40).optional().default(""),
   email: z
     .string()

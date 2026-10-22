@@ -656,6 +656,7 @@ export async function confirmCustomerCheckout(input: {
         invoice,
         providerPaymentId: retrieved.providerPaymentId,
         providerOrderId: retrieved.providerOrderId,
+        paidByCustomer: true,
       });
       newlyPaid.push(invoice);
     }
@@ -754,7 +755,7 @@ export async function startCustomerCheckout(input: {
         invoice.status = "open";
         await invoice.save();
       }
-      await markInvoicePaid({ invoice });
+      await markInvoicePaid({ invoice, paidByCustomer: true });
     }
     await finalizeRedemptionsForInvoices(paidInvoiceIds);
     for (const invoice of unpaid) {

@@ -17,6 +17,7 @@ import {
   defaultAddressLabel,
   normalizePhoneDigits,
 } from "../utils/customerSites";
+import { toProperCase } from "../utils/formatName";
 import {
   buildGatherTwiml,
   buildSayHangupTwiml,
@@ -132,8 +133,11 @@ function parseSpokenName(raw: string): { first: string; last: string } {
     .trim();
   if (!cleaned) return { first: "Caller", last: "" };
   const parts = cleaned.split(" ");
-  if (parts.length === 1) return { first: parts[0], last: "" };
-  return { first: parts[0], last: parts.slice(1).join(" ") };
+  if (parts.length === 1) return { first: toProperCase(parts[0]) || "Caller", last: "" };
+  return {
+    first: toProperCase(parts[0]) || "Caller",
+    last: toProperCase(parts.slice(1).join(" ")),
+  };
 }
 
 export function parseSpokenAddress(raw: string): {

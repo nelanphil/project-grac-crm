@@ -13,6 +13,13 @@ import { User } from "../models/mongo/User";
 import { resolveCustomerRefsForUser } from "../utils/resolveCustomerLogin";
 import { userHasCapability } from "../utils/jobRoles";
 import { isCustomerRole, isOrgAdminRole } from "../utils/roles";
+import {
+  categoryForEntityType,
+  changesFromMetadata,
+  isActivitySource,
+  metadataWithoutChanges,
+  recordCustomerActivityAsync,
+} from "./customerActivity.service";
 
 export interface LogNotificationInput {
   entityType: NotificationEntityType;
@@ -102,13 +109,14 @@ export async function logNotification(input: LogNotificationInput): Promise<void
         ? input.actorName?.trim() || "System"
         : await resolveActorName(input.actorUserId, input.actorName);
 
-    await NotificationEvent.create({
+    const customerRef = toObjectId(input.customerRef ?? null);
+    const created = await NotificationEvent.create({
       entityType: input.entityType,
       action: input.action,
       actorType,
       actorUserId,
       actorName,
-      customerRef: toObjectId(input.customerRef ?? null),
+      customerRef,
       entityId: String(input.entityId),
       summary: input.summary.trim(),
       metadata: input.metadata ?? {},
@@ -117,6 +125,29 @@ export async function logNotification(input: LogNotificationInput): Promise<void
         .filter((id): id is Types.ObjectId => id !== null),
       direct: Boolean(input.direct),
     });
+
+    if (customerRef) {
+      const sourceRaw = input.metadata?.activitySource;
+      recordCustomerActivityAsync({
+        customerRef,
+        category: categoryForEntityType(input.entityType),
+        action: input.action,
+        summary: input.summary,
+        actorUserId: input.actorUserId,
+        actorName,
+        actorKind: actorType === "system" ? "system" : undefined,
+        entityType: input.entityType,
+        entityId: String(input.entityId),
+        changes: changesFromMetadata(input.metadata),
+        metadata: metadataWithoutChanges(input.metadata),
+        source:
+          typeof sourceRaw === "string" && isActivitySource(sourceRaw)
+            ? sourceRaw
+            : "crm",
+        sourceEventId: `notification:${String(created._id)}`,
+        createdAt: created.createdAt,
+      });
+    }
   } catch (err) {
     console.error("[notifications] failed to log event", err);
   }

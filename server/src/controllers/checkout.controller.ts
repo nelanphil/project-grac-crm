@@ -16,6 +16,7 @@ import {
   findCheckoutKeyByPayCode,
   findCustomerByCheckoutKey,
 } from "../utils/checkoutKey";
+import { recordCustomerActivityAsync } from "../services/customerActivity.service";
 import { Customer } from "../models/mongo/Customer";
 import {
   assertScopedSelection,
@@ -103,6 +104,18 @@ export async function getCheckoutByKey(
       res.status(404).json({ message: "Checkout link not found" });
       return;
     }
+    recordCustomerActivityAsync({
+      customerRef: customer._id,
+      category: "payment",
+      action: "opened",
+      summary: "Opened a checkout link",
+      actorKind: "customer",
+      actorName: "Customer",
+      entityType: "customer",
+      entityId: String(customer._id),
+      source: "portal",
+      throttleMs: 15 * 60 * 1000,
+    });
     const cart = await listPaymentLinkCart([String(customer._id)]);
     res.json(cart);
   } catch (err) {
@@ -118,6 +131,18 @@ export async function startCheckoutByKey(
     const key = String(req.params.key ?? "").trim();
     if (isScopedCheckoutKey(key)) {
       const scoped = await loadScopedCheckout(key);
+      recordCustomerActivityAsync({
+        customerRef: scoped.customerId,
+        category: "payment",
+        action: "checkout_started",
+        summary: "Started checkout",
+        actorKind: "customer",
+        actorName: "Customer",
+        entityType: "customer",
+        entityId: scoped.customerId,
+        source: "portal",
+        throttleMs: 2 * 60 * 1000,
+      });
       const selection = sessionBody(req);
       assertScopedSelection(scoped.items, selection.invoiceIds, selection.workOrderIds);
       res.json(await startCustomerCheckout({
@@ -132,6 +157,18 @@ export async function startCheckoutByKey(
       res.status(404).json({ message: "Checkout link not found" });
       return;
     }
+    recordCustomerActivityAsync({
+      customerRef: customer._id,
+      category: "payment",
+      action: "checkout_started",
+      summary: "Started checkout",
+      actorKind: "customer",
+      actorName: "Customer",
+      entityType: "customer",
+      entityId: String(customer._id),
+      source: "portal",
+      throttleMs: 2 * 60 * 1000,
+    });
     const { invoiceIds, workOrderIds, discountCode } = sessionBody(req);
     const customerId = String(customer._id);
     await assertStablePaymentLinkSelection(customerId, invoiceIds, workOrderIds);

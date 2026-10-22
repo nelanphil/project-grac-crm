@@ -61,6 +61,7 @@ router.post("/:provider", async (req: Request, res: Response) => {
           invoice,
           providerPaymentId: verified.providerPaymentId,
           providerOrderId: verified.providerOrderId,
+          paidByCustomer: true,
         });
         newlyPaid.push(invoice);
       }

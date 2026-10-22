@@ -17,13 +17,16 @@ import {
   getCustomerAttention,
 } from "@/lib/api";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useCustomerHistoryStore } from "@/store/useCustomerHistoryStore";
+import CustomerHistoryPanel from "@/components/customers/CustomerHistoryPanel";
 
 export type RecordTab =
   | "contacts"
   | "address"
   | "notes"
   | "contracts"
-  | "communications";
+  | "communications"
+  | "history";
 
 const TABS: RecordTab[] = [
   "contacts",
@@ -31,6 +34,7 @@ const TABS: RecordTab[] = [
   "notes",
   "contracts",
   "communications",
+  "history",
 ];
 
 function parseTab(value: string | null): RecordTab {
@@ -110,6 +114,11 @@ export default function CustomerRecordCard({
   }
   const [notesAlert, setNotesAlert] = useState(false);
   const [commsAlert, setCommsAlert] = useState(false);
+  const historyUnseen = useCustomerHistoryStore(
+    (state) => state.byCustomer[customer._id]?.unseenIds.length ?? 0,
+  );
+  const connectHistory = useCustomerHistoryStore((state) => state.connect);
+  const disconnectHistory = useCustomerHistoryStore((state) => state.disconnect);
   const notesHold = useRef(false);
   const notesRequest = useRef(0);
 
@@ -134,6 +143,11 @@ export default function CustomerRecordCard({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadAttention();
   }, [loadAttention]);
+
+  useEffect(() => {
+    connectHistory(token, customer._id);
+    return () => disconnectHistory(customer._id);
+  }, [connectHistory, customer._id, disconnectHistory, token]);
 
   useEffect(() => {
     function refresh() {
@@ -171,8 +185,14 @@ export default function CustomerRecordCard({
         alert: showCommsAlert,
         alertLabel: "Communications, unread message",
       },
+      {
+        id: "history" as const,
+        label: "History",
+        alert: activeTab !== "history" && historyUnseen > 0,
+        alertLabel: "History, new activity",
+      },
     ],
-    [showNotesAlert, showCommsAlert],
+    [activeTab, historyUnseen, showNotesAlert, showCommsAlert],
   );
 
   function setTab(id: RecordTab) {
@@ -298,6 +318,16 @@ export default function CustomerRecordCard({
             customerId={customer._id}
             contacts={contacts}
             token={token}
+          />
+        </div>
+      ) : null}
+
+      {showPane("history") ? (
+        <div className={activeTab === "history" ? undefined : "hidden"}>
+          <CustomerHistoryPanel
+            customerId={customer._id}
+            token={token}
+            active={activeTab === "history"}
           />
         </div>
       ) : null}

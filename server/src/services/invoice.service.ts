@@ -12,6 +12,7 @@ import {
 import { promoteTemporaryContract } from "../utils/temporaryContractOffer";
 import { SCHEDULE_TIMEZONE } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
+import { recordCustomerActivityAsync } from "./customerActivity.service";
 import { PaymentProviderName } from "../models/mongo/PaymentProviderAccount";
 import {
   companyTaxForUnpaidWorkOrder,
@@ -118,8 +119,11 @@ export async function markInvoicePaid(params: {
   providerPaymentId?: string | null;
   providerOrderId?: string | null;
   actor?: InvoiceActor;
+  /** Set when the payer is the customer and no staff user is on the request. */
+  paidByCustomer?: boolean;
 }): Promise<IInvoice> {
-  const { invoice, providerPaymentId, providerOrderId, actor } = params;
+  const { invoice, providerPaymentId, providerOrderId, actor, paidByCustomer } =
+    params;
 
   if (invoice.status === "paid") {
     return invoice;
@@ -145,6 +149,33 @@ export async function markInvoicePaid(params: {
       amountCents: invoice.amountCents,
     },
   });
+
+  if (invoice.customerRef) {
+    const amount = (invoice.amountCents / 100).toFixed(2);
+    recordCustomerActivityAsync({
+      customerRef: invoice.customerRef,
+      category: "payment",
+      action: "paid",
+      summary: paidByCustomer
+        ? `Paid invoice ${invoice.number} ($${amount})`
+        : `Invoice ${invoice.number} marked paid ($${amount})`,
+      actorKind: paidByCustomer
+        ? "customer"
+        : actor?.actorUserId
+          ? undefined
+          : "system",
+      actorUserId: paidByCustomer ? null : actor?.actorUserId ?? null,
+      actorName: paidByCustomer ? "Customer" : actor?.actorName ?? null,
+      entityType: "invoice",
+      entityId: String(invoice._id),
+      source: paidByCustomer ? "webhook" : actor?.actorUserId ? "crm" : "job",
+      metadata: {
+        amountCents: invoice.amountCents,
+        number: invoice.number,
+        provider: invoice.paymentProvider,
+      },
+    });
+  }
 
   if (
     (invoice.sourceType === "contract_renewal" ||

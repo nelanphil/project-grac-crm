@@ -40,6 +40,10 @@ import {
   getCustomerAttention,
 } from "../controllers/customerNote.controller";
 import { getCustomerCheckoutLink } from "../controllers/checkout.controller";
+import {
+  getCustomerActivity,
+  streamCustomerActivity,
+} from "../controllers/customerActivity.controller";
 
 const router = Router();
 
@@ -61,6 +65,17 @@ router.post(
   "/check-duplicates",
   requirePermission("customers:read"),
   checkCustomerDuplicates,
+);
+
+router.get(
+  "/:id/activity/live",
+  requirePermission("customers:read"),
+  streamCustomerActivity,
+);
+router.get(
+  "/:id/activity",
+  requirePermission("customers:read"),
+  getCustomerActivity,
 );
 
 // Notes

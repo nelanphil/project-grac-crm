@@ -82,6 +82,10 @@ import {
   customerDisplayName,
   logNotificationAsync,
 } from "../services/notification.service";
+import {
+  diffFields,
+} from "../services/customerActivity.service";
+import { CustomerActivity } from "../models/mongo/CustomerActivity";
 import { normalizeCountyName } from "../constants/floridaCounties";
 import {
   assertOwnerCanAccessCustomer,
@@ -1590,6 +1594,23 @@ export async function updateCustomer(
           ? String(updatedCustomer.ownerUserRef)
           : null,
         ownerManual: Boolean(updatedCustomer.ownerManual),
+        changes: diffFields(
+          {
+            accountName: customer.accountName ?? "",
+            ownerUserId: customer.ownerUserRef
+              ? String(customer.ownerUserRef)
+              : "",
+            ownerManual: Boolean(customer.ownerManual),
+          },
+          {
+            accountName: updatedCustomer.accountName ?? "",
+            ownerUserId: updatedCustomer.ownerUserRef
+              ? String(updatedCustomer.ownerUserRef)
+              : "",
+            ownerManual: Boolean(updatedCustomer.ownerManual),
+          },
+          ["accountName", "ownerUserId", "ownerManual"],
+        ),
       },
       ...actorFromRequest(req.user),
     });
@@ -2110,6 +2131,17 @@ export async function updateCustomerAddress(
       return;
     }
 
+    const beforeAddress = {
+      label: address.label,
+      address: address.address,
+      city: address.city,
+      state: address.state,
+      zip: address.zip,
+      county: address.county,
+      propertyType: address.propertyType,
+      isPrimary: address.isPrimary,
+    };
+
     if (parsed.data.label !== undefined) address.label = parsed.data.label;
     if (parsed.data.address !== undefined)
       address.address = parsed.data.address;
@@ -2164,7 +2196,33 @@ export async function updateCustomerAddress(
       entityId: String(address._id),
       customerRef: customer._id,
       summary: `Address updated for ${custName}`,
-      metadata: { label: address.label, customerName: custName },
+      metadata: {
+        label: address.label,
+        customerName: custName,
+        changes: diffFields(
+          beforeAddress,
+          {
+            label: address.label,
+            address: address.address,
+            city: address.city,
+            state: address.state,
+            zip: address.zip,
+            county: address.county,
+            propertyType: address.propertyType,
+            isPrimary: address.isPrimary,
+          },
+          [
+            "label",
+            "address",
+            "city",
+            "state",
+            "zip",
+            "county",
+            "propertyType",
+            "isPrimary",
+          ],
+        ),
+      },
       ...actorFromRequest(req.user),
     });
 
@@ -2426,6 +2484,15 @@ export async function updateEquipment(
       return;
     }
 
+    const beforeEquipment = {
+      generatorModel: equipment.generatorModel,
+      serial: equipment.serial,
+      atsSerial: equipment.atsSerial,
+      exday: equipment.exday,
+      extime: equipment.extime,
+      addressRef: equipment.addressRef ? String(equipment.addressRef) : "",
+    };
+
     const effectiveSerial =
       parsed.data.serial !== undefined ? parsed.data.serial : equipment.serial;
     const effectiveAtsSerial =
@@ -2488,6 +2555,25 @@ export async function updateEquipment(
       metadata: {
         customerName: custName,
         generatorModel: equipment.generatorModel,
+        changes: diffFields(
+          beforeEquipment,
+          {
+            generatorModel: equipment.generatorModel,
+            serial: equipment.serial,
+            atsSerial: equipment.atsSerial,
+            exday: equipment.exday,
+            extime: equipment.extime,
+            addressRef: equipment.addressRef ? String(equipment.addressRef) : "",
+          },
+          [
+            "generatorModel",
+            "serial",
+            "atsSerial",
+            "exday",
+            "extime",
+            "addressRef",
+          ],
+        ),
       },
       ...actorFromRequest(req.user),
     });
@@ -2720,6 +2806,14 @@ export async function updateCustomerContact(
 
     const previousEmail = customer.email ?? "";
     const wasPrimary = contact.isPrimary;
+    const beforeContact = {
+      first: contact.first,
+      last: contact.last,
+      phone: contact.phone,
+      email: contact.email,
+      label: contact.label,
+      isPrimary: contact.isPrimary,
+    };
 
     if (parsed.data.first !== undefined) contact.first = parsed.data.first;
     if (parsed.data.last !== undefined) contact.last = parsed.data.last;
@@ -2768,7 +2862,22 @@ export async function updateCustomerContact(
       entityId: String(contact._id),
       customerRef: customer._id,
       summary: `Contact ${contactName} updated for ${custName}`,
-      metadata: { customerName: custName, contactName },
+      metadata: {
+        customerName: custName,
+        contactName,
+        changes: diffFields(
+          beforeContact,
+          {
+            first: contact.first,
+            last: contact.last,
+            phone: contact.phone,
+            email: contact.email,
+            label: contact.label,
+            isPrimary: contact.isPrimary,
+          },
+          ["first", "last", "phone", "email", "label", "isPrimary"],
+        ),
+      },
       ...actorFromRequest(req.user),
     });
 
@@ -3357,6 +3466,11 @@ export async function mergeCustomers(
         { $set: { isPrimary: true } },
       );
     }
+
+    await CustomerActivity.updateMany(
+      { customerRef: source._id },
+      { $set: { customerRef: survivor._id } },
+    );
 
     source.mergedIntoRef = survivor._id as mongoose.Types.ObjectId;
     source.mergedAt = new Date();

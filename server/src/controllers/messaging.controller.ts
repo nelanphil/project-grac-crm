@@ -27,6 +27,7 @@ import {
   ScheduledAtError,
 } from "../utils/scheduledEmail";
 import { unreadTextQuery } from "../utils/unreadMessageThread";
+import { recordCustomerActivityAsync } from "../services/customerActivity.service";
 import {
   MERGE_FIELDS,
   templateUsesPaymentLink,
@@ -490,7 +491,7 @@ export async function dispatchMessagingBatch(
             statusCallbackUrl,
           });
 
-          await TwilioCommunication.create({
+          const sentMessage = await TwilioCommunication.create({
             twilioAccountRef: account._id,
             accountSid: account.accountSid,
             channel,
@@ -507,6 +508,24 @@ export async function dispatchMessagingBatch(
             twilioSid: sid,
             createdByUserRef: userId ?? null,
           });
+          if (customerRef) {
+            const preview = rendered.trim().slice(0, 80);
+            recordCustomerActivityAsync({
+              customerRef,
+              category: "communication",
+              action: "sent",
+              summary: preview ? `Sent a text: ${preview}` : "Sent a text message",
+              actorUserId: userId,
+              entityType: "twilio_communication",
+              entityId: String(sentMessage._id),
+              source: "crm",
+              metadata: {
+                channel,
+                toNumber: toE164Number,
+                threadId: String(thread._id),
+              },
+            });
+          }
           await touchThreadAfterMessage(thread._id, {
             direction: "outbound",
             channel,

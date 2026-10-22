@@ -26,6 +26,7 @@ import {
   contactHasValidEmail,
 } from "../utils/messagingContext";
 import { createPaymentLinkCache } from "../utils/paymentLinkForCustomer";
+import { recordCustomerActivityAsync } from "./customerActivity.service";
 import {
   resolveOfferContractTemplateId,
   type OfferContractOverride,
@@ -403,6 +404,21 @@ export async function dispatchStaffEmailBatch(
           templateRef,
           createdByUserRef: userId,
         });
+        if (customerRef) {
+          recordCustomerActivityAsync({
+            customerRef,
+            category: "communication",
+            action: "sent",
+            summary: wrapped.subject
+              ? `Sent an email: ${wrapped.subject}`
+              : `Sent an email to ${toEmail}`,
+            actorUserId: userId ? String(userId) : null,
+            entityType: "email_communication",
+            entityId: String(row._id),
+            source: "crm",
+            metadata: { toEmail, subject: wrapped.subject },
+          });
+        }
 
         return {
           contactId,

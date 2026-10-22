@@ -8,6 +8,9 @@ import {
   setEmailPreferences,
 } from "../utils/emailPreferences";
 import { verifyUnsubscribeToken } from "../utils/unsubscribeToken";
+import { Customer } from "../models/mongo/Customer";
+import { CustomerContact } from "../models/mongo/CustomerContact";
+import { recordCustomerActivityAsync } from "../services/customerActivity.service";
 
 function tokenFromRequest(req: Request): string {
   const queryToken = typeof req.query.token === "string" ? req.query.token : "";
@@ -110,6 +113,38 @@ export async function oneClickUnsubscribe(
         ? { billingAlerts: false }
         : { generalNotifications: false };
     const prefs = await setEmailPreferences(verified.email, channelOff);
+    const email = verified.email.toLowerCase();
+    const [contacts, customers] = await Promise.all([
+      CustomerContact.find({ email, deletedAt: null }).select("customerRef").lean(),
+      Customer.find({
+        email,
+        deletedAt: null,
+        mergedIntoRef: null,
+      })
+        .select("_id")
+        .lean(),
+    ]);
+    const seen = new Set<string>();
+    for (const customer of customers) seen.add(String(customer._id));
+    for (const contact of contacts) {
+      if (contact.customerRef) seen.add(String(contact.customerRef));
+    }
+    const channelLabel =
+      verified.channel === "billing" ? "billing emails" : "emails";
+    for (const customerRef of seen) {
+      recordCustomerActivityAsync({
+        customerRef,
+        category: "communication",
+        action: "unsubscribed",
+        summary: `Unsubscribed from ${channelLabel}`,
+        actorKind: "customer",
+        actorName: "Customer",
+        entityType: "email_preference",
+        entityId: email,
+        source: "portal",
+        metadata: { channel: verified.channel, email },
+      });
+    }
     res.status(200).json({
       email: prefs.email,
       generalNotifications: prefs.generalNotifications,

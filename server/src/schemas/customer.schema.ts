@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { propertyTypeSchema } from "./customerSite.schema";
+import { personNameSchema } from "./personName";
 
 const optionalEmail = z
   .string()
@@ -12,8 +13,8 @@ const optionalEmail = z
   });
 
 export const createCustomerContactNestedSchema = z.object({
-  first: z.string().trim().max(120).optional().default(""),
-  last: z.string().trim().max(120).optional().default(""),
+  first: personNameSchema.optional().default(""),
+  last: personNameSchema.optional().default(""),
   phone: z.string().trim().max(40).optional().default(""),
   email: optionalEmail,
   label: z.string().trim().max(120).optional().default(""),

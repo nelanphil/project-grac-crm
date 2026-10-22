@@ -5,6 +5,7 @@ import { Equipment } from "../models/mongo/Equipment";
 import { stateCodeOrFlorida } from "../constants/usStates";
 import { syncCustomerPrimaryFields } from "../utils/customerSites";
 import { customerDisplayName } from "./notification.service";
+import { recordCustomerActivityAsync } from "./customerActivity.service";
 import {
   computeTicketTotals,
   NormalizedTicketPart,
@@ -456,11 +457,38 @@ export async function applyTicketFields(
 
   if (body.signatureDataUrl !== undefined) {
     const next = body.signatureDataUrl ?? "";
+    const wasSigned = Boolean(target.signedAt);
     target.signatureDataUrl = next;
     if (next) {
       target.signedAt = new Date();
       if (body.signedByName !== undefined) {
         target.signedByName = body.signedByName;
+      }
+      if (!wasSigned && customer._id && target._id) {
+        const modelName =
+          (target as { constructor?: { modelName?: string } }).constructor
+            ?.modelName ?? "";
+        const category = modelName === "Estimate" ? "estimate" : "work_order";
+        const label =
+          typeof target.number === "string" && target.number
+            ? target.number
+            : category === "estimate"
+              ? "estimate"
+              : "work order";
+        const signer =
+          typeof target.signedByName === "string" ? target.signedByName.trim() : "";
+        recordCustomerActivityAsync({
+          customerRef: customer._id,
+          category,
+          action: "signed",
+          summary: signer ? `${signer} signed ${label}` : `Signed ${label}`,
+          actorKind: "customer",
+          actorName: signer || "Customer",
+          entityType: category,
+          entityId: String(target._id),
+          source: "portal",
+          metadata: signer ? { signedByName: signer } : undefined,
+        });
       }
     } else {
       target.signedAt = null;

@@ -24,6 +24,7 @@ import {
   customerDisplayName,
   logNotificationAsync,
 } from "../services/notification.service";
+import { diffFields } from "../services/customerActivity.service";
 import {
   portalCreateAddressSchema,
   portalCreateContactSchema,
@@ -495,6 +496,15 @@ export async function updatePortalAddress(
       return;
     }
 
+    const beforeAddress = {
+      label: address.label,
+      address: address.address,
+      city: address.city,
+      state: address.state,
+      zip: address.zip,
+      isPrimary: address.isPrimary,
+    };
+
     if (parsed.data.label !== undefined) address.label = parsed.data.label;
     if (parsed.data.address !== undefined) address.address = parsed.data.address;
     if (parsed.data.city !== undefined) address.city = parsed.data.city;
@@ -536,7 +546,23 @@ export async function updatePortalAddress(
       entityId: String(address._id),
       customerRef: customer._id,
       summary: `Address updated for ${custName}`,
-      metadata: { label: address.label, customerName: custName },
+      metadata: {
+        label: address.label,
+        customerName: custName,
+        activitySource: "portal",
+        changes: diffFields(
+          beforeAddress,
+          {
+            label: address.label,
+            address: address.address,
+            city: address.city,
+            state: address.state,
+            zip: address.zip,
+            isPrimary: address.isPrimary,
+          },
+          ["label", "address", "city", "state", "zip", "isPrimary"],
+        ),
+      },
       ...actorFromRequest(req.user),
     });
 
@@ -597,6 +623,14 @@ export async function updatePortalContact(
 
     const previousEmail = customer.email ?? "";
     const wasPrimary = contact.isPrimary;
+    const beforeContact = {
+      first: contact.first,
+      last: contact.last,
+      phone: contact.phone,
+      email: contact.email,
+      label: contact.label,
+      isPrimary: contact.isPrimary,
+    };
     if (parsed.data.first !== undefined) contact.first = parsed.data.first;
     if (parsed.data.last !== undefined) contact.last = parsed.data.last;
     if (parsed.data.phone !== undefined) contact.phone = parsed.data.phone;
@@ -651,7 +685,23 @@ export async function updatePortalContact(
       entityId: String(contact._id),
       customerRef: customer._id,
       summary: `Contact ${contactName} updated for ${custName}`,
-      metadata: { customerName: custName, contactName },
+      metadata: {
+        customerName: custName,
+        contactName,
+        activitySource: "portal",
+        changes: diffFields(
+          beforeContact,
+          {
+            first: contact.first,
+            last: contact.last,
+            phone: contact.phone,
+            email: contact.email,
+            label: contact.label,
+            isPrimary: contact.isPrimary,
+          },
+          ["first", "last", "phone", "email", "label", "isPrimary"],
+        ),
+      },
       ...actorFromRequest(req.user),
     });
 
@@ -739,7 +789,11 @@ export async function createPortalAddress(
       entityId: String(address._id),
       customerRef: customer._id,
       summary: `Address created for ${custName}`,
-      metadata: { label: address.label, customerName: custName },
+      metadata: {
+        label: address.label,
+        customerName: custName,
+        activitySource: "portal",
+      },
       ...actorFromRequest(req.user),
     });
 
@@ -828,7 +882,11 @@ export async function createPortalContact(
       entityId: String(contact._id),
       customerRef: customer._id,
       summary: `Contact ${contactName} created for ${custName}`,
-      metadata: { customerName: custName, contactName },
+      metadata: {
+        customerName: custName,
+        contactName,
+        activitySource: "portal",
+      },
       ...actorFromRequest(req.user),
     });
 
@@ -917,7 +975,7 @@ export async function deletePortalAddress(
       entityId: addressId,
       customerRef: customer._id,
       summary: `Address deleted for ${custName}`,
-      metadata: { customerName: custName },
+      metadata: { customerName: custName, activitySource: "portal" },
       ...actorFromRequest(req.user),
     });
 
@@ -993,7 +1051,11 @@ export async function deletePortalContact(
       entityId: contactId,
       customerRef: customer._id,
       summary: `Contact ${contactName} deleted for ${custName}`,
-      metadata: { customerName: custName, contactName },
+      metadata: {
+        customerName: custName,
+        contactName,
+        activitySource: "portal",
+      },
       ...actorFromRequest(req.user),
     });
 
