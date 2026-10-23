@@ -99,51 +99,42 @@ function subscribeViewport(onChange: () => void) {
   };
 }
 
-function useSuggestPopoverCoords(anchor: HTMLElement | null, extraKey: number) {
-  const [coords, setCoords] = useState<{
-    top: number;
-    left: number;
-    width: number;
-    maxHeight: number;
-  } | null>(null);
+function measureSuggestPopover(anchor: HTMLElement) {
+  const rect = anchor.getBoundingClientRect();
+  const viewport = window.visualViewport;
+  const offsetLeft = viewport?.offsetLeft ?? 0;
+  const offsetTop = viewport?.offsetTop ?? 0;
+  const viewWidth = viewport?.width ?? window.innerWidth;
+  const viewHeight = viewport?.height ?? window.innerHeight;
+  const gutter = 8;
+  const spaceBelow = offsetTop + viewHeight - rect.bottom - gutter;
+  const spaceAbove = rect.top - offsetTop - gutter;
+  const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
+  const maxHeight = Math.min(256, Math.max(openUp ? spaceAbove : spaceBelow, 120));
+  const width = Math.min(Math.max(rect.width, 240), viewWidth - gutter * 2);
+  const left = Math.min(
+    Math.max(offsetLeft + gutter, rect.left),
+    offsetLeft + viewWidth - width - gutter,
+  );
+  return {
+    top: openUp
+      ? Math.max(offsetTop + gutter, rect.top - maxHeight - 4)
+      : rect.bottom + 4,
+    left,
+    width,
+    maxHeight,
+  };
+}
 
-  useEffect(() => {
+function useSuggestPopoverCoords(anchor: HTMLElement | null, extraKey: number) {
+  const [, setViewportEpoch] = useState(0);
+
+  useLayoutEffect(() => {
     if (!anchor) return;
-    function update() {
-      if (!anchor) return;
-      const rect = anchor.getBoundingClientRect();
-      const viewport = window.visualViewport;
-      const offsetLeft = viewport?.offsetLeft ?? 0;
-      const offsetTop = viewport?.offsetTop ?? 0;
-      const viewWidth = viewport?.width ?? window.innerWidth;
-      const viewHeight = viewport?.height ?? window.innerHeight;
-      const gutter = 8;
-      const spaceBelow = offsetTop + viewHeight - rect.bottom - gutter;
-      const spaceAbove = rect.top - offsetTop - gutter;
-      const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
-      const maxHeight = Math.min(256, Math.max(openUp ? spaceAbove : spaceBelow, 120));
-      const width = Math.min(
-        Math.max(rect.width, 240),
-        viewWidth - gutter * 2,
-      );
-      const left = Math.min(
-        Math.max(offsetLeft + gutter, rect.left),
-        offsetLeft + viewWidth - width - gutter,
-      );
-      setCoords({
-        top: openUp
-          ? Math.max(offsetTop + gutter, rect.top - maxHeight - 4)
-          : rect.bottom + 4,
-        left,
-        width,
-        maxHeight,
-      });
-    }
-    update();
-    return subscribeViewport(update);
+    return subscribeViewport(() => setViewportEpoch((value) => value + 1));
   }, [anchor, extraKey]);
 
-  return coords;
+  return anchor ? measureSuggestPopover(anchor) : null;
 }
 
 function useBodyScrollLock(
@@ -430,17 +421,20 @@ function SuggestMenuFrame({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
+  const menuVisible = !isSmUp || Boolean(coords && !empty);
+
   useEffect(() => {
+    if (!menuVisible) return;
     const openedAt = Date.now();
     function onPointerDown(event: PointerEvent) {
-      if (Date.now() - openedAt < 150) return;
+      if (Date.now() - openedAt < 250) return;
       const target = event.target as Node;
       if (anchor?.contains(target) || menuRef.current?.contains(target)) return;
       onClose();
     }
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [anchor, onClose]);
+  }, [anchor, menuVisible, onClose]);
 
   if (typeof document === "undefined") return null;
   if (isSmUp && (empty || !coords)) return null;
@@ -1210,6 +1204,8 @@ export default function TicketLineItemsEditor({
   );
   const skipSearchFocusId = useRef<string | null>(null);
   const skipSearchFocusTimer = useRef<number | null>(null);
+  const ignoreDismiss = useRef(false);
+  const ignoreDismissTimer = useRef<number | null>(null);
   const isSmUp = useMinWidth(SM_UP_QUERY);
   const [loadedProductKey, setLoadedProductKey] = useState<string | null>(null);
   const discountRules = discounts ?? DEFAULT_PRODUCT_DISCOUNTS;
@@ -1223,6 +1219,9 @@ export default function TicketLineItemsEditor({
       if (skipSearchFocusTimer.current != null) {
         window.clearTimeout(skipSearchFocusTimer.current);
       }
+      if (ignoreDismissTimer.current != null) {
+        window.clearTimeout(ignoreDismissTimer.current);
+      }
     };
   }, []);
 
@@ -1235,21 +1234,27 @@ export default function TicketLineItemsEditor({
     }
     const q = (productQuery[activePartId] ?? "").trim();
     const requestKey = `${activePartId}:${q}`;
+    let cancelled = false;
     const t = setTimeout(() => {
       getProducts(token, {
         search: q || undefined,
         active: true,
       })
         .then(({ products }) => {
+          if (cancelled) return;
           setProductResults(products.slice(0, 12));
           setLoadedProductKey(requestKey);
         })
         .catch(() => {
+          if (cancelled) return;
           setProductResults([]);
           setLoadedProductKey(requestKey);
         });
     }, q ? 200 : 0);
-    return () => clearTimeout(t);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [token, activePartId, productQuery, parts]);
 
   useEffect(() => {
@@ -1283,7 +1288,18 @@ export default function TicketLineItemsEditor({
     skipSearchFocusTimer.current = window.setTimeout(() => {
       skipSearchFocusId.current = null;
       skipSearchFocusTimer.current = null;
-    }, 0);
+    }, 100);
+  }
+
+  function armIgnoreDismiss() {
+    ignoreDismiss.current = true;
+    if (ignoreDismissTimer.current != null) {
+      window.clearTimeout(ignoreDismissTimer.current);
+    }
+    ignoreDismissTimer.current = window.setTimeout(() => {
+      ignoreDismiss.current = false;
+      ignoreDismissTimer.current = null;
+    }, 250);
   }
 
   function addProductRow() {
@@ -1349,6 +1365,7 @@ export default function TicketLineItemsEditor({
       setProductResults([]);
       setLoadedProductKey(null);
       setCreateFor(null);
+      armIgnoreDismiss();
       if (isSmUp) {
         skipSearchFocusId.current = null;
         setActivePartId(inserted.emptyId);
@@ -1470,6 +1487,7 @@ export default function TicketLineItemsEditor({
                         setActivePartId(row.id);
                       }}
                       onCloseSearch={() => {
+                        if (ignoreDismiss.current) return;
                         if (activePartId === row.id) {
                           setActivePartId(null);
                           setProductResults([]);
