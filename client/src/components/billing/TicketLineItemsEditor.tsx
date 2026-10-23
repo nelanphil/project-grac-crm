@@ -1,6 +1,12 @@
 "use client";
 
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   DndContext,
@@ -54,7 +60,119 @@ import {
 import { useAuthStore } from "@/store/useAuthStore";
 
 const inputClass =
-  "w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue";
+  "w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-base text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue sm:text-sm";
+const SM_UP_QUERY = "(min-width: 640px)";
+const SUGGEST_KIND_PILL =
+  "ml-2 rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600";
+const SUGGEST_ROW_BUTTON =
+  "flex min-h-11 w-full items-start justify-between gap-3 px-3 py-2.5 text-left text-sm hover:bg-neutral-50 sm:text-xs";
+
+function useMinWidth(query: string) {
+  const [matches, setMatches] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia(query).matches : true,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const onChange = () => setMatches(media.matches);
+    onChange();
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [query]);
+
+  return matches;
+}
+
+function subscribeViewport(onChange: () => void) {
+  window.addEventListener("scroll", onChange, true);
+  window.addEventListener("resize", onChange);
+  const viewport = window.visualViewport;
+  viewport?.addEventListener("resize", onChange);
+  viewport?.addEventListener("scroll", onChange);
+  return () => {
+    window.removeEventListener("scroll", onChange, true);
+    window.removeEventListener("resize", onChange);
+    viewport?.removeEventListener("resize", onChange);
+    viewport?.removeEventListener("scroll", onChange);
+  };
+}
+
+function useSuggestPopoverCoords(anchor: HTMLElement | null, extraKey: number) {
+  const [coords, setCoords] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!anchor) return;
+    function update() {
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const offsetLeft = viewport?.offsetLeft ?? 0;
+      const offsetTop = viewport?.offsetTop ?? 0;
+      const viewWidth = viewport?.width ?? window.innerWidth;
+      const viewHeight = viewport?.height ?? window.innerHeight;
+      const gutter = 8;
+      const spaceBelow = offsetTop + viewHeight - rect.bottom - gutter;
+      const spaceAbove = rect.top - offsetTop - gutter;
+      const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
+      const maxHeight = Math.min(256, Math.max(openUp ? spaceAbove : spaceBelow, 120));
+      const width = Math.min(
+        Math.max(rect.width, 240),
+        viewWidth - gutter * 2,
+      );
+      const left = Math.min(
+        Math.max(offsetLeft + gutter, rect.left),
+        offsetLeft + viewWidth - width - gutter,
+      );
+      setCoords({
+        top: openUp
+          ? Math.max(offsetTop + gutter, rect.top - maxHeight - 4)
+          : rect.bottom + 4,
+        left,
+        width,
+        maxHeight,
+      });
+    }
+    update();
+    return subscribeViewport(update);
+  }, [anchor, extraKey]);
+
+  return coords;
+}
+
+function useSheetViewportStyle(enabled: boolean): CSSProperties {
+  const [style, setStyle] = useState<CSSProperties>({
+    bottom: 0,
+    maxHeight: "60vh",
+  });
+
+  useEffect(() => {
+    if (!enabled) return;
+    function update() {
+      const viewport = window.visualViewport;
+      if (!viewport) {
+        setStyle({ bottom: 0, maxHeight: "60vh" });
+        return;
+      }
+      const keyboardInset = Math.max(
+        0,
+        window.innerHeight - viewport.height - viewport.offsetTop,
+      );
+      setStyle({
+        bottom: keyboardInset,
+        maxHeight: Math.min(viewport.height * 0.6, viewport.height),
+      });
+    }
+    update();
+    return subscribeViewport(update);
+  }, [enabled]);
+
+  return style;
+}
 
 function formatMoney(amount: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -124,66 +242,114 @@ function patchRow(
   return parts.map((row) => (row.id === id ? { ...row, ...updates } : row));
 }
 
-function ProductSuggestMenu({
-  anchor,
-  products,
-  discounts,
-  searchQuery,
-  canCreate,
+function productKindLabel(product: ProductItem): string {
+  if (product.kind === "labor") return "Labor";
+  if (product.kind === "equipment") return "Equipment";
+  if (product.kind === "contract") return "Contract";
+  return "Part";
+}
+
+function SuggestPrice({
+  listPrice,
+  unitPrice,
+  strikeThroughPrice = 0,
+}: {
+  listPrice: number;
+  unitPrice: number;
+  strikeThroughPrice?: number;
+}) {
+  return (
+    <span className="shrink-0 text-right tabular-nums font-medium">
+      {strikeThroughPrice > 0 ? (
+        <span className="block text-neutral-400 line-through">
+          {formatMoney(strikeThroughPrice)}
+        </span>
+      ) : null}
+      {unitPrice < listPrice ? (
+        <span className="block text-neutral-400 line-through">
+          {formatMoney(listPrice)}
+        </span>
+      ) : null}
+      <span className="block">
+        {formatMoney(unitPrice < listPrice ? unitPrice : listPrice)}
+      </span>
+    </span>
+  );
+}
+
+function SuggestResultButton({
+  code,
+  kindLabel,
+  name,
+  price,
   onSelect,
-  onCreate,
+}: {
+  code: string;
+  kindLabel: string;
+  name?: string;
+  price: ReactNode;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onSelect}
+      className={SUGGEST_ROW_BUTTON}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="font-medium">{code}</span>
+        <span className={SUGGEST_KIND_PILL}>{kindLabel}</span>
+        {name ? (
+          <span className="mt-0.5 block text-neutral-600 line-clamp-2 break-words">
+            {name}
+          </span>
+        ) : null}
+      </span>
+      {price}
+    </button>
+  );
+}
+
+function SuggestMenuFrame({
+  anchor,
+  extraKey,
+  label,
+  searchQuery,
+  searchPlaceholder,
+  empty,
+  onQueryChange,
   onClose,
+  children,
 }: {
   anchor: HTMLElement | null;
-  products: ProductItem[];
-  discounts: ProductDiscounts;
+  extraKey: number;
+  label: string;
   searchQuery: string;
-  canCreate: boolean;
-  onSelect: (product: ProductItem) => void;
-  onCreate: (code: string) => void;
+  searchPlaceholder: string;
+  empty: boolean;
+  onQueryChange: (query: string) => void;
   onClose: () => void;
+  children: ReactNode;
 }) {
-  const menuRef = useRef<HTMLUListElement>(null);
-  const [coords, setCoords] = useState<{
-    top: number;
-    left: number;
-    width: number;
-    maxHeight: number;
-  } | null>(null);
+  const isSmUp = useMinWidth(SM_UP_QUERY);
+  const coords = useSuggestPopoverCoords(isSmUp ? anchor : null, extraKey);
+  const menuRef = useRef<HTMLElement | null>(null);
+  const sheetInputRef = useRef<HTMLInputElement>(null);
+  const sheetStyle = useSheetViewportStyle(!isSmUp);
 
   useEffect(() => {
-    if (!anchor) return;
-    function update() {
-      if (!anchor) return;
-      const rect = anchor.getBoundingClientRect();
-      const gutter = 8;
-      const spaceBelow = window.innerHeight - rect.bottom - gutter;
-      const spaceAbove = rect.top - gutter;
-      const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
-      const maxHeight = Math.min(256, Math.max(openUp ? spaceAbove : spaceBelow, 120));
-      const width = Math.min(
-        Math.max(rect.width, 240),
-        window.innerWidth - gutter * 2,
-      );
-      const left = Math.min(
-        Math.max(gutter, rect.left),
-        window.innerWidth - width - gutter,
-      );
-      setCoords({
-        top: openUp ? Math.max(gutter, rect.top - maxHeight - 4) : rect.bottom + 4,
-        left,
-        width,
-        maxHeight,
-      });
+    if (isSmUp) return;
+    sheetInputRef.current?.focus();
+  }, [isSmUp]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
     }
-    update();
-    window.addEventListener("scroll", update, true);
-    window.addEventListener("resize", update);
-    return () => {
-      window.removeEventListener("scroll", update, true);
-      window.removeEventListener("resize", update);
-    };
-  }, [anchor, products.length]);
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
   useEffect(() => {
     function onPointerDown(event: PointerEvent) {
@@ -195,76 +361,135 @@ function ProductSuggestMenu({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [anchor, onClose]);
 
-  const query = searchQuery.trim();
-  const queryCode = query.replace(/\s+/g, "").toUpperCase();
-  const exactMatch = products.some((product) => catalogCode(product).toUpperCase() === queryCode);
-  const showCreate = canCreate && queryCode.length > 0 && !exactMatch;
+  if (empty || typeof document === "undefined") return null;
+  if (isSmUp && !coords) return null;
 
-  if (!coords || (products.length === 0 && !showCreate)) return null;
+  if (!isSmUp) {
+    return createPortal(
+      <>
+        <div
+          className="fixed inset-0 z-[90] bg-black/40"
+          onClick={onClose}
+          aria-hidden
+        />
+        <div
+          ref={(node) => {
+            menuRef.current = node;
+          }}
+          role="dialog"
+          aria-label={label}
+          className="fixed inset-x-0 bottom-0 z-[90] max-h-[60vh] overflow-y-auto rounded-t-xl bg-white shadow-xl pb-[env(safe-area-inset-bottom)]"
+          style={sheetStyle}
+        >
+          <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-[var(--staff-border)] bg-white px-3 py-2">
+            <input
+              ref={sheetInputRef}
+              value={searchQuery}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
+              className={inputClass}
+            />
+            <button
+              type="button"
+              onClick={onClose}
+              className="shrink-0 rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50"
+            >
+              Close
+            </button>
+          </div>
+          <ul>{children}</ul>
+        </div>
+      </>,
+      document.body,
+    );
+  }
 
   return createPortal(
     <ul
-      ref={menuRef}
+      ref={(node) => {
+        menuRef.current = node;
+      }}
       style={{
         position: "fixed",
-        top: coords.top,
-        left: coords.left,
-        width: coords.width,
-        maxHeight: coords.maxHeight,
+        top: coords?.top,
+        left: coords?.left,
+        width: coords?.width,
+        maxHeight: coords?.maxHeight,
         zIndex: 80,
       }}
       className="overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg"
     >
+      {children}
+    </ul>,
+    document.body,
+  );
+}
+
+function ProductSuggestMenu({
+  anchor,
+  products,
+  discounts,
+  searchQuery,
+  canCreate,
+  onQueryChange,
+  onSelect,
+  onCreate,
+  onClose,
+}: {
+  anchor: HTMLElement | null;
+  products: ProductItem[];
+  discounts: ProductDiscounts;
+  searchQuery: string;
+  canCreate: boolean;
+  onQueryChange: (query: string) => void;
+  onSelect: (product: ProductItem) => void;
+  onCreate: (code: string) => void;
+  onClose: () => void;
+}) {
+  const query = searchQuery.trim();
+  const queryCode = query.replace(/\s+/g, "").toUpperCase();
+  const exactMatch = products.some(
+    (product) => catalogCode(product).toUpperCase() === queryCode,
+  );
+  const showCreate = canCreate && queryCode.length > 0 && !exactMatch;
+
+  return (
+    <SuggestMenuFrame
+      anchor={anchor}
+      extraKey={products.length}
+      label="Product search results"
+      searchQuery={searchQuery}
+      searchPlaceholder="Search products"
+      empty={products.length === 0 && !showCreate}
+      onQueryChange={onQueryChange}
+      onClose={onClose}
+    >
       {products.map((product) => {
         const listPrice = catalogListPrice(product);
-        const isContract = product.kind === "contract";
-        const kindLabel =
-          product.kind === "labor"
-            ? "Labor"
-            : product.kind === "equipment"
-              ? "Equipment"
-              : isContract
-                ? "Contract"
-                : "Part";
-        const unitPrice = isContract
-          ? listPrice
-          : discountedUnitPrice(
-              listPrice,
-              product.kind === "labor" ? "labor" : "part",
-              discounts,
-            );
-        const strike = product.strikeThroughPrice > 0;
+        const unitPrice =
+          product.kind === "contract"
+            ? listPrice
+            : discountedUnitPrice(
+                listPrice,
+                product.kind === "labor" ? "labor" : "part",
+                discounts,
+              );
         return (
           <li key={product._id}>
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => onSelect(product)}
-              className="w-full px-3 py-2 text-left text-xs hover:bg-neutral-50"
-            >
-              <span className="font-medium">{catalogCode(product)}</span>
-              <span className="ml-2 rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600">
-                {kindLabel}
-              </span>
-              <span className="mt-0.5 block text-neutral-500">
-                {product.name} ·{" "}
-                {strike ? (
-                  <span className="mr-1 text-neutral-400 line-through">
-                    {formatMoney(product.strikeThroughPrice)}
-                  </span>
-                ) : null}
-                {unitPrice < listPrice ? (
-                  <>
-                    <span className="mr-1 text-neutral-400 line-through">
-                      {formatMoney(listPrice)}
-                    </span>
-                    {formatMoney(unitPrice)}
-                  </>
-                ) : (
-                  formatMoney(listPrice)
-                )}
-              </span>
-            </button>
+            <SuggestResultButton
+              code={catalogCode(product)}
+              kindLabel={productKindLabel(product)}
+              name={product.name}
+              onSelect={() => onSelect(product)}
+              price={
+                <SuggestPrice
+                  listPrice={listPrice}
+                  unitPrice={unitPrice}
+                  strikeThroughPrice={product.strikeThroughPrice}
+                />
+              }
+            />
           </li>
         );
       })}
@@ -272,16 +497,17 @@ function ProductSuggestMenu({
         <li className={products.length ? "border-t border-neutral-100" : ""}>
           <button
             type="button"
-            onMouseDown={(e) => e.preventDefault()}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => onCreate(queryCode)}
-            className="w-full px-3 py-2 text-left text-xs text-brand-blue hover:bg-sky-50"
+            className="flex min-h-11 w-full items-start justify-between gap-3 px-3 py-2.5 text-left text-sm text-brand-blue hover:bg-sky-50 sm:text-xs"
           >
-            Create product <span className="font-semibold">{queryCode}</span>
+            <span>
+              Create product <span className="font-semibold">{queryCode}</span>
+            </span>
           </button>
         </li>
       ) : null}
-    </ul>,
-    document.body,
+    </SuggestMenuFrame>
   );
 }
 
@@ -295,101 +521,45 @@ function isEmptyLine(row: TicketPartRow): boolean {
 function AgreementSuggestMenu({
   anchor,
   templates,
+  searchQuery,
+  onQueryChange,
   onSelect,
   onClose,
 }: {
   anchor: HTMLElement | null;
   templates: ContractTemplateItem[];
+  searchQuery: string;
+  onQueryChange: (query: string) => void;
   onSelect: (template: ContractTemplateItem) => void;
   onClose: () => void;
 }) {
-  const menuRef = useRef<HTMLUListElement>(null);
-  const [coords, setCoords] = useState<{
-    top: number;
-    left: number;
-    width: number;
-    maxHeight: number;
-  } | null>(null);
-
-  useEffect(() => {
-    if (!anchor) return;
-    function update() {
-      if (!anchor) return;
-      const rect = anchor.getBoundingClientRect();
-      const gutter = 8;
-      const spaceBelow = window.innerHeight - rect.bottom - gutter;
-      const spaceAbove = rect.top - gutter;
-      const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
-      const maxHeight = Math.min(256, Math.max(openUp ? spaceAbove : spaceBelow, 120));
-      const width = Math.min(
-        Math.max(rect.width, 240),
-        window.innerWidth - gutter * 2,
-      );
-      const left = Math.min(
-        Math.max(gutter, rect.left),
-        window.innerWidth - width - gutter,
-      );
-      setCoords({
-        top: openUp ? Math.max(gutter, rect.top - maxHeight - 4) : rect.bottom + 4,
-        left,
-        width,
-        maxHeight,
-      });
-    }
-    update();
-    window.addEventListener("scroll", update, true);
-    window.addEventListener("resize", update);
-    return () => {
-      window.removeEventListener("scroll", update, true);
-      window.removeEventListener("resize", update);
-    };
-  }, [anchor, templates.length]);
-
-  useEffect(() => {
-    function onPointerDown(event: PointerEvent) {
-      const target = event.target as Node;
-      if (anchor?.contains(target) || menuRef.current?.contains(target)) return;
-      onClose();
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [anchor, onClose]);
-
-  if (!coords || templates.length === 0) return null;
-
-  return createPortal(
-    <ul
-      ref={menuRef}
-      style={{
-        position: "fixed",
-        top: coords.top,
-        left: coords.left,
-        width: coords.width,
-        maxHeight: coords.maxHeight,
-        zIndex: 80,
-      }}
-      className="overflow-auto rounded-md border border-neutral-200 bg-white shadow-lg"
+  return (
+    <SuggestMenuFrame
+      anchor={anchor}
+      extraKey={templates.length}
+      label="Agreement search results"
+      searchQuery={searchQuery}
+      searchPlaceholder="Search agreements"
+      empty={templates.length === 0}
+      onQueryChange={onQueryChange}
+      onClose={onClose}
     >
       {templates.map((template) => (
         <li key={template._id}>
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onSelect(template)}
-            className="w-full px-3 py-2 text-left text-xs hover:bg-neutral-50"
-          >
-            <span className="font-medium">{template.label}</span>
-            <span className="ml-2 rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600">
-              Agreement
-            </span>
-            <span className="mt-0.5 block text-neutral-500">
-              {formatMoney(template.cost ?? 0)}
-            </span>
-          </button>
+          <SuggestResultButton
+            code={template.label}
+            kindLabel="Agreement"
+            onSelect={() => onSelect(template)}
+            price={
+              <SuggestPrice
+                listPrice={template.cost ?? 0}
+                unitPrice={template.cost ?? 0}
+              />
+            }
+          />
         </li>
       ))}
-    </ul>,
-    document.body,
+    </SuggestMenuFrame>
   );
 }
 
@@ -757,6 +927,17 @@ function SortableLineRow({
               <AgreementSuggestMenu
                 anchor={menuAnchor}
                 templates={agreementResults}
+                searchQuery={searchQuery || row.description}
+                onQueryChange={(query) =>
+                  onChange(
+                    {
+                      description: query,
+                      contractTemplateRef: "",
+                      enrolledContractRef: "",
+                    },
+                    query,
+                  )
+                }
                 onClose={onCloseSearch}
                 onSelect={(template) => {
                   const cost = template.cost ?? 0;
@@ -856,6 +1037,9 @@ function SortableLineRow({
               discounts={discounts}
               searchQuery={searchQuery || row.partNumber}
               canCreate={canCreate}
+              onQueryChange={(query) =>
+                onChange({ partNumber: query, productRef: "" }, query)
+              }
               onClose={onCloseSearch}
               onCreate={onCreateProduct}
               onSelect={(product) => {
