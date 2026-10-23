@@ -852,13 +852,13 @@ function SortableLineRow({
   agreementResults,
   isActiveSearch,
   pendingFocus,
+  pendingFocusNonce,
   discounts,
   searchQuery,
   canCreate,
   productLoading,
   agreementLoading,
   onFocusSearch,
-  onPendingFocusApplied,
   onCloseSearch,
   onChange,
   onRemove,
@@ -869,13 +869,13 @@ function SortableLineRow({
   agreementResults: ContractTemplateItem[];
   isActiveSearch: boolean;
   pendingFocus: boolean;
+  pendingFocusNonce: number;
   discounts: ProductDiscounts;
   searchQuery: string;
   canCreate: boolean;
   productLoading: boolean;
   agreementLoading: boolean;
   onFocusSearch: () => void;
-  onPendingFocusApplied: () => void;
   onCloseSearch: () => void;
   onChange: (updates: Partial<TicketPartRow>, searchQuery?: string) => void;
   onRemove: () => void;
@@ -890,7 +890,6 @@ function SortableLineRow({
     isDragging,
   } = useSortable({ id: row.id });
   const searchRef = useRef<HTMLInputElement>(null);
-  const didFocus = useRef(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLInputElement | null>(null);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
@@ -903,15 +902,9 @@ function SortableLineRow({
   }
 
   useEffect(() => {
-    if (!pendingFocus) {
-      didFocus.current = false;
-      return;
-    }
-    if (didFocus.current) return;
-    didFocus.current = true;
+    if (!pendingFocus) return;
     searchRef.current?.focus();
-    onPendingFocusApplied();
-  }, [pendingFocus, onPendingFocusApplied]);
+  }, [pendingFocus, pendingFocusNonce]);
 
   useEffect(() => {
     setMenuAnchor(isActiveSearch ? searchRef.current : null);
@@ -1206,6 +1199,7 @@ export default function TicketLineItemsEditor({
   >(null);
   const [activePartId, setActivePartId] = useState<string | null>(null);
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+  const [pendingFocusNonce, setPendingFocusNonce] = useState(0);
   const [createFor, setCreateFor] = useState<{ rowId: string; code: string } | null>(
     null,
   );
@@ -1272,10 +1266,25 @@ export default function TicketLineItemsEditor({
     };
   }, [token, activePartId, parts, agreementCatalog]);
 
+  function requestRowFocus(id: string) {
+    setPendingFocusId(id);
+    setPendingFocusNonce((value) => value + 1);
+  }
+
+  function clearSearchSkipSoon() {
+    if (skipSearchFocusTimer.current != null) {
+      window.clearTimeout(skipSearchFocusTimer.current);
+    }
+    skipSearchFocusTimer.current = window.setTimeout(() => {
+      skipSearchFocusId.current = null;
+      skipSearchFocusTimer.current = null;
+    }, 0);
+  }
+
   function addProductRow() {
     const row = emptyPartRow();
     onChange([...parts, row]);
-    setPendingFocusId(row.id);
+    requestRowFocus(row.id);
     setActivePartId(row.id);
   }
 
@@ -1286,7 +1295,7 @@ export default function TicketLineItemsEditor({
   function addAgreementRow() {
     const row = emptyAgreementRow();
     onChange([...parts, row]);
-    setPendingFocusId(row.id);
+    requestRowFocus(row.id);
     setActivePartId(row.id);
   }
 
@@ -1331,7 +1340,7 @@ export default function TicketLineItemsEditor({
     if (updates.productRef || selectedAgreement) {
       const inserted = insertEmptyProductBelow(next, id);
       next = inserted.parts;
-      setPendingFocusId(inserted.emptyId);
+      requestRowFocus(inserted.emptyId);
       setProductResults([]);
       setLoadedProductKey(null);
       setCreateFor(null);
@@ -1341,6 +1350,7 @@ export default function TicketLineItemsEditor({
       } else {
         skipSearchFocusId.current = inserted.emptyId;
         setActivePartId(null);
+        clearSearchSkipSoon();
       }
     } else if (updates.contractTemplateRef) {
       setActivePartId(null);
@@ -1444,6 +1454,7 @@ export default function TicketLineItemsEditor({
                       }
                       isActiveSearch={activePartId === row.id}
                       pendingFocus={pendingFocusId === row.id}
+                      pendingFocusNonce={pendingFocusNonce}
                       discounts={discountRules}
                       searchQuery={productQuery[row.id] ?? row.partNumber}
                       canCreate={canCreateProduct}
@@ -1452,15 +1463,6 @@ export default function TicketLineItemsEditor({
                       onFocusSearch={() => {
                         if (skipSearchFocusId.current === row.id) return;
                         setActivePartId(row.id);
-                      }}
-                      onPendingFocusApplied={() => {
-                        if (skipSearchFocusTimer.current != null) {
-                          window.clearTimeout(skipSearchFocusTimer.current);
-                        }
-                        skipSearchFocusTimer.current = window.setTimeout(() => {
-                          skipSearchFocusId.current = null;
-                          skipSearchFocusTimer.current = null;
-                        }, 0);
                       }}
                       onCloseSearch={() => {
                         if (activePartId === row.id) {
