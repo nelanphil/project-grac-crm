@@ -4422,11 +4422,14 @@ export interface FinancialsSummary {
   workOrders: {
     count: number;
     openCount: number;
+    openCents: number;
     completedCount: number;
     unbilledCents: number;
     laborHours: number;
     completedPaidCount: number;
     completedPaidCents: number;
+    pendingPaymentCount: number;
+    pendingPaymentCents: number;
   };
   estimates: {
     count: number;
@@ -4459,8 +4462,8 @@ export type FinancialFilterType =
   | "past_due"
   | "open_work_orders"
   | "unbilled_work"
-  | "labor_hours"
   | "completed_paid"
+  | "pending_payment"
   | "estimates";
 
 export interface FinancialRecordItem {
@@ -5107,6 +5110,22 @@ export async function getMailboxMessage(
     `/email-mailbox/${accountId}/messages/${uid}?${params.toString()}`,
     {
       method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function markMailboxMessageSeen(
+  token: string,
+  accountId: string,
+  uid: number,
+  folder: MailboxFolder,
+): Promise<{ seen: true }> {
+  const params = new URLSearchParams({ folder });
+  return authRequest<{ seen: true }>(
+    `/email-mailbox/${accountId}/messages/${uid}/seen?${params.toString()}`,
+    {
+      method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     },
   );

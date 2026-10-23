@@ -24,6 +24,7 @@ import {
   type AscContractSyncSummary,
 } from "./ascContractSync";
 import { LEGACY_LOGIN_OWNERS } from "./legacyLoginOwners";
+import { pendingPaymentWorkOrderFilter } from "./completedPaidReport";
 import {
   legacyWorkOrderHasBillableMoney,
   ensureLegacyCatalogProducts,
@@ -2392,6 +2393,34 @@ export async function runLegacyDumpSync(options: {
       log(
         `Skipped legacy work order ids with a different user: ${userMismatchIds.join(", ")}`,
       );
+    }
+
+    if (!dryRun && workOrderRows.length > 0) {
+      const dumpCustomerIds = new Set(customerRows.map((row) => row.legacyId));
+      const dumpPending = new Map<number, number>();
+      for (const row of workOrderRows) {
+        if (!row.completed || row.paid) continue;
+        if (customerRows.length > 0 && !dumpCustomerIds.has(row.customerId)) continue;
+        dumpPending.set(row.userId, (dumpPending.get(row.userId) ?? 0) + 1);
+      }
+      const crmPending = await models.WorkOrder.aggregate<{ _id: number; n: number }>([
+        {
+          $match: {
+            ...pendingPaymentWorkOrderFilter(),
+            deletedAt: null,
+            userId: { $in: [...dumpPending.keys()] },
+          },
+        },
+        { $group: { _id: "$userId", n: { $sum: 1 } } },
+      ]);
+      const crmByUser = new Map(crmPending.map((row) => [row._id, row.n]));
+      for (const userId of [...dumpPending.keys()].sort((a, b) => a - b)) {
+        const dumpCount = dumpPending.get(userId) ?? 0;
+        const crmCount = crmByUser.get(userId) ?? 0;
+        log(
+          `pending-payment user ${userId}: dump ${dumpCount.toLocaleString()}, CRM ${crmCount.toLocaleString()}${dumpCount === crmCount ? "" : " (MISMATCH)"}.`,
+        );
+      }
     }
 
     log(

@@ -9,6 +9,7 @@ import {
   getMailboxThreadHandler,
   listMailboxMessagesHandler,
   locateMailboxMessageHandler,
+  markMailboxMessageSeenHandler,
   replyMailboxMessageHandler,
   setMailboxArchiveHandler,
   setMailboxAssigneesHandler,
@@ -38,6 +39,11 @@ router.get(
   "/:accountId/messages/:uid",
   requirePermission("messages:read"),
   getMailboxMessageHandler,
+);
+router.post(
+  "/:accountId/messages/:uid/seen",
+  requirePermission("messages:read"),
+  markMailboxMessageSeenHandler,
 );
 router.post(
   "/:accountId/messages/:uid/reply",

@@ -6,7 +6,9 @@ import {
 } from "./legacyDumpSync";
 import {
   completedPaidWorkOrderFilter,
+  pendingPaymentWorkOrderFilter,
   workOrderMatchesCompletedPaid,
+  workOrderMatchesPendingPayment,
 } from "./completedPaidReport";
 import { legacyOwnerForUserId } from "./legacyLoginOwners";
 import {
@@ -165,6 +167,53 @@ describe("completedPaidWorkOrderFilter", () => {
       ),
       false,
     );
+  });
+});
+
+describe("pending payment (pp.php)", () => {
+  it("is completed and unpaid with no date or amount condition", () => {
+    assert.deepEqual(pendingPaymentWorkOrderFilter(), {
+      completed: true,
+      paid: false,
+    });
+  });
+
+  it("includes completed unpaid tickets at any date, including $0", () => {
+    assert.equal(
+      workOrderMatchesPendingPayment({ completed: true, paid: false }),
+      true,
+    );
+    assert.equal(
+      workOrderMatchesPendingPayment({ completed: true, paid: false, total: 0 }),
+      true,
+    );
+  });
+
+  it("excludes paid tickets and tickets that are not completed", () => {
+    assert.equal(
+      workOrderMatchesPendingPayment({ completed: true, paid: true }),
+      false,
+    );
+    assert.equal(
+      workOrderMatchesPendingPayment({ completed: false, paid: false }),
+      false,
+    );
+  });
+
+  it("limits an owner's list to that website login", () => {
+    const owned = new Set<string>();
+    const tickets = [
+      { userId: 1, completed: true, paid: false },
+      { userId: 2, completed: true, paid: false },
+      { userId: 1, completed: true, paid: true },
+    ];
+    const christopher = tickets.filter(
+      (ticket) =>
+        workOrderMatchesPendingPayment(ticket) &&
+        workOrderBelongsToOwner(ticket, 1, owned),
+    );
+    assert.equal(christopher.length, 1);
+    assert.equal(christopher[0]?.userId, 1);
   });
 });
 

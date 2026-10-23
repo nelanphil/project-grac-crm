@@ -11,7 +11,11 @@ import {
   type ScheduleRouteStop,
   type WorkOrderListItem,
 } from "@/lib/api";
-import { loadUnreadInbox, type InboxPreview } from "@/lib/dashboardInbox";
+import {
+  loadUnreadInbox,
+  markInboxPreviewRead,
+  type InboxPreview,
+} from "@/lib/dashboardInbox";
 import {
   dashboardJobs,
   preserveAddressCoords,
@@ -112,6 +116,7 @@ interface DashboardStore {
   setScheduleFocus: (focusDate: string) => void;
   loadBriefing: (token: string) => void;
   loadInbox: (token: string) => void;
+  markInboxRead: (token: string, id: string) => Promise<void>;
   loadSchedule: (token: string, scope: ScheduleScope) => void;
   clearSchedule: () => void;
   updateJobs: (
@@ -267,6 +272,23 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
           inboxError: errorMessage(err, "Could not load inbox"),
         });
       });
+  },
+
+  markInboxRead: async (token, id) => {
+    const item = get().inbox?.find((row) => row.id === id);
+    if (!item) return;
+    try {
+      await markInboxPreviewRead(token, item);
+      beginSlice("inbox");
+      set((state) => ({
+        inbox: state.inbox?.filter((row) => row.id !== id) ?? null,
+        inboxError: null,
+      }));
+    } catch (err: unknown) {
+      set({
+        inboxError: errorMessage(err, "Could not mark message read"),
+      });
+    }
   },
 
   loadSchedule: (token, scope) => {

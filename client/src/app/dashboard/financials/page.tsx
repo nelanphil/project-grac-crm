@@ -59,7 +59,7 @@ function showsWorkOrderColumns(
   return (
     filter === "open_work_orders" ||
     filter === "unbilled_work" ||
-    filter === "labor_hours" ||
+    filter === "pending_payment" ||
     filter === "completed_paid" ||
     (filter === "paid" && websitePaid)
   );
@@ -136,9 +136,10 @@ const FILTER_META: Record<FinancialFilterType, FilterMeta> = {
     externalHref: "/dashboard/work-orders",
     externalLabel: "Work Orders",
   },
-  labor_hours: {
-    title: "Labor Hours",
-    description: "Work orders logging technician labor hours",
+  pending_payment: {
+    title: "Pending Payment",
+    description:
+      "Completed work orders that are not paid yet, from every date",
     externalHref: "/dashboard/work-orders",
     externalLabel: "Work Orders",
   },
@@ -356,7 +357,9 @@ function FinancialsContent() {
         }
       : FILTER_META[activeFilter];
   const reportTimeZone =
-    activeFilter === "completed_paid" || (activeFilter === "paid" && websitePaid)
+    activeFilter === "completed_paid" ||
+    activeFilter === "pending_payment" ||
+    (activeFilter === "paid" && websitePaid)
       ? "UTC"
       : undefined;
 
@@ -488,13 +491,14 @@ function FinancialsContent() {
     if (filter === "past_due") {
       setSortKey("dueDate");
       setSortDir("asc");
-    } else if (filter === "labor_hours") {
-      setSortKey("laborHours");
-      setSortDir("desc");
     } else if (filter === "unbilled_work") {
       setSortKey("total");
       setSortDir("desc");
-    } else if (filter === "completed_paid" || (filter === "paid" && ownerId)) {
+    } else if (
+      filter === "completed_paid" ||
+      filter === "pending_payment" ||
+      (filter === "paid" && ownerId)
+    ) {
       setSortKey("date");
       setSortDir("asc");
     } else {
@@ -694,8 +698,8 @@ function FinancialsContent() {
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <KpiCard
               label="Open work orders"
-              value={String(summary.workOrders.openCount)}
-              hint={`${summary.workOrders.completedCount} completed`}
+              value={formatMoney(summary.workOrders.openCents)}
+              hint={`${summary.workOrders.openCount} open`}
               isSelected={activeFilter === "open_work_orders"}
               onClick={() => handleSelectFilter("open_work_orders")}
             />
@@ -707,11 +711,11 @@ function FinancialsContent() {
               onClick={() => handleSelectFilter("unbilled_work")}
             />
             <KpiCard
-              label="Labor hours"
-              value={summary.workOrders.laborHours.toFixed(1)}
-              hint="Logged labor hours"
-              isSelected={activeFilter === "labor_hours"}
-              onClick={() => handleSelectFilter("labor_hours")}
+              label="Pending payment"
+              value={formatMoney(summary.workOrders.pendingPaymentCents)}
+              hint={`${summary.workOrders.pendingPaymentCount} result(s) · All dates`}
+              isSelected={activeFilter === "pending_payment"}
+              onClick={() => handleSelectFilter("pending_payment")}
             />
             <KpiCard
               label="Completed & paid"

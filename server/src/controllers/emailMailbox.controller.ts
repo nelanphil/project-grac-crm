@@ -27,6 +27,7 @@ import {
   getMailboxMessage,
   listMailboxMessages,
   locateMailboxMessage,
+  markMailboxMessageSeen,
   MailboxAddress,
   MailboxError,
   MailboxFolder,
@@ -224,6 +225,34 @@ export async function getMailboxMessageHandler(
     sendMailboxError(res, err);
   }
 }
+
+export async function markMailboxMessageSeenHandler(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  const parsed = mailboxMessageQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "folder must be inbox or sent",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  const uid = parseUid(String(req.params.uid), res);
+  if (uid == null) return;
+
+  const account = await loadReadableAccount(String(req.params.accountId), res);
+  if (!account) return;
+
+  try {
+    const result = await markMailboxMessageSeen(account, parsed.data.folder, uid);
+    res.json(result);
+  } catch (err) {
+    sendMailboxError(res, err);
+  }
+}
+
 export async function getMailboxThreadHandler(
   req: AuthRequest,
   res: Response,

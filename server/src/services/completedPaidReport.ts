@@ -31,6 +31,19 @@ export function completedPaidWorkOrderFilter(
   };
 }
 
+/** pp.php: completed and unpaid at any date, including $0 tickets. */
+export function pendingPaymentWorkOrderFilter(): Record<string, unknown> {
+  return { completed: true, paid: false };
+}
+
+export function workOrderMatchesPendingPayment(wo: {
+  completed?: boolean;
+  paid?: boolean;
+  total?: number;
+}): boolean {
+  return wo.completed === true && wo.paid === false;
+}
+
 export function workOrderMatchesCompletedPaid(
   wo: CompletedPaidWorkOrder,
   from: Date | null,

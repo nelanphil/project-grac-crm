@@ -66,18 +66,19 @@ function BriefingRow({
   text,
   meta,
   unread = false,
+  onMarkRead,
+  marking = false,
 }: {
   href: string;
   text: string;
   meta: string;
   unread?: boolean;
+  onMarkRead?: () => void;
+  marking?: boolean;
 }) {
   return (
-    <li>
-      <Link
-        href={href}
-        className="flex items-start gap-2.5 px-4 py-3.5 hover:bg-[var(--staff-cream)] lg:py-2.5"
-      >
+    <li className="flex items-start gap-3 px-4 py-3.5 hover:bg-[var(--staff-cream)] lg:py-2.5">
+      <Link href={href} className="flex min-w-0 flex-1 items-start gap-2.5">
         {unread ? (
           <span
             className="mt-[0.4rem] h-2 w-2 shrink-0 rounded-full bg-brand-orange"
@@ -85,20 +86,13 @@ function BriefingRow({
           />
         ) : null}
         <span className="min-w-0 flex-1">
-          <span className="flex items-baseline justify-between gap-3">
-            <p
-              className={`min-w-0 truncate text-sm text-[var(--staff-ink)] ${
-                unread ? "font-bold" : ""
-              }`}
-            >
-              {text}
-            </p>
-            {unread ? (
-              <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-brand-orange">
-                Unread
-              </span>
-            ) : null}
-          </span>
+          <p
+            className={`min-w-0 truncate text-sm text-[var(--staff-ink)] ${
+              unread ? "font-bold" : ""
+            }`}
+          >
+            {text}
+          </p>
           {meta ? (
             <p
               className={`mt-0.5 truncate text-xs ${
@@ -112,6 +106,16 @@ function BriefingRow({
           ) : null}
         </span>
       </Link>
+      {onMarkRead ? (
+        <button
+          type="button"
+          disabled={marking}
+          onClick={onMarkRead}
+          className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-brand-orange hover:underline disabled:cursor-wait disabled:opacity-60"
+        >
+          {marking ? "Marking…" : "Mark as read"}
+        </button>
+      ) : null}
     </li>
   );
 }
@@ -170,6 +174,10 @@ export default function StaffBriefingHome() {
   const inboxError = useDashboardStore((s) => s.inboxError);
   const loadBriefing = useDashboardStore((s) => s.loadBriefing);
   const loadInbox = useDashboardStore((s) => s.loadInbox);
+  const markInboxRead = useDashboardStore((s) => s.markInboxRead);
+  const [markingInboxIds, setMarkingInboxIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const connect = useDashboardStore((s) => s.connect);
   const disconnect = useDashboardStore((s) => s.disconnect);
   const setCanSeeInbox = useDashboardStore((s) => s.setCanSeeInbox);
@@ -419,26 +427,47 @@ export default function StaffBriefingHome() {
               </ul>
             )
             ) : tab === "inbox" ? (
-              inboxError ? (
+              inboxError && !inbox?.length ? (
                 <p className="px-4 py-6 text-sm text-red-700">{inboxError}</p>
               ) : !inbox ? (
                 <EmptyLine>Loading inbox…</EmptyLine>
               ) : inbox.length === 0 ? (
                 <EmptyLine>No unread messages.</EmptyLine>
               ) : (
-                <ul className="divide-y divide-[var(--staff-border)]">
-                  {inbox.map((item) => (
-                    <BriefingRow
-                      key={item.id}
-                      href={item.href}
-                      unread
-                      text={item.title}
-                      meta={[item.kind, item.preview, formatWhen(item.at ?? "")]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    />
-                  ))}
-                </ul>
+                <>
+                  {inboxError ? (
+                    <p className="px-4 pt-3 text-sm text-red-700">{inboxError}</p>
+                  ) : null}
+                  <ul className="divide-y divide-[var(--staff-border)]">
+                    {inbox.map((item) => (
+                      <BriefingRow
+                        key={item.id}
+                        href={item.href}
+                        unread
+                        marking={markingInboxIds.has(item.id)}
+                        onMarkRead={() => {
+                          if (!token || markingInboxIds.has(item.id)) return;
+                          setMarkingInboxIds((current) => {
+                            const next = new Set(current);
+                            next.add(item.id);
+                            return next;
+                          });
+                          void markInboxRead(token, item.id).finally(() => {
+                            setMarkingInboxIds((current) => {
+                              const next = new Set(current);
+                              next.delete(item.id);
+                              return next;
+                            });
+                          });
+                        }}
+                        text={item.title}
+                        meta={[item.kind, item.preview, formatWhen(item.at ?? "")]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      />
+                    ))}
+                  </ul>
+                </>
               )
             ) : notesError ? (
               <p className="px-4 py-6 text-sm text-red-700">{notesError}</p>

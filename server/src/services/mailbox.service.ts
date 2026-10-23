@@ -919,6 +919,21 @@ export async function getMailboxMessage(
   });
 }
 
+/** Set the IMAP \\Seen flag without downloading the message. */
+export async function markMailboxMessageSeen(
+  account: IEmailAccount,
+  folder: MailboxFolder,
+  uid: number,
+): Promise<{ seen: true }> {
+  await withMailboxClient(account, async (client) => {
+    const path = await resolveFolderPath(client, folder);
+    await withMailboxLock(client, path, () =>
+      client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }),
+    );
+  });
+  return { seen: true };
+}
+
 export async function listImapThreadMessages(
   account: IEmailAccount,
   folder: MailboxFolder,

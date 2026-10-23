@@ -3,10 +3,18 @@ import {
   getEmailAccounts,
   getMailboxMessages,
   getMessagingThreads,
+  markContactFormSubmissionRead,
+  markMailboxMessageSeen,
+  markMessagingThreadRead,
   type MailboxAddress,
   type MessageThreadItem,
 } from "@/lib/api";
 import { contactDisplayName } from "@/components/messaging/conversationUtils";
+
+export type InboxReadTarget =
+  | { type: "text"; threadId: string }
+  | { type: "email"; accountId: string; uid: number }
+  | { type: "contact-form"; submissionId: string };
 
 export type InboxPreview = {
   id: string;
@@ -15,6 +23,7 @@ export type InboxPreview = {
   preview: string;
   at: string | null;
   href: string;
+  readTarget: InboxReadTarget;
 };
 
 function emailSender(from: MailboxAddress[]): string {
@@ -75,6 +84,11 @@ async function loadUnreadEmails(token: string): Promise<InboxPreview[]> {
                 "(no subject)",
               at: message.date,
               href: `/dashboard/messaging?tab=inbox&view=email&accountId=${encodeURIComponent(account._id)}&folder=inbox&uid=${message.uid}`,
+              readTarget: {
+                type: "email",
+                accountId: account._id,
+                uid: message.uid,
+              },
             }));
         } catch {
           return [] as InboxPreview[];
@@ -101,6 +115,10 @@ async function loadUnreadContactForms(token: string): Promise<InboxPreview[]> {
       preview: excerpt(item.message),
       at: item.createdAt,
       href: contactFormHref(item.createdAt),
+      readTarget: {
+        type: "contact-form" as const,
+        submissionId: item._id,
+      },
     }));
   } catch {
     return [];
@@ -120,10 +138,27 @@ export async function loadUnreadInbox(token: string): Promise<InboxPreview[]> {
     preview: thread.lastMessagePreview.trim() || "Text message",
     at: thread.lastMessageAt,
     href: inboxHrefForThread(thread),
+    readTarget: { type: "text", threadId: thread._id },
   }));
   return [...texts, ...emails, ...contactForms].sort((left, right) => {
     const leftTime = left.at ? new Date(left.at).getTime() : 0;
     const rightTime = right.at ? new Date(right.at).getTime() : 0;
     return rightTime - leftTime;
   });
+}
+
+export async function markInboxPreviewRead(
+  token: string,
+  item: InboxPreview,
+): Promise<void> {
+  const target = item.readTarget;
+  if (target.type === "text") {
+    await markMessagingThreadRead(token, target.threadId);
+    return;
+  }
+  if (target.type === "email") {
+    await markMailboxMessageSeen(token, target.accountId, target.uid, "inbox");
+    return;
+  }
+  await markContactFormSubmissionRead(token, target.submissionId);
 }
