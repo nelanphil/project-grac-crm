@@ -204,7 +204,8 @@ export async function previewMessage(
           ? (await customerHasPayableInvoice(customerRef)) || Boolean(offerId)
           : Boolean(offerId);
       if (showLink) paymentUrl = sampleShortPaymentUrl();
-      if (customerRef && paymentUrl) {
+      // A single invoice's text already states the total due.
+      if (customerRef && paymentUrl && !parsed.data.invoiceId) {
         paymentSummary = await previewPaymentSummary(
           customerRef,
           parsed.data.invoiceId,
@@ -380,10 +381,10 @@ export async function dispatchMessagingBatch(
             offerContractOverrides: data.invoiceId ? [] : data.offerContractOverrides,
             paymentLinkForCustomer: async (customerId, explicitInvoiceId) => {
               const link = await paymentLinkForCustomer(customerId, explicitInvoiceId);
-              if (link) {
+              if (link && !data.invoiceId) {
                 paymentLabel = paymentAmountLabel(
                   link.totalCents,
-                  Boolean(data.invoiceId) || Boolean(explicitInvoiceId),
+                  Boolean(explicitInvoiceId),
                 );
               }
               return link;

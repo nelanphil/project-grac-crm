@@ -109,3 +109,20 @@ export const updateWorkOrderSchema = z
 
 export type CreateWorkOrderInput = z.infer<typeof createWorkOrderSchema>;
 export type UpdateWorkOrderInput = z.infer<typeof updateWorkOrderSchema>;
+
+const completionContactSchema = {
+  contactId: z
+    .string()
+    .trim()
+    .regex(/^[a-fA-F0-9]{24}$/, "Choose a contact"),
+  phoneOverride: z.string().trim().max(40).optional(),
+  emailOverride: z.string().trim().max(200).optional(),
+};
+
+export const completeWorkOrderSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("pay_now") }),
+  z.object({ mode: z.literal("send"), ...completionContactSchema }),
+  z.object({ mode: z.literal("resend"), ...completionContactSchema }),
+]);
+
+export type CompleteWorkOrderInput = z.infer<typeof completeWorkOrderSchema>;

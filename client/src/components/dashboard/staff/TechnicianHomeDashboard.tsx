@@ -10,7 +10,6 @@ import {
   getTechnicians,
   getWorkOrder,
   type TechnicianListItem,
-  updateWorkOrder,
   type WorkOrderListItem,
 } from "@/lib/api";
 import {
@@ -118,8 +117,6 @@ function applyAddressCoords(
   });
 }
 
-type CardAction = "complete" | "paid";
-
 const SWATCH =
   "inline-flex max-w-full rounded-full px-2.5 py-1 text-xs font-semibold ring-1 transition";
 
@@ -127,35 +124,23 @@ function AppointmentCard({
   job,
   canWrite,
   selected,
-  pendingAction,
-  busy,
-  error,
   onToggleOpen,
-  onAsk,
-  onConfirm,
-  onCancel,
+  onMarkComplete,
+  onResend,
   mobilePanel,
 }: {
   job: WorkOrderListItem;
   canWrite: boolean;
   selected: boolean;
-  pendingAction: CardAction | null;
-  busy: boolean;
-  error: string | null;
   onToggleOpen: () => void;
-  onAsk: (action: CardAction) => void;
-  onConfirm: () => void;
-  onCancel: () => void;
+  onMarkComplete: () => void;
+  onResend: () => void;
   mobilePanel: ReactNode;
 }) {
   const service = serviceLabel(job);
   const note = noteLabel(job, service);
   const address = jobAddress(job);
   const number = workOrderNumber(job);
-  const confirmCopy =
-    pendingAction === "paid"
-      ? "Mark this job paid?"
-      : "Mark this job complete?";
 
   return (
     <div className="min-w-0 space-y-2">
@@ -189,73 +174,48 @@ function AppointmentCard({
         <p className="mt-1 break-words text-sm text-[var(--staff-muted)]">{note}</p>
       ) : null}
 
-      {pendingAction ? (
-        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
-          <p className="break-words">{confirmCopy}</p>
-          {error ? <p className="mt-2 break-words text-sm text-red-700">{error}</p> : null}
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onConfirm}
-              className="rounded-md bg-brand-dark px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
-            >
-              {busy ? "Saving…" : "Confirm"}
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onCancel}
-              className="rounded-md border border-amber-300 px-2.5 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-60"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-4 flex min-w-0 flex-wrap items-center gap-2">
+      <div className="mt-4 flex min-w-0 flex-wrap items-center gap-2">
+        <button
+          type="button"
+          aria-pressed={selected}
+          onClick={onToggleOpen}
+          className={`rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--staff-cream)] ${
+            selected
+              ? "border-brand-orange text-brand-orange"
+              : "border-[var(--staff-border)] text-[var(--staff-ink)]"
+          }`}
+        >
+          {selected ? "Close" : "Open"}
+        </button>
+        {job.completed ? (
+          <span className={`${SWATCH} bg-emerald-50 text-emerald-800 ring-emerald-200`}>
+            Complete
+          </span>
+        ) : null}
+        {canWrite && job.completed ? (
           <button
             type="button"
-            aria-pressed={selected}
-            onClick={onToggleOpen}
-            className={`rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-[var(--staff-cream)] ${
-              selected
-                ? "border-brand-orange text-brand-orange"
-                : "border-[var(--staff-border)] text-[var(--staff-ink)]"
-            }`}
+            onClick={onResend}
+            className={`${SWATCH} bg-sky-50 text-sky-800 ring-sky-200 hover:bg-sky-100`}
           >
-            {selected ? "Close" : "Open"}
+            Resend
           </button>
-          {job.completed ? (
-            <span className={`${SWATCH} bg-emerald-50 text-emerald-800 ring-emerald-200`}>
-              Complete
-            </span>
-          ) : null}
-          {canWrite && job.paid ? (
-            <span className={`${SWATCH} bg-emerald-50 text-emerald-800 ring-emerald-200`}>
-              Paid
-            </span>
-          ) : null}
-          {canWrite && !job.paid ? (
-            <button
-              type="button"
-              onClick={() => onAsk("paid")}
-              className={`${SWATCH} bg-sky-50 text-sky-800 ring-sky-200 hover:bg-sky-100`}
-            >
-              Mark paid
-            </button>
-          ) : null}
-          {canWrite && !job.completed ? (
-            <button
-              type="button"
-              onClick={() => onAsk("complete")}
-              className={`${SWATCH} bg-orange-50 text-orange-800 ring-orange-200 hover:bg-orange-100`}
-            >
-              Mark complete
-            </button>
-          ) : null}
-        </div>
-      )}
+        ) : null}
+        {canWrite && job.paid ? (
+          <span className={`${SWATCH} bg-emerald-50 text-emerald-800 ring-emerald-200`}>
+            Paid
+          </span>
+        ) : null}
+        {canWrite && !job.completed ? (
+          <button
+            type="button"
+            onClick={onMarkComplete}
+            className={`${SWATCH} bg-orange-50 text-orange-800 ring-orange-200 hover:bg-orange-100`}
+          >
+            Mark complete
+          </button>
+        ) : null}
+      </div>
     </article>
     {mobilePanel}
     </div>
@@ -302,14 +262,10 @@ export default function TechnicianHomeDashboard() {
   const setRoute = useDashboardStore((s) => s.setRoute);
   const clearRoute = useDashboardStore((s) => s.clearRoute);
   const setScheduleFocus = useDashboardStore((s) => s.setScheduleFocus);
-  const setScheduleBusy = useDashboardStore((s) => s.setScheduleBusy);
-  const [pending, setPending] = useState<{
-    id: string;
-    action: CardAction;
-  } | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [autoCompleteId, setAutoCompleteId] = useState<string | null>(null);
+  const [autoResendId, setAutoResendId] = useState<string | null>(null);
+  const [completeToken, setCompleteToken] = useState(0);
   const [order, setOrder] = useState<WorkOrderListItem | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
@@ -369,10 +325,6 @@ export default function TechnicianHomeDashboard() {
   useEffect(() => {
     setScheduleFocus(focusDate);
   }, [focusDate, setScheduleFocus]);
-
-  useEffect(() => {
-    setScheduleBusy(Boolean(pending) || busyId != null);
-  }, [pending, busyId, setScheduleBusy]);
 
   useEffect(() => {
     if (!token) return;
@@ -524,56 +476,13 @@ export default function TechnicianHomeDashboard() {
     setSelectedId(null);
     setOrder(null);
     setOrderError(null);
-    setPending(null);
-    setActionError(null);
-  }
-
-  function askAction(id: string, action: CardAction) {
-    setActionError(null);
-    setPending({ id, action });
-  }
-
-  function cancelAction() {
-    setActionError(null);
-    setPending(null);
-  }
-
-  async function confirmAction() {
-    if (!token || !pending) return;
-    const { id, action } = pending;
-    setBusyId(id);
-    setActionError(null);
-    try {
-      if (action === "complete") {
-        await updateWorkOrder(token, id, { completed: true });
-        updateJobs((current) =>
-          current.map((job) =>
-            job._id === id ? { ...job, completed: true } : job,
-          ),
-        );
-      } else {
-        await updateWorkOrder(token, id, { paid: true });
-        updateJobs((current) =>
-          current.map((job) => (job._id === id ? { ...job, paid: true } : job)),
-        );
-      }
-      setPending(null);
-    } catch (err) {
-      setActionError(
-        err instanceof ApiError
-          ? err.message
-          : action === "complete"
-            ? "Failed to mark this job complete."
-            : "Failed to mark this job paid.",
-      );
-    } finally {
-      setBusyId(null);
-    }
+    setAutoCompleteId(null);
+    setAutoResendId(null);
   }
 
   function clearOpenJob() {
-    setPending(null);
-    setActionError(null);
+    setAutoCompleteId(null);
+    setAutoResendId(null);
     setOrder(null);
     setOrderError(null);
     setSelectedId(null);
@@ -585,14 +494,38 @@ export default function TechnicianHomeDashboard() {
   }
 
   function toggleOpen(id: string) {
-    setActionError(null);
-    setPending(null);
+    setAutoCompleteId(null);
+    setAutoResendId(null);
     setOrder(null);
     setOrderError(null);
     setSelectedId((current) => (current === id ? null : id));
   }
 
+  function openForComplete(id: string) {
+    setCompleteToken((current) => current + 1);
+    setAutoResendId(null);
+    setAutoCompleteId(id);
+    if (selectedId !== id) {
+      setOrder(null);
+      setOrderError(null);
+      setSelectedId(id);
+    }
+  }
+
+  function openForResend(id: string) {
+    setCompleteToken((current) => current + 1);
+    setAutoCompleteId(null);
+    setAutoResendId(id);
+    if (selectedId !== id) {
+      setOrder(null);
+      setOrderError(null);
+      setSelectedId(id);
+    }
+  }
+
   function closeWorkOrder() {
+    setAutoCompleteId(null);
+    setAutoResendId(null);
     setOrder(null);
     setOrderError(null);
     setSelectedId(null);
@@ -632,19 +565,14 @@ export default function TechnicianHomeDashboard() {
   const showMap = !selectedId && layout !== null;
 
   function cardProps(job: WorkOrderListItem) {
-    const isPending = pending?.id === job._id;
     const selected = selectedId === job._id;
     return {
       job,
       canWrite,
       selected,
-      pendingAction: isPending ? pending.action : null,
-      busy: busyId === job._id,
-      error: isPending ? actionError : null,
       onToggleOpen: () => toggleOpen(job._id),
-      onAsk: (action: CardAction) => askAction(job._id, action),
-      onConfirm: () => void confirmAction(),
-      onCancel: cancelAction,
+      onMarkComplete: () => openForComplete(job._id),
+      onResend: () => openForResend(job._id),
       mobilePanel:
         selected && layout === "mobile" ? (
           <MobileWorkOrderPanel
@@ -654,6 +582,9 @@ export default function TechnicianHomeDashboard() {
             token={token}
             user={user}
             canWrite={canWrite}
+            autoStart={autoCompleteId === job._id}
+            autoResend={autoResendId === job._id}
+            startToken={completeToken}
             onClose={closeWorkOrder}
             onSaved={handleOrderSaved}
           />
@@ -782,6 +713,9 @@ export default function TechnicianHomeDashboard() {
           token={token}
           user={user}
           canWrite={canWrite}
+          autoStart={autoCompleteId === selectedId}
+          autoResend={autoResendId === selectedId}
+          startToken={completeToken}
           onClose={closeWorkOrder}
           onSaved={handleOrderSaved}
         />

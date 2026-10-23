@@ -11,6 +11,7 @@ import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { User, activeUserFilter } from "../models/mongo/User";
 import {
+  completeWorkOrderSchema,
   createWorkOrderSchema,
   updateWorkOrderSchema,
 } from "../schemas/workOrder.schema";
@@ -38,6 +39,12 @@ import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
 import { resolveTicketWorkOrderType } from "../services/ticketWorkOrderType";
 import { syncWorkOrderInvoice } from "../services/invoice.service";
+import {
+  checkWorkOrderCompletion,
+  completeWorkOrder,
+  resendWorkOrderInvoice,
+  WorkOrderCompletionError,
+} from "../services/workOrderCompletion.service";
 import {
   addMinutes,
   formatLocalDate,
@@ -1132,5 +1139,123 @@ export async function restoreWorkOrder(
   } catch (err) {
     console.error("POST /work-orders/:id/restore error:", err);
     res.status(500).json({ message: "Failed to restore work order" });
+  }
+}
+
+async function loadAssignableWorkOrder(
+  req: AuthRequest,
+  res: Response,
+): Promise<InstanceType<typeof WorkOrder> | null> {
+  const workOrder = await WorkOrder.findById(req.params.id);
+  if (!workOrder) {
+    res.status(404).json({ message: "Work order not found" });
+    return null;
+  }
+  const dispatcher = isDispatcherRole(req.user);
+  const isAssignee = crewIdStrings(workOrder).includes(req.user?.id ?? "");
+  if (!dispatcher && !isAssignee) {
+    res.status(403).json({
+      message: "You can only update jobs assigned to you",
+    });
+    return null;
+  }
+  return workOrder;
+}
+
+function requestApiBase(req: AuthRequest): string {
+  return (
+    process.env.PUBLIC_API_URL?.replace(/\/$/, "") ||
+    `${req.protocol}://${req.get("host")}`
+  );
+}
+
+export async function getWorkOrderCompletion(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const workOrder = await loadAssignableWorkOrder(req, res);
+    if (!workOrder) return;
+    const check = await checkWorkOrderCompletion(workOrder);
+    res.json(check);
+  } catch (err) {
+    console.error("GET /work-orders/:id/completion-check error:", err);
+    res.status(500).json({ message: "Failed to check this work order" });
+  }
+}
+
+export async function postWorkOrderComplete(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const parsed = completeWorkOrderSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const workOrder = await loadAssignableWorkOrder(req, res);
+    if (!workOrder) return;
+
+    const result =
+      parsed.data.mode === "resend"
+        ? await resendWorkOrderInvoice({
+            workOrder,
+            contactId: parsed.data.contactId,
+            phoneOverride: parsed.data.phoneOverride,
+            emailOverride: parsed.data.emailOverride,
+            userId: req.user?.id ?? null,
+            apiBase: requestApiBase(req),
+          })
+        : await completeWorkOrder({
+            workOrder,
+            mode: parsed.data.mode,
+            contactId:
+              parsed.data.mode === "send" ? parsed.data.contactId : undefined,
+            phoneOverride:
+              parsed.data.mode === "send" ? parsed.data.phoneOverride : undefined,
+            emailOverride:
+              parsed.data.mode === "send" ? parsed.data.emailOverride : undefined,
+            userId: req.user?.id ?? null,
+            apiBase: requestApiBase(req),
+          });
+
+    logNotificationAsync({
+      entityType: "work_order",
+      action: "updated",
+      entityId: String(workOrder._id),
+      customerRef: workOrder.customerRef ?? null,
+      summary:
+        parsed.data.mode === "resend"
+          ? workOrder.number
+            ? `Invoice for work order ${workOrder.number} resent`
+            : "Work order invoice resent"
+          : workOrder.number
+            ? `Work order ${workOrder.number} marked complete`
+            : "Work order marked complete",
+      ...actorFromRequest(req.user),
+    });
+    if (parsed.data.mode !== "resend" && workOrder.scheduledStart) {
+      publishDashboardChanged();
+    }
+
+    const lean = workOrder.toObject() as unknown as Record<string, unknown>;
+    const [enriched] = await enrichWithAddress([lean]);
+    res.json({
+      workOrder: enriched,
+      invoice: result.invoice,
+      ...(result.payUrl ? { payUrl: result.payUrl } : {}),
+      ...(result.delivery ? { delivery: result.delivery } : {}),
+    });
+  } catch (err) {
+    if (err instanceof WorkOrderCompletionError) {
+      res.status(err.status).json({ message: err.message });
+      return;
+    }
+    console.error("POST /work-orders/:id/complete error:", err);
+    res.status(500).json({ message: "Failed to mark this work order complete" });
   }
 }

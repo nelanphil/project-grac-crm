@@ -224,6 +224,7 @@ export default function ServiceTicketForm({
   extraActions,
   invoiceAction,
   autoSave,
+  hideStatusFields,
 }: {
   variant: TicketVariant;
   initial?: TicketFormState;
@@ -249,6 +250,8 @@ export default function ServiceTicketForm({
    * button. Must throw on failure and resolve with the saved record as form state.
    */
   autoSave?: (payload: ReturnType<typeof ticketToPayload>) => Promise<TicketFormState>;
+  /** Hides the paid and completed controls. The schedule work order uses its own completion flow. */
+  hideStatusFields?: boolean;
 }) {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
@@ -2244,7 +2247,7 @@ export default function ServiceTicketForm({
         ) : null}
 
         <div className="mt-5 flex flex-wrap items-end justify-between gap-4 border-t border-neutral-200 pt-5">
-          {variant === "work-order" ? (
+          {variant === "work-order" && !hideStatusFields ? (
             <div className="flex flex-wrap items-end gap-8">
               <Field label="Paid">
                 <div className="flex h-9 items-center gap-4 text-sm">

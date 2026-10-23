@@ -13,6 +13,7 @@ import ServiceTicketDocument, {
 import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
 import TicketLineItemsEditor from "@/components/billing/TicketLineItemsEditor";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
+import WorkOrderCompleteFlow from "@/components/dashboard/staff/WorkOrderCompleteFlow";
 import WorkOrderInvoiceSend from "@/components/dashboard/staff/WorkOrderInvoiceSend";
 import {
   getWorkOrderTypes,
@@ -157,6 +158,43 @@ function ticketView(order: WorkOrderListItem): ServiceTicketView {
   };
 }
 
+const completeBadge =
+  "inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200";
+
+function CompletionControl({
+  order,
+  token,
+  canWrite,
+  autoStart,
+  autoResend,
+  startToken,
+  onCompleted,
+}: {
+  order: WorkOrderListItem;
+  token: string | null;
+  canWrite: boolean;
+  autoStart: boolean;
+  autoResend: boolean;
+  startToken: number;
+  onCompleted: (order: WorkOrderListItem) => void;
+}) {
+  if (canWrite && token) {
+    return (
+      <WorkOrderCompleteFlow
+        key={`${order._id}:${autoResend ? `resend-${startToken}` : autoStart ? startToken : "manual"}`}
+        orderId={order._id}
+        token={token}
+        completed={Boolean(order.completed)}
+        autoStart={autoStart}
+        autoResend={autoResend}
+        onCompleted={onCompleted}
+      />
+    );
+  }
+  if (order.completed) return <span className={completeBadge}>Complete</span>;
+  return null;
+}
+
 function PanelStatus({
   loading,
   error,
@@ -184,6 +222,9 @@ export function DesktopWorkOrderPanel({
   token,
   user,
   canWrite,
+  autoStart,
+  autoResend,
+  startToken,
   onClose,
   onSaved,
 }: {
@@ -193,6 +234,9 @@ export function DesktopWorkOrderPanel({
   token: string | null;
   user: PanelUser | null;
   canWrite: boolean;
+  autoStart: boolean;
+  autoResend: boolean;
+  startToken: number;
   onClose: () => void;
   onSaved: (order: WorkOrderListItem) => void;
 }) {
@@ -209,6 +253,17 @@ export function DesktopWorkOrderPanel({
         </button>
       </div>
       <PanelStatus loading={loading} error={error} />
+      {order ? (
+        <CompletionControl
+          order={order}
+          token={token}
+          canWrite={canWrite}
+          autoStart={autoStart}
+          autoResend={autoResend}
+          startToken={startToken}
+          onCompleted={onSaved}
+        />
+      ) : null}
       {order && token && user ? (
         canWrite ? (
           <ServiceTicketForm
@@ -217,6 +272,7 @@ export function DesktopWorkOrderPanel({
             initial={ticketFromRecord(order)}
             recordId={order._id}
             submitLabel="Save work order"
+            hideStatusFields
             onSubmit={() => {}}
             autoSave={async (payload) => {
               const updated = await saveWorkOrder(token, order, payload, user);
@@ -276,6 +332,9 @@ export function MobileWorkOrderPanel({
   token,
   user,
   canWrite,
+  autoStart,
+  autoResend,
+  startToken,
   onClose,
   onSaved,
 }: {
@@ -285,6 +344,9 @@ export function MobileWorkOrderPanel({
   token: string | null;
   user: PanelUser | null;
   canWrite: boolean;
+  autoStart: boolean;
+  autoResend: boolean;
+  startToken: number;
   onClose: () => void;
   onSaved: (order: WorkOrderListItem) => void;
 }) {
@@ -421,6 +483,17 @@ export function MobileWorkOrderPanel({
         </button>
       </div>
       <PanelStatus loading={loading} error={error} />
+      {order ? (
+        <CompletionControl
+          order={order}
+          token={token}
+          canWrite={canWrite}
+          autoStart={autoStart}
+          autoResend={autoResend}
+          startToken={startToken}
+          onCompleted={onSaved}
+        />
+      ) : null}
       {order && token && user ? (
         <>
           {canWrite ? (

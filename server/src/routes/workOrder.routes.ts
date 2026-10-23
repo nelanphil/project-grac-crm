@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { authenticate } from "../middleware/auth.middleware";
+import { authenticate, requirePermission } from "../middleware/auth.middleware";
 import {
   getWorkOrders,
   getWorkOrderById,
@@ -9,6 +9,8 @@ import {
   cancelWorkOrderAppointment,
   deleteWorkOrder,
   restoreWorkOrder,
+  getWorkOrderCompletion,
+  postWorkOrderComplete,
 } from "../controllers/workOrder.controller";
 import {
   getRecentWorkOrderNotes,
@@ -31,6 +33,16 @@ router.get("/:id/notes", getWorkOrderNotes);
 router.post("/:id/notes", createWorkOrderNote);
 router.patch("/:id/notes/:noteId", updateWorkOrderNote);
 router.delete("/:id/notes/:noteId", deleteWorkOrderNote);
+router.get(
+  "/:id/completion-check",
+  requirePermission("jobs:write"),
+  getWorkOrderCompletion,
+);
+router.post(
+  "/:id/complete",
+  requirePermission("jobs:write"),
+  postWorkOrderComplete,
+);
 router.get("/:id", getWorkOrderById);
 router.post("/", createWorkOrder);
 router.patch("/:id", updateWorkOrder);

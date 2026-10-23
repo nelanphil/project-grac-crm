@@ -2473,6 +2473,67 @@ export async function getScheduleWorkOrders(
   });
 }
 
+export interface WorkOrderCompletionContact {
+  _id: string;
+  name: string;
+  phone: string;
+  email: string;
+  phoneValid: boolean;
+  emailValid: boolean;
+  isPrimary: boolean;
+}
+
+export interface WorkOrderCompletionCheck {
+  totalCents: number;
+  blockedReason: string | null;
+  invoiceOpen: boolean;
+  contacts: WorkOrderCompletionContact[];
+}
+
+export type WorkOrderChannelDelivery =
+  | { status: "sent" }
+  | { status: "failed"; error: string }
+  | { status: "skipped" };
+
+export interface WorkOrderCompletionResult {
+  workOrder: WorkOrderListItem;
+  invoice: { _id: string; number: string; amountCents: number };
+  payUrl?: string;
+  delivery?: {
+    sms: WorkOrderChannelDelivery;
+    email: WorkOrderChannelDelivery;
+  };
+}
+
+export async function getWorkOrderCompletionCheck(
+  token: string,
+  id: string,
+): Promise<WorkOrderCompletionCheck> {
+  return authRequest<WorkOrderCompletionCheck>(
+    `/work-orders/${id}/completion-check`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+}
+
+export async function completeWorkOrder(
+  token: string,
+  id: string,
+  data:
+    | { mode: "pay_now" }
+    | {
+        mode: "send" | "resend";
+        contactId: string;
+        phoneOverride?: string;
+        emailOverride?: string;
+      },
+): Promise<WorkOrderCompletionResult> {
+  return authRequest<WorkOrderCompletionResult>(`/work-orders/${id}/complete`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
 export async function updateWorkOrder(
   token: string,
   id: string,

@@ -251,6 +251,74 @@ html[data-theme="dark"] .channel-pill-selected {
   color: var(--color-brand-orange);
 }
 
+/* Mark-complete callout. The light amber fill stays light, so its buttons
+   cannot use --staff-ink, which flips to near-white in dark mode. */
+.complete-notice {
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #78350f;
+}
+
+html[data-theme="dark"] .complete-notice {
+  border-color: #a16207;
+  background: #2c2416;
+  color: #fde68a;
+}
+
+.complete-notice-primary {
+  background: #231f20;
+  color: #fff;
+}
+
+.complete-notice-primary:hover {
+  opacity: 0.9;
+}
+
+html[data-theme="dark"] .complete-notice-primary {
+  background: #f6f2ee;
+  color: #110f0d;
+}
+
+.complete-notice-secondary {
+  border: 1px solid #b45309;
+  background: #fffdfb;
+  color: #78350f;
+}
+
+.complete-notice-secondary:hover {
+  background: #fef3c7;
+}
+
+html[data-theme="dark"] .complete-notice-secondary {
+  border-color: #fbbf24;
+  background: #1c1917;
+  color: #fde68a;
+}
+
+html[data-theme="dark"] .complete-notice-secondary:hover {
+  background: #3a2e22;
+}
+
+.complete-notice-error {
+  color: #b91c1c;
+}
+
+html[data-theme="dark"] .complete-notice-error {
+  color: #fecaca;
+}
+
+.complete-notice-field {
+  border: 1px solid #fcd34d;
+  background: #fffdfb;
+  color: #451a03;
+}
+
+html[data-theme="dark"] .complete-notice-field {
+  border-color: #a16207;
+  background: #1c1917;
+  color: #fde68a;
+}
+
 /* Paper documents, customer-facing previews, and the job terminal keep
    their own light (or already-dark) colors. */
 html[data-theme="dark"] :is(.invoice-document, .theme-light) {
