@@ -3,6 +3,7 @@
 import {
   type CSSProperties,
   type ReactNode,
+  type RefObject,
   useEffect,
   useRef,
   useState,
@@ -142,6 +143,66 @@ function useSuggestPopoverCoords(anchor: HTMLElement | null, extraKey: number) {
   }, [anchor, extraKey]);
 
   return coords;
+}
+
+function useBodyScrollLock(
+  locked: boolean,
+  allowScroll: RefObject<HTMLElement | null>,
+) {
+  useEffect(() => {
+    if (!locked) return;
+    const html = document.documentElement;
+    const { body } = document;
+    const scrollY = window.scrollY;
+    const previous = {
+      htmlOverflow: html.style.overflow,
+      htmlOverscroll: html.style.overscrollBehavior,
+      bodyOverflow: body.style.overflow,
+      bodyOverscroll: body.style.overscrollBehavior,
+      bodyPosition: body.style.position,
+      bodyTop: body.style.top,
+      bodyLeft: body.style.left,
+      bodyRight: body.style.right,
+      bodyWidth: body.style.width,
+    };
+
+    html.style.overflow = "hidden";
+    html.style.overscrollBehavior = "none";
+    body.style.overflow = "hidden";
+    body.style.overscrollBehavior = "none";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+
+    function preventBackgroundTouch(event: TouchEvent) {
+      const target = event.target as Node | null;
+      const sheet = allowScroll.current;
+      if (target && sheet?.contains(target)) {
+        if (sheet.scrollHeight > sheet.clientHeight) return;
+      }
+      event.preventDefault();
+    }
+
+    document.addEventListener("touchmove", preventBackgroundTouch, {
+      passive: false,
+    });
+
+    return () => {
+      html.style.overflow = previous.htmlOverflow;
+      html.style.overscrollBehavior = previous.htmlOverscroll;
+      body.style.overflow = previous.bodyOverflow;
+      body.style.overscrollBehavior = previous.bodyOverscroll;
+      body.style.position = previous.bodyPosition;
+      body.style.top = previous.bodyTop;
+      body.style.left = previous.bodyLeft;
+      body.style.right = previous.bodyRight;
+      body.style.width = previous.bodyWidth;
+      document.removeEventListener("touchmove", preventBackgroundTouch);
+      window.scrollTo(0, scrollY);
+    };
+  }, [locked, allowScroll]);
 }
 
 function useSheetViewportStyle(enabled: boolean): CSSProperties {
@@ -311,6 +372,17 @@ function SuggestResultButton({
   );
 }
 
+function NoMatchesRow() {
+  return (
+    <li
+      className="px-3 py-2.5 text-sm text-neutral-500 sm:text-xs"
+      aria-live="polite"
+    >
+      No matches
+    </li>
+  );
+}
+
 function SuggestMenuFrame({
   anchor,
   extraKey,
@@ -336,7 +408,9 @@ function SuggestMenuFrame({
   const coords = useSuggestPopoverCoords(isSmUp ? anchor : null, extraKey);
   const menuRef = useRef<HTMLElement | null>(null);
   const sheetInputRef = useRef<HTMLInputElement>(null);
-  const sheetStyle = useSheetViewportStyle(!isSmUp);
+  const sheetOpen = !isSmUp;
+  const sheetStyle = useSheetViewportStyle(sheetOpen);
+  useBodyScrollLock(sheetOpen, menuRef);
 
   useEffect(() => {
     if (isSmUp) return;
@@ -361,14 +435,14 @@ function SuggestMenuFrame({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [anchor, onClose]);
 
-  if (empty || typeof document === "undefined") return null;
-  if (isSmUp && !coords) return null;
+  if (typeof document === "undefined") return null;
+  if (isSmUp && (empty || !coords)) return null;
 
   if (!isSmUp) {
     return createPortal(
       <>
         <div
-          className="fixed inset-0 z-[90] bg-black/40"
+          className="fixed inset-0 z-[90] touch-none bg-black/40"
           onClick={onClose}
           aria-hidden
         />
@@ -378,7 +452,7 @@ function SuggestMenuFrame({
           }}
           role="dialog"
           aria-label={label}
-          className="fixed inset-x-0 bottom-0 z-[90] max-h-[60vh] overflow-y-auto rounded-t-xl bg-white shadow-xl pb-[env(safe-area-inset-bottom)]"
+          className="fixed inset-x-0 bottom-0 z-[90] max-h-[60vh] overflow-y-auto overscroll-contain rounded-t-xl bg-white shadow-xl pb-[env(safe-area-inset-bottom)]"
           style={sheetStyle}
         >
           <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-[var(--staff-border)] bg-white px-3 py-2">
@@ -465,6 +539,7 @@ function ProductSuggestMenu({
       onQueryChange={onQueryChange}
       onClose={onClose}
     >
+      {products.length === 0 ? <NoMatchesRow /> : null}
       {products.map((product) => {
         const listPrice = catalogListPrice(product);
         const unitPrice =
@@ -544,6 +619,7 @@ function AgreementSuggestMenu({
       onQueryChange={onQueryChange}
       onClose={onClose}
     >
+      {templates.length === 0 ? <NoMatchesRow /> : null}
       {templates.map((template) => (
         <li key={template._id}>
           <SuggestResultButton
@@ -923,7 +999,7 @@ function SortableLineRow({
             {row.contractTemplateRef ? (
               <p className="mt-0.5 text-[11px] text-neutral-500">Agreement</p>
             ) : null}
-            {isActiveSearch && agreementResults.length > 0 ? (
+            {isActiveSearch ? (
               <AgreementSuggestMenu
                 anchor={menuAnchor}
                 templates={agreementResults}
@@ -1030,7 +1106,7 @@ function SortableLineRow({
               {row.description}
             </p>
           ) : null}
-          {isActiveSearch && (productResults.length > 0 || canCreate) ? (
+          {isActiveSearch ? (
             <ProductSuggestMenu
               anchor={menuAnchor}
               products={productResults}
@@ -1105,6 +1181,7 @@ export default function TicketLineItemsEditor({
   const [createFor, setCreateFor] = useState<{ rowId: string; code: string } | null>(
     null,
   );
+  const skipSearchFocusId = useRef<string | null>(null);
   const discountRules = discounts ?? DEFAULT_PRODUCT_DISCOUNTS;
 
   const sensors = useSensors(
@@ -1202,7 +1279,8 @@ export default function TicketLineItemsEditor({
     if (updates.productRef || selectedAgreement) {
       const inserted = insertEmptyProductBelow(next, id);
       next = inserted.parts;
-      setActivePartId(inserted.emptyId);
+      skipSearchFocusId.current = inserted.emptyId;
+      setActivePartId(null);
       setPendingFocusId(inserted.emptyId);
       setProductResults([]);
       setCreateFor(null);
@@ -1311,7 +1389,13 @@ export default function TicketLineItemsEditor({
                       discounts={discountRules}
                       searchQuery={productQuery[row.id] ?? row.partNumber}
                       canCreate={canCreateProduct}
-                      onFocusSearch={() => setActivePartId(row.id)}
+                      onFocusSearch={() => {
+                        if (skipSearchFocusId.current === row.id) {
+                          skipSearchFocusId.current = null;
+                          return;
+                        }
+                        setActivePartId(row.id);
+                      }}
                       onCloseSearch={() => {
                         if (activePartId === row.id) {
                           setActivePartId(null);
