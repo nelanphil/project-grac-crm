@@ -5,6 +5,7 @@ import {
   type ReactNode,
   type RefObject,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -430,7 +431,9 @@ function SuggestMenuFrame({
   }, [onClose]);
 
   useEffect(() => {
+    const openedAt = Date.now();
     function onPointerDown(event: PointerEvent) {
+      if (Date.now() - openedAt < 150) return;
       const target = event.target as Node;
       if (anchor?.contains(target) || menuRef.current?.contains(target)) return;
       onClose();
@@ -906,7 +909,7 @@ function SortableLineRow({
     searchRef.current?.focus();
   }, [pendingFocus, pendingFocusNonce]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setMenuAnchor(isActiveSearch ? searchRef.current : null);
   }, [isActiveSearch]);
 
@@ -1002,6 +1005,7 @@ function SortableLineRow({
               ref={searchRef}
               value={row.description}
               onFocus={onFocusSearch}
+              onPointerDown={onFocusSearch}
               onChange={(e) =>
                 onChange(
                   {
@@ -1108,6 +1112,7 @@ function SortableLineRow({
             ref={searchRef}
             value={row.partNumber}
             onFocus={onFocusSearch}
+            onPointerDown={onFocusSearch}
             onChange={(e) =>
               onChange(
                 {
