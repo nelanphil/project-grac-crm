@@ -177,10 +177,14 @@ function useBodyScrollLock(
     body.style.width = "100%";
 
     function preventBackgroundTouch(event: TouchEvent) {
-      const target = event.target as Node | null;
+      const target = event.target;
       const sheet = allowScroll.current;
-      if (target && sheet?.contains(target)) {
-        if (sheet.scrollHeight > sheet.clientHeight) return;
+      if (
+        target instanceof Element &&
+        (sheet?.contains(target) ||
+          target.closest("input, textarea, [contenteditable='true']"))
+      ) {
+        return;
       }
       event.preventDefault();
     }
@@ -372,15 +376,19 @@ function SuggestResultButton({
   );
 }
 
-function NoMatchesRow() {
+function SuggestStatusRow({ children }: { children: ReactNode }) {
   return (
     <li
       className="px-3 py-2.5 text-sm text-neutral-500 sm:text-xs"
       aria-live="polite"
     >
-      No matches
+      {children}
     </li>
   );
+}
+
+function isSmUpViewport(): boolean {
+  return typeof window !== "undefined" && window.matchMedia(SM_UP_QUERY).matches;
 }
 
 function SuggestMenuFrame({
@@ -506,6 +514,7 @@ function ProductSuggestMenu({
   discounts,
   searchQuery,
   canCreate,
+  loading,
   onQueryChange,
   onSelect,
   onCreate,
@@ -516,6 +525,7 @@ function ProductSuggestMenu({
   discounts: ProductDiscounts;
   searchQuery: string;
   canCreate: boolean;
+  loading: boolean;
   onQueryChange: (query: string) => void;
   onSelect: (product: ProductItem) => void;
   onCreate: (code: string) => void;
@@ -535,11 +545,15 @@ function ProductSuggestMenu({
       label="Product search results"
       searchQuery={searchQuery}
       searchPlaceholder="Search products"
-      empty={products.length === 0 && !showCreate}
+      empty={!loading && products.length === 0 && !showCreate}
       onQueryChange={onQueryChange}
       onClose={onClose}
     >
-      {products.length === 0 ? <NoMatchesRow /> : null}
+      {loading && products.length === 0 ? (
+        <SuggestStatusRow>Searching…</SuggestStatusRow>
+      ) : !loading && products.length === 0 ? (
+        <SuggestStatusRow>No matches</SuggestStatusRow>
+      ) : null}
       {products.map((product) => {
         const listPrice = catalogListPrice(product);
         const unitPrice =
@@ -597,6 +611,7 @@ function AgreementSuggestMenu({
   anchor,
   templates,
   searchQuery,
+  loading,
   onQueryChange,
   onSelect,
   onClose,
@@ -604,6 +619,7 @@ function AgreementSuggestMenu({
   anchor: HTMLElement | null;
   templates: ContractTemplateItem[];
   searchQuery: string;
+  loading: boolean;
   onQueryChange: (query: string) => void;
   onSelect: (template: ContractTemplateItem) => void;
   onClose: () => void;
@@ -615,11 +631,15 @@ function AgreementSuggestMenu({
       label="Agreement search results"
       searchQuery={searchQuery}
       searchPlaceholder="Search agreements"
-      empty={templates.length === 0}
+      empty={!loading && templates.length === 0}
       onQueryChange={onQueryChange}
       onClose={onClose}
     >
-      {templates.length === 0 ? <NoMatchesRow /> : null}
+      {loading ? (
+        <SuggestStatusRow>Searching…</SuggestStatusRow>
+      ) : templates.length === 0 ? (
+        <SuggestStatusRow>No matches</SuggestStatusRow>
+      ) : null}
       {templates.map((template) => (
         <li key={template._id}>
           <SuggestResultButton
@@ -839,6 +859,8 @@ function SortableLineRow({
   discounts,
   searchQuery,
   canCreate,
+  productLoading,
+  agreementLoading,
   onFocusSearch,
   onCloseSearch,
   onChange,
@@ -853,6 +875,8 @@ function SortableLineRow({
   discounts: ProductDiscounts;
   searchQuery: string;
   canCreate: boolean;
+  productLoading: boolean;
+  agreementLoading: boolean;
   onFocusSearch: () => void;
   onCloseSearch: () => void;
   onChange: (updates: Partial<TicketPartRow>, searchQuery?: string) => void;
@@ -1004,6 +1028,7 @@ function SortableLineRow({
                 anchor={menuAnchor}
                 templates={agreementResults}
                 searchQuery={searchQuery || row.description}
+                loading={agreementLoading}
                 onQueryChange={(query) =>
                   onChange(
                     {
@@ -1113,6 +1138,7 @@ function SortableLineRow({
               discounts={discounts}
               searchQuery={searchQuery || row.partNumber}
               canCreate={canCreate}
+              loading={productLoading}
               onQueryChange={(query) =>
                 onChange({ partNumber: query, productRef: "" }, query)
               }
@@ -1182,11 +1208,21 @@ export default function TicketLineItemsEditor({
     null,
   );
   const skipSearchFocusId = useRef<string | null>(null);
+  const skipSearchFocusTimer = useRef<number | null>(null);
+  const [loadedProductKey, setLoadedProductKey] = useState<string | null>(null);
   const discountRules = discounts ?? DEFAULT_PRODUCT_DISCOUNTS;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
+
+  useEffect(() => {
+    return () => {
+      if (skipSearchFocusTimer.current != null) {
+        window.clearTimeout(skipSearchFocusTimer.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!token || activePartId == null) return;
@@ -1196,13 +1232,20 @@ export default function TicketLineItemsEditor({
       return;
     }
     const q = (productQuery[activePartId] ?? "").trim();
+    const requestKey = `${activePartId}:${q}`;
     const t = setTimeout(() => {
       getProducts(token, {
         search: q || undefined,
         active: true,
       })
-        .then(({ products }) => setProductResults(products.slice(0, 12)))
-        .catch(() => setProductResults([]));
+        .then(({ products }) => {
+          setProductResults(products.slice(0, 12));
+          setLoadedProductKey(requestKey);
+        })
+        .catch(() => {
+          setProductResults([]);
+          setLoadedProductKey(requestKey);
+        });
     }, q ? 200 : 0);
     return () => clearTimeout(t);
   }, [token, activePartId, productQuery, parts]);
@@ -1245,6 +1288,12 @@ export default function TicketLineItemsEditor({
   }
 
   const activeRow = parts.find((part) => part.id === activePartId);
+  const activeProductKey =
+    activePartId && activeRow && activeRow.lineType !== "agreement"
+      ? `${activePartId}:${(productQuery[activePartId] ?? "").trim()}`
+      : null;
+  const productLoading =
+    activeProductKey != null && loadedProductKey !== activeProductKey;
   const agreementQuery = (
     activePartId ? (productQuery[activePartId] ?? activeRow?.description ?? "") : ""
   )
@@ -1279,11 +1328,26 @@ export default function TicketLineItemsEditor({
     if (updates.productRef || selectedAgreement) {
       const inserted = insertEmptyProductBelow(next, id);
       next = inserted.parts;
-      skipSearchFocusId.current = inserted.emptyId;
-      setActivePartId(null);
       setPendingFocusId(inserted.emptyId);
       setProductResults([]);
+      setLoadedProductKey(null);
       setCreateFor(null);
+      if (isSmUpViewport()) {
+        skipSearchFocusId.current = null;
+        setActivePartId(inserted.emptyId);
+      } else {
+        skipSearchFocusId.current = inserted.emptyId;
+        setActivePartId(null);
+        if (skipSearchFocusTimer.current != null) {
+          window.clearTimeout(skipSearchFocusTimer.current);
+        }
+        skipSearchFocusTimer.current = window.setTimeout(() => {
+          if (skipSearchFocusId.current === inserted.emptyId) {
+            skipSearchFocusId.current = null;
+          }
+          skipSearchFocusTimer.current = null;
+        }, 400);
+      }
     } else if (updates.contractTemplateRef) {
       setActivePartId(null);
       setProductResults([]);
@@ -1389,11 +1453,10 @@ export default function TicketLineItemsEditor({
                       discounts={discountRules}
                       searchQuery={productQuery[row.id] ?? row.partNumber}
                       canCreate={canCreateProduct}
+                      productLoading={productLoading}
+                      agreementLoading={agreementCatalog == null}
                       onFocusSearch={() => {
-                        if (skipSearchFocusId.current === row.id) {
-                          skipSearchFocusId.current = null;
-                          return;
-                        }
+                        if (skipSearchFocusId.current === row.id) return;
                         setActivePartId(row.id);
                       }}
                       onCloseSearch={() => {
