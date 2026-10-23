@@ -387,10 +387,6 @@ function SuggestStatusRow({ children }: { children: ReactNode }) {
   );
 }
 
-function isSmUpViewport(): boolean {
-  return typeof window !== "undefined" && window.matchMedia(SM_UP_QUERY).matches;
-}
-
 function SuggestMenuFrame({
   anchor,
   extraKey,
@@ -862,6 +858,7 @@ function SortableLineRow({
   productLoading,
   agreementLoading,
   onFocusSearch,
+  onPendingFocusApplied,
   onCloseSearch,
   onChange,
   onRemove,
@@ -878,6 +875,7 @@ function SortableLineRow({
   productLoading: boolean;
   agreementLoading: boolean;
   onFocusSearch: () => void;
+  onPendingFocusApplied: () => void;
   onCloseSearch: () => void;
   onChange: (updates: Partial<TicketPartRow>, searchQuery?: string) => void;
   onRemove: () => void;
@@ -905,11 +903,15 @@ function SortableLineRow({
   }
 
   useEffect(() => {
-    if (pendingFocus && !didFocus.current) {
-      didFocus.current = true;
-      searchRef.current?.focus();
+    if (!pendingFocus) {
+      didFocus.current = false;
+      return;
     }
-  }, [pendingFocus]);
+    if (didFocus.current) return;
+    didFocus.current = true;
+    searchRef.current?.focus();
+    onPendingFocusApplied();
+  }, [pendingFocus, onPendingFocusApplied]);
 
   useEffect(() => {
     setMenuAnchor(isActiveSearch ? searchRef.current : null);
@@ -1209,6 +1211,7 @@ export default function TicketLineItemsEditor({
   );
   const skipSearchFocusId = useRef<string | null>(null);
   const skipSearchFocusTimer = useRef<number | null>(null);
+  const isSmUp = useMinWidth(SM_UP_QUERY);
   const [loadedProductKey, setLoadedProductKey] = useState<string | null>(null);
   const discountRules = discounts ?? DEFAULT_PRODUCT_DISCOUNTS;
 
@@ -1332,21 +1335,12 @@ export default function TicketLineItemsEditor({
       setProductResults([]);
       setLoadedProductKey(null);
       setCreateFor(null);
-      if (isSmUpViewport()) {
+      if (isSmUp) {
         skipSearchFocusId.current = null;
         setActivePartId(inserted.emptyId);
       } else {
         skipSearchFocusId.current = inserted.emptyId;
         setActivePartId(null);
-        if (skipSearchFocusTimer.current != null) {
-          window.clearTimeout(skipSearchFocusTimer.current);
-        }
-        skipSearchFocusTimer.current = window.setTimeout(() => {
-          if (skipSearchFocusId.current === inserted.emptyId) {
-            skipSearchFocusId.current = null;
-          }
-          skipSearchFocusTimer.current = null;
-        }, 400);
       }
     } else if (updates.contractTemplateRef) {
       setActivePartId(null);
@@ -1458,6 +1452,15 @@ export default function TicketLineItemsEditor({
                       onFocusSearch={() => {
                         if (skipSearchFocusId.current === row.id) return;
                         setActivePartId(row.id);
+                      }}
+                      onPendingFocusApplied={() => {
+                        if (skipSearchFocusTimer.current != null) {
+                          window.clearTimeout(skipSearchFocusTimer.current);
+                        }
+                        skipSearchFocusTimer.current = window.setTimeout(() => {
+                          skipSearchFocusId.current = null;
+                          skipSearchFocusTimer.current = null;
+                        }, 0);
                       }}
                       onCloseSearch={() => {
                         if (activePartId === row.id) {
