@@ -1,7 +1,11 @@
 import { Response } from "express";
 import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
-import { Invoice, IInvoice } from "../models/mongo/Invoice";
+import {
+  Invoice,
+  IInvoice,
+  toPublicOfflinePayment,
+} from "../models/mongo/Invoice";
 import { Contract } from "../models/mongo/Contract";
 import {
   includingDeletedWorkOrders,
@@ -47,6 +51,12 @@ import {
   normalizeTaxRatePercent,
   taxCentsFromDollars,
 } from "../services/taxSettings";
+import { ensureDefaultInvoiceTemplate } from "../models/mongo/InvoiceTemplate";
+import {
+  invoiceBlocksSchema,
+  sanitizeInvoiceBlocks,
+} from "../schemas/invoiceTemplate.schema";
+import { defaultInvoiceBlocks } from "../utils/defaultInvoiceBlocks";
 import { isStaffRole } from "../utils/roles";
 import { buildTokenSearchFilter } from "../utils/textSearch";
 import { createScopedPaymentLink } from "../services/checkoutLink.service";
@@ -87,11 +97,24 @@ function toPublicInvoice(doc: IInvoice | Record<string, unknown>) {
     providerCheckoutId: d.providerCheckoutId,
     providerOrderId: d.providerOrderId,
     providerPaymentId: d.providerPaymentId,
+    offlinePayment: toPublicOfflinePayment(
+      d.offlinePayment as IInvoice["offlinePayment"],
+    ),
     hasPayLink: Boolean(d.payTokenHash),
     payTokenExpiresAt: d.payTokenExpiresAt,
     metadata: d.metadata ?? {},
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
+  };
+}
+
+function hideOfflineProof<
+  T extends { offlinePayment: { proofUrl: string | null } | null },
+>(invoice: T): T {
+  if (!invoice.offlinePayment?.proofUrl) return invoice;
+  return {
+    ...invoice,
+    offlinePayment: { ...invoice.offlinePayment, proofUrl: null },
   };
 }
 
@@ -366,8 +389,9 @@ export async function getInvoices(
           const extra = invoice.customerRef
             ? names.get(String(invoice.customerRef))
             : undefined;
+          const pub = toPublicInvoice(invoice);
           return {
-            ...toPublicInvoice(invoice),
+            ...(isStaff(req.user) ? pub : hideOfflineProof(pub)),
             customerName: extra?.customerName ?? "",
             contactName: extra?.contactName ?? "",
           };
@@ -397,8 +421,9 @@ export async function getInvoices(
         const extra = invoice.customerRef
           ? names.get(String(invoice.customerRef))
           : undefined;
+        const pub = toPublicInvoice(invoice);
         return {
-          ...toPublicInvoice(invoice),
+          ...(isStaff(req.user) ? pub : hideOfflineProof(pub)),
           customerName: extra?.customerName ?? "",
           contactName: extra?.contactName ?? "",
         };
@@ -489,14 +514,49 @@ export async function getInvoiceById(
     }
 
     const enrichment = await enrichInvoiceDetail(invoice);
+    const pub = {
+      ...toPublicInvoice(invoice),
+      ...enrichment,
+    };
     res.json({
-      invoice: {
-        ...toPublicInvoice(invoice),
-        ...enrichment,
-      },
+      invoice: isStaff(req.user) ? pub : hideOfflineProof(pub),
     });
   } catch {
     res.status(500).json({ message: "Failed to load invoice" });
+  }
+}
+
+export async function getInvoiceByViewToken(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const token = String(req.params.token ?? "").trim();
+    if (!token) {
+      res.status(400).json({ message: "Invoice link is missing." });
+      return;
+    }
+    const invoice = await Invoice.findOne({ viewToken: token }).lean();
+    if (!invoice || invoice.status === "void") {
+      res.status(404).json({ message: "This invoice link is not valid." });
+      return;
+    }
+    const enrichment = await enrichInvoiceDetail(invoice);
+    const template = await ensureDefaultInvoiceTemplate();
+    const parsed = invoiceBlocksSchema.safeParse(template.blocks);
+    const blocks = parsed.success
+      ? sanitizeInvoiceBlocks(parsed.data)
+      : defaultInvoiceBlocks();
+    res.json({
+      invoice: hideOfflineProof({
+        ...toPublicInvoice(invoice),
+        ...enrichment,
+      }),
+      blocks,
+    });
+  } catch (err) {
+    console.error("GET /invoice-view/:token error:", err);
+    res.status(500).json({ message: "Failed to load this invoice" });
   }
 }
 
@@ -1080,7 +1140,7 @@ export async function getInvoiceByPayToken(
         const workOrderNotes = invoice.workOrderRef
           ? await listVisibleWorkOrderNotes(invoice.workOrderRef)
           : [];
-        return { ...toPublicInvoice(invoice), workOrderNotes };
+        return hideOfflineProof({ ...toPublicInvoice(invoice), workOrderNotes });
       }),
     );
     const totalCents = invoices.reduce(

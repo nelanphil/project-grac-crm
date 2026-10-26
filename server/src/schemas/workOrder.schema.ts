@@ -123,6 +123,30 @@ export const completeWorkOrderSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("pay_now") }),
   z.object({ mode: z.literal("send"), ...completionContactSchema }),
   z.object({ mode: z.literal("resend"), ...completionContactSchema }),
+  z.object({
+    mode: z.literal("paid_offline"),
+    method: z.enum(["check", "cash"]),
+    checkNumber: z.string().trim().max(40).optional(),
+    proofUrl: z
+      .string()
+      .trim()
+      .max(2000)
+      .startsWith("https://", "Proof URL must start with https://")
+      .optional(),
+  }),
+]);
+
+export const sendWorkOrderReceiptSchema = z.discriminatedUnion("channel", [
+  z.object({
+    channel: z.literal("email"),
+    email: z.string().trim().max(200),
+    saveToContact: z.boolean().optional(),
+  }),
+  z.object({
+    channel: z.literal("sms"),
+    phone: z.string().trim().max(40),
+  }),
 ]);
 
 export type CompleteWorkOrderInput = z.infer<typeof completeWorkOrderSchema>;
+export type SendWorkOrderReceiptInput = z.infer<typeof sendWorkOrderReceiptSchema>;

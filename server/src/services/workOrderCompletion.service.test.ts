@@ -6,6 +6,7 @@ import {
   NO_CUSTOMER_REASON,
   ZERO_TOTAL_REASON,
   completionBlockedReason,
+  sendBlockedReason,
   validateCompletionSend,
   type CompletionContact,
 } from "./workOrderCompletion.service";
@@ -34,7 +35,6 @@ describe("completionBlockedReason", () => {
     completed: false,
     totalCents: 15000,
     hasCustomer: true,
-    reachableContacts: 1,
   };
 
   it("blocks a work order that is already complete", () => {
@@ -62,15 +62,18 @@ describe("completionBlockedReason", () => {
     );
   });
 
+  it("allows a billable work order even when no contact can be reached", () => {
+    assert.equal(completionBlockedReason(open), null);
+  });
+});
+
+describe("sendBlockedReason", () => {
   it("blocks a customer with no reachable contact", () => {
-    assert.equal(
-      completionBlockedReason({ ...open, reachableContacts: 0 }),
-      NO_CONTACT_REASON,
-    );
+    assert.equal(sendBlockedReason(0), NO_CONTACT_REASON);
   });
 
-  it("allows a billable work order with a reachable contact", () => {
-    assert.equal(completionBlockedReason(open), null);
+  it("allows a customer with a reachable contact", () => {
+    assert.equal(sendBlockedReason(2), null);
   });
 });
 

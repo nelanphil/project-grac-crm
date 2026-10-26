@@ -2,6 +2,7 @@ import { randomBytes } from "crypto";
 import { Types } from "mongoose";
 import { env } from "../config/env";
 import { Customer, ICustomer } from "../models/mongo/Customer";
+import { Invoice, type IInvoice } from "../models/mongo/Invoice";
 
 export function mintCheckoutKey(): string {
   return randomBytes(24).toString("base64url");
@@ -54,6 +55,47 @@ export function buildCheckoutCompleteUrl(
 
 export function sampleCheckoutUrl(): string {
   return buildCheckoutUrl("sample-preview");
+}
+
+/** Permanent public invoice page. Query param because the client is a static export. */
+export function buildInvoiceViewUrl(token: string): string {
+  const params = new URLSearchParams();
+  params.set("t", token);
+  return `${env.clientUrl.replace(/\/$/, "")}/invoice/?${params.toString()}`;
+}
+
+/** Mint a view token once and reuse it for every later email or text. */
+export async function ensureInvoiceViewToken(invoice: IInvoice): Promise<string> {
+  const existing = invoice.viewToken?.trim();
+  if (existing) return existing;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const token = randomBytes(24).toString("base64url");
+    try {
+      const updated = await Invoice.findOneAndUpdate(
+        {
+          _id: invoice._id,
+          $or: [{ viewToken: null }, { viewToken: { $exists: false } }, { viewToken: "" }],
+        },
+        { $set: { viewToken: token } },
+        { new: true },
+      ).select("viewToken");
+      if (updated?.viewToken) {
+        invoice.viewToken = updated.viewToken;
+        return updated.viewToken;
+      }
+      const raced = await Invoice.findById(invoice._id).select("viewToken");
+      if (raced?.viewToken) {
+        invoice.viewToken = raced.viewToken;
+        return raced.viewToken;
+      }
+    } catch (err) {
+      if (isDuplicateKeyError(err)) continue;
+      throw err;
+    }
+  }
+
+  throw new Error("Failed to allocate invoice view token");
 }
 
 /**

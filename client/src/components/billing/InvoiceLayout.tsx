@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import type {
-  InvoiceCustomerSummary,
-  InvoiceItem,
-  InvoiceServiceAddress,
+import {
+  offlinePaymentLabel,
+  type InvoiceCustomerSummary,
+  type InvoiceItem,
+  type InvoiceServiceAddress,
 } from "@/lib/api";
 import { COMPANY } from "@/lib/constants";
 import {
@@ -516,15 +517,20 @@ function LeafBody({
       );
     }
     case "paymentMethod": {
-      if (!invoice.paymentProvider) {
+      const methodLabel = invoice.paymentProvider
+        ? invoice.paymentProvider
+        : invoice.offlinePayment
+          ? offlinePaymentLabel(invoice.offlinePayment)
+          : null;
+      if (!methodLabel) {
         return editing ? (
           <Placeholder>Payment method appears after a payment is recorded.</Placeholder>
         ) : null;
       }
       return (
-        <p className={isCustomer ? "" : "capitalize"}>
+        <p className={isCustomer || !invoice.paymentProvider ? "" : "capitalize"}>
           <span style={invoiceTextCss(block.labelStyle)}>{block.label}: </span>
-          <span style={invoiceTextCss(block.valueStyle)}>{invoice.paymentProvider}</span>
+          <span style={invoiceTextCss(block.valueStyle)}>{methodLabel}</span>
         </p>
       );
     }

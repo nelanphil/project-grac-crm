@@ -1,4 +1,17 @@
 import { Types } from "mongoose";
+import {
+  toPublicOfflinePayment,
+  type OfflinePaymentMethod,
+  type PublicOfflinePayment,
+} from "../models/mongo/Invoice";
+import {
+  emailInvoiceReceipt,
+  type InvoiceEmailReceiptResult,
+} from "./invoiceReceipt.service";
+import {
+  buildInvoiceViewUrl,
+  ensureInvoiceViewToken,
+} from "../utils/checkoutKey";
 import { CustomerContact, activeContactFilter } from "../models/mongo/CustomerContact";
 import { EmailAccount } from "../models/mongo/EmailAccount";
 import {
@@ -13,6 +26,7 @@ import { dispatchStaffEmailBatch } from "./emailMessage.service";
 import {
   dollarsToCents,
   findOpenInvoiceForWorkOrder,
+  markInvoicePaid,
   resolveCustomerRefForWorkOrder,
   syncWorkOrderInvoice,
   type WorkOrderInvoiceSource,
@@ -43,7 +57,7 @@ export const ZERO_TOTAL_REASON =
 export const NO_CUSTOMER_REASON =
   "This work order has no customer, so it cannot be invoiced.";
 export const NO_CONTACT_REASON =
-  "This customer has no contact with a valid phone number or email. Add contact information before marking the work order complete.";
+  "This customer has no contact with a valid phone number or email. Add contact information before sending the invoice or taking a card payment.";
 
 export interface CompletionContact {
   _id: string;
@@ -58,6 +72,8 @@ export interface CompletionContact {
 export interface WorkOrderCompletionCheck {
   totalCents: number;
   blockedReason: string | null;
+  /** Set when the customer cannot be texted or emailed. Cash and check can still complete. */
+  sendBlockedReason: string | null;
   invoiceOpen: boolean;
   contacts: CompletionContact[];
 }
@@ -71,6 +87,13 @@ export interface WorkOrderCompletionResult {
   invoice: { _id: string; number: string; amountCents: number };
   payUrl?: string;
   delivery?: { sms: ChannelDelivery; email: ChannelDelivery };
+  offlinePayment?: PublicOfflinePayment;
+  receipt?: {
+    email: InvoiceEmailReceiptResult;
+    phone: string;
+    phoneValid: boolean;
+    viewUrl: string;
+  };
 }
 
 export function isTenDigitUsPhone(phone: string): boolean {
@@ -81,13 +104,15 @@ export function completionBlockedReason(input: {
   completed: boolean;
   totalCents: number;
   hasCustomer: boolean;
-  reachableContacts: number;
 }): string | null {
   if (input.completed) return ALREADY_COMPLETE_REASON;
   if (input.totalCents <= 0) return ZERO_TOTAL_REASON;
   if (!input.hasCustomer) return NO_CUSTOMER_REASON;
-  if (input.reachableContacts <= 0) return NO_CONTACT_REASON;
   return null;
+}
+
+export function sendBlockedReason(reachableContacts: number): string | null {
+  return reachableContacts <= 0 ? NO_CONTACT_REASON : null;
 }
 
 type SendChannel =
@@ -235,8 +260,8 @@ export async function checkWorkOrderCompletion(
       completed: Boolean(workOrder.completed),
       totalCents,
       hasCustomer: Boolean(customerRef),
-      reachableContacts,
     }),
+    sendBlockedReason: sendBlockedReason(reachableContacts),
     invoiceOpen: Boolean(openInvoice),
     contacts,
   };
@@ -437,16 +462,23 @@ async function sendEmail(input: {
 
 export async function completeWorkOrder(input: {
   workOrder: IWorkOrder;
-  mode: "pay_now" | "send";
+  mode: "pay_now" | "send" | "paid_offline";
   contactId?: string;
   phoneOverride?: string;
   emailOverride?: string;
+  method?: OfflinePaymentMethod;
+  checkNumber?: string;
+  proofUrl?: string;
   userId?: string | null;
+  actorName?: string | null;
   apiBase: string;
 }): Promise<WorkOrderCompletionResult> {
   const check = await checkWorkOrderCompletion(input.workOrder);
   if (check.blockedReason) {
     throw new WorkOrderCompletionError(check.blockedReason);
+  }
+  if (input.mode !== "paid_offline" && check.sendBlockedReason) {
+    throw new WorkOrderCompletionError(check.sendBlockedReason);
   }
 
   let plan: CompletionSendPlan | null = null;
@@ -487,6 +519,82 @@ export async function completeWorkOrder(input: {
       if (err instanceof CheckoutError) {
         throw new WorkOrderCompletionError(err.message, err.statusCode);
       }
+      throw err;
+    }
+  }
+
+  if (input.mode === "paid_offline") {
+    if (input.method !== "check" && input.method !== "cash") {
+      throw new WorkOrderCompletionError("Choose check or cash.");
+    }
+    const proofUrl = input.proofUrl?.trim() || "";
+    if (proofUrl && !proofUrl.startsWith("https://")) {
+      throw new WorkOrderCompletionError("Proof URL must start with https://");
+    }
+    let recorded = false;
+    try {
+      const userId =
+        input.userId && Types.ObjectId.isValid(input.userId)
+          ? new Types.ObjectId(input.userId)
+          : null;
+      invoice.offlinePayment = {
+        method: input.method,
+        checkNumber:
+          input.method === "check" ? input.checkNumber?.trim() || null : null,
+        proofUrl: proofUrl || null,
+        recordedByUserId: userId,
+        recordedByName: input.actorName?.trim() || null,
+        recordedAt: new Date(),
+      };
+      invoice.markModified("offlinePayment");
+      const paid = await markInvoicePaid({
+        invoice,
+        actor: {
+          actorType: input.userId ? "user" : "system",
+          actorUserId: input.userId ?? null,
+          actorName: input.actorName ?? null,
+        },
+      });
+      recorded = true;
+      const offlinePayment = toPublicOfflinePayment(paid.offlinePayment);
+      if (!offlinePayment) {
+        throw new WorkOrderCompletionError("Could not record this payment.");
+      }
+      const primary =
+        check.contacts.find((contact) => contact.isPrimary) ??
+        check.contacts[0] ??
+        null;
+      let email: InvoiceEmailReceiptResult = {
+        status: "failed",
+        error: "The email was not sent.",
+      };
+      try {
+        email = await emailInvoiceReceipt({ invoice: paid });
+      } catch (err) {
+        console.error("paid invoice email failed:", err);
+        email = {
+          status: "failed",
+          error: err instanceof Error ? err.message : "The email was not sent.",
+        };
+      }
+      let viewUrl = "";
+      try {
+        viewUrl = buildInvoiceViewUrl(await ensureInvoiceViewToken(paid));
+      } catch (err) {
+        console.error("invoice view link failed:", err);
+      }
+      return {
+        invoice: summary,
+        offlinePayment,
+        receipt: {
+          email,
+          phone: primary?.phone ?? "",
+          phoneValid: Boolean(primary?.phoneValid),
+          viewUrl,
+        },
+      };
+    } catch (err) {
+      if (!recorded) await rollbackCompletion(input.workOrder);
       throw err;
     }
   }
@@ -534,6 +642,9 @@ export async function resendWorkOrderInvoice(input: {
   const check = await checkWorkOrderCompletion(input.workOrder);
   if (check.blockedReason && check.blockedReason !== ALREADY_COMPLETE_REASON) {
     throw new WorkOrderCompletionError(check.blockedReason);
+  }
+  if (check.sendBlockedReason) {
+    throw new WorkOrderCompletionError(check.sendBlockedReason);
   }
   const validated = validateCompletionSend({
     contacts: check.contacts,

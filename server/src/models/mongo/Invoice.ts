@@ -20,6 +20,52 @@ export const INVOICE_STATUSES = [
 ] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
+export const OFFLINE_PAYMENT_METHODS = ["check", "cash"] as const;
+export type OfflinePaymentMethod = (typeof OFFLINE_PAYMENT_METHODS)[number];
+
+export interface IOfflinePayment {
+  method: OfflinePaymentMethod;
+  checkNumber?: string | null;
+  proofUrl?: string | null;
+  recordedByUserId?: Types.ObjectId | null;
+  recordedByName?: string | null;
+  recordedAt?: Date | null;
+}
+
+export interface PublicOfflinePayment {
+  method: OfflinePaymentMethod;
+  checkNumber: string | null;
+  proofUrl: string | null;
+  recordedByUserId: string | null;
+  recordedByName: string | null;
+  recordedAt: string | null;
+}
+
+export function toPublicOfflinePayment(
+  value: IOfflinePayment | null | undefined,
+): PublicOfflinePayment | null {
+  if (!value || (value.method !== "check" && value.method !== "cash")) return null;
+  const recordedAt =
+    value.recordedAt instanceof Date
+      ? value.recordedAt
+      : value.recordedAt
+        ? new Date(value.recordedAt)
+        : null;
+  return {
+    method: value.method,
+    checkNumber: value.checkNumber?.trim() || null,
+    proofUrl: value.proofUrl?.trim() || null,
+    recordedByUserId: value.recordedByUserId
+      ? String(value.recordedByUserId)
+      : null,
+    recordedByName: value.recordedByName?.trim() || null,
+    recordedAt:
+      recordedAt && !Number.isNaN(recordedAt.getTime())
+        ? recordedAt.toISOString()
+        : null,
+  };
+}
+
 export interface IInvoiceLineItem {
   description: string;
   amountCents: number;
@@ -55,6 +101,9 @@ export interface IInvoice extends Document {
   providerPaymentId?: string | null;
   payTokenHash?: string | null;
   payTokenExpiresAt?: Date | null;
+  /** Unguessable token for a permanent, read-only public invoice page. Absent until minted. */
+  viewToken?: string | null;
+  offlinePayment?: IOfflinePayment | null;
   metadata: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
@@ -134,6 +183,29 @@ const invoiceSchema = new Schema<IInvoice>(
     providerPaymentId: { type: String, default: null, index: true },
     payTokenHash: { type: String, default: null, index: true },
     payTokenExpiresAt: { type: Date, default: null },
+    viewToken: { type: String, unique: true, sparse: true },
+    offlinePayment: {
+      type: new Schema<IOfflinePayment>(
+        {
+          method: {
+            type: String,
+            enum: OFFLINE_PAYMENT_METHODS,
+            required: true,
+          },
+          checkNumber: { type: String, default: null },
+          proofUrl: { type: String, default: null },
+          recordedByUserId: {
+            type: Schema.Types.ObjectId,
+            ref: "User",
+            default: null,
+          },
+          recordedByName: { type: String, default: null },
+          recordedAt: { type: Date, default: null },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
     metadata: { type: Schema.Types.Mixed, default: {} },
   },
   { timestamps: true },

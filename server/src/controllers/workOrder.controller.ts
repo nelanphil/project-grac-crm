@@ -1,6 +1,13 @@
-import { Response } from "express";
+import crypto from "crypto";
+import { NextFunction, Response } from "express";
 import mongoose from "mongoose";
+import multer from "multer";
 import { AuthRequest } from "../middleware/auth.middleware";
+import {
+  Invoice,
+  toPublicOfflinePayment,
+  type IOfflinePayment,
+} from "../models/mongo/Invoice";
 import {
   includingDeletedWorkOrders,
   WorkOrder,
@@ -9,10 +16,15 @@ import { WorkOrderNote } from "../models/mongo/WorkOrderNote";
 import { Estimate } from "../models/mongo/Estimate";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
+import {
+  CustomerContact,
+  activeContactFilter,
+} from "../models/mongo/CustomerContact";
 import { User, activeUserFilter } from "../models/mongo/User";
 import {
   completeWorkOrderSchema,
   createWorkOrderSchema,
+  sendWorkOrderReceiptSchema,
   updateWorkOrderSchema,
 } from "../schemas/workOrder.schema";
 import { applyTicketFields } from "../services/applyTicketFields";
@@ -55,6 +67,12 @@ import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { capabilitiesForJobRoleIds } from "../utils/jobRoles";
 import { hasRole } from "../utils/roles";
 import { findWorkOrderIdsMatchingNoteSearch } from "./workOrderNote.controller";
+import { getCloudinarySecretsForUpload } from "./cloudinaryCredentials.controller";
+import {
+  classifyReceiptEmail,
+  emailInvoiceReceipt,
+  textInvoiceReceipt,
+} from "../services/invoiceReceipt.service";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 /** Autosave patches often; one "updated" event per editor per window is enough. */
@@ -340,7 +358,8 @@ export async function getWorkOrderById(
       return;
     }
     const [enriched] = await enrichWithAddress([workOrder]);
-    res.json(enriched);
+    const offlinePayment = await offlinePaymentForWorkOrder(workOrder._id);
+    res.json(offlinePayment ? { ...enriched, offlinePayment } : enriched);
   } catch {
     res.status(500).json({ message: "Failed to fetch work order" });
   }
@@ -1169,6 +1188,247 @@ function requestApiBase(req: AuthRequest): string {
   );
 }
 
+const MAX_PROOF_BYTES = 10 * 1024 * 1024;
+const PROOF_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/heic-sequence",
+  "image/heif-sequence",
+]);
+
+const paymentProofUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_PROOF_BYTES },
+});
+
+function proofFileAllowed(file: Express.Multer.File): boolean {
+  if (PROOF_MIME_TYPES.has(file.mimetype)) return true;
+  if (file.mimetype && file.mimetype !== "application/octet-stream") return false;
+  return /\.(jpe?g|png|webp|heic|heif)$/i.test(file.originalname || "");
+}
+
+export function uploadWorkOrderPaymentProofMiddleware(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): void {
+  paymentProofUpload.single("file")(req, res, (err: unknown) => {
+    if (!err) {
+      next();
+      return;
+    }
+    const limit =
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code?: string }).code === "LIMIT_FILE_SIZE";
+    res.status(400).json({
+      message: limit
+        ? "Images must be 10 MB or smaller."
+        : err instanceof Error
+          ? err.message
+          : "Upload failed.",
+    });
+  });
+}
+
+async function offlinePaymentForWorkOrder(workOrderId: unknown) {
+  const invoice = await Invoice.findOne({
+    workOrderRef: workOrderId,
+    status: "paid",
+    "offlinePayment.method": { $in: ["check", "cash"] },
+  })
+    .sort({ paidAt: -1 })
+    .select("offlinePayment")
+    .lean();
+  return toPublicOfflinePayment(
+    invoice?.offlinePayment as IOfflinePayment | null | undefined,
+  );
+}
+
+async function staffDisplayName(
+  userId: string | undefined,
+  email: string | undefined,
+): Promise<string | null> {
+  if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+    const user = await User.findById(userId)
+      .select("first_name last_name email")
+      .lean();
+    const name = [user?.first_name, user?.last_name]
+      .map((part) => part?.trim() ?? "")
+      .filter(Boolean)
+      .join(" ");
+    if (name) return name;
+    if (user?.email?.trim()) return user.email.trim();
+  }
+  return email?.trim() || null;
+}
+
+export async function postWorkOrderPaymentProof(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const file = (req as AuthRequest & { file?: Express.Multer.File }).file;
+    if (!file) {
+      res.status(400).json({ message: "A file upload is required." });
+      return;
+    }
+    if (!proofFileAllowed(file)) {
+      res.status(400).json({
+        message: "Only JPEG, PNG, WebP, and HEIC photos can be uploaded.",
+      });
+      return;
+    }
+
+    const workOrder = await loadAssignableWorkOrder(req, res);
+    if (!workOrder) return;
+
+    const config = await getCloudinarySecretsForUpload();
+    if (!config) {
+      res.status(400).json({
+        message: "Cloudinary credentials are required before uploading images.",
+      });
+      return;
+    }
+
+    const slug = crypto.randomBytes(8).toString("hex");
+    const workOrderId = String(workOrder._id);
+    const body = new FormData();
+    body.append(
+      "file",
+      new Blob([file.buffer], { type: file.mimetype || "image/jpeg" }),
+      file.originalname || "payment-proof",
+    );
+    if (config.uploadPreset) body.append("upload_preset", config.uploadPreset);
+    body.append("public_id", `payment-proofs/${workOrderId}-${slug}`);
+    body.append("folder", "payment-proofs");
+    body.append("tags", `payment-proof,${workOrderId}`);
+
+    const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${config.cloudName}/image/upload`;
+    const response = await fetch(cloudinaryUrl, {
+      method: "POST",
+      body,
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString("base64")}`,
+      },
+    });
+    const data = (await response.json().catch(() => ({}))) as {
+      secure_url?: string;
+      error?: { message?: string };
+    };
+    if (!response.ok || !data.secure_url || !data.secure_url.startsWith("https://")) {
+      res.status(502).json({
+        message: data.error?.message || "Image upload to Cloudinary failed.",
+      });
+      return;
+    }
+
+    res.status(201).json({ url: data.secure_url });
+  } catch (err) {
+    console.error("POST /work-orders/:id/payment-proof error:", err);
+    res.status(500).json({ message: "Failed to upload payment photo" });
+  }
+}
+
+export async function postWorkOrderSendReceipt(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const parsed = sendWorkOrderReceiptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const workOrder = await loadAssignableWorkOrder(req, res);
+    if (!workOrder) return;
+
+    const invoice = await Invoice.findOne({
+      workOrderRef: workOrder._id,
+      status: "paid",
+      "offlinePayment.method": { $in: ["check", "cash"] },
+    }).sort({ paidAt: -1 });
+    if (!invoice) {
+      res.status(409).json({
+        message: "This work order has no check or cash payment to send.",
+      });
+      return;
+    }
+
+    if (parsed.data.channel === "email") {
+      const classified = classifyReceiptEmail(parsed.data.email);
+      if (classified.status !== "ok") {
+        res.status(400).json({
+          message:
+            classified.status === "missing"
+              ? "Enter an email address."
+              : "Enter a valid email address.",
+        });
+        return;
+      }
+      if (parsed.data.saveToContact && workOrder.customerRef) {
+        const contact = await CustomerContact.findOne({
+          customerRef: workOrder.customerRef,
+          isPrimary: true,
+          ...activeContactFilter,
+        });
+        if (contact) {
+          contact.email = classified.to;
+          await contact.save();
+        }
+      }
+      const email = await emailInvoiceReceipt({
+        invoice,
+        to: classified.to,
+      });
+      if (email.status === "sent") {
+        logNotificationAsync({
+          entityType: "work_order",
+          action: "updated",
+          entityId: String(workOrder._id),
+          customerRef: workOrder.customerRef ?? null,
+          summary: `Invoice ${invoice.number} emailed to ${email.to}`,
+          ...actorFromRequest(req.user),
+        });
+      }
+      res.json({ email });
+      return;
+    }
+
+    const text = await textInvoiceReceipt({
+      invoice,
+      phone: parsed.data.phone,
+      userId: req.user?.id ?? null,
+      apiBase: requestApiBase(req),
+    });
+    if (text.status === "invalid") {
+      res.status(400).json({ message: "Enter a 10-digit phone number." });
+      return;
+    }
+    if (text.status === "sent") {
+      logNotificationAsync({
+        entityType: "work_order",
+        action: "updated",
+        entityId: String(workOrder._id),
+        customerRef: workOrder.customerRef ?? null,
+        summary: `Invoice ${invoice.number} link texted to ${text.to}`,
+        ...actorFromRequest(req.user),
+      });
+    }
+    res.json({ text });
+  } catch (err) {
+    console.error("POST /work-orders/:id/send-receipt error:", err);
+    res.status(500).json({ message: "Failed to send this invoice" });
+  }
+}
+
 export async function getWorkOrderCompletion(
   req: AuthRequest,
   res: Response,
@@ -1200,6 +1460,10 @@ export async function postWorkOrderComplete(
     const workOrder = await loadAssignableWorkOrder(req, res);
     if (!workOrder) return;
 
+    const actorName =
+      parsed.data.mode === "paid_offline"
+        ? await staffDisplayName(req.user?.id, req.user?.email)
+        : null;
     const result =
       parsed.data.mode === "resend"
         ? await resendWorkOrderInvoice({
@@ -1210,18 +1474,33 @@ export async function postWorkOrderComplete(
             userId: req.user?.id ?? null,
             apiBase: requestApiBase(req),
           })
-        : await completeWorkOrder({
-            workOrder,
-            mode: parsed.data.mode,
-            contactId:
-              parsed.data.mode === "send" ? parsed.data.contactId : undefined,
-            phoneOverride:
-              parsed.data.mode === "send" ? parsed.data.phoneOverride : undefined,
-            emailOverride:
-              parsed.data.mode === "send" ? parsed.data.emailOverride : undefined,
-            userId: req.user?.id ?? null,
-            apiBase: requestApiBase(req),
-          });
+        : parsed.data.mode === "paid_offline"
+          ? await completeWorkOrder({
+              workOrder,
+              mode: "paid_offline",
+              method: parsed.data.method,
+              checkNumber: parsed.data.checkNumber,
+              proofUrl: parsed.data.proofUrl,
+              userId: req.user?.id ?? null,
+              actorName,
+              apiBase: requestApiBase(req),
+            })
+          : await completeWorkOrder({
+              workOrder,
+              mode: parsed.data.mode,
+              contactId:
+                parsed.data.mode === "send" ? parsed.data.contactId : undefined,
+              phoneOverride:
+                parsed.data.mode === "send"
+                  ? parsed.data.phoneOverride
+                  : undefined,
+              emailOverride:
+                parsed.data.mode === "send"
+                  ? parsed.data.emailOverride
+                  : undefined,
+              userId: req.user?.id ?? null,
+              apiBase: requestApiBase(req),
+            });
 
     logNotificationAsync({
       entityType: "work_order",
@@ -1233,22 +1512,33 @@ export async function postWorkOrderComplete(
           ? workOrder.number
             ? `Invoice for work order ${workOrder.number} resent`
             : "Work order invoice resent"
-          : workOrder.number
-            ? `Work order ${workOrder.number} marked complete`
-            : "Work order marked complete",
+          : parsed.data.mode === "paid_offline"
+            ? workOrder.number
+              ? `Work order ${workOrder.number} marked complete (paid by check/cash)`
+              : "Work order marked complete (paid by check/cash)"
+            : workOrder.number
+              ? `Work order ${workOrder.number} marked complete`
+              : "Work order marked complete",
       ...actorFromRequest(req.user),
     });
     if (parsed.data.mode !== "resend" && workOrder.scheduledStart) {
       publishDashboardChanged();
     }
 
+    if (result.offlinePayment) workOrder.paid = true;
     const lean = workOrder.toObject() as unknown as Record<string, unknown>;
     const [enriched] = await enrichWithAddress([lean]);
     res.json({
-      workOrder: enriched,
+      workOrder: result.offlinePayment
+        ? { ...enriched, offlinePayment: result.offlinePayment }
+        : enriched,
       invoice: result.invoice,
       ...(result.payUrl ? { payUrl: result.payUrl } : {}),
       ...(result.delivery ? { delivery: result.delivery } : {}),
+      ...(result.offlinePayment
+        ? { offlinePayment: result.offlinePayment }
+        : {}),
+      ...(result.receipt ? { receipt: result.receipt } : {}),
     });
   } catch (err) {
     if (err instanceof WorkOrderCompletionError) {

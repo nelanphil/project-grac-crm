@@ -569,14 +569,23 @@ export function renderInvoiceTemplateFragment(input: {
   return { html, text: document.text };
 }
 
+function viewLinkPiece(viewUrl?: string): Piece {
+  const href = viewUrl?.trim() ?? "";
+  if (!href) return { html: "", text: "" };
+  const html = `<p style="margin:24px 0 0;text-align:center;text-transform:none;"><a href="${escapeHtml(href)}" style="display:inline-block;background:#231f20;color:#ffffff;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;padding:12px 20px;border-radius:8px;">View or download PDF</a></p>`;
+  return { html, text: `View or download PDF: ${href}` };
+}
+
 export function renderInvoiceTemplateEmail(input: {
   blocks: InvoiceBlock[];
   invoice: InvoiceTemplateEmailDocument;
   unsubscribeUrl?: string;
   unsubscribeNote?: string;
+  viewUrl?: string;
 }): { html: string; text: string } {
   const document = renderInvoiceDocument(input.blocks, input.invoice);
   const documentHtml = document.html;
+  const view = viewLinkPiece(input.viewUrl);
   const unsubscribe = unsubscribePiece(input.unsubscribeUrl, input.unsubscribeNote);
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -586,7 +595,7 @@ export function renderInvoiceTemplateEmail(input: {
       <td align="center" style="padding:24px 12px;">
         <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border:1px solid #e5e5e5;border-radius:12px;">
           <tr>
-            <td style="padding:32px 28px;text-transform:uppercase;">${documentHtml}</td>
+            <td style="padding:32px 28px;text-transform:uppercase;">${documentHtml}${view.html}</td>
           </tr>
         </table>
         ${unsubscribe.html}
@@ -595,6 +604,6 @@ export function renderInvoiceTemplateEmail(input: {
   </table>
 </body>
 </html>`;
-  const text = [document.text, unsubscribe.text].filter(Boolean).join("\n\n");
+  const text = [document.text, view.text, unsubscribe.text].filter(Boolean).join("\n\n");
   return { html, text };
 }

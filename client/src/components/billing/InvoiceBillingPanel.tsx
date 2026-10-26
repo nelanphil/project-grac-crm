@@ -233,6 +233,22 @@ export default function InvoiceBillingPanel({
                   {inv.paidAt
                     ? ` · paid ${new Date(inv.paidAt).toLocaleDateString()}`
                     : ""}
+                  {inv.offlinePayment
+                    ? ` · ${inv.offlinePayment.method === "cash" ? "cash" : "check"}`
+                    : ""}
+                  {inv.offlinePayment?.proofUrl ? (
+                    <>
+                      {" · "}
+                      <a
+                        href={inv.offlinePayment.proofUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="normal-case text-brand-orange underline"
+                      >
+                        Proof
+                      </a>
+                    </>
+                  ) : null}
                 </div>
               </div>
               {inv.status === "open" || inv.status === "failed" ? (

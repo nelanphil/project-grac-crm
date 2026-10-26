@@ -21,6 +21,7 @@ import {
   getInvoices,
   getWorkOrder,
   InvoiceItem,
+  offlinePaymentLabel,
   updateWorkOrder,
   WorkOrderListItem,
 } from "@/lib/api";
@@ -253,6 +254,36 @@ function WorkOrderDetailContent() {
           {order.warnings.map((warning) => (
             <p key={warning}>{warning}</p>
           ))}
+        </div>
+      ) : null}
+
+      {order.offlinePayment ? (
+        <div className="rounded-lg border border-neutral-200 bg-white px-4 py-4 text-sm">
+          <p className="font-semibold text-brand-dark">Payment received</p>
+          <p className="mt-1 text-neutral-700">
+            {offlinePaymentLabel(order.offlinePayment)}
+            {order.offlinePayment.recordedByName
+              ? ` · recorded by ${order.offlinePayment.recordedByName}`
+              : ""}
+            {order.offlinePayment.recordedAt
+              ? ` on ${new Date(order.offlinePayment.recordedAt).toLocaleString()}`
+              : ""}
+          </p>
+          {order.offlinePayment.proofUrl ? (
+            <a
+              href={order.offlinePayment.proofUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-block"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={order.offlinePayment.proofUrl}
+                alt="Payment proof"
+                className="h-24 w-24 rounded-md border object-cover"
+              />
+            </a>
+          ) : null}
         </div>
       ) : null}
 

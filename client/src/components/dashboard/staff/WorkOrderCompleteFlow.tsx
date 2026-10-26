@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import {
   ApiError,
   completeWorkOrder,
   getWorkOrderCompletionCheck,
+  offlinePaymentLabel,
+  sendWorkOrderReceipt,
+  uploadWorkOrderPaymentProof,
+  type InvoiceEmailReceipt,
   type WorkOrderChannelDelivery,
   type WorkOrderCompletionCheck,
   type WorkOrderCompletionContact,
@@ -23,7 +27,8 @@ const quietButton =
 const inputClass =
   "complete-notice-field w-full rounded-md border px-2.5 py-1.5 text-sm";
 
-type Phase = "idle" | "loading" | "blocked" | "choose" | "send" | "done";
+type Phase = "idle" | "loading" | "blocked" | "choose" | "offline" | "send" | "done";
+const MAX_PROOF_BYTES = 10 * 1024 * 1024;
 
 function formatCents(cents: number): string {
   return (cents / 100).toLocaleString("en-US", {
@@ -110,6 +115,15 @@ function deliveryLine(label: string, delivery: WorkOrderChannelDelivery): string
   return `${label} failed: ${delivery.error}`;
 }
 
+function emailWarning(email: InvoiceEmailReceipt): string {
+  if (email.status === "missing") return "The primary contact has no email on file.";
+  if (email.status === "invalid") {
+    return `The primary contact has an invalid email (${email.to}).`;
+  }
+  if (email.status === "skipped" || email.status === "failed") return email.error;
+  return "";
+}
+
 function failureMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
 }
@@ -157,6 +171,23 @@ export default function WorkOrderCompleteFlow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<WorkOrderCompletionResult | null>(null);
+  const [method, setMethod] = useState<"check" | "cash">("check");
+  const [checkNumber, setCheckNumber] = useState("");
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreview, setProofPreview] = useState<string | null>(null);
+  const [canCapture, setCanCapture] = useState(false);
+  const [receiptEmail, setReceiptEmail] = useState("");
+  const [saveReceiptEmail, setSaveReceiptEmail] = useState(true);
+  const [emailDismissed, setEmailDismissed] = useState(false);
+  const [emailSentTo, setEmailSentTo] = useState<string | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [receiptPhone, setReceiptPhone] = useState("");
+  const [textSentTo, setTextSentTo] = useState<string | null>(null);
+  const [textError, setTextError] = useState<string | null>(null);
+  const [receiptBusy, setReceiptBusy] = useState<"email" | "sms" | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const uploadedProof = useRef<{ file: File; url: string } | null>(null);
 
   function applyContact(contact: WorkOrderCompletionContact) {
     setContactId(contact._id);
@@ -216,6 +247,22 @@ export default function WorkOrderCompleteFlow({
   }
 
   useEffect(() => {
+    const media = window.matchMedia("(pointer: coarse)");
+    const sync = () => setCanCapture(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  const proofPreviewRef = useRef<string | null>(null);
+  proofPreviewRef.current = proofPreview;
+  useEffect(() => {
+    return () => {
+      if (proofPreviewRef.current) URL.revokeObjectURL(proofPreviewRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!autoResend || !completed) return;
     let cancelled = false;
     getWorkOrderCompletionCheck(token, orderId)
@@ -255,6 +302,64 @@ export default function WorkOrderCompleteFlow({
     };
   }, [autoStart, orderId, completed, token]);
 
+  function pickProof(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    if (!file) return;
+    const allowed =
+      file.type.startsWith("image/") ||
+      /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name);
+    if (!allowed) {
+      setError("Choose a JPEG, PNG, WebP, or HEIC photo.");
+      return;
+    }
+    if (file.size > MAX_PROOF_BYTES) {
+      setError("Photos must be 10 MB or smaller.");
+      return;
+    }
+    setError(null);
+    setProofFile(file);
+    setProofPreview((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return URL.createObjectURL(file);
+    });
+  }
+
+  async function confirmOffline() {
+    setError(null);
+    let proofUrl: string | undefined;
+    if (proofFile) {
+      setBusy(true);
+      try {
+        if (uploadedProof.current?.file === proofFile) {
+          proofUrl = uploadedProof.current.url;
+        } else {
+          const uploaded = await uploadWorkOrderPaymentProof(
+            token,
+            orderId,
+            proofFile,
+          );
+          uploadedProof.current = { file: proofFile, url: uploaded.url };
+          proofUrl = uploaded.url;
+        }
+      } catch (err) {
+        setError(failureMessage(err, "Failed to upload the payment photo."));
+        setBusy(false);
+        return;
+      }
+    }
+    const number = checkNumber.trim();
+    await finish(
+      {
+        mode: "paid_offline",
+        method,
+        ...(method === "check" && number ? { checkNumber: number } : {}),
+        ...(proofUrl ? { proofUrl } : {}),
+      },
+      "Failed to mark this job complete.",
+    );
+  }
+
   async function finish(
     data:
       | { mode: "pay_now" }
@@ -263,6 +368,12 @@ export default function WorkOrderCompleteFlow({
           contactId: string;
           phoneOverride?: string;
           emailOverride?: string;
+        }
+      | {
+          mode: "paid_offline";
+          method: "check" | "cash";
+          checkNumber?: string;
+          proofUrl?: string;
         },
     fallback: string,
   ) {
@@ -272,12 +383,74 @@ export default function WorkOrderCompleteFlow({
       const next = await completeWorkOrder(token, orderId, data);
       setResent(data.mode === "resend");
       setResult(next);
+      const receipt = next.receipt;
+      setReceiptPhone(receipt?.phone ? phoneFieldValue(receipt.phone) : "");
+      setReceiptEmail(receipt?.email.status === "invalid" ? receipt.email.to : "");
+      setEmailDismissed(false);
+      setEmailSentTo(receipt?.email.status === "sent" ? receipt.email.to : null);
+      setReceiptError(null);
+      setTextSentTo(null);
+      setTextError(null);
       setPhase("done");
       onCompleted(next.workOrder);
     } catch (err) {
       setError(failureMessage(err, fallback));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function sendReceiptEmail() {
+    const email = receiptEmail.trim();
+    if (!hasValidContactEmail(email)) {
+      setReceiptError("Enter a valid email address.");
+      return;
+    }
+    setReceiptBusy("email");
+    setReceiptError(null);
+    try {
+      const next = await sendWorkOrderReceipt(token, orderId, {
+        channel: "email",
+        email,
+        saveToContact: saveReceiptEmail,
+      });
+      if (next.email?.status === "sent") {
+        setEmailSentTo(next.email.to);
+      } else if (next.email?.status === "skipped" || next.email?.status === "failed") {
+        setReceiptError(next.email.error);
+      } else {
+        setReceiptError("Enter a valid email address.");
+      }
+    } catch (err) {
+      setReceiptError(failureMessage(err, "The email was not sent."));
+    } finally {
+      setReceiptBusy(null);
+    }
+  }
+
+  async function sendReceiptText() {
+    if (!isValidUsPhone(receiptPhone)) {
+      setTextError("Enter a 10-digit phone number.");
+      return;
+    }
+    setReceiptBusy("sms");
+    setTextError(null);
+    try {
+      const next = await sendWorkOrderReceipt(token, orderId, {
+        channel: "sms",
+        phone: receiptPhone.trim(),
+      });
+      if (next.text?.status === "sent") {
+        setTextSentTo(next.text.to);
+      } else if (next.text?.status === "failed") {
+        setTextError(next.text.error);
+      } else {
+        setTextError("Enter a 10-digit phone number.");
+      }
+    } catch (err) {
+      setTextError(failureMessage(err, "The text was not sent."));
+    } finally {
+      setReceiptBusy(null);
     }
   }
 
@@ -315,8 +488,20 @@ export default function WorkOrderCompleteFlow({
         <p>
           {resent
             ? `Invoice ${result.invoice.number} was resent.`
-            : `This work order is complete. Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} is ready${result.payUrl ? " to pay" : ""}.`}
+            : result.offlinePayment
+              ? `This work order is complete. Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} was marked paid by ${offlinePaymentLabel(result.offlinePayment)}.`
+              : `This work order is complete. Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} is ready${result.payUrl ? " to pay" : ""}.`}
         </p>
+        {result.offlinePayment?.proofUrl ? (
+          <a
+            href={result.offlinePayment.proofUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`${primaryButton} mt-3 inline-flex`}
+          >
+            View photo
+          </a>
+        ) : null}
         {result.payUrl ? (
           <a
             href={result.payUrl}
@@ -334,6 +519,100 @@ export default function WorkOrderCompleteFlow({
           </ul>
         ) : null}
       </div>
+      {result.offlinePayment && result.receipt ? (
+        <div className="complete-notice space-y-3 rounded-md border px-3 py-3 text-sm">
+          {emailSentTo ? (
+            <p>Invoice emailed to {emailSentTo}.</p>
+          ) : emailDismissed ? (
+            <p>No invoice email will be sent.</p>
+          ) : (
+            <div className="space-y-3">
+              <p className="complete-notice-error">{emailWarning(result.receipt.email)}</p>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide">
+                  Email
+                </span>
+                <input
+                  type="email"
+                  value={receiptEmail}
+                  autoComplete="off"
+                  onChange={(event) => setReceiptEmail(event.target.value)}
+                  className={inputClass}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={saveReceiptEmail}
+                  onChange={(event) => setSaveReceiptEmail(event.target.checked)}
+                />
+                Save to primary contact
+              </label>
+              {receiptError ? <p className="complete-notice-error">{receiptError}</p> : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={receiptBusy !== null}
+                  onClick={() => void sendReceiptEmail()}
+                  className={primaryButton}
+                >
+                  {receiptBusy === "email" ? "Sending…" : "Send email"}
+                </button>
+                <button
+                  type="button"
+                  disabled={receiptBusy !== null}
+                  onClick={() => {
+                    setReceiptError(null);
+                    setEmailDismissed(true);
+                  }}
+                  className={quietButton}
+                >
+                  No email
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="space-y-2">
+            {textSentTo ? (
+              <p>Link texted to {textSentTo}.</p>
+            ) : (
+              <>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold uppercase tracking-wide">
+                    Text invoice link
+                  </span>
+                  <input
+                    value={receiptPhone}
+                    inputMode="tel"
+                    autoComplete="off"
+                    onChange={(event) =>
+                      setReceiptPhone(formatUsPhoneInput(event.target.value))
+                    }
+                    className={inputClass}
+                  />
+                </label>
+                {textError ? <p className="complete-notice-error">{textError}</p> : null}
+                <button
+                  type="button"
+                  disabled={receiptBusy !== null}
+                  onClick={() => void sendReceiptText()}
+                  className={quietButton}
+                >
+                  {receiptBusy === "sms" ? "Sending…" : "Text invoice link"}
+                </button>
+              </>
+            )}
+          </div>
+          <button
+            type="button"
+            disabled={receiptBusy !== null}
+            onClick={() => setPhase("idle")}
+            className={primaryButton}
+          >
+            Done
+          </button>
+        </div>
+      ) : null}
       </div>
     );
   }
@@ -373,6 +652,7 @@ export default function WorkOrderCompleteFlow({
   const contacts = reachableContacts(check?.contacts ?? []);
   const contact = contacts.find((row) => row._id === contactId) ?? null;
   const amount = formatCents(check?.totalCents ?? 0);
+  const contactSendBlocked = Boolean(check?.sendBlockedReason);
 
   if (phase === "choose") {
     return (
@@ -381,11 +661,14 @@ export default function WorkOrderCompleteFlow({
           Completing this work order will generate an invoice for {amount} to be
           paid by the customer.
         </p>
+        {contactSendBlocked ? (
+          <p className="complete-notice-error mt-2">{check?.sendBlockedReason}</p>
+        ) : null}
         {error ? <p className="complete-notice-error mt-2 text-sm">{error}</p> : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || contactSendBlocked}
             onClick={() => void finish({ mode: "pay_now" }, "Failed to mark this job complete.")}
             className={primaryButton}
           >
@@ -393,7 +676,7 @@ export default function WorkOrderCompleteFlow({
           </button>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || contactSendBlocked}
             onClick={() => {
               const next = contacts.find((row) => row.isPrimary) ?? contacts[0];
               if (next) applyContact(next);
@@ -409,11 +692,148 @@ export default function WorkOrderCompleteFlow({
             disabled={busy}
             onClick={() => {
               setError(null);
+              setPhase("offline");
+            }}
+            className={quietButton}
+          >
+            Paid Check/Cash
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setError(null);
               setPhase("idle");
             }}
             className={quietButton}
           >
             Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "offline") {
+    return (
+      <div className="complete-notice space-y-3 rounded-md border px-3 py-3 text-sm">
+        <p>Confirm that {amount} was received by check or cash.</p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setMethod("check")}
+            className={method === "check" ? primaryButton : quietButton}
+          >
+            Check
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setMethod("cash")}
+            className={method === "cash" ? primaryButton : quietButton}
+          >
+            Cash
+          </button>
+        </div>
+        {method === "check" ? (
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide">
+              Check number (optional)
+            </span>
+            <input
+              value={checkNumber}
+              autoComplete="off"
+              onChange={(event) => setCheckNumber(event.target.value)}
+              className={inputClass}
+            />
+          </label>
+        ) : null}
+        <div>
+          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide">
+            Photo (optional)
+          </span>
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={pickProof}
+          />
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={pickProof}
+          />
+          <div className="flex flex-wrap gap-2">
+            {canCapture ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => cameraInputRef.current?.click()}
+                className={quietButton}
+              >
+                Take photo
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => uploadInputRef.current?.click()}
+              className={quietButton}
+            >
+              Upload photo
+            </button>
+          </div>
+          {proofPreview ? (
+            <div className="mt-2 flex items-start gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={proofPreview}
+                alt="Payment proof preview"
+                className="h-24 w-24 rounded-md border object-cover"
+              />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  uploadedProof.current = null;
+                  setProofFile(null);
+                  setProofPreview((current) => {
+                    if (current) URL.revokeObjectURL(current);
+                    return null;
+                  });
+                }}
+                className={quietButton}
+              >
+                Remove
+              </button>
+            </div>
+          ) : null}
+        </div>
+        {error ? <p className="complete-notice-error">{error}</p> : null}
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void confirmOffline()}
+            className={primaryButton}
+          >
+            {busy ? "Saving…" : "Confirm"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setError(null);
+              setPhase("choose");
+            }}
+            className={quietButton}
+          >
+            Back
           </button>
         </div>
       </div>

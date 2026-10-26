@@ -11,6 +11,9 @@ import {
   restoreWorkOrder,
   getWorkOrderCompletion,
   postWorkOrderComplete,
+  postWorkOrderPaymentProof,
+  postWorkOrderSendReceipt,
+  uploadWorkOrderPaymentProofMiddleware,
 } from "../controllers/workOrder.controller";
 import {
   getRecentWorkOrderNotes,
@@ -42,6 +45,17 @@ router.post(
   "/:id/complete",
   requirePermission("jobs:write"),
   postWorkOrderComplete,
+);
+router.post(
+  "/:id/payment-proof",
+  requirePermission("jobs:write"),
+  uploadWorkOrderPaymentProofMiddleware,
+  postWorkOrderPaymentProof,
+);
+router.post(
+  "/:id/send-receipt",
+  requirePermission("jobs:write"),
+  postWorkOrderSendReceipt,
 );
 router.get("/:id", getWorkOrderById);
 router.post("/", createWorkOrder);

@@ -2306,6 +2306,7 @@ export interface WorkOrderListItem {
   warnings?: string[];
   scheduleNote?: string | null;
   deletedAt?: string | null;
+  offlinePayment?: OfflinePayment | null;
 }
 
 export type ServiceTicketPayload = {
@@ -2483,9 +2484,27 @@ export interface WorkOrderCompletionContact {
   isPrimary: boolean;
 }
 
+export interface OfflinePayment {
+  method: "check" | "cash";
+  checkNumber: string | null;
+  proofUrl: string | null;
+  recordedByUserId: string | null;
+  recordedByName: string | null;
+  recordedAt: string | null;
+}
+
+export function offlinePaymentLabel(
+  payment: Pick<OfflinePayment, "method" | "checkNumber">,
+): string {
+  if (payment.method === "cash") return "Cash";
+  const number = payment.checkNumber?.trim();
+  return number ? `Check #${number}` : "Check";
+}
+
 export interface WorkOrderCompletionCheck {
   totalCents: number;
   blockedReason: string | null;
+  sendBlockedReason: string | null;
   invoiceOpen: boolean;
   contacts: WorkOrderCompletionContact[];
 }
@@ -2495,6 +2514,25 @@ export type WorkOrderChannelDelivery =
   | { status: "failed"; error: string }
   | { status: "skipped" };
 
+export type InvoiceEmailReceipt =
+  | { status: "sent"; to: string }
+  | { status: "missing" }
+  | { status: "invalid"; to: string }
+  | { status: "skipped"; error: string }
+  | { status: "failed"; error: string };
+
+export type InvoiceTextReceipt =
+  | { status: "sent"; to: string }
+  | { status: "invalid" }
+  | { status: "failed"; error: string };
+
+export interface WorkOrderReceiptDelivery {
+  email: InvoiceEmailReceipt;
+  phone: string;
+  phoneValid: boolean;
+  viewUrl: string;
+}
+
 export interface WorkOrderCompletionResult {
   workOrder: WorkOrderListItem;
   invoice: { _id: string; number: string; amountCents: number };
@@ -2503,6 +2541,8 @@ export interface WorkOrderCompletionResult {
     sms: WorkOrderChannelDelivery;
     email: WorkOrderChannelDelivery;
   };
+  offlinePayment?: OfflinePayment;
+  receipt?: WorkOrderReceiptDelivery;
 }
 
 export async function getWorkOrderCompletionCheck(
@@ -2525,6 +2565,12 @@ export async function completeWorkOrder(
         contactId: string;
         phoneOverride?: string;
         emailOverride?: string;
+      }
+    | {
+        mode: "paid_offline";
+        method: "check" | "cash";
+        checkNumber?: string;
+        proofUrl?: string;
       },
 ): Promise<WorkOrderCompletionResult> {
   return authRequest<WorkOrderCompletionResult>(`/work-orders/${id}/complete`, {
@@ -2532,6 +2578,47 @@ export async function completeWorkOrder(
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
+}
+
+export async function uploadWorkOrderPaymentProof(
+  token: string,
+  id: string,
+  file: File,
+): Promise<{ url: string }> {
+  const payload = new FormData();
+  payload.append("file", file);
+  return authRequest<{ url: string }>(`/work-orders/${id}/payment-proof`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: payload,
+  });
+}
+
+export async function sendWorkOrderReceipt(
+  token: string,
+  id: string,
+  data:
+    | { channel: "email"; email: string; saveToContact?: boolean }
+    | { channel: "sms"; phone: string },
+): Promise<{ email?: InvoiceEmailReceipt; text?: InvoiceTextReceipt }> {
+  return authRequest<{ email?: InvoiceEmailReceipt; text?: InvoiceTextReceipt }>(
+    `/work-orders/${id}/send-receipt`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
+}
+
+export async function getPublicInvoiceView(token: string): Promise<{
+  invoice: InvoiceItem;
+  blocks: unknown;
+}> {
+  return authRequest<{ invoice: InvoiceItem; blocks: unknown }>(
+    `/invoice-view/${encodeURIComponent(token)}`,
+    { method: "GET" },
+  );
 }
 
 export async function updateWorkOrder(
@@ -3337,6 +3424,7 @@ export interface InvoiceItem {
   issuedAt: string;
   paidAt: string | null;
   paymentProvider: "square" | "stripe" | "paypal" | null;
+  offlinePayment?: OfflinePayment | null;
   providerCheckoutId: string | null;
   providerOrderId: string | null;
   providerPaymentId: string | null;
