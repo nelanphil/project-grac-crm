@@ -293,6 +293,7 @@ const NAV_GRANT_RULES: {
 }[] = [
   { href: "/dashboard/leads", excludeRoles: ["customer"] },
   { href: "/dashboard/messaging", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/inboxes", includeRoles: ["admin", "super-admin"] },
   { href: "/dashboard/control-panel", includeRoles: ["admin", "super-admin"] },
   { href: "/dashboard/customers", excludeRoles: ["customer"] },
   { href: "/dashboard/contact", excludeRoles: ["customer"] },

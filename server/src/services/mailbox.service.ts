@@ -39,6 +39,7 @@ export type MailboxAttachmentMeta = {
   filename: string;
   size: number;
   contentType: string;
+  partId?: string;
 };
 
 export type MailboxMessageDetail = MailboxMessageSummary & {
@@ -1013,4 +1014,124 @@ export async function listImapThreadMessages(
 
     return [...byKey.values()];
   });
+}
+
+function attachmentMeta(
+  files: { filename?: string; size?: number; contentType?: string; contentId?: string }[],
+): MailboxAttachmentMeta[] {
+  return files.map((file, index) => ({
+    filename: file.filename || "attachment",
+    size: file.size || 0,
+    contentType: file.contentType || "application/octet-stream",
+    partId: file.contentId || String(index),
+  }));
+}
+
+async function readFetchedMessage(msg: {
+  uid: number;
+  flags?: Set<string>;
+  envelope?: {
+    inReplyTo?: string;
+    subject?: string;
+    messageId?: string;
+    from?: { name?: string; address?: string }[];
+    to?: { name?: string; address?: string }[];
+    cc?: { name?: string; address?: string }[];
+    date?: Date | string;
+  };
+  internalDate?: Date | string;
+  source?: Buffer;
+}): Promise<MailboxMessageDetail | null> {
+  if (!msg.source) return null;
+  const parsed = await simpleParser(msg.source);
+  const summary = toSummary(msg);
+  const text = (parsed.text || "").slice(0, MAX_TEXT);
+  const rawHtml = typeof parsed.html === "string" ? parsed.html : "";
+  return {
+    ...summary,
+    messageId: parsed.messageId?.trim() || summary.messageId,
+    inReplyTo: parsed.inReplyTo?.trim() || summary.inReplyTo,
+    references: referenceList(parsed.references),
+    snippet: text.replace(/\s+/g, " ").trim().slice(0, 160) || summary.snippet,
+    text,
+    html: rawHtml ? sanitizeInboundEmailHtml(rawHtml.slice(0, MAX_HTML)) : "",
+    attachments: attachmentMeta(parsed.attachments ?? []),
+  };
+}
+
+async function collectInbox(
+  account: IEmailAccount,
+  search: Record<string, unknown>,
+  limit: number,
+): Promise<MailboxMessageDetail[]> {
+  const capped = Math.min(Math.max(limit, 1), 50);
+  return withMailboxClient(account, async (client) => {
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      const found = await client.search(search as never, { uid: true });
+      if (!Array.isArray(found) || found.length === 0) return [];
+      const uids = found.sort((left, right) => left - right).slice(0, capped);
+      const rows: MailboxMessageDetail[] = [];
+      for await (const msg of client.fetch(
+        uids,
+        {
+          uid: true,
+          flags: true,
+          envelope: true,
+          internalDate: true,
+          source: true,
+        },
+        { uid: true },
+      )) {
+        const detail = await readFetchedMessage(msg);
+        if (detail) rows.push(detail);
+      }
+      rows.sort((left, right) => left.uid - right.uid);
+      return rows;
+    } finally {
+      lock.release();
+    }
+  });
+}
+
+/** Highest UID currently in INBOX, or 0 when the mailbox is empty. */
+export async function highestInboxUid(account: IEmailAccount): Promise<number> {
+  return withMailboxClient(account, async (client) => {
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      const box = client.mailbox;
+      const exists = box && typeof box === "object" ? box.exists : 0;
+      if (!exists) return 0;
+      const msg = await client.fetchOne(String(exists), { uid: true });
+      if (!msg) return 0;
+      return msg.uid ?? 0;
+    } finally {
+      lock.release();
+    }
+  });
+}
+
+/** INBOX messages with a UID greater than `afterUid`, oldest first. Does not mark them seen. */
+export async function listInboxMessagesAfterUid(
+  account: IEmailAccount,
+  afterUid: number,
+  limit: number,
+): Promise<MailboxMessageDetail[]> {
+  const start = Math.max(afterUid, 0) + 1;
+  return collectInbox(account, { uid: `${start}:*` }, limit);
+}
+
+/** INBOX messages since a date, optionally after a UID. Does not mark them seen. */
+export async function listInboxMessagesSince(
+  account: IEmailAccount,
+  since: Date,
+  afterUid: number,
+  limit: number,
+): Promise<MailboxMessageDetail[]> {
+  const start = Math.max(afterUid, 0) + 1;
+  return collectInbox(
+    account,
+    { since, uid: `${start}:*` },
+    limit,
+  );
 }

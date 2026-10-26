@@ -59,7 +59,7 @@ export async function sendMailboxReply(input: {
       subject: original.subject,
     },
   });
-  const headers = {
+  const headers: Record<string, string> = {
     ...(input.mode === "forward"
       ? {}
       : threadingHeaders({
@@ -101,6 +101,23 @@ export async function sendMailboxReply(input: {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Sent copy failed.";
     console.error("[mailbox] could not append sent copy:", message);
+  }
+
+  try {
+    const { recordSentMailboxEmail } = await import("./emailInboxSync.service");
+    await recordSentMailboxEmail({
+      account: input.account,
+      to: input.to,
+      subject: input.subject,
+      html,
+      text: htmlToPlainText(html),
+      messageId: result.messageId,
+      inReplyTo: headers["In-Reply-To"],
+      references: headers.References ? headers.References.split(/\s+/) : [],
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Email log failed.";
+    console.error("[inboxes] could not store sent email:", message);
   }
 
   return { sent: true, savedToSent };

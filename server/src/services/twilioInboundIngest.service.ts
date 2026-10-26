@@ -18,6 +18,7 @@ import {
 } from "./customerActivity.service";
 import type { RecordActivityInput } from "./customerActivity.service";
 import { normalizePhoneDigits } from "../utils/customerSites";
+import { touchFromTwilio } from "./inboxConversation.service";
 import { listedPhoneNumbers } from "../utils/twilioPhoneLines";
 import {
   formatVoicemailLine,
@@ -232,6 +233,10 @@ export async function ingestInboundMessage(opts: {
   });
   const threadRef = thread._id;
   const stamps = timestampWrite(opts.occurredAt);
+  const prior = await TwilioCommunication.exists({
+    accountSid: opts.account.accountSid,
+    twilioSid: opts.twilioSid,
+  });
 
   const doc = await TwilioCommunication.findOneAndUpdate(
     { accountSid: opts.account.accountSid, twilioSid: opts.twilioSid },
@@ -271,6 +276,14 @@ export async function ingestInboundMessage(opts: {
     },
     Boolean(opts.occurredAt),
   );
+
+  if (doc) {
+    await touchFromTwilio(doc, {
+      countUnread: !prior && !backfilled,
+      publish: !backfilled,
+      reopen: !backfilled,
+    });
+  }
 
   if (customerRef && doc) {
     const preview = body.trim().slice(0, 80);
@@ -443,6 +456,25 @@ export async function ingestInboundVoice(opts: {
     },
     { upsert: true, new: true, timestamps: stamps.timestamps },
   );
+
+  if (doc) {
+    await touchFromTwilio(
+      {
+        customerRef: doc.customerRef,
+        fromNumber: doc.fromNumber,
+        toNumber: doc.toNumber,
+        direction: doc.direction,
+        channel: doc.channel,
+        body: typeof $set.body === "string" ? $set.body : doc.body,
+        createdAt: doc.createdAt,
+      },
+      {
+        countUnread: !existing && !backfilled,
+        publish: !backfilled,
+        reopen: !backfilled,
+      },
+    );
+  }
 
   const preview =
     (typeof $set.body === "string" && $set.body) ||

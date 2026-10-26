@@ -1,5 +1,6 @@
 import { EmailAccount, IEmailAccount } from "../models/mongo/EmailAccount";
 import { publishDashboardChanged } from "./dashboardLive";
+import { syncAccountInbox } from "./emailInboxSync.service";
 import { watchInboxIdle } from "./mailbox.service";
 
 type IdleSession = {
@@ -25,15 +26,26 @@ function accountKey(account: IEmailAccount): string {
   ].join("|");
 }
 
+function syncAccount(account: IEmailAccount): void {
+  void syncAccountInbox(String(account._id)).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[inbox-email] ${account.username}: ${message}`);
+  });
+}
+
 async function runAccount(
   account: IEmailAccount,
   signal: AbortSignal,
 ): Promise<void> {
   let delay = 2_000;
+  syncAccount(account);
   while (!signal.aborted && !stopped) {
     const started = Date.now();
     try {
-      await watchInboxIdle(account, signal, () => publishDashboardChanged());
+      await watchInboxIdle(account, signal, () => {
+        syncAccount(account);
+        publishDashboardChanged();
+      });
       if (signal.aborted || stopped) return;
       if (Date.now() - started < 1_000) {
         await sleep(delay);

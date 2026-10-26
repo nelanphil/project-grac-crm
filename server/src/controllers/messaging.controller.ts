@@ -28,6 +28,7 @@ import {
 } from "../utils/scheduledEmail";
 import { unreadTextQuery } from "../utils/unreadMessageThread";
 import { recordCustomerActivityAsync } from "../services/customerActivity.service";
+import { touchFromTwilio } from "../services/inboxConversation.service";
 import {
   MERGE_FIELDS,
   templateUsesPaymentLink,
@@ -448,7 +449,7 @@ export async function dispatchMessagingBatch(
         }
 
         if (!toE164Number) {
-          await TwilioCommunication.create({
+          const failedMessage = await TwilioCommunication.create({
             twilioAccountRef: account._id,
             accountSid: account.accountSid,
             channel,
@@ -472,6 +473,11 @@ export async function dispatchMessagingBatch(
             channel,
             body: rendered,
             at: new Date(),
+          });
+          await touchFromTwilio(failedMessage, {
+            countUnread: false,
+            publish: true,
+            actorUserId: userId,
           });
           return {
             contactId,
@@ -533,6 +539,11 @@ export async function dispatchMessagingBatch(
             body: rendered,
             at: new Date(),
           });
+          await touchFromTwilio(sentMessage, {
+            countUnread: false,
+            publish: true,
+            actorUserId: userId,
+          });
 
           return {
             contactId,
@@ -548,7 +559,7 @@ export async function dispatchMessagingBatch(
                 ? err.message
                 : "Send failed";
 
-          await TwilioCommunication.create({
+          const failedSend = await TwilioCommunication.create({
             twilioAccountRef: account._id,
             accountSid: account.accountSid,
             channel,
@@ -570,6 +581,11 @@ export async function dispatchMessagingBatch(
             channel,
             body: rendered,
             at: new Date(),
+          });
+          await touchFromTwilio(failedSend, {
+            countUnread: false,
+            publish: true,
+            actorUserId: userId,
           });
 
           return {
@@ -1054,6 +1070,11 @@ export async function placeCall(
         body: sayText,
         at: new Date(),
       });
+      await touchFromTwilio(doc, {
+        countUnread: false,
+        publish: true,
+        actorUserId: userId,
+      });
 
       res.status(201).json({
         communication: toPublicCommunication(doc, {
@@ -1070,7 +1091,7 @@ export async function placeCall(
             ? err.message
             : "Call failed";
 
-      await TwilioCommunication.create({
+      const failedCall = await TwilioCommunication.create({
         twilioAccountRef: account._id,
         accountSid: account.accountSid,
         channel: "voice",
@@ -1091,6 +1112,11 @@ export async function placeCall(
         channel: "voice",
         body: sayText,
         at: new Date(),
+      });
+      await touchFromTwilio(failedCall, {
+        countUnread: false,
+        publish: true,
+        actorUserId: userId,
       });
 
       res.status(400).json({ message: errorMessage });

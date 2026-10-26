@@ -27,6 +27,8 @@ import {
 } from "../utils/messagingContext";
 import { createPaymentLinkCache } from "../utils/paymentLinkForCustomer";
 import { recordCustomerActivityAsync } from "./customerActivity.service";
+import { touchFromEmail } from "./inboxConversation.service";
+import { normalizeMessageId } from "../utils/mailboxReply";
 import {
   resolveOfferContractTemplateId,
   type OfferContractOverride,
@@ -388,8 +390,12 @@ export async function dispatchStaffEmailBatch(
           headers: listUnsubscribeHeaders(toEmail, "general"),
         });
 
+        const messageId = sent.messageId
+          ? normalizeMessageId(sent.messageId)
+          : "";
         const row = await EmailCommunication.create({
           emailAccountRef: account._id,
+          direction: "outbound",
           fromName: sendFromName,
           fromEmail: account.fromEmail,
           toEmail,
@@ -398,11 +404,18 @@ export async function dispatchStaffEmailBatch(
           html: wrapped.html,
           status: "sent",
           providerMessageId: sent.messageId ?? null,
+          messageId,
+          receivedAt: new Date(),
           errorMessage: null,
           customerRef,
           contactRef,
           templateRef,
           createdByUserRef: userId,
+        });
+        await touchFromEmail(row, {
+          countUnread: false,
+          publish: true,
+          actorUserId: userId ? String(userId) : null,
         });
         if (customerRef) {
           recordCustomerActivityAsync({
@@ -431,6 +444,7 @@ export async function dispatchStaffEmailBatch(
 
         const row = await EmailCommunication.create({
           emailAccountRef: account._id,
+          direction: "outbound",
           fromName: sendFromName,
           fromEmail: account.fromEmail,
           toEmail,
@@ -444,6 +458,11 @@ export async function dispatchStaffEmailBatch(
           contactRef,
           templateRef,
           createdByUserRef: userId,
+        });
+        await touchFromEmail(row, {
+          countUnread: false,
+          publish: true,
+          actorUserId: userId ? String(userId) : null,
         });
 
         return {

@@ -8,6 +8,7 @@ import {
   ScrollText,
   Settings2,
   MessageSquare,
+  Inbox,
   Map,
   MapPin,
   ShieldCheck,
@@ -63,6 +64,12 @@ export const NAV_SECTIONS: NavSection[] = [
         href: "/dashboard/messaging",
         label: "Messages",
         icon: MessageSquare,
+        includeRoles: ["admin", "super-admin"],
+      },
+      {
+        href: "/dashboard/inboxes",
+        label: "Inboxes",
+        icon: Inbox,
         includeRoles: ["admin", "super-admin"],
       },
       {

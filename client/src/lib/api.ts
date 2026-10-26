@@ -7643,3 +7643,301 @@ export async function getDatabaseDocuments(
     },
   );
 }
+
+export type InboxChannel = "sms" | "mms" | "voice" | "email";
+export type InboxHandleKind = "phone" | "email";
+
+export interface InboxConversationItem {
+  id: string;
+  customerId: string | null;
+  displayName: string;
+  handle: string;
+  handleKind: InboxHandleKind;
+  phone: string;
+  email: string;
+  lastMessageAt: string | null;
+  lastPreview: string;
+  lastChannel: InboxChannel | null;
+  lastDirection: "inbound" | "outbound" | null;
+  unreadCount: number;
+  status: "open" | "closed";
+  readAt: string | null;
+  readByName: string | null;
+  ourNumber: string;
+  emailAccountId: string | null;
+}
+
+export interface InboxTimelineMessage {
+  id: string;
+  channel: InboxChannel;
+  direction: "inbound" | "outbound";
+  at: string;
+  body: string;
+  html: string;
+  subject: string;
+  status: string;
+  from: string;
+  to: string;
+  senderName: string;
+  mediaUrls: string[];
+  attachments: {
+    filename: string;
+    size: number;
+    contentType: string;
+    partId: string;
+  }[];
+  durationSeconds: number | null;
+  transcript: string;
+  emailAccountId: string | null;
+  imapUid: number | null;
+}
+
+export interface InboxContext {
+  customer: {
+    id: string;
+    name: string;
+    phone: string;
+    email: string;
+    address: string;
+  } | null;
+  contacts: {
+    id: string;
+    name: string;
+    phone: string;
+    email: string;
+    label: string;
+    isPrimary: boolean;
+  }[];
+  workOrders: {
+    id: string;
+    number: string;
+    summary: string;
+    scheduledStart: string | null;
+    total: number;
+  }[];
+  invoices: {
+    id: string;
+    number: string;
+    amountCents: number;
+    status: string;
+    dueDate: string | null;
+  }[];
+  notes: {
+    id: string;
+    content: string;
+    authorName: string;
+    createdAt: string;
+  }[];
+}
+
+export interface InboxChannels {
+  twilioAccounts: {
+    id: string;
+    friendlyName: string;
+    numbers: { phoneNumber: string; label: string }[];
+  }[];
+  emailAccounts: {
+    id: string;
+    friendlyName: string;
+    fromEmail: string;
+    fromName: string;
+  }[];
+}
+
+export interface InboxTemplate {
+  id: string;
+  name: string;
+  type: "sms" | "email";
+  subject: string;
+  body: string;
+}
+
+function inboxQuery(params: Record<string, string | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) search.set(key, value);
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export async function getInboxConversations(
+  token: string,
+  options: {
+    status?: "open" | "closed" | "all";
+    filter?: "" | "unread" | "unresponded";
+    channel?: "" | "text" | "email" | "voice" | "sms" | "mms";
+    q?: string;
+    cursor?: string;
+  } = {},
+): Promise<{ conversations: InboxConversationItem[]; nextCursor: string | null }> {
+  return authRequest(
+    `/inboxes/conversations${inboxQuery({
+      status: options.status,
+      filter: options.filter,
+      channel: options.channel,
+      q: options.q,
+      cursor: options.cursor,
+    })}`,
+    { method: "GET", headers: { Authorization: `Bearer ${token}` } },
+  );
+}
+
+export async function getInboxTimeline(
+  token: string,
+  id: string,
+  before?: string,
+): Promise<{
+  conversation: InboxConversationItem | null;
+  messages: InboxTimelineMessage[];
+  hasMore: boolean;
+  nextBefore: string | null;
+}> {
+  return authRequest(
+    `/inboxes/conversations/${id}/timeline${inboxQuery({ before })}`,
+    { method: "GET", headers: { Authorization: `Bearer ${token}` } },
+  );
+}
+
+export async function markInboxConversationRead(
+  token: string,
+  id: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/conversations/${id}/read`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function closeInboxConversation(
+  token: string,
+  id: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/conversations/${id}/close`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function reopenInboxConversation(
+  token: string,
+  id: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/conversations/${id}/reopen`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function sendInboxSms(
+  token: string,
+  id: string,
+  data: {
+    body?: string;
+    templateId?: string;
+    contactId?: string;
+    toNumber?: string;
+    fromNumber?: string;
+    twilioAccountId?: string;
+  },
+): Promise<{ summary?: { sent: number; failed: number } }> {
+  return authRequest(`/inboxes/conversations/${id}/sms`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function sendInboxEmail(
+  token: string,
+  id: string,
+  data: {
+    body: string;
+    subject?: string;
+    emailAccountId?: string;
+    contactId?: string;
+    to?: string;
+    templateId?: string;
+  },
+): Promise<{ sent: boolean }> {
+  return authRequest(`/inboxes/conversations/${id}/email`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function callInboxConversation(
+  token: string,
+  id: string,
+  data: { contactId?: string; fromNumber?: string; twilioAccountId?: string } = {},
+): Promise<{ sent: boolean }> {
+  return authRequest(`/inboxes/conversations/${id}/call`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function linkInboxCustomer(
+  token: string,
+  id: string,
+  customerId: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/conversations/${id}/link-customer`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ customerId }),
+  });
+}
+
+export async function getInboxContext(
+  token: string,
+  id: string,
+): Promise<InboxContext> {
+  return authRequest(`/inboxes/conversations/${id}/context`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function addInboxNote(
+  token: string,
+  id: string,
+  content: string,
+): Promise<{ note: InboxContext["notes"][number] }> {
+  return authRequest(`/inboxes/conversations/${id}/context`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function searchInboxCustomers(
+  token: string,
+  q: string,
+): Promise<{
+  customers: { id: string; name: string; phone: string; email: string }[];
+}> {
+  return authRequest(`/inboxes/customers${inboxQuery({ q })}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getInboxChannels(token: string): Promise<InboxChannels> {
+  return authRequest("/inboxes/channels", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getInboxTemplates(
+  token: string,
+  type?: "sms" | "email",
+): Promise<{ templates: InboxTemplate[] }> {
+  return authRequest(`/inboxes/templates${inboxQuery({ type })}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}

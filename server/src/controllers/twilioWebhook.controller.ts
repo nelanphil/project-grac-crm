@@ -13,6 +13,7 @@ import {
 } from "../services/twilio.service";
 import { touchThreadAfterMessage } from "../utils/messageThreads";
 import { publishDashboardChanged } from "../services/dashboardLive";
+import { touchFromTwilio } from "../services/inboxConversation.service";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
 import {
   formatVoicemailLine,
@@ -316,6 +317,13 @@ export async function statusWebhook(
         });
       }
 
+      if (existing.channel === "voice") {
+        const fresh = await TwilioCommunication.findById(existing._id);
+        if (fresh) {
+          await touchFromTwilio(fresh, { countUnread: false, publish: true });
+        }
+      }
+
       res.status(200).send("OK");
       return;
     }
@@ -367,6 +375,10 @@ export async function statusWebhook(
         body,
         transcript: storedTranscript,
         at: doc.createdAt ?? new Date(),
+      });
+      await touchFromTwilio(doc, {
+        countUnread: resolved.direction === "inbound",
+        publish: true,
       });
 
       res.status(200).send("OK");

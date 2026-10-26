@@ -25,6 +25,8 @@ export interface IEmailAccount extends Document {
   /** Receipts are only sent for mail that arrives after this time. */
   autoAcknowledgeEnabledAt: Date | null;
   roles: EmailAccountRole[];
+  /** Highest INBOX UID already copied into EmailCommunication. 0 until the first baseline. */
+  lastSyncedUid: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -102,6 +104,10 @@ const emailAccountSchema = new Schema<IEmailAccount>(
       enum: EMAIL_ACCOUNT_ROLES,
       default: [],
       index: true,
+    },
+    lastSyncedUid: {
+      type: Number,
+      default: 0,
     },
   },
   { timestamps: true }
