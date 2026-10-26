@@ -461,3 +461,156 @@ export async function configureIncomingNumbersWebhooks(
     }
   }
 }
+
+export type TwilioInboundMessage = {
+  sid: string;
+  from: string;
+  to: string;
+  body: string;
+  mediaUrls: string[];
+  status: string;
+  date: Date;
+};
+
+export type TwilioInboundCall = {
+  sid: string;
+  parentCallSid: string;
+  from: string;
+  to: string;
+  status: string;
+  durationSeconds: number | null;
+  date: Date;
+};
+
+export type TwilioCallRecording = {
+  sid: string;
+  url: string;
+  durationSeconds: number | null;
+};
+
+function twilioApiUrl(uri: string): string {
+  const trimmed = uri.trim();
+  if (!trimmed) return "";
+  const path = trimmed.replace(/\.json$/, "");
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  return `https://api.twilio.com${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function asDate(value: Date | string | null | undefined): Date | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function durationSeconds(raw: string | null | undefined): number | null {
+  if (raw == null || raw === "") return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Inbound SMS/MMS sent to one of our numbers on or after `since`. */
+export async function listInboundMessages(
+  account: ITwilioAccount,
+  params: { to: string; since: Date },
+): Promise<TwilioInboundMessage[]> {
+  const { accountSid, authToken } = resolveCredentials(account);
+  const client = twilio(accountSid, authToken);
+  try {
+    const messages = await client.messages.list({
+      to: params.to,
+      dateSentAfter: params.since,
+      pageSize: 200,
+    });
+    const inbound = messages.filter((message) => message.direction === "inbound");
+    const out: TwilioInboundMessage[] = [];
+    for (const message of inbound) {
+      const numMedia = parseInt(message.numMedia || "0", 10) || 0;
+      let mediaUrls: string[] = [];
+      if (numMedia > 0) {
+        try {
+          const media = await client.messages(message.sid).media.list({ limit: 20 });
+          mediaUrls = media
+            .map((item) => twilioApiUrl(item.uri || ""))
+            .filter(Boolean);
+        } catch (err) {
+          console.warn(
+            `[twilio] Could not list media for ${message.sid}:`,
+            err,
+          );
+        }
+      }
+      out.push({
+        sid: message.sid,
+        from: message.from || "",
+        to: message.to || "",
+        body: message.body || "",
+        mediaUrls,
+        status: message.status || "received",
+        date:
+          asDate(message.dateSent) ||
+          asDate(message.dateCreated) ||
+          params.since,
+      });
+    }
+    return out;
+  } catch (err) {
+    if (err instanceof TwilioServiceError) throw err;
+    throw new TwilioServiceError(safeTwilioMessage(err, authToken));
+  }
+}
+
+/** Inbound calls to one of our numbers that started on or after `since`. */
+export async function listInboundCalls(
+  account: ITwilioAccount,
+  params: { to: string; since: Date },
+): Promise<TwilioInboundCall[]> {
+  const { accountSid, authToken } = resolveCredentials(account);
+  const client = twilio(accountSid, authToken);
+  try {
+    const calls = await client.calls.list({
+      to: params.to,
+      startTimeAfter: params.since,
+      pageSize: 200,
+    });
+    return calls
+      .filter((call) => call.direction === "inbound")
+      .map((call) => ({
+        sid: call.sid,
+        parentCallSid: (call.parentCallSid || "").trim(),
+        from: call.from || "",
+        to: call.to || "",
+        status: call.status || "",
+        durationSeconds: durationSeconds(call.duration),
+        date:
+          asDate(call.startTime) || asDate(call.dateCreated) || params.since,
+      }));
+  } catch (err) {
+    throw new TwilioServiceError(safeTwilioMessage(err, authToken));
+  }
+}
+
+/** Recordings saved on a call, oldest first as Twilio returns them. */
+export async function listCallRecordings(
+  account: ITwilioAccount,
+  callSid: string,
+): Promise<TwilioCallRecording[]> {
+  const sid = callSid.trim();
+  if (!sid) return [];
+  const { accountSid, authToken } = resolveCredentials(account);
+  const client = twilio(accountSid, authToken);
+  try {
+    const recordings = await client.recordings.list({
+      callSid: sid,
+      limit: 20,
+    });
+    return recordings
+      .map((recording) => ({
+        sid: recording.sid,
+        url: twilioApiUrl(recording.uri || ""),
+        durationSeconds: durationSeconds(recording.duration),
+      }))
+      .filter((recording) => recording.sid && recording.url);
+  } catch (err) {
+    throw new TwilioServiceError(safeTwilioMessage(err, authToken));
+  }
+}

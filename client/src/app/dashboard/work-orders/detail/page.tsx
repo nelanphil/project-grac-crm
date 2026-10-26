@@ -26,7 +26,11 @@ import {
   WorkOrderListItem,
 } from "@/lib/api";
 import { isDispatcherRole } from "@/lib/schedule";
-import { ticketFromRecord, type ticketToPayload } from "@/lib/service-ticket";
+import {
+  ticketFromRecord,
+  workOrderUpdateBody,
+  type ticketToPayload,
+} from "@/lib/service-ticket";
 
 export default function WorkOrderDetailPage() {
   return (
@@ -182,17 +186,11 @@ function WorkOrderDetailContent() {
     payload: ReturnType<typeof ticketToPayload> & { scheduleInsertIndex?: number },
   ) {
     if (!token || !order) throw new Error("Work order is not loaded.");
-    const { assignedUserRef, ...remaining } = payload;
-    const rest = { ...remaining } as Omit<typeof remaining, "scheduleInsertIndex">;
-    delete (rest as { scheduleInsertIndex?: number }).scheduleInsertIndex;
-    const nextAssigned = assignedUserRef ?? null;
-    const prevAssigned = order.assignedUserRef ?? null;
-    return updateWorkOrder(token, order._id, {
-      ...rest,
-      ...(isDispatcherRole(user) && nextAssigned !== prevAssigned
-        ? { assignedUserRef: nextAssigned }
-        : {}),
-    });
+    return updateWorkOrder(
+      token,
+      order._id,
+      workOrderUpdateBody(payload, order, isDispatcherRole(user)),
+    );
   }
 
   const invoiceAction =

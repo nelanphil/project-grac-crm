@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import {
-  API_URL,
   ApiError,
   getRecentWorkOrderNotes,
   getReminders,
@@ -11,6 +10,7 @@ import {
   type ScheduleRouteStop,
   type WorkOrderListItem,
 } from "@/lib/api";
+import { subscribeDashboardLive } from "@/lib/dashboardLive";
 import {
   loadUnreadInbox,
   markInboxPreviewRead,
@@ -40,7 +40,7 @@ const sliceSeq: Record<Slice, number> = {
   schedule: 0,
 };
 
-let liveAbort: AbortController | null = null;
+let unsubscribeLive: (() => void) | null = null;
 let liveToken: string | null = null;
 let refreshing = false;
 let refreshQueued = false;
@@ -60,38 +60,6 @@ function scopeKey(scope: ScheduleScope): string {
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function readDashboardEvents(
-  body: ReadableStream<Uint8Array>,
-  onEvent: () => void,
-  signal: AbortSignal,
-): Promise<void> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    while (!signal.aborted) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      buffer += decoder.decode(value, { stream: true });
-      let splitAt = buffer.indexOf("\n\n");
-      while (splitAt !== -1) {
-        const frame = buffer.slice(0, splitAt);
-        buffer = buffer.slice(splitAt + 2);
-        if (frame.split("\n").some((line) => line.startsWith("data:"))) {
-          onEvent();
-        }
-        splitAt = buffer.indexOf("\n\n");
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
 }
 
 interface DashboardStore {
@@ -127,46 +95,6 @@ interface DashboardStore {
   refresh: (token: string) => Promise<void>;
   connect: (token: string) => void;
   disconnect: () => void;
-}
-
-function resetLive(): void {
-  liveAbort?.abort();
-  liveAbort = null;
-  liveToken = null;
-  refreshQueued = false;
-}
-
-async function runLive(token: string, signal: AbortSignal): Promise<void> {
-  let refreshOnOpen = false;
-  let delay = 1_000;
-  while (!signal.aborted) {
-    try {
-      const res = await fetch(`${API_URL}/dashboard/live`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "text/event-stream",
-        },
-        signal,
-      });
-      if (signal.aborted) return;
-      if (!res.ok || !res.body) throw new Error("dashboard live closed");
-      if (refreshOnOpen) void useDashboardStore.getState().refresh(token);
-      refreshOnOpen = true;
-      delay = 1_000;
-      await readDashboardEvents(
-        res.body,
-        () => {
-          void useDashboardStore.getState().refresh(token);
-        },
-        signal,
-      );
-    } catch {
-      if (signal.aborted) return;
-    }
-    if (signal.aborted) return;
-    await sleep(delay);
-    delay = Math.min(delay * 2, 15_000);
-  }
 }
 
 export const useDashboardStore = create<DashboardStore>((set, get) => ({
@@ -469,14 +397,18 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
   },
 
   connect: (token) => {
-    if (liveToken === token && liveAbort) return;
-    resetLive();
+    if (liveToken === token && unsubscribeLive) return;
+    unsubscribeLive?.();
     liveToken = token;
-    liveAbort = new AbortController();
-    void runLive(token, liveAbort.signal);
+    unsubscribeLive = subscribeDashboardLive(token, () => {
+      void useDashboardStore.getState().refresh(token);
+    });
   },
 
   disconnect: () => {
-    resetLive();
+    unsubscribeLive?.();
+    unsubscribeLive = null;
+    liveToken = null;
+    refreshQueued = false;
   },
 }));

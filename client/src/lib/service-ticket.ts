@@ -637,6 +637,47 @@ export function ticketToPayload(form: TicketFormState) {
   };
 }
 
+function crewIds(record: {
+  assignedUserRef?: string | null;
+  assignedUserRefs?: string[] | null;
+}): string[] {
+  if (record.assignedUserRefs && record.assignedUserRefs.length > 0) {
+    return record.assignedUserRefs;
+  }
+  return record.assignedUserRef ? [record.assignedUserRef] : [];
+}
+
+/**
+ * The API rejects crew fields from non-dispatchers, so they are only sent
+ * when a dispatcher actually changed the crew.
+ */
+export function workOrderUpdateBody<
+  P extends ReturnType<typeof ticketToPayload> & { scheduleInsertIndex?: number },
+>(
+  payload: P,
+  order: { assignedUserRef?: string | null; assignedUserRefs?: string[] | null },
+  isDispatcher: boolean,
+) {
+  const rest: Omit<P, "assignedUserRef" | "assignedUserRefs" | "scheduleInsertIndex"> & {
+    assignedUserRef?: string | null;
+    assignedUserRefs?: string[];
+  } = { ...payload };
+  delete (rest as Partial<P>).assignedUserRef;
+  delete (rest as Partial<P>).assignedUserRefs;
+  delete (rest as Partial<P>).scheduleInsertIndex;
+  if (!isDispatcher) return rest;
+  const next = crewIds(payload);
+  const prev = crewIds(order);
+  const changed =
+    next.length !== prev.length || next.some((id, index) => id !== prev[index]);
+  if (!changed) return rest;
+  return {
+    ...rest,
+    assignedUserRef: next[0] ?? null,
+    assignedUserRefs: next,
+  };
+}
+
 export function ticketDateFromRecord(record: {
   date?: string | null;
   scheduledStart?: string | null;

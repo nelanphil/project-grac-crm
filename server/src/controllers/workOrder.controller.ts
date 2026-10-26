@@ -44,6 +44,7 @@ import {
   findOverlappingJob,
   isDispatcherRole,
   rangeUtc,
+  retainRouteLock,
   scheduleDesiredWindow,
 } from "../services/schedule.service";
 import { parseNoteTimeTags } from "../utils/noteTimeTags";
@@ -666,7 +667,39 @@ export async function updateWorkOrder(
     }
 
     const dispatcher = isDispatcherRole(req.user);
-    const isAssignee = crewIdStrings(workOrder).includes(req.user?.id ?? "");
+    const currentCrew = crewIdStrings(workOrder);
+    const isAssignee = currentCrew.includes(req.user?.id ?? "");
+
+    if (!dispatcher) {
+      if (
+        parsed.data.assignedUserRefs !== undefined ||
+        parsed.data.assignedUserRef !== undefined
+      ) {
+        const sentCrew =
+          parsed.data.assignedUserRefs !== undefined
+            ? parsed.data.assignedUserRefs
+            : parsed.data.assignedUserRef
+              ? [parsed.data.assignedUserRef]
+              : [];
+        const sentSet = new Set(sentCrew);
+        if (
+          sentSet.size === currentCrew.length &&
+          currentCrew.every((id) => sentSet.has(id))
+        ) {
+          delete parsed.data.assignedUserRef;
+          delete parsed.data.assignedUserRefs;
+        }
+      }
+      if (parsed.data.scheduledStart !== undefined) {
+        const sent = parsed.data.scheduledStart
+          ? new Date(parsed.data.scheduledStart).getTime()
+          : null;
+        const stored = workOrder.scheduledStart
+          ? new Date(workOrder.scheduledStart).getTime()
+          : null;
+        if (sent === stored) delete parsed.data.scheduledStart;
+      }
+    }
 
     const assigning =
       parsed.data.assignedUserRef !== undefined ||
@@ -688,7 +721,7 @@ export async function updateWorkOrder(
       }
     }
 
-    const prevCrew = crewIdStrings(workOrder);
+    const prevCrew = currentCrew;
     const prevStartTime = workOrder.startTime ?? "";
     const prevScheduledStart = workOrder.scheduledStart
       ? new Date(workOrder.scheduledStart)
@@ -788,6 +821,7 @@ export async function updateWorkOrder(
       if (parsed.data.scheduledStart === null || parsed.data.scheduledStart === "") {
         workOrder.scheduledStart = null;
         workOrder.scheduledEnd = null;
+        workOrder.routeLocked = false;
       } else {
         const start = new Date(parsed.data.scheduledStart);
         if (Number.isNaN(start.getTime())) {
@@ -847,7 +881,9 @@ export async function updateWorkOrder(
       if (dateChanged && !nextDate) {
         workOrder.scheduledStart = null;
         workOrder.scheduledEnd = null;
+        workOrder.routeLocked = false;
       }
+      if (dateChanged || assigneeChanged) workOrder.routeLocked = false;
       const missingSlot = !prevScheduledStart;
       const shouldPlace =
         dispatcher &&
@@ -922,6 +958,7 @@ export async function updateWorkOrder(
       ) {
         workOrder.scheduledStart = null;
         workOrder.scheduledEnd = null;
+        workOrder.routeLocked = false;
       }
     }
 
@@ -932,6 +969,18 @@ export async function updateWorkOrder(
 
     const warnings: string[] = [...placementWarnings];
     if (!placedAppointment) {
+      const nextStartDate = workOrder.scheduledStart
+        ? formatLocalDate(workOrder.scheduledStart)
+        : "";
+      retainRouteLock(workOrder, {
+        hadScheduledStart: Boolean(prevScheduledStart),
+        hasScheduledStart: Boolean(workOrder.scheduledStart),
+        technicianChanged: nextCrew.join(",") !== prevCrew.join(","),
+        dateChanged:
+          Boolean(prevAppointmentDate) &&
+          Boolean(nextStartDate) &&
+          prevAppointmentDate !== nextStartDate,
+      });
       await applyAssignmentSideEffects(
         workOrder,
         assignees.length > 0 ? assignees : null,
@@ -1030,6 +1079,7 @@ export async function cancelWorkOrderAppointment(
 
     workOrder.scheduledStart = null;
     workOrder.scheduledEnd = null;
+    workOrder.routeLocked = false;
     applyCrewIds(workOrder, []);
     workOrder.tech = "";
     workOrder.appointmentCanceledAt = new Date();

@@ -53,6 +53,8 @@ export interface IWorkOrder extends Document {
   scheduledStart: Date | null;
   scheduledEnd: Date | null;
   estimatedMinutes: number;
+  /** Keep this stop's time when the technician's day is reordered. */
+  routeLocked: boolean;
   appointmentCanceledAt: Date | null;
   appointmentCanceledBy?: Types.ObjectId | null;
   descPerformed: string;
@@ -188,6 +190,7 @@ const workOrderSchema = new Schema<IWorkOrder>(
     scheduledStart: { type: Date, default: null, index: true },
     scheduledEnd: { type: Date, default: null },
     estimatedMinutes: { type: Number, default: 30 },
+    routeLocked: { type: Boolean, default: false },
     appointmentCanceledAt: { type: Date, default: null, index: true },
     appointmentCanceledBy: {
       type: Schema.Types.ObjectId,

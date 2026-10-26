@@ -16,8 +16,14 @@ const router = Router();
 
 router.use(authenticate);
 
-router.get("/", requirePermission("products:read"), getProducts);
-router.get("/:id", requirePermission("products:read"), getProductById);
+const canReadCatalog = requireAnyPermission(
+  "products:read",
+  "estimates:write",
+  "jobs:write",
+);
+
+router.get("/", canReadCatalog, getProducts);
+router.get("/:id", canReadCatalog, getProductById);
 router.post(
   "/",
   requireAnyPermission("products:write", "estimates:write", "jobs:write"),

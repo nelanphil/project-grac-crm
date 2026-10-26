@@ -385,7 +385,6 @@ function SuggestMenuFrame({
   label,
   searchQuery,
   searchPlaceholder,
-  empty,
   onQueryChange,
   onClose,
   children,
@@ -395,7 +394,6 @@ function SuggestMenuFrame({
   label: string;
   searchQuery: string;
   searchPlaceholder: string;
-  empty: boolean;
   onQueryChange: (query: string) => void;
   onClose: () => void;
   children: ReactNode;
@@ -421,13 +419,17 @@ function SuggestMenuFrame({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const menuVisible = !isSmUp || Boolean(coords && !empty);
+  const menuVisible = !isSmUp || Boolean(coords);
+  const openedAt = useRef(0);
+
+  useLayoutEffect(() => {
+    if (menuVisible) openedAt.current = Date.now();
+  }, [menuVisible]);
 
   useEffect(() => {
     if (!menuVisible) return;
-    const openedAt = Date.now();
     function onPointerDown(event: PointerEvent) {
-      if (Date.now() - openedAt < 250) return;
+      if (Date.now() - openedAt.current < 250) return;
       const target = event.target as Node;
       if (anchor?.contains(target) || menuRef.current?.contains(target)) return;
       onClose();
@@ -437,14 +439,17 @@ function SuggestMenuFrame({
   }, [anchor, menuVisible, onClose]);
 
   if (typeof document === "undefined") return null;
-  if (isSmUp && (empty || !coords)) return null;
+  if (isSmUp && !coords) return null;
 
   if (!isSmUp) {
     return createPortal(
       <>
         <div
           className="fixed inset-0 z-[90] touch-none bg-black/40"
-          onClick={onClose}
+          onClick={() => {
+            if (Date.now() - openedAt.current < 250) return;
+            onClose();
+          }}
           aria-hidden
         />
         <div
@@ -538,7 +543,6 @@ function ProductSuggestMenu({
       label="Product search results"
       searchQuery={searchQuery}
       searchPlaceholder="Search products"
-      empty={!loading && products.length === 0 && !showCreate}
       onQueryChange={onQueryChange}
       onClose={onClose}
     >
@@ -624,7 +628,6 @@ function AgreementSuggestMenu({
       label="Agreement search results"
       searchQuery={searchQuery}
       searchPlaceholder="Search agreements"
-      empty={!loading && templates.length === 0}
       onQueryChange={onQueryChange}
       onClose={onClose}
     >

@@ -32,6 +32,7 @@ import {
   getScheduleStaff,
   getScheduleStartOptions,
   applyScheduleRoute,
+  setScheduleRouteLock,
   placeScheduleWorkOrder,
   planScheduleRoute,
   type PlannedRoute,
@@ -70,6 +71,7 @@ import {
   workOrderCrewIds,
   workOrderLocalDate,
 } from "@/lib/schedule";
+import { subscribeDashboardLive } from "@/lib/dashboardLive";
 import WeekBoard, {
   UnscheduledCard,
 } from "@/components/schedule/WeekBoard";
@@ -975,7 +977,8 @@ export default function CalendarTab({
   const [routeObjective, setRouteObjective] = useState<RouteObjective>("time");
   const [addedUnscheduledIds, setAddedUnscheduledIds] = useState<string[]>([]);
   const [manualOrder, setManualOrder] = useState<string[] | null>(null);
-  const [routeLocks, setRouteLocks] = useState<Record<string, string>>({});
+  const [draftLocks, setDraftLocks] = useState<Record<string, string>>({});
+  const [reorderPending, setReorderPending] = useState(false);
   const [unscheduling, setUnscheduling] = useState(false);
   const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(
     null,
@@ -993,6 +996,15 @@ export default function CalendarTab({
   );
   const planSeq = useRef(0);
   const optimizeLock = useRef(false);
+  const reorderTimer = useRef<number | null>(null);
+  const pendingOrderRef = useRef<string[]>([]);
+  const routeLocksRef = useRef<Record<string, string>>({});
+  const persistRouteOrderRef = useRef<
+    (order: string[], locks: Record<string, string>) => Promise<void>
+  >(async () => {});
+  const liveQueuedRef = useRef(false);
+  const scheduleBusyRef = useRef(false);
+  const orderEpoch = useRef(0);
   const effectiveTechId = !dispatcher && user?.id ? user.id : routeTechId;
   const [territoryFeatures, setTerritoryFeatures] = useState<
     CityBoundaryCollection["features"]
@@ -1263,6 +1275,23 @@ export default function CalendarTab({
     return [...kept, ...rest];
   }, [routeJobs, manualOrder]);
   const routeStopKey = routeStopIds.join(",");
+  const routeLocks = useMemo(() => {
+    const locks: Record<string, string> = {};
+    for (const id of routeStopIds) {
+      const draft = draftLocks[id];
+      if (draft) {
+        locks[id] = draft;
+        continue;
+      }
+      const job = jobById.get(id);
+      if (!job?.routeLocked || !job.scheduledStart) continue;
+      const start = new Date(job.scheduledStart);
+      if (Number.isNaN(start.getTime())) continue;
+      locks[id] = formatLocalTime(start);
+    }
+    return locks;
+  }, [routeStopIds, draftLocks, jobById]);
+  routeLocksRef.current = routeLocks;
   const activeRouteLocks = useMemo(
     () =>
       routeStopIds.flatMap((id) => {
@@ -1292,6 +1321,7 @@ export default function CalendarTab({
 
   const load = useCallback(async () => {
     if (!token) return;
+    const epoch = orderEpoch.current;
     try {
       const [board, rail] = await Promise.all([
         fetchBoardData(token, range.from, range.to, dispatcher),
@@ -1301,6 +1331,13 @@ export default function CalendarTab({
       ]);
       setStaff(board.staff);
       setJobs(board.jobs);
+      if (
+        orderEpoch.current === epoch &&
+        !optimizeLock.current &&
+        reorderTimer.current == null
+      ) {
+        setManualOrder((current) => (current ? null : current));
+      }
       setCalendarUnscheduled(board.unscheduled);
       if (rail) {
         setRailJobs(rail.unscheduled);
@@ -1380,6 +1417,72 @@ export default function CalendarTab({
       cancelled = true;
     };
   }, [viewReady, token, dispatcher, selectedDate]);
+
+  scheduleBusyRef.current =
+    saving ||
+    routeOptimizing ||
+    routePlanning ||
+    unscheduling ||
+    reorderPending ||
+    Boolean(draggingJobId);
+
+  useEffect(
+    () => () => {
+      if (reorderTimer.current != null) {
+        window.clearTimeout(reorderTimer.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!token) return;
+    let timer: number | null = null;
+    const reload = () => {
+      if (scheduleBusyRef.current) {
+        liveQueuedRef.current = true;
+        return;
+      }
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        if (scheduleBusyRef.current) {
+          liveQueuedRef.current = true;
+          return;
+        }
+        void load();
+      }, 300);
+    };
+    const unsubscribe = subscribeDashboardLive(token, reload);
+    return () => {
+      unsubscribe();
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [token, load]);
+
+  useEffect(() => {
+    if (
+      saving ||
+      routeOptimizing ||
+      routePlanning ||
+      unscheduling ||
+      reorderPending ||
+      draggingJobId
+    ) {
+      return;
+    }
+    if (!liveQueuedRef.current) return;
+    liveQueuedRef.current = false;
+    void load();
+  }, [
+    saving,
+    routeOptimizing,
+    routePlanning,
+    unscheduling,
+    reorderPending,
+    draggingJobId,
+    load,
+  ]);
 
   useEffect(() => {
     if (surface !== "map" || !token || !dispatcher) return;
@@ -1797,26 +1900,80 @@ export default function CalendarTab({
     setSelectedRailJob(job);
   }
 
-  function toggleRouteLock(id: string) {
-    setRouteLocks((current) => {
-      if (current[id]) {
-        const next = { ...current };
-        delete next[id];
-        return next;
-      }
-      const fromPlan = routeTotalsMatch
-        ? routePlan?.stops.find((stop) => stop.workOrderId === id)?.arrival
-        : null;
-      const scheduled = jobById.get(id)?.scheduledStart;
-      const source = fromPlan || scheduled;
-      const time = source ? formatLocalTime(new Date(source)) : "08:00";
-      return { ...current, [id]: time };
+  function patchRouteJob(id: string, patch: Partial<WorkOrderListItem>) {
+    const merge = (list: WorkOrderListItem[]) =>
+      list.map((job) => (job._id === id ? { ...job, ...patch } : job));
+    setJobs(merge);
+    setCalendarUnscheduled(merge);
+    setRailJobs(merge);
+    setRailScheduled(merge);
+  }
+
+  function clearDraftLock(id: string) {
+    setDraftLocks((current) => {
+      if (!current[id]) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
     });
   }
 
+  async function toggleRouteLock(id: string) {
+    if (!dispatcher || !canWrite || !token) return;
+    const job = jobById.get(id);
+    const scheduled = stopIsScheduledOnDay(id);
+    if (!scheduled) {
+      setDraftLocks((current) => {
+        if (current[id]) {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        }
+        const scheduledStart = job?.scheduledStart;
+        const time = scheduledStart
+          ? formatLocalTime(new Date(scheduledStart))
+          : "08:00";
+        return { ...current, [id]: time };
+      });
+      return;
+    }
+    const locked = Boolean(job?.routeLocked);
+    patchRouteJob(id, { routeLocked: !locked });
+    setRouteMessage(null);
+    try {
+      await setScheduleRouteLock(token, { workOrderId: id, locked: !locked });
+      await load();
+    } catch (err) {
+      patchRouteJob(id, { routeLocked: locked });
+      setRouteMessage(
+        err instanceof ApiError ? err.message : "Failed to update the lock.",
+      );
+    }
+  }
+
   function setRouteLockTime(id: string, time: string) {
-    if (!time) return;
-    setRouteLocks((current) => ({ ...current, [id]: time }));
+    if (!time || !dispatcher || !canWrite) return;
+    if (!stopIsScheduledOnDay(id)) {
+      setDraftLocks((current) => ({ ...current, [id]: time }));
+      return;
+    }
+    orderEpoch.current += 1;
+    const locks = { ...routeLocksRef.current, [id]: time };
+    routeLocksRef.current = locks;
+    const order = routeStopIds.slice();
+    pendingOrderRef.current = order;
+    setManualOrder(order);
+    patchRouteJob(id, {
+      routeLocked: true,
+      scheduledStart: localDateTimeToIso(selectedDate, time),
+    });
+    if (reorderTimer.current != null) {
+      window.clearTimeout(reorderTimer.current);
+      reorderTimer.current = null;
+    }
+    setReorderPending(true);
+    optimizeLock.current = true;
+    void persistRouteOrderRef.current(order, locks);
   }
 
   function forgetRouteStop(id: string) {
@@ -1824,12 +1981,7 @@ export default function CalendarTab({
     setManualOrder((current) =>
       current ? current.filter((item) => item !== id) : current,
     );
-    setRouteLocks((current) => {
-      if (!current[id]) return current;
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
+    clearDraftLock(id);
   }
 
   function stopIsScheduledOnDay(id: string): boolean {
@@ -1888,6 +2040,9 @@ export default function CalendarTab({
   }
 
   function moveRouteStop(id: string, direction: -1 | 1) {
+    if (!dispatcher || !canWrite) return;
+    if (routeLocksRef.current[id]) return;
+    orderEpoch.current += 1;
     const order = routeStopIds.slice();
     const index = order.indexOf(id);
     const target = index + direction;
@@ -1895,8 +2050,76 @@ export default function CalendarTab({
     const [item] = order.splice(index, 1);
     if (!item) return;
     order.splice(target, 0, item);
+    pendingOrderRef.current = order;
     setManualOrder(order);
+    setReorderPending(true);
+    optimizeLock.current = true;
+    if (reorderTimer.current != null) window.clearTimeout(reorderTimer.current);
+    reorderTimer.current = window.setTimeout(() => {
+      reorderTimer.current = null;
+      void persistRouteOrderRef.current(
+        pendingOrderRef.current,
+        routeLocksRef.current,
+      );
+    }, 400);
   }
+
+  persistRouteOrderRef.current = async (order, locks) => {
+    const planIds = order.filter((id) => !jobById.get(id)?.completed);
+    if (!token || !effectiveTechId || !dispatcher || !canWrite || planIds.length === 0) {
+      optimizeLock.current = false;
+      setReorderPending(false);
+      setRoutePlanning(false);
+      setManualOrder(null);
+      return;
+    }
+    const seq = ++planSeq.current;
+    optimizeLock.current = true;
+    setRoutePlanning(true);
+    setRouteMessage(null);
+    try {
+      const applied = await applyScheduleRoute(token, {
+        userId: effectiveTechId,
+        date: selectedDate,
+        orderedWorkOrderIds: planIds,
+        lockedStops: planIds.flatMap((id) => {
+          const time = locks[id];
+          if (!time) return [];
+          return [
+            {
+              workOrderId: id,
+              arrival: localDateTimeToIso(selectedDate, time),
+            },
+          ];
+        }),
+      });
+      if (seq !== planSeq.current) return;
+      setJobs((current) => {
+        const byId = new Map(current.map((job) => [job._id, job]));
+        for (const job of applied.workOrders) {
+          byId.set(job._id, { ...byId.get(job._id), ...job });
+        }
+        return [...byId.values()];
+      });
+      setDraftLocks({});
+      if (applied.warnings?.length) setWarning(applied.warnings.join(" "));
+      await load();
+    } catch (err) {
+      if (seq !== planSeq.current) return;
+      setManualOrder(null);
+      setRouteMessage(
+        err instanceof ApiError ? err.message : "Failed to save the route order.",
+      );
+      await load();
+    } finally {
+      if (seq === planSeq.current && reorderTimer.current == null) {
+        optimizeLock.current = false;
+        setRoutePlanning(false);
+        setReorderPending(false);
+        setManualOrder(null);
+      }
+    }
+  };
 
   const runPlan = useCallback(
     async (optimize: boolean) => {
@@ -1934,6 +2157,7 @@ export default function CalendarTab({
           });
           if (seq !== planSeq.current) return;
           setManualOrder(result.orderedWorkOrderIds);
+          setDraftLocks({});
           setRoutePlan({
             ...result,
             warnings: [...result.warnings, ...(applied.warnings ?? [])],
@@ -1949,6 +2173,9 @@ export default function CalendarTab({
             setWarning(applied.warnings.join(" "));
           }
           await load();
+          if (seq === planSeq.current && reorderTimer.current == null) {
+            setManualOrder(null);
+          }
         } else {
           setRoutePlan(result);
         }
@@ -2281,10 +2508,16 @@ export default function CalendarTab({
   }
 
   function selectRouteTech(id: string) {
+    if (reorderTimer.current != null) {
+      window.clearTimeout(reorderTimer.current);
+      reorderTimer.current = null;
+    }
+    optimizeLock.current = false;
+    setReorderPending(false);
     setRouteTechId(id || null);
     setAddedUnscheduledIds([]);
     setManualOrder(null);
-    setRouteLocks({});
+    setDraftLocks({});
     setRoutePlan(null);
     setRouteMessage(null);
     setConfirmingRemoveId(null);
@@ -2564,11 +2797,17 @@ export default function CalendarTab({
                     );
                   }}
                   onMap={(userId) => {
+                    if (reorderTimer.current != null) {
+                      window.clearTimeout(reorderTimer.current);
+                      reorderTimer.current = null;
+                    }
+                    optimizeLock.current = false;
+                    setReorderPending(false);
                     setRouteTechId(userId);
                     setSurface("map");
                     setAddedUnscheduledIds([]);
                     setManualOrder(null);
-                    setRouteLocks({});
+                    setDraftLocks({});
                     setRoutePlan(null);
                     setRouteMessage(null);
                   }}

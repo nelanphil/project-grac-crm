@@ -2298,9 +2298,12 @@ export interface WorkOrderListItem {
   scheduledStart?: string | null;
   scheduledEnd?: string | null;
   estimatedMinutes?: number;
+  routeLocked?: boolean;
   appointmentCanceledAt?: string | null;
   appointmentCanceledBy?: string | null;
   customerRef?: string | null;
+  /** Primary customer contact's phone; only returned by schedule endpoints. */
+  primaryContactPhone?: string | null;
   customerId?: number;
   assignee?: WorkOrderAssignee | null;
   warnings?: string[];
@@ -3185,6 +3188,17 @@ export async function applyScheduleRoute(
   },
 ): Promise<{ workOrders: WorkOrderListItem[]; warnings: string[] }> {
   return authRequest(`/schedule/route/apply`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function setScheduleRouteLock(
+  token: string,
+  data: { workOrderId: string; locked: boolean },
+): Promise<WorkOrderListItem> {
+  return authRequest(`/schedule/route/lock`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),

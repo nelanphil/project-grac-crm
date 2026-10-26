@@ -21,7 +21,7 @@ export type ActivityCategory = (typeof ACTIVITY_CATEGORIES)[number];
 export const ACTIVITY_ACTOR_KINDS = ["staff", "customer", "system"] as const;
 export type ActivityActorKind = (typeof ACTIVITY_ACTOR_KINDS)[number];
 
-export const ACTIVITY_SOURCES = ["crm", "portal", "webhook", "job"] as const;
+export const ACTIVITY_SOURCES = ["crm", "portal", "webhook", "job", "backfill"] as const;
 export type ActivitySource = (typeof ACTIVITY_SOURCES)[number];
 
 export interface IActivityChange {

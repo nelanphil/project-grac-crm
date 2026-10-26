@@ -4,7 +4,6 @@ import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
 import { MessageThread } from "../models/mongo/MessageThread";
 import { ITwilioAccount } from "../models/mongo/TwilioAccount";
 import {
-  findContactByPhone,
   mapTwilioCallStatus,
   mapTwilioMessageStatus,
 } from "../utils/communicationFormat";
@@ -12,15 +11,8 @@ import {
   fetchRecordingTranscript,
   resolveAccountFromWebhook,
 } from "../services/twilio.service";
-import {
-  normalizeThreadPhone,
-  resolveThreadForInbound,
-  touchThreadAfterMessage,
-} from "../utils/messageThreads";
-import { toE164 } from "../utils/messagingContext";
+import { touchThreadAfterMessage } from "../utils/messageThreads";
 import { publishDashboardChanged } from "../services/dashboardLive";
-import { recordCustomerActivityAsync } from "../services/customerActivity.service";
-import { normalizePhoneDigits } from "../utils/customerSites";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
 import {
   formatVoicemailLine,
@@ -29,10 +21,17 @@ import {
   startInboundIvr,
   voicemailTwiml,
 } from "../services/voiceIvr.service";
-import { voiceConversationPreview } from "../utils/voiceActivity";
 import { buildSayHangupTwiml } from "../utils/twilioVoiceTwiml";
 import { resolveSayVoice } from "../utils/twilioVoices";
-import { listedPhoneNumbers } from "../utils/twilioPhoneLines";
+import {
+  findVoiceCommunication,
+  inboundVoiceBody,
+  ingestInboundMessage,
+  ingestInboundVoice,
+  resolveInboundVoiceThread,
+  voiceSidCandidates,
+  withRecordingFirst,
+} from "../services/twilioInboundIngest.service";
 
 function asStringRecord(body: unknown): Record<string, string> {
   const out: Record<string, string> = {};
@@ -96,22 +95,6 @@ function collectMediaUrls(params: Record<string, string>): string[] {
   return urls;
 }
 
-function phonesMatch(a: string, b: string): boolean {
-  const da = normalizePhoneDigits(a);
-  const db = normalizePhoneDigits(b);
-  if (!da || !db) return false;
-  if (da === db) return true;
-  return (
-    da.length >= 10 && db.length >= 10 && da.slice(-10) === db.slice(-10)
-  );
-}
-
-function isOurNumber(account: ITwilioAccount, phone: string): boolean {
-  return listedPhoneNumbers(account.phoneNumbers).some((n) =>
-    phonesMatch(n, phone),
-  );
-}
-
 const EMPTY_TWIML =
   '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
@@ -144,97 +127,15 @@ export async function inboundMessageWebhook(
       return;
     }
 
-    const fromNumber = params.From || "";
-    const toNumber = params.To || "";
-    const body = params.Body || "";
-    const mediaUrls = collectMediaUrls(params);
-    const channel = mediaUrls.length > 0 ? "mms" : "sms";
-    const matched = fromNumber ? await findContactByPhone(fromNumber) : null;
-    const ourNumber = toE164(toNumber) ?? toNumber;
-    const snapshot = normalizeThreadPhone(fromNumber);
-    // Unique open thread is (contactRef, ourNumber). customerRef is grouping only.
-    const contactRef = matched?.contactRef ?? null;
-    const customerRef = matched?.customerRef ?? null;
-
-    const thread = await resolveThreadForInbound({
-      contactRef,
-      customerRef,
-      twilioAccountRef: account._id,
-      accountSid: account.accountSid,
-      ourNumber,
-      contactPhoneSnapshot: snapshot,
+    await ingestInboundMessage({
+      account,
+      twilioSid,
+      fromNumber: params.From || "",
+      toNumber: params.To || "",
+      body: params.Body || "",
+      mediaUrls: collectMediaUrls(params),
+      rawStatus: params.SmsStatus || params.MessageStatus || "received",
     });
-    const threadRef = thread._id;
-
-    const doc = await TwilioCommunication.findOneAndUpdate(
-      { accountSid: account.accountSid, twilioSid },
-      {
-        $set: {
-          twilioAccountRef: account._id,
-          accountSid: account.accountSid,
-          channel,
-          direction: "inbound",
-          status: "received",
-          fromNumber,
-          toNumber,
-          body,
-          mediaUrls,
-          customerRef,
-          contactRef,
-          threadRef,
-          rawStatus: params.SmsStatus || params.MessageStatus || "received",
-        },
-        $setOnInsert: {
-          createdByUserRef: null,
-          transcript: "",
-        },
-      },
-      { upsert: true, new: true },
-    );
-
-    await touchThreadAfterMessage(threadRef, {
-      direction: "inbound",
-      channel,
-      body,
-      at: doc?.createdAt ?? new Date(),
-    });
-    if (customerRef && doc) {
-      const preview = body.trim().slice(0, 80);
-      recordCustomerActivityAsync({
-        customerRef,
-        category: "communication",
-        action: "received",
-        summary: preview
-          ? `Received a text: ${preview}`
-          : "Received a text message",
-        actorKind: "customer",
-        actorName: "Customer",
-        entityType: "twilio_communication",
-        entityId: String(doc._id),
-        source: "webhook",
-        sourceEventId: `twilio:${twilioSid}`,
-        metadata: { channel, fromNumber, threadId: String(threadRef) },
-      });
-      const keyword = body.trim().toUpperCase();
-      if (
-        ["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"].includes(
-          keyword,
-        )
-      ) {
-        recordCustomerActivityAsync({
-          customerRef,
-          category: "communication",
-          action: "opted_out",
-          summary: "Opted out of text messages",
-          actorKind: "customer",
-          actorName: "Customer",
-          entityType: "twilio_communication",
-          entityId: String(doc._id),
-          source: "webhook",
-          sourceEventId: `twilio:${twilioSid}:optout`,
-        });
-      }
-    }
     publishDashboardChanged();
 
     res.status(200).type("text/xml").send(EMPTY_TWIML);
@@ -266,251 +167,6 @@ async function resolveCallTranscript(
   const fromParams = transcriptFromParams(params).trim();
   if (fromParams) return fromParams;
   return fetchRecordingTranscript(account, params.RecordingSid || "");
-}
-
-function withRecordingFirst(existing: string[], recordingUrl: string): string[] {
-  if (!recordingUrl) return existing;
-  const rest = existing.filter((u) => u !== recordingUrl);
-  return [recordingUrl, ...rest];
-}
-
-function voiceSidCandidates(
-  params: Record<string, string>,
-  extra?: string,
-): string[] {
-  return [
-    ...new Set(
-      [extra, params.CallSid, params.ParentCallSid]
-        .map((sid) => (sid || "").trim())
-        .filter(Boolean),
-    ),
-  ];
-}
-
-async function findVoiceCommunication(
-  accountSid: string,
-  sids: string[],
-) {
-  if (sids.length === 0) return null;
-  return TwilioCommunication.findOne({
-    accountSid,
-    channel: "voice",
-    twilioSid: sids.length === 1 ? sids[0] : { $in: sids },
-  });
-}
-
-function inboundVoiceBody(transcript: string): string {
-  return voiceConversationPreview(transcript);
-}
-
-async function resolveInboundVoiceThread(params: {
-  account: ITwilioAccount;
-  fromNumber: string;
-  toNumber: string;
-  preferOutbound?: boolean;
-}) {
-  const outbound = params.preferOutbound
-    ? Boolean(params.fromNumber && isOurNumber(params.account, params.fromNumber))
-    : false;
-  const direction = outbound ? "outbound" : "inbound";
-  const ourNumberRaw = outbound ? params.fromNumber : params.toNumber;
-  const theirNumber = outbound ? params.toNumber : params.fromNumber;
-  const ourNumber = toE164(ourNumberRaw) ?? ourNumberRaw;
-  const snapshot = normalizeThreadPhone(theirNumber);
-  const matched = theirNumber ? await findContactByPhone(theirNumber) : null;
-  // Unique open thread is (contactRef, ourNumber). customerRef is grouping only.
-  const contactRef = matched?.contactRef ?? null;
-  const customerRef = matched?.customerRef ?? null;
-
-  const thread = await resolveThreadForInbound({
-    contactRef,
-    customerRef,
-    twilioAccountRef: params.account._id,
-    accountSid: params.account.accountSid,
-    ourNumber,
-    contactPhoneSnapshot: snapshot,
-  });
-
-  return {
-    thread,
-    direction: direction as "inbound" | "outbound",
-    customerRef,
-    contactRef,
-  };
-}
-
-async function ingestInboundVoice(opts: {
-  account: ITwilioAccount;
-  callSid: string;
-  parentCallSid?: string;
-  fromNumber: string;
-  toNumber: string;
-  statusRaw?: string;
-  defaultStatus: "in-progress" | "completed";
-  transcript?: string;
-  recordingUrl?: string;
-  durationSeconds?: number | null;
-}): Promise<void> {
-  const sidCandidates = voiceSidCandidates(
-    {
-      CallSid: opts.callSid,
-      ParentCallSid: opts.parentCallSid || "",
-    },
-    opts.callSid,
-  );
-  const existing = await findVoiceCommunication(
-    opts.account.accountSid,
-    sidCandidates,
-  );
-  const canonicalSid =
-    (existing?.twilioSid || "").trim() ||
-    (opts.parentCallSid || "").trim() ||
-    opts.callSid ||
-    "";
-  if (!canonicalSid) return;
-
-  const fromNumber = opts.fromNumber || existing?.fromNumber || "";
-  const toNumber = opts.toNumber || existing?.toNumber || "";
-  const resolved = await resolveInboundVoiceThread({
-    account: opts.account,
-    fromNumber,
-    toNumber,
-  });
-
-  let threadRef = resolved.thread._id;
-  let customerRef = resolved.customerRef ?? existing?.customerRef ?? null;
-  let contactRef = resolved.contactRef ?? existing?.contactRef ?? null;
-  if (resolved.contactRef) {
-    threadRef = resolved.thread._id;
-    customerRef = resolved.customerRef;
-    contactRef = resolved.contactRef;
-  } else if (existing?.threadRef) {
-    threadRef = existing.threadRef;
-    customerRef = existing.customerRef ?? customerRef;
-    contactRef = existing.contactRef ?? contactRef;
-  }
-
-  const incomingTranscript = (opts.transcript || "").trim();
-  const mergedTranscript = incomingTranscript
-    ? mergeVoiceActivity(
-        existing?.transcript || "",
-        formatVoicemailLine(incomingTranscript),
-      )
-    : (existing?.transcript || "").trim();
-  const status = opts.statusRaw
-    ? mapTwilioCallStatus(opts.statusRaw)
-    : existing
-      ? existing.status
-      : opts.defaultStatus;
-  const alreadyOnThread = Boolean(existing?.threadRef);
-
-  const $set: Record<string, unknown> = {
-    twilioAccountRef: opts.account._id,
-    accountSid: opts.account.accountSid,
-    channel: "voice",
-    direction: "inbound",
-    status,
-    fromNumber,
-    toNumber,
-    customerRef,
-    contactRef,
-    threadRef,
-    rawStatus: opts.statusRaw || existing?.rawStatus || opts.defaultStatus,
-  };
-
-  if (incomingTranscript) {
-    $set.transcript = mergedTranscript;
-    $set.body = inboundVoiceBody(mergedTranscript);
-  } else if (!existing) {
-    $set.body = inboundVoiceBody("");
-    $set.transcript = "";
-  } else {
-    $set.body = inboundVoiceBody(existing.transcript || "");
-  }
-
-  if (opts.recordingUrl) {
-    $set.mediaUrls = withRecordingFirst(existing?.mediaUrls ?? [], opts.recordingUrl);
-  } else if (!existing) {
-    $set.mediaUrls = [];
-  }
-
-  if (
-    opts.durationSeconds != null &&
-    Number.isFinite(opts.durationSeconds)
-  ) {
-    $set.durationSeconds = opts.durationSeconds;
-  }
-
-  const doc = await TwilioCommunication.findOneAndUpdate(
-    { accountSid: opts.account.accountSid, twilioSid: canonicalSid },
-    {
-      $set,
-      $setOnInsert: {
-        createdByUserRef: null,
-        twilioSid: canonicalSid,
-      },
-    },
-    { upsert: true, new: true },
-  );
-
-  const preview =
-    (typeof $set.body === "string" && $set.body) || inboundVoiceBody(mergedTranscript);
-
-  if (customerRef && doc && !existing) {
-    recordCustomerActivityAsync({
-      customerRef,
-      category: "communication",
-      action: "called",
-      summary: `Received a call from ${fromNumber || "an unknown number"}`,
-      actorKind: "customer",
-      actorName: "Customer",
-      entityType: "twilio_communication",
-      entityId: String(doc._id),
-      source: "webhook",
-      sourceEventId: `twilio:call:${canonicalSid}`,
-      metadata: { fromNumber, toNumber, threadId: String(threadRef) },
-    });
-  }
-  if (customerRef && doc && opts.recordingUrl) {
-    recordCustomerActivityAsync({
-      customerRef,
-      category: "communication",
-      action: "recorded",
-      summary: "A call recording was saved",
-      actorKind: "system",
-      actorName: "System",
-      entityType: "twilio_communication",
-      entityId: String(doc._id),
-      source: "webhook",
-      sourceEventId: `twilio:recording:${canonicalSid}`,
-      metadata: { threadId: String(threadRef) },
-    });
-  }
-
-  if (!alreadyOnThread) {
-    await touchThreadAfterMessage(threadRef, {
-      direction: "inbound",
-      channel: "voice",
-      body: preview,
-      transcript: mergedTranscript,
-      at: doc?.createdAt ?? new Date(),
-    });
-    return;
-  }
-
-  if (incomingTranscript && threadRef) {
-    await MessageThread.updateOne(
-      { _id: threadRef },
-      {
-        $set: {
-          lastMessageAt: new Date(),
-          lastMessageDirection: "inbound",
-          lastMessageChannel: "voice",
-          lastMessagePreview: preview.slice(0, PREVIEW_LENGTH),
-        },
-      },
-    );
-  }
 }
 
 function parseDurationSeconds(params: Record<string, string>): number | null {

@@ -17,6 +17,7 @@ import {
   recommendTechnicianForSlot,
   recommendDatesForSite,
   placeWorkOrder,
+  setRouteStopLock,
   previewOptimalPlacement,
   assignAndOptimizeTechnician,
   startOptionsForWorkOrder,
@@ -757,6 +758,47 @@ export async function postScheduleRouteApply(
     }
     console.error("POST /schedule/route/apply error:", err);
     res.status(500).json({ message: "Failed to apply route" });
+  }
+}
+
+const lockRouteSchema = z.object({
+  workOrderId: z.string().min(1),
+  locked: z.boolean(),
+});
+
+export async function postScheduleRouteLock(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isDispatcherRole(req.user)) {
+      res.status(403).json({ message: "Insufficient role" });
+      return;
+    }
+    if (!req.user?.permissions.includes("jobs:write")) {
+      res.status(403).json({ message: "Missing permission: jobs:write" });
+      return;
+    }
+
+    const parsed = lockRouteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const workOrder = await setRouteStopLock(parsed.data);
+    publishDashboardChanged();
+    res.json(workOrder);
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500;
+    if (status !== 500) {
+      res.status(status).json({ message: (err as Error).message });
+      return;
+    }
+    console.error("POST /schedule/route/lock error:", err);
+    res.status(500).json({ message: "Failed to lock route stop" });
   }
 }
 

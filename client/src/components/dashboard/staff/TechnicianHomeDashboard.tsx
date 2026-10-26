@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Phone } from "lucide-react";
 import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 import {
   ApiError,
@@ -26,6 +26,7 @@ import {
   isScheduledOnDate,
   startOfWeekSunday,
 } from "@/lib/schedule";
+import { formatUsPhoneInput } from "@/lib/formatPhone";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useDashboardStore } from "@/store/useDashboardStore";
 import {
@@ -117,6 +118,17 @@ function applyAddressCoords(
   });
 }
 
+function contactPhone(
+  raw: string | null | undefined,
+): { label: string; tel: string } | null {
+  const text = raw?.trim();
+  if (!text) return null;
+  const digits = text.replace(/\D/g, "");
+  const ten = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (ten.length === 10) return { label: formatUsPhoneInput(ten), tel: `+1${ten}` };
+  return { label: text, tel: digits || text };
+}
+
 const SWATCH =
   "inline-flex max-w-full rounded-full px-2.5 py-1 text-xs font-semibold ring-1 transition";
 
@@ -141,6 +153,7 @@ function AppointmentCard({
   const note = noteLabel(job, service);
   const address = jobAddress(job);
   const number = workOrderNumber(job);
+  const phone = contactPhone(job.primaryContactPhone);
 
   return (
     <div className="min-w-0 space-y-2">
@@ -161,9 +174,21 @@ function AppointmentCard({
           </p>
         ) : null}
       </div>
-      <h3 className="mt-1 break-words text-base font-semibold text-[var(--staff-ink)]">
-        {job.customerName?.trim() || "Customer"}
-      </h3>
+      <div className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+        <h3 className="min-w-0 break-words text-base font-semibold text-[var(--staff-ink)]">
+          {job.customerName?.trim() || "Customer"}
+        </h3>
+        {phone ? (
+          <a
+            href={`tel:${phone.tel}`}
+            aria-label={`Call ${phone.label}`}
+            className="-my-2 inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap py-2 text-sm font-medium text-brand-orange underline-offset-2 hover:underline sm:min-h-0"
+          >
+            <Phone className="h-3.5 w-3.5" aria-hidden />
+            {phone.label}
+          </a>
+        ) : null}
+      </div>
       {address ? (
         <p className="mt-1 break-words text-sm text-[var(--staff-muted)]">{address}</p>
       ) : null}

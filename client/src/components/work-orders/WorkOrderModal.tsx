@@ -40,6 +40,7 @@ import { formatLocalClock } from "@/lib/schedule";
 import {
   ticketFromRecord,
   ticketToPayload,
+  workOrderUpdateBody,
   type TicketFormState,
 } from "@/lib/service-ticket";
 
@@ -336,15 +337,11 @@ export default function WorkOrderModal({
     payload: ReturnType<typeof ticketToPayload>,
   ): Promise<TicketFormState> {
     if (!token || !order) throw new Error("Work order is not loaded.");
-    const { assignedUserRef, ...rest } = payload;
-    const nextAssigned = assignedUserRef ?? null;
-    const prevAssigned = order.assignedUserRef ?? null;
-    const updated = await updateWorkOrder(token, order._id, {
-      ...rest,
-      ...(user && isDispatcherRole(user) && nextAssigned !== prevAssigned
-        ? { assignedUserRef: nextAssigned }
-        : {}),
-    });
+    const updated = await updateWorkOrder(
+      token,
+      order._id,
+      workOrderUpdateBody(payload, order, Boolean(user && isDispatcherRole(user))),
+    );
     setOrder(updated);
     onSaved?.(updated);
     return ticketFromRecord(updated);
@@ -354,17 +351,11 @@ export default function WorkOrderModal({
     payload: ReturnType<typeof ticketToPayload> & { scheduleInsertIndex?: number },
   ) {
     if (!token || !order) return;
-    const { assignedUserRef, ...remaining } = payload;
-    const rest = { ...remaining } as Omit<typeof remaining, "scheduleInsertIndex">;
-    delete (rest as { scheduleInsertIndex?: number }).scheduleInsertIndex;
-    const nextAssigned = assignedUserRef ?? null;
-    const prevAssigned = order.assignedUserRef ?? null;
-    const updated = await updateWorkOrder(token, order._id, {
-      ...rest,
-      ...(user && isDispatcherRole(user) && nextAssigned !== prevAssigned
-        ? { assignedUserRef: nextAssigned }
-        : {}),
-    });
+    const updated = await updateWorkOrder(
+      token,
+      order._id,
+      workOrderUpdateBody(payload, order, Boolean(user && isDispatcherRole(user))),
+    );
     setOrder(updated);
     onSaved?.(updated);
   }

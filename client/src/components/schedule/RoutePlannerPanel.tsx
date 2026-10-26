@@ -463,7 +463,7 @@ export function TechnicianRoutePane({
                   <button
                     type="button"
                     aria-label={`Move ${job.label} up`}
-                    disabled={index === 0 || busy}
+                    disabled={index === 0 || busy || Boolean(lockedTime)}
                     onClick={() => onMove(job.id, -1)}
                     className="rounded p-1 text-neutral-500 hover:bg-neutral-100 disabled:opacity-30"
                   >
@@ -472,7 +472,7 @@ export function TechnicianRoutePane({
                   <button
                     type="button"
                     aria-label={`Move ${job.label} down`}
-                    disabled={index === jobs.length - 1 || busy}
+                    disabled={index === jobs.length - 1 || busy || Boolean(lockedTime)}
                     onClick={() => onMove(job.id, 1)}
                     className="rounded p-1 text-neutral-500 hover:bg-neutral-100 disabled:opacity-30"
                   >

@@ -5,6 +5,7 @@ import { WorkOrderNote } from "../models/mongo/WorkOrderNote";
 import { WorkOrderType } from "../models/mongo/WorkOrderType";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
+import { CustomerContact, activeContactFilter } from "../models/mongo/CustomerContact";
 import { customerDisplayName } from "./notification.service";
 import { publishDashboardChanged } from "./dashboardLive";
 import {
@@ -238,6 +239,7 @@ export type EnrichedWorkOrder = Record<string, unknown> & {
   address: AddressSummary | null;
   customerName: string | null;
   customerRef: string | null;
+  primaryContactPhone: string | null;
   assignee: AssigneeSummary | null;
   workOrderTypeRef: string | null;
   workOrderType: { _id: string; label: string } | null;
@@ -323,7 +325,7 @@ export async function enrichScheduleWorkOrders(
       : [],
     customerIds.length
       ? Customer.find({ _id: { $in: customerIds } })
-          .select("_id accountName first last")
+          .select("_id accountName first last phone")
           .lean()
       : [],
     missingLegacyIds.length
@@ -332,7 +334,7 @@ export async function enrichScheduleWorkOrders(
           deletedAt: null,
           $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
         })
-          .select("_id legacyId accountName first last")
+          .select("_id legacyId accountName first last phone")
           .lean()
       : [],
     userIds.length
@@ -373,6 +375,28 @@ export async function enrichScheduleWorkOrders(
     if (typeof customer.legacyId === "number") {
       customerByLegacy.set(customer.legacyId, customer._id.toString());
     }
+  }
+  const phoneByCustomer = new Map<string, string>();
+  for (const customer of [...customers, ...fallbackCustomers]) {
+    const phone = customer.phone?.trim();
+    if (phone) phoneByCustomer.set(customer._id.toString(), phone);
+  }
+  const resolvedCustomerIds = [
+    ...customers.map((c) => c._id),
+    ...fallbackCustomers.map((c) => c._id),
+  ];
+  const primaryContacts = resolvedCustomerIds.length
+    ? await CustomerContact.find({
+        customerRef: { $in: resolvedCustomerIds },
+        isPrimary: true,
+        ...activeContactFilter,
+      })
+        .select("customerRef phone")
+        .lean()
+    : [];
+  for (const contact of primaryContacts) {
+    const phone = contact.phone?.trim();
+    if (phone) phoneByCustomer.set(contact.customerRef.toString(), phone);
   }
   const userById = new Map(
     users.map((u) => [
@@ -424,6 +448,9 @@ export async function enrichScheduleWorkOrders(
       workOrderType: typeById.get(wo.workOrderTypeRef?.toString() ?? "") ?? null,
       address: addressById.get(wo.addressRef?.toString() ?? "") ?? null,
       customerName: lookedUpName ?? snapshotName,
+      primaryContactPhone: resolvedRef
+        ? (phoneByCustomer.get(resolvedRef) ?? null)
+        : null,
       assignedUserRef: crew[0] ?? null,
       assignedUserRefs: crew,
       assignees: crew
@@ -2550,6 +2577,61 @@ function lockArrivalById(
   return byId;
 }
 
+export type PersistedRouteLockJob = {
+  id: string;
+  routeLocked?: boolean | null;
+  scheduledStart?: Date | null;
+};
+
+/** Client lock times win. A saved lock is kept when the client omits that stop. */
+export function mergePersistedRouteLocks(
+  jobs: PersistedRouteLockJob[],
+  clientLocks: Map<string, Date>,
+): Map<string, Date> {
+  const merged = new Map(clientLocks);
+  for (const job of jobs) {
+    if (merged.has(job.id)) continue;
+    if (!(job.routeLocked && job.scheduledStart instanceof Date)) continue;
+    if (Number.isNaN(job.scheduledStart.getTime())) continue;
+    merged.set(job.id, new Date(job.scheduledStart));
+  }
+  return merged;
+}
+
+export function routeLockedForAppliedStop(
+  id: string,
+  locks: Map<string, Date>,
+): boolean {
+  return locks.has(id);
+}
+
+/**
+ * A lock belongs to one technician and one day. It does not survive
+ * unscheduling or a move to a different technician or day.
+ */
+export function routeLockSurvivesChange(opts: {
+  hadScheduledStart: boolean;
+  hasScheduledStart: boolean;
+  technicianChanged: boolean;
+  dateChanged: boolean;
+}): boolean {
+  if (!opts.hadScheduledStart || !opts.hasScheduledStart) return false;
+  if (opts.technicianChanged || opts.dateChanged) return false;
+  return true;
+}
+
+export function retainRouteLock(
+  workOrder: { routeLocked?: boolean | null },
+  change: {
+    hadScheduledStart: boolean;
+    hasScheduledStart: boolean;
+    technicianChanged: boolean;
+    dateChanged: boolean;
+  },
+): void {
+  if (!routeLockSurvivesChange(change)) workOrder.routeLocked = false;
+}
+
 function formatRouteClock(date: Date): string {
   return new Intl.DateTimeFormat("en-US", {
     timeZone: SCHEDULE_TIMEZONE,
@@ -2870,7 +2952,8 @@ function createdAtMs(job: DayJob): number {
 
 function isFixedVisit(job: DayJob, exceptId?: string): boolean {
   if (exceptId && String(job._id) === exceptId) return false;
-  return crewIdStrings(job).length > 1 && job.scheduledStart instanceof Date;
+  if (!(job.scheduledStart instanceof Date)) return false;
+  return crewIdStrings(job).length > 1 || Boolean(job.routeLocked);
 }
 
 /** First start that is not inside an existing block, after the previous stop and drive. */
@@ -2992,7 +3075,14 @@ export async function applyPlannedRoute(opts: {
     return drive.minutes;
   };
 
-  const lockById = lockArrivalById(opts.lockedStops);
+  const lockById = mergePersistedRouteLocks(
+    sequence.map((job) => ({
+      id: String(job._id),
+      routeLocked: job.routeLocked,
+      scheduledStart: job.scheduledStart,
+    })),
+    lockArrivalById(opts.lockedStops),
+  );
   for (const job of sequence) {
     if (
       crewIdStrings(job).length > 1 &&
@@ -3035,6 +3125,7 @@ export async function applyPlannedRoute(opts: {
     job.scheduledStart = start;
     job.scheduledEnd = end;
     job.estimatedMinutes = duration;
+    job.routeLocked = routeLockedForAppliedStop(String(job._id), lockById);
     job.appointmentCanceledAt = null;
     job.appointmentCanceledBy = null;
     if (crewIdStrings(job).length > 1) {
@@ -3064,6 +3155,27 @@ export async function applyPlannedRoute(opts: {
     sequence.map((job) => job.toObject() as unknown as Record<string, unknown>),
   );
   return { workOrders, warnings };
+}
+
+export async function setRouteStopLock(opts: {
+  workOrderId: string;
+  locked: boolean;
+}): Promise<EnrichedWorkOrder> {
+  if (!mongoose.Types.ObjectId.isValid(opts.workOrderId)) {
+    throw routeError("Invalid work order.");
+  }
+  const job = await WorkOrder.findById(opts.workOrderId);
+  if (!job) throw routeError("Work order not found.", 404);
+  if (opts.locked && !(job.scheduledStart instanceof Date)) {
+    throw routeError("Schedule the stop before locking it.");
+  }
+  job.routeLocked = opts.locked;
+  await job.save();
+  const [enriched] = await enrichScheduleWorkOrders([
+    job.toObject() as unknown as Record<string, unknown>,
+  ]);
+  if (!enriched) throw routeError("Work order not found.", 404);
+  return enriched;
 }
 
 export function assignmentTechLabel(
@@ -3472,10 +3584,19 @@ async function placeSharedCrew(opts: {
   const ordered = opts.userIds
     .map((id) => byId.get(id))
     .filter((user): user is NonNullable<typeof user> => Boolean(user));
+  const prevStart = job.scheduledStart;
+  const prevCrew = crewIdStrings(job).join(",");
   applyCrewIds(job, opts.userIds);
   job.scheduledStart = slot.start;
   job.scheduledEnd = slot.end;
   job.estimatedMinutes = minutes;
+  retainRouteLock(job, {
+    hadScheduledStart: prevStart instanceof Date,
+    hasScheduledStart: true,
+    technicianChanged: prevCrew !== opts.userIds.join(","),
+    dateChanged:
+      prevStart instanceof Date && formatLocalDate(prevStart) !== opts.date,
+  });
   job.appointmentCanceledAt = null;
   job.appointmentCanceledBy = null;
   await applyAssignmentSideEffects(job, ordered);
@@ -3631,6 +3752,8 @@ export async function placeWorkOrder(opts: {
     dropped.estimatedMinutes = opts.estimatedMinutes;
   }
 
+  const droppedPrevStart = dropped.scheduledStart;
+  const droppedPrevCrew = crewIdStrings(dropped).join(",");
   const dayJobs = [...existing, dropped];
   const addressIds = [
     ...new Set(
@@ -3746,6 +3869,14 @@ export async function placeWorkOrder(opts: {
     job.estimatedMinutes = duration;
     if (String(job._id) === droppedId) {
       applyCrewIds(job, [String(assignee._id)]);
+      retainRouteLock(job, {
+        hadScheduledStart: droppedPrevStart instanceof Date,
+        hasScheduledStart: true,
+        technicianChanged: droppedPrevCrew !== String(assignee._id),
+        dateChanged:
+          droppedPrevStart instanceof Date &&
+          formatLocalDate(droppedPrevStart) !== opts.date,
+      });
       job.appointmentCanceledAt = null;
       job.appointmentCanceledBy = null;
     }
@@ -4291,6 +4422,7 @@ export async function assignAndOptimizeTechnician(
   applyCrewIds(job, [opts.userId]);
   job.date = localDateToUtc(opts.date, "00:00");
   job.scheduledStart = null;
+  job.routeLocked = false;
   job.appointmentCanceledAt = null;
   job.appointmentCanceledBy = null;
   await job.save();

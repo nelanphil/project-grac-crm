@@ -31,6 +31,7 @@ import {
   ticketFromRecord,
   ticketToPayload,
   workOrderTypeSaveIssue,
+  workOrderUpdateBody,
   type TicketFormState,
   type TicketPartRow,
 } from "@/lib/service-ticket";
@@ -109,15 +110,11 @@ async function saveWorkOrder(
   payload: ReturnType<typeof ticketToPayload>,
   user: PanelUser | null,
 ): Promise<WorkOrderListItem> {
-  const { assignedUserRef, ...rest } = payload;
-  const nextAssigned = assignedUserRef ?? null;
-  const prevAssigned = order.assignedUserRef ?? null;
-  return updateWorkOrder(token, order._id, {
-    ...rest,
-    ...(user && isDispatcherRole(user) && nextAssigned !== prevAssigned
-      ? { assignedUserRef: nextAssigned }
-      : {}),
-  });
+  return updateWorkOrder(
+    token,
+    order._id,
+    workOrderUpdateBody(payload, order, Boolean(user && isDispatcherRole(user))),
+  );
 }
 
 function ticketView(order: WorkOrderListItem): ServiceTicketView {
