@@ -6,6 +6,7 @@ import DashboardNav from "@/components/dashboard/DashboardNav";
 import StaffDashboardShell from "@/components/dashboard/staff/StaffDashboardShell";
 import { isJobTerminalPopoutPath } from "@/utils/jobTerminalWindow";
 import { authGetMe } from "@/lib/api";
+import { touchActivity } from "@/lib/activityHeartbeat";
 import { refreshVisitLocation } from "@/lib/browserLocation";
 import { canAccessNavPath } from "@/lib/dashboard-nav";
 import { isStaffRole } from "@/lib/dashboard-role";
@@ -37,6 +38,7 @@ export default function DashboardLayout({
         if (cancelled) return;
         login(token, fresh);
         refreshVisitLocation(token, fresh.id);
+        touchActivity(token, fresh.id);
       })
       .catch(() => {
         // Keep the stored session if the refresh fails.
@@ -48,6 +50,28 @@ export default function DashboardLayout({
       cancelled = true;
     };
   }, [hydrated, token, login]);
+
+  useEffect(() => {
+    if (!hydrated || !synced || !token || !user) return;
+
+    const ping = () => touchActivity(token, user.id);
+    ping();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") ping();
+    };
+
+    window.addEventListener("focus", ping);
+    window.addEventListener("pointerdown", ping);
+    window.addEventListener("keydown", ping);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", ping);
+      window.removeEventListener("pointerdown", ping);
+      window.removeEventListener("keydown", ping);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [hydrated, synced, token, user, pathname]);
 
   useEffect(() => {
     if (!hydrated || !synced || !user || pathAllowed) return;

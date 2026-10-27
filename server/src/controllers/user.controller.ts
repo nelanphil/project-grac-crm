@@ -185,6 +185,7 @@ function formatUser(
     scheduleColor?: string | null;
     initials?: string | null;
     lastLoginAt?: Date | null;
+    lastActiveAt?: Date | null;
     lastLoginLocation?: IUserLoginLocation | null;
     createdAt: Date;
     updatedAt?: Date;
@@ -218,6 +219,7 @@ function formatUser(
     scheduleColor: user.scheduleColor ?? "",
     initials: user.initials ?? "",
     lastLoginAt: user.lastLoginAt ?? null,
+    lastActiveAt: user.lastActiveAt ?? null,
     lastLoginLocation: user.lastLoginLocation ?? null,
     createdAt: user.createdAt,
     ...(user.updatedAt ? { updatedAt: user.updatedAt } : {}),

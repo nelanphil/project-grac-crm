@@ -81,6 +81,8 @@ export interface IUser extends Document {
   legalDocsVersion: string | null;
   /** Most recent successful sign-in. Null until the user logs in after this was added. */
   lastLoginAt: Date | null;
+  /** Most recent dashboard activity (sign-in, return visit, or interaction). Null until tracked. */
+  lastActiveAt: Date | null;
   /** Approximate place of the most recent sign-in. Null for private IPs or a failed lookup. */
   lastLoginLocation: IUserLoginLocation | null;
   /** Per-user dashboard nav customization. */
@@ -267,6 +269,7 @@ const userSchema = new Schema<IUser>(
     initials: { type: String, default: null, trim: true, uppercase: true },
     legalDocsVersion: { type: String, default: null },
     lastLoginAt: { type: Date, default: null },
+    lastActiveAt: { type: Date, default: null },
     lastLoginLocation: { type: loginLocationSchema, default: null },
     uiPreferences: {
       type: uiPreferencesSchema,

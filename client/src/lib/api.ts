@@ -594,6 +594,14 @@ export async function authUpdateLoginLocation(
   return res.ok;
 }
 
+export async function authTouchActivity(token: string): Promise<boolean> {
+  const res = await fetch(`${API_URL}/auth/me/activity`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return res.ok;
+}
+
 export async function authRegister(data: {
   email: string;
   password: string;
@@ -846,6 +854,7 @@ export interface UserListItem {
   initials?: string;
   scheduleColor?: string;
   lastLoginAt?: string | null;
+  lastActiveAt?: string | null;
   lastLoginLocation?: UserLoginLocation | null;
   createdAt: string;
   updatedAt?: string;

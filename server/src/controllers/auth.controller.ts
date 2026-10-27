@@ -519,7 +519,7 @@ export async function login(req: Request, res: Response): Promise<void> {
       deviceLocation ?? (await lookupLoginLocation(req.ip));
     await User.updateOne(
       { _id: matchedUser._id },
-      { $set: { lastLoginAt, lastLoginLocation } },
+      { $set: { lastLoginAt, lastLoginLocation, lastActiveAt: lastLoginAt } },
     );
 
     const permissions = await permissionsForUser(matchedUser);
@@ -585,6 +585,42 @@ export async function updateLoginLocation(
     res.status(204).end();
   } catch (err) {
     console.error("POST /auth/me/login-location error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+const ACTIVITY_TOUCH_MIN_MS = 60_000;
+
+/** POST /auth/me/activity — record that the signed-in user is using the dashboard. */
+export async function touchActivity(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  try {
+    const now = new Date();
+    await User.updateOne(
+      {
+        _id: req.user.id,
+        ...activeUserFilter,
+        $or: [
+          { lastActiveAt: null },
+          {
+            lastActiveAt: {
+              $lt: new Date(now.getTime() - ACTIVITY_TOUCH_MIN_MS),
+            },
+          },
+        ],
+      },
+      { $set: { lastActiveAt: now } },
+    );
+    res.status(204).end();
+  } catch (err) {
+    console.error("POST /auth/me/activity error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }

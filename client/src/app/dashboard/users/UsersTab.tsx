@@ -627,8 +627,8 @@ export default function UsersTab() {
                     value={new Date(user.createdAt).toLocaleDateString()}
                   />
                   <DataField
-                    label="Last login"
-                    value={formatLastLogin(user.lastLoginAt)}
+                    label="Last active"
+                    value={formatLastLogin(user.lastActiveAt ?? user.lastLoginAt)}
                   />
                   <DataField
                     label="Location"
@@ -689,7 +689,7 @@ export default function UsersTab() {
                       Joined
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                      Last login
+                      Last active
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                       Location
@@ -730,7 +730,7 @@ export default function UsersTab() {
                         {new Date(user.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
-                        {formatLastLogin(user.lastLoginAt)}
+                        {formatLastLogin(user.lastActiveAt ?? user.lastLoginAt)}
                       </td>
                       <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">
                         {formatLoginLocation(user.lastLoginLocation)}

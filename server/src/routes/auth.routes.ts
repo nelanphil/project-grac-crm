@@ -12,6 +12,7 @@ import {
   acceptLegalConsent,
   updateMyNotifications,
   updateLoginLocation,
+  touchActivity,
 } from "../controllers/auth.controller";
 import { authenticate, AuthRequest } from "../middleware/auth.middleware";
 
@@ -38,6 +39,9 @@ router.patch("/me/notifications", authenticate, (req, res: Response) =>
 );
 router.post("/me/login-location", authenticate, (req, res: Response) =>
   updateLoginLocation(req as AuthRequest, res),
+);
+router.post("/me/activity", authenticate, (req, res: Response) =>
+  touchActivity(req as AuthRequest, res),
 );
 router.post("/legal-consent", authenticate, (req, res: Response) =>
   acceptLegalConsent(req as AuthRequest, res),
