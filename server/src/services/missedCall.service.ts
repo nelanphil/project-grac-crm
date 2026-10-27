@@ -14,11 +14,26 @@ import {
 } from "../utils/messageThreads";
 import { isPubliclyReachableApiHost, resolvePublicApiBase } from "../utils/publicUrl";
 import { phoneLinesMatch, normalizePhoneLines } from "../utils/twilioPhoneLines";
+import {
+  TWILIO_RESPONSES_SLUG,
+  TwilioResponseSettings,
+} from "../models/mongo/TwilioResponseSettings";
 
 export const MISSED_CALL_TEXT =
   "Hey, sorry we missed your call. It is very important to us, please leave a message regarding your generator status or issue and we will get right back to you. Feel free to text back here as well\n\nThanks!";
 
 export const MISSED_CALL_COOLDOWN_MS = 15 * 60 * 1000;
+
+/** Saved wording, or the built-in message when nothing has been saved. */
+export async function loadMissedCallText(): Promise<string> {
+  const doc = await TwilioResponseSettings.findOne({
+    slug: TWILIO_RESPONSES_SLUG,
+  })
+    .select("missedCallText")
+    .lean();
+  const text = doc?.missedCallText?.trim();
+  return text || MISSED_CALL_TEXT;
+}
 
 export type MissedCallSkipReason =
   | "missing"
@@ -92,13 +107,19 @@ export async function handleMissedInboundCall(input: {
     phoneLinesMatch(entry.phoneNumber, input.toNumber || doc.toNumber),
   );
   const now = new Date();
+  let missedCallText = MISSED_CALL_TEXT;
+  try {
+    missedCallText = await loadMissedCallText();
+  } catch (err) {
+    console.error("[voice] missed-call text settings unavailable:", err);
+  }
   const recent = callerE164
     ? await TwilioCommunication.findOne({
         direction: "outbound",
         channel: { $in: ["sms", "mms"] },
         toNumber: callerE164,
-        body: MISSED_CALL_TEXT,
         createdAt: { $gte: new Date(now.getTime() - MISSED_CALL_COOLDOWN_MS) },
+        $or: [{ autoReply: "missed-call" }, { body: MISSED_CALL_TEXT }],
       })
         .sort({ createdAt: -1 })
         .select("createdAt")
@@ -154,7 +175,7 @@ export async function handleMissedInboundCall(input: {
       account: input.account,
       from,
       to: callerE164,
-      body: MISSED_CALL_TEXT,
+      body: missedCallText,
       statusCallbackUrl: callback,
     });
 
@@ -179,7 +200,8 @@ export async function handleMissedInboundCall(input: {
         status: "sent",
         fromNumber: from,
         toNumber: callerE164,
-        body: MISSED_CALL_TEXT,
+        body: missedCallText,
+        autoReply: "missed-call",
         mediaUrls: [],
         twilioSid: sid,
         customerRef: claimed.customerRef ?? null,
@@ -191,7 +213,7 @@ export async function handleMissedInboundCall(input: {
         await touchThreadAfterMessage(threadRef, {
           direction: "outbound",
           channel: "sms",
-          body: MISSED_CALL_TEXT,
+          body: missedCallText,
           at: sms.createdAt ?? new Date(),
         });
       }

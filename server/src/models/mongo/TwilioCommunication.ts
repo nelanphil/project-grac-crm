@@ -58,6 +58,8 @@ export interface ITwilioCommunication extends Document {
   answeredByUserRef?: Types.ObjectId | null;
   /** Set once a missed inbound call has been handled, whether or not a text went out. */
   missedCallTextSentAt?: Date | null;
+  /** Marks an automatic reply so cooldown survives a wording change. */
+  autoReply?: "missed-call" | "";
   createdAt: Date;
   updatedAt: Date;
 }
@@ -178,6 +180,11 @@ const twilioCommunicationSchema = new Schema<ITwilioCommunication>(
       default: null,
     },
     missedCallTextSentAt: { type: Date, default: null },
+    autoReply: {
+      type: String,
+      enum: ["", "missed-call"],
+      default: "",
+    },
   },
   { timestamps: true },
 );

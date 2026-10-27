@@ -6095,6 +6095,26 @@ export async function saveContactFormSettings(
   });
 }
 
+export async function getTwilioResponseSettings(
+  token: string,
+): Promise<{ missedCallText: string }> {
+  return authRequest<{ missedCallText: string }>("/twilio-response-settings", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function saveTwilioResponseSettings(
+  token: string,
+  missedCallText: string,
+): Promise<{ missedCallText: string }> {
+  return authRequest<{ missedCallText: string }>("/twilio-response-settings", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ missedCallText }),
+  });
+}
+
 export interface ContactFormSubmissionItem {
   _id: string;
   firstName: string;

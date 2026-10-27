@@ -9,6 +9,7 @@ import QuoCredentialsCard from "@/components/admin/QuoCredentialsCard";
 import XaiCredentialsCard from "@/components/admin/XaiCredentialsCard";
 import PublicAssetManagerCard from "@/components/admin/PublicAssetManagerCard";
 import ContactFormEmailsCard from "@/components/admin/ContactFormEmailsCard";
+import TwilioResponsesCard from "@/components/admin/TwilioResponsesCard";
 import DatabaseSection from "@/components/admin/DatabaseSection";
 import CrashReportsTab from "@/components/admin/CrashReportsTab";
 import NameReportsTab from "@/components/admin/NameReportsTab";
@@ -20,6 +21,7 @@ type TabId =
   | "api-credentials"
   | "public-images"
   | "forms"
+  | "twilio-responses"
   | "database"
   | "crash-reports"
   | "reports";
@@ -29,6 +31,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "api-credentials", label: "API Credentials" },
   { id: "public-images", label: "Public Images" },
   { id: "forms", label: "Forms" },
+  { id: "twilio-responses", label: "Twilio Responses" },
   { id: "database", label: "Database" },
   { id: "crash-reports", label: "Crash reports" },
   { id: "reports", label: "Reports" },
@@ -40,6 +43,7 @@ function parseTab(value: string | null): TabId {
     value === "api-credentials" ||
     value === "public-images" ||
     value === "forms" ||
+    value === "twilio-responses" ||
     value === "database" ||
     value === "crash-reports" ||
     value === "reports"
@@ -60,7 +64,7 @@ export default function AdminPage() {
                 Admin Panel
               </h1>
               <p className="mt-1 text-sm text-neutral-500">
-                Manage platform credentials, public images, form settings, crash reports, and name reports.
+                Manage platform credentials, public images, form settings, Twilio responses, crash reports, and name reports.
               </p>
             </div>
             <div className="rounded-xl border border-neutral-200 bg-white shadow-sm px-6 py-8 text-sm text-neutral-500">
@@ -100,7 +104,7 @@ function AdminContent() {
       <div>
         <h1 className="text-2xl font-bold text-brand-dark">Admin Panel</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          Manage platform credentials, public images, form settings, crash reports, and name reports.
+          Manage platform credentials, public images, form settings, Twilio responses, crash reports, and name reports.
         </p>
       </div>
 
@@ -135,6 +139,9 @@ function AdminContent() {
         <PublicAssetManagerCard token={token} />
       )}
       {activeTab === "forms" && <ContactFormEmailsCard token={token} />}
+      {activeTab === "twilio-responses" && (
+        <TwilioResponsesCard token={token} />
+      )}
       {activeTab === "database" && <DatabaseSection token={token} />}
       {activeTab === "crash-reports" && <CrashReportsTab token={token} />}
       {activeTab === "reports" && <NameReportsTab token={token} />}
