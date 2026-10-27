@@ -1,6 +1,9 @@
 import { Types } from "mongoose";
 import {
+  Invoice,
   toPublicOfflinePayment,
+  type IInvoice,
+  type IOfflinePayment,
   type OfflinePaymentMethod,
   type PublicOfflinePayment,
 } from "../models/mongo/Invoice";
@@ -27,6 +30,7 @@ import {
   dollarsToCents,
   findOpenInvoiceForWorkOrder,
   markInvoicePaid,
+  reopenInvoice,
   resolveCustomerRefForWorkOrder,
   syncWorkOrderInvoice,
   type WorkOrderInvoiceSource,
@@ -75,6 +79,8 @@ export interface WorkOrderCompletionCheck {
   /** Set when the customer cannot be texted or emailed. Cash and check can still complete. */
   sendBlockedReason: string | null;
   invoiceOpen: boolean;
+  /** Staff-recorded check or cash payment that can be reopened. Card payments are omitted. */
+  offlinePayment: PublicOfflinePayment | null;
   contacts: CompletionContact[];
 }
 
@@ -88,6 +94,8 @@ export interface WorkOrderCompletionResult {
   payUrl?: string;
   delivery?: { sms: ChannelDelivery; email: ChannelDelivery };
   offlinePayment?: PublicOfflinePayment;
+  /** True when a previous check or cash payment was reopened for this request. */
+  reverted?: boolean;
   receipt?: {
     email: InvoiceEmailReceiptResult;
     phone: string;
@@ -113,6 +121,47 @@ export function completionBlockedReason(input: {
 
 export function sendBlockedReason(reachableContacts: number): string | null {
   return reachableContacts <= 0 ? NO_CONTACT_REASON : null;
+}
+
+export type CompletedPaymentAction =
+  | { action: "fresh" }
+  | { action: "reuse_open" }
+  | { action: "revert_offline" }
+  | { action: "reject"; message: string };
+
+/** Whether pay_now or paid_offline may reuse the open invoice on a completed order. */
+export function settleCompletedBlockedReason(input: {
+  completed: boolean;
+  mode: "pay_now" | "send" | "paid_offline";
+  blockedReason: string | null;
+  invoiceOpen: boolean;
+  offlinePaid?: boolean;
+}): CompletedPaymentAction {
+  if (!input.completed) {
+    if (input.blockedReason) {
+      return { action: "reject", message: input.blockedReason };
+    }
+    return { action: "fresh" };
+  }
+  if (input.mode === "send") {
+    return {
+      action: "reject",
+      message: input.blockedReason ?? ALREADY_COMPLETE_REASON,
+    };
+  }
+  if (input.blockedReason && input.blockedReason !== ALREADY_COMPLETE_REASON) {
+    return { action: "reject", message: input.blockedReason };
+  }
+  if (!input.invoiceOpen) {
+    if (
+      input.offlinePaid &&
+      (input.mode === "pay_now" || input.mode === "paid_offline")
+    ) {
+      return { action: "revert_offline" };
+    }
+    return { action: "reject", message: INVOICE_NOT_OPEN_REASON };
+  }
+  return { action: "reuse_open" };
 }
 
 type SendChannel =
@@ -223,6 +272,63 @@ function contactName(first: string, last: string): string {
   return name || "Contact";
 }
 
+type CompletionActor = {
+  actorType?: "user" | "system";
+  actorUserId?: string | null;
+  actorName?: string | null;
+};
+
+/** Latest staff check/cash payment with no card charge. Null when a card already paid it. */
+export async function findRevertibleOfflineInvoice(
+  workOrderId: Types.ObjectId | string,
+): Promise<IInvoice | null> {
+  return Invoice.findOne({
+    workOrderRef: workOrderId,
+    status: "paid",
+    "offlinePayment.method": { $in: ["check", "cash"] },
+    providerPaymentId: { $in: [null, ""] },
+  }).sort({ paidAt: -1 });
+}
+
+function offlinePaymentSnapshot(
+  value: IOfflinePayment | null | undefined,
+): IOfflinePayment | null {
+  if (!value || (value.method !== "check" && value.method !== "cash")) return null;
+  return {
+    method: value.method,
+    checkNumber: value.checkNumber ?? null,
+    proofUrl: value.proofUrl ?? null,
+    recordedByUserId: value.recordedByUserId ?? null,
+    recordedByName: value.recordedByName ?? null,
+    recordedAt: value.recordedAt ?? null,
+  };
+}
+
+/** Reopen a check/cash invoice. `restore` puts that payment back if the new action fails. */
+export async function revertOfflinePayment(
+  workOrder: { _id: Types.ObjectId | string },
+  actor?: CompletionActor,
+): Promise<{ invoice: IInvoice; restore: () => Promise<void> } | null> {
+  const invoice = await findRevertibleOfflineInvoice(workOrder._id);
+  if (!invoice) return null;
+  const snapshot = offlinePaymentSnapshot(invoice.offlinePayment);
+  invoice.offlinePayment = null;
+  invoice.markModified("offlinePayment");
+  const reopened = await reopenInvoice({ invoice, actor });
+  await Invoice.updateOne({ _id: reopened._id }, { $unset: { offlinePayment: "" } });
+  reopened.offlinePayment = null;
+  return {
+    invoice: reopened,
+    restore: async () => {
+      const current = await Invoice.findById(reopened._id);
+      if (!current || !snapshot) return;
+      current.offlinePayment = snapshot;
+      current.markModified("offlinePayment");
+      await markInvoicePaid({ invoice: current, actor });
+    },
+  };
+}
+
 export async function checkWorkOrderCompletion(
   workOrder: WorkOrderInvoiceSource & { completed?: boolean },
 ): Promise<WorkOrderCompletionCheck> {
@@ -254,6 +360,9 @@ export async function checkWorkOrderCompletion(
     (contact) => contact.phoneValid || contact.emailValid,
   ).length;
   const openInvoice = await findOpenInvoiceForWorkOrder(workOrder._id);
+  const offlineInvoice = openInvoice
+    ? null
+    : await findRevertibleOfflineInvoice(workOrder._id);
   return {
     totalCents,
     blockedReason: completionBlockedReason({
@@ -263,6 +372,7 @@ export async function checkWorkOrderCompletion(
     }),
     sendBlockedReason: sendBlockedReason(reachableContacts),
     invoiceOpen: Boolean(openInvoice),
+    offlinePayment: toPublicOfflinePayment(offlineInvoice?.offlinePayment),
     contacts,
   };
 }
@@ -471,11 +581,20 @@ export async function completeWorkOrder(input: {
   proofUrl?: string;
   userId?: string | null;
   actorName?: string | null;
+  actor?: CompletionActor;
   apiBase: string;
 }): Promise<WorkOrderCompletionResult> {
   const check = await checkWorkOrderCompletion(input.workOrder);
-  if (check.blockedReason) {
-    throw new WorkOrderCompletionError(check.blockedReason);
+  const alreadyComplete = Boolean(input.workOrder.completed);
+  const decision = settleCompletedBlockedReason({
+    completed: alreadyComplete,
+    mode: input.mode,
+    blockedReason: check.blockedReason,
+    invoiceOpen: check.invoiceOpen,
+    offlinePaid: Boolean(check.offlinePayment),
+  });
+  if (decision.action === "reject") {
+    throw new WorkOrderCompletionError(decision.message);
   }
   if (input.mode !== "paid_offline" && check.sendBlockedReason) {
     throw new WorkOrderCompletionError(check.sendBlockedReason);
@@ -493,7 +612,29 @@ export async function completeWorkOrder(input: {
     plan = validated.plan;
   }
 
-  const invoice = await markCompletedAndInvoice(input.workOrder);
+  const actor = input.actor ?? {
+    actorType: input.userId ? "user" : "system",
+    actorUserId: input.userId ?? null,
+    actorName: input.actorName ?? null,
+  };
+  let restore: (() => Promise<void>) | null = null;
+  let reverted = false;
+  let invoice: IInvoice | null = null;
+  if (decision.action === "reuse_open") {
+    invoice = await findOpenInvoiceForWorkOrder(input.workOrder._id);
+  } else if (decision.action === "revert_offline") {
+    const revertedPayment = await revertOfflinePayment(input.workOrder, actor);
+    if (revertedPayment) {
+      restore = revertedPayment.restore;
+      reverted = true;
+      invoice = revertedPayment.invoice;
+    }
+  } else {
+    invoice = await markCompletedAndInvoice(input.workOrder);
+  }
+  if (!invoice) {
+    throw new WorkOrderCompletionError(INVOICE_NOT_OPEN_REASON);
+  }
   const invoiceId = String(invoice._id);
   const summary = {
     _id: invoiceId,
@@ -513,9 +654,10 @@ export async function completeWorkOrder(input: {
       if (!link?.payUrl) {
         throw new WorkOrderCompletionError("Could not create a payment link.");
       }
-      return { invoice: summary, payUrl: link.payUrl };
+      return withReverted({ invoice: summary, payUrl: link.payUrl }, reverted);
     } catch (err) {
-      await rollbackCompletion(input.workOrder);
+      if (restore) await restore();
+      else if (!alreadyComplete) await rollbackCompletion(input.workOrder);
       if (err instanceof CheckoutError) {
         throw new WorkOrderCompletionError(err.message, err.statusCode);
       }
@@ -524,15 +666,15 @@ export async function completeWorkOrder(input: {
   }
 
   if (input.mode === "paid_offline") {
-    if (input.method !== "check" && input.method !== "cash") {
-      throw new WorkOrderCompletionError("Choose check or cash.");
-    }
-    const proofUrl = input.proofUrl?.trim() || "";
-    if (proofUrl && !proofUrl.startsWith("https://")) {
-      throw new WorkOrderCompletionError("Proof URL must start with https://");
-    }
     let recorded = false;
     try {
+      if (input.method !== "check" && input.method !== "cash") {
+        throw new WorkOrderCompletionError("Choose check or cash.");
+      }
+      const proofUrl = input.proofUrl?.trim() || "";
+      if (proofUrl && !proofUrl.startsWith("https://")) {
+        throw new WorkOrderCompletionError("Proof URL must start with https://");
+      }
       const userId =
         input.userId && Types.ObjectId.isValid(input.userId)
           ? new Types.ObjectId(input.userId)
@@ -583,18 +725,24 @@ export async function completeWorkOrder(input: {
       } catch (err) {
         console.error("invoice view link failed:", err);
       }
-      return {
-        invoice: summary,
-        offlinePayment,
-        receipt: {
-          email,
-          phone: primary?.phone ?? "",
-          phoneValid: Boolean(primary?.phoneValid),
-          viewUrl,
+      return withReverted(
+        {
+          invoice: summary,
+          offlinePayment,
+          receipt: {
+            email,
+            phone: primary?.phone ?? "",
+            phoneValid: Boolean(primary?.phoneValid),
+            viewUrl,
+          },
         },
-      };
+        reverted,
+      );
     } catch (err) {
-      if (!recorded) await rollbackCompletion(input.workOrder);
+      if (!recorded) {
+        if (restore) await restore();
+        else if (!alreadyComplete) await rollbackCompletion(input.workOrder);
+      }
       throw err;
     }
   }
@@ -619,7 +767,14 @@ export async function completeWorkOrder(input: {
       userId: input.userId,
     }),
   ]);
-  return { invoice: summary, delivery: { sms, email } };
+  return withReverted({ invoice: summary, delivery: { sms, email } }, reverted);
+}
+
+function withReverted<T extends WorkOrderCompletionResult>(
+  result: T,
+  reverted: boolean,
+): T {
+  return reverted ? { ...result, reverted: true } : result;
 }
 
 export async function resendWorkOrderInvoice(input: {
@@ -628,6 +783,7 @@ export async function resendWorkOrderInvoice(input: {
   phoneOverride?: string;
   emailOverride?: string;
   userId?: string | null;
+  actor?: CompletionActor;
   apiBase: string;
 }): Promise<WorkOrderCompletionResult> {
   if (!input.workOrder.completed) {
@@ -635,51 +791,79 @@ export async function resendWorkOrderInvoice(input: {
       "Mark this work order complete before resending its invoice.",
     );
   }
-  const invoice = await findOpenInvoiceForWorkOrder(input.workOrder._id);
+  let invoice = await findOpenInvoiceForWorkOrder(input.workOrder._id);
+  let restore: (() => Promise<void>) | null = null;
+  let reverted = false;
   if (!invoice) {
-    throw new WorkOrderCompletionError(INVOICE_NOT_OPEN_REASON);
+    const revertedPayment = await revertOfflinePayment(input.workOrder, input.actor);
+    if (!revertedPayment) {
+      throw new WorkOrderCompletionError(INVOICE_NOT_OPEN_REASON);
+    }
+    invoice = revertedPayment.invoice;
+    restore = revertedPayment.restore;
+    reverted = true;
   }
-  const check = await checkWorkOrderCompletion(input.workOrder);
-  if (check.blockedReason && check.blockedReason !== ALREADY_COMPLETE_REASON) {
-    throw new WorkOrderCompletionError(check.blockedReason);
-  }
-  if (check.sendBlockedReason) {
-    throw new WorkOrderCompletionError(check.sendBlockedReason);
-  }
-  const validated = validateCompletionSend({
-    contacts: check.contacts,
-    contactId: input.contactId,
-    phoneOverride: input.phoneOverride,
-    emailOverride: input.emailOverride,
-  });
-  if (!validated.ok) throw new WorkOrderCompletionError(validated.message);
+  try {
+    const check = await checkWorkOrderCompletion(input.workOrder);
+    if (check.blockedReason && check.blockedReason !== ALREADY_COMPLETE_REASON) {
+      throw new WorkOrderCompletionError(check.blockedReason);
+    }
+    if (check.sendBlockedReason) {
+      throw new WorkOrderCompletionError(check.sendBlockedReason);
+    }
+    const validated = validateCompletionSend({
+      contacts: check.contacts,
+      contactId: input.contactId,
+      phoneOverride: input.phoneOverride,
+      emailOverride: input.emailOverride,
+    });
+    if (!validated.ok) throw new WorkOrderCompletionError(validated.message);
 
-  const copy = await invoiceMessageCopy(invoice);
-  const [sms, email] = await Promise.all([
-    sendSms({
-      plan: validated.plan,
-      invoiceId: String(invoice._id),
-      amountCents: invoice.amountCents,
-      body: copy.smsBody,
-      userId: input.userId,
-      apiBase: input.apiBase,
-    }),
-    sendEmail({
-      plan: validated.plan,
-      invoiceId: String(invoice._id),
-      amountCents: invoice.amountCents,
-      subject: copy.emailSubject,
-      body: copy.emailBody,
-      emailChrome: copy.emailChrome,
-      userId: input.userId,
-    }),
-  ]);
-  return {
-    invoice: {
-      _id: String(invoice._id),
-      number: invoice.number,
-      amountCents: invoice.amountCents,
-    },
-    delivery: { sms, email },
-  };
+    const copy = await invoiceMessageCopy(invoice);
+    const [sms, email] = await Promise.all([
+      sendSms({
+        plan: validated.plan,
+        invoiceId: String(invoice._id),
+        amountCents: invoice.amountCents,
+        body: copy.smsBody,
+        userId: input.userId,
+        apiBase: input.apiBase,
+      }),
+      sendEmail({
+        plan: validated.plan,
+        invoiceId: String(invoice._id),
+        amountCents: invoice.amountCents,
+        subject: copy.emailSubject,
+        body: copy.emailBody,
+        emailChrome: copy.emailChrome,
+        userId: input.userId,
+      }),
+    ]);
+    if (restore && sms.status !== "sent" && email.status !== "sent") {
+      const putBack = restore;
+      restore = null;
+      await putBack();
+      const detail =
+        sms.status === "failed"
+          ? sms.error
+          : email.status === "failed"
+            ? email.error
+            : "The invoice was not sent.";
+      throw new WorkOrderCompletionError(detail);
+    }
+    return withReverted(
+      {
+        invoice: {
+          _id: String(invoice._id),
+          number: invoice.number,
+          amountCents: invoice.amountCents,
+        },
+        delivery: { sms, email },
+      },
+      reverted,
+    );
+  } catch (err) {
+    if (restore) await restore();
+    throw err;
+  }
 }

@@ -182,6 +182,8 @@ function CompletionControl({
         orderId={order._id}
         token={token}
         completed={Boolean(order.completed)}
+        paid={Boolean(order.paid)}
+        offlinePaid={Boolean(order.offlinePayment)}
         autoStart={autoStart}
         autoResend={autoResend}
         onCompleted={onCompleted}

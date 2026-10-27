@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   ALREADY_COMPLETE_REASON,
+  INVOICE_NOT_OPEN_REASON,
   NO_CONTACT_REASON,
   NO_CUSTOMER_REASON,
   ZERO_TOTAL_REASON,
   completionBlockedReason,
   sendBlockedReason,
+  settleCompletedBlockedReason,
   validateCompletionSend,
   type CompletionContact,
 } from "./workOrderCompletion.service";
@@ -161,5 +163,109 @@ describe("validateCompletionSend", () => {
     });
     assert.equal(result.ok, false);
     if (!result.ok) assert.match(result.message, /phone number or email/);
+  });
+});
+
+describe("settleCompletedBlockedReason", () => {
+  it("rejects an incomplete order for its blocked reason", () => {
+    assert.deepEqual(
+      settleCompletedBlockedReason({
+        completed: false,
+        mode: "pay_now",
+        blockedReason: ZERO_TOTAL_REASON,
+        invoiceOpen: false,
+      }),
+      { action: "reject", message: ZERO_TOTAL_REASON },
+    );
+  });
+
+  it("starts a fresh completion when the order is open and unblocked", () => {
+    assert.deepEqual(
+      settleCompletedBlockedReason({
+        completed: false,
+        mode: "paid_offline",
+        blockedReason: null,
+        invoiceOpen: false,
+      }),
+      { action: "fresh" },
+    );
+  });
+
+  it("reuses the open invoice when switching payment on a completed order", () => {
+    for (const mode of ["pay_now", "paid_offline"] as const) {
+      assert.deepEqual(
+        settleCompletedBlockedReason({
+          completed: true,
+          mode,
+          blockedReason: ALREADY_COMPLETE_REASON,
+          invoiceOpen: true,
+        }),
+        { action: "reuse_open" },
+      );
+    }
+  });
+
+  it("keeps send on a completed order rejected", () => {
+    assert.deepEqual(
+      settleCompletedBlockedReason({
+        completed: true,
+        mode: "send",
+        blockedReason: ALREADY_COMPLETE_REASON,
+        invoiceOpen: true,
+      }),
+      { action: "reject", message: ALREADY_COMPLETE_REASON },
+    );
+  });
+
+  it("rejects a completed order whose invoice is no longer open", () => {
+    assert.deepEqual(
+      settleCompletedBlockedReason({
+        completed: true,
+        mode: "pay_now",
+        blockedReason: ALREADY_COMPLETE_REASON,
+        invoiceOpen: false,
+      }),
+      { action: "reject", message: INVOICE_NOT_OPEN_REASON },
+    );
+  });
+
+  it("rejects a completed order for a reason other than already complete", () => {
+    assert.deepEqual(
+      settleCompletedBlockedReason({
+        completed: true,
+        mode: "paid_offline",
+        blockedReason: NO_CUSTOMER_REASON,
+        invoiceOpen: true,
+      }),
+      { action: "reject", message: NO_CUSTOMER_REASON },
+    );
+  });
+
+  it("reopens a check or cash payment when the invoice is no longer open", () => {
+    for (const mode of ["pay_now", "paid_offline"] as const) {
+      assert.deepEqual(
+        settleCompletedBlockedReason({
+          completed: true,
+          mode,
+          blockedReason: ALREADY_COMPLETE_REASON,
+          invoiceOpen: false,
+          offlinePaid: true,
+        }),
+        { action: "revert_offline" },
+      );
+    }
+  });
+
+  it("still rejects a paid invoice that was not recorded as check or cash", () => {
+    assert.deepEqual(
+      settleCompletedBlockedReason({
+        completed: true,
+        mode: "pay_now",
+        blockedReason: ALREADY_COMPLETE_REASON,
+        invoiceOpen: false,
+        offlinePaid: false,
+      }),
+      { action: "reject", message: INVOICE_NOT_OPEN_REASON },
+    );
   });
 });

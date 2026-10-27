@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { formatUsPhoneInput, isValidUsPhone } from "@/lib/formatPhone";
 import { hasValidContactEmail } from "@/lib/invoiceEmailHtml";
+import SwipeToConfirm from "@/components/ui/SwipeToConfirm";
 
 const badge =
   "inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200";
@@ -131,6 +132,8 @@ function failureMessage(err: unknown, fallback: string): string {
 const ALREADY_COMPLETE_REASON = "This work order is already complete.";
 const INVOICE_NOT_OPEN_REASON =
   "This invoice is no longer open, so it cannot be resent.";
+const INVOICE_ALREADY_CLOSED_REASON =
+  "This invoice is already paid or closed.";
 
 function resendBlockedReason(check: WorkOrderCompletionCheck): string | null {
   if (
@@ -149,6 +152,8 @@ export default function WorkOrderCompleteFlow({
   orderId,
   token,
   completed,
+  paid,
+  offlinePaid,
   autoStart,
   autoResend,
   onCompleted,
@@ -156,6 +161,8 @@ export default function WorkOrderCompleteFlow({
   orderId: string;
   token: string;
   completed: boolean;
+  paid: boolean;
+  offlinePaid: boolean;
   autoStart: boolean;
   autoResend: boolean;
   onCompleted: (order: WorkOrderListItem) => void;
@@ -163,6 +170,7 @@ export default function WorkOrderCompleteFlow({
   const [phase, setPhase] = useState<Phase>(
     (autoResend && completed) || (autoStart && !completed) ? "loading" : "idle",
   );
+  const [changingPayment, setChangingPayment] = useState(false);
   const [resent, setResent] = useState(false);
   const [check, setCheck] = useState<WorkOrderCompletionCheck | null>(null);
   const [contactId, setContactId] = useState("");
@@ -196,6 +204,7 @@ export default function WorkOrderCompleteFlow({
   }
 
   function openResend(next: WorkOrderCompletionCheck) {
+    setChangingPayment(false);
     setCheck(next);
     const reason = resendBlockedReason(next);
     if (reason) {
@@ -228,10 +237,40 @@ export default function WorkOrderCompleteFlow({
     }
   }
 
+  async function beginChangePayment() {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    setResent(false);
+    setPhase("loading");
+    try {
+      const next = await getWorkOrderCompletionCheck(token, orderId);
+      setCheck(next);
+      if (!next.invoiceOpen && !next.offlinePayment) {
+        setChangingPayment(false);
+        setError(INVOICE_ALREADY_CLOSED_REASON);
+        setPhase("blocked");
+        return;
+      }
+      if (next.offlinePayment) setMethod(next.offlinePayment.method);
+      setChangingPayment(true);
+      setError(null);
+      setPhase("choose");
+    } catch (err) {
+      setChangingPayment(false);
+      setCheck(null);
+      setError(failureMessage(err, "Failed to check this work order."));
+      setPhase("blocked");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function begin() {
     setBusy(true);
     setError(null);
     setResult(null);
+    setChangingPayment(false);
     setPhase("loading");
     try {
       const next = await getWorkOrderCompletionCheck(token, orderId);
@@ -356,7 +395,9 @@ export default function WorkOrderCompleteFlow({
         ...(method === "check" && number ? { checkNumber: number } : {}),
         ...(proofUrl ? { proofUrl } : {}),
       },
-      "Failed to mark this job complete.",
+      completed
+        ? "Failed to record this payment."
+        : "Failed to mark this job complete.",
     );
   }
 
@@ -391,6 +432,7 @@ export default function WorkOrderCompleteFlow({
       setReceiptError(null);
       setTextSentTo(null);
       setTextError(null);
+      setChangingPayment(false);
       setPhase("done");
       onCompleted(next.workOrder);
     } catch (err) {
@@ -465,6 +507,15 @@ export default function WorkOrderCompleteFlow({
         >
           Resend
         </button>
+        {paid && !offlinePaid ? null : (
+          <button
+            type="button"
+            onClick={() => void beginChangePayment()}
+            className="inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100"
+          >
+            Change payment method
+          </button>
+        )}
       </div>
     );
   }
@@ -482,6 +533,15 @@ export default function WorkOrderCompleteFlow({
             >
               Resend
             </button>
+            {(paid && !offlinePaid) || result.offlinePayment ? null : (
+              <button
+                type="button"
+                onClick={() => void beginChangePayment()}
+                className="inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100"
+              >
+                Change payment method
+              </button>
+            )}
           </div>
         ) : null}
       <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-900">
@@ -503,14 +563,25 @@ export default function WorkOrderCompleteFlow({
           </a>
         ) : null}
         {result.payUrl ? (
-          <a
-            href={result.payUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`${primaryButton} mt-3 inline-flex`}
-          >
-            Open payment page
-          </a>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <a
+              href={result.payUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`${primaryButton} inline-flex`}
+            >
+              Open payment page
+            </a>
+            {result.offlinePayment ? null : (
+              <button
+                type="button"
+                onClick={() => void beginChangePayment()}
+                className="inline-flex rounded-md border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-medium text-emerald-900 hover:bg-emerald-100"
+              >
+                Change payment method
+              </button>
+            )}
+          </div>
         ) : null}
         {result.delivery ? (
           <ul className="mt-2 space-y-1">
@@ -658,9 +729,18 @@ export default function WorkOrderCompleteFlow({
     return (
       <div className="complete-notice rounded-md border px-3 py-3 text-sm">
         <p>
-          Completing this work order will generate an invoice for {amount} to be
-          paid by the customer.
+          {completed
+            ? check?.offlinePayment
+              ? `Invoice for ${amount} is marked paid. Choose how the customer will pay.`
+              : `Invoice for ${amount} is open. Choose how the customer will pay.`
+            : `Completing this work order will generate an invoice for ${amount} to be paid by the customer.`}
         </p>
+        {check?.offlinePayment ? (
+          <p className="mt-2">
+            This invoice is marked paid by {offlinePaymentLabel(check.offlinePayment)}.
+            Choosing another option will mark it unpaid.
+          </p>
+        ) : null}
         {contactSendBlocked ? (
           <p className="complete-notice-error mt-2">{check?.sendBlockedReason}</p>
         ) : null}
@@ -669,7 +749,14 @@ export default function WorkOrderCompleteFlow({
           <button
             type="button"
             disabled={busy || contactSendBlocked}
-            onClick={() => void finish({ mode: "pay_now" }, "Failed to mark this job complete.")}
+            onClick={() =>
+              void finish(
+                { mode: "pay_now" },
+                completed
+                  ? "Failed to open the payment page."
+                  : "Failed to mark this job complete.",
+              )
+            }
             className={primaryButton}
           >
             {busy ? "Saving…" : "Take payment on this device"}
@@ -703,6 +790,7 @@ export default function WorkOrderCompleteFlow({
             disabled={busy}
             onClick={() => {
               setError(null);
+              setChangingPayment(false);
               setPhase("idle");
             }}
             className={quietButton}
@@ -718,6 +806,12 @@ export default function WorkOrderCompleteFlow({
     return (
       <div className="complete-notice space-y-3 rounded-md border px-3 py-3 text-sm">
         <p>Confirm that {amount} was received by check or cash.</p>
+        {check?.offlinePayment ? (
+          <p>
+            This invoice is marked paid by {offlinePaymentLabel(check.offlinePayment)}.
+            Choosing another option will mark it unpaid.
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -815,15 +909,13 @@ export default function WorkOrderCompleteFlow({
           ) : null}
         </div>
         {error ? <p className="complete-notice-error">{error}</p> : null}
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void confirmOffline()}
-            className={primaryButton}
-          >
-            {busy ? "Saving…" : "Confirm"}
-          </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <SwipeToConfirm
+            label={`Swipe to confirm ${amount}`}
+            busyLabel="Saving…"
+            busy={busy}
+            onConfirm={() => void confirmOffline()}
+          />
           <button
             type="button"
             disabled={busy}
@@ -845,7 +937,8 @@ export default function WorkOrderCompleteFlow({
   const phoneError = contact ? phoneFieldError(contact, phone) : null;
   const emailError = contact ? emailFieldError(contact, email) : null;
   const via = channelLine(text, mail);
-  const invoiceClosed = completed && check?.invoiceOpen === false;
+  const invoiceClosed =
+    completed && check?.invoiceOpen === false && !check?.offlinePayment;
   const sendBlocked =
     !contact || Boolean(phoneError) || Boolean(emailError) || !via || invoiceClosed;
 
@@ -856,6 +949,12 @@ export default function WorkOrderCompleteFlow({
         you choose. A phone or email you type here replaces the one on file for
         this message only.
       </p>
+      {check?.offlinePayment ? (
+        <p>
+          This invoice is marked paid by {offlinePaymentLabel(check.offlinePayment)}.
+          Choosing another option will mark it unpaid.
+        </p>
+      ) : null}
       <label className="block">
         <span className="mb-1 block text-xs font-semibold uppercase tracking-wide">
           Contact
@@ -942,7 +1041,7 @@ export default function WorkOrderCompleteFlow({
           disabled={busy}
           onClick={() => {
             setError(null);
-            setPhase(completed ? "idle" : "choose");
+            setPhase(completed && !changingPayment ? "idle" : "choose");
           }}
           className={quietButton}
         >

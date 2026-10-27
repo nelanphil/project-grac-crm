@@ -1509,11 +1509,10 @@ export async function postWorkOrderComplete(
 
     const workOrder = await loadAssignableWorkOrder(req, res);
     if (!workOrder) return;
+    const wasComplete = Boolean(workOrder.completed);
+    const actorName = await staffDisplayName(req.user?.id, req.user?.email);
+    const actor = { ...actorFromRequest(req.user), actorName };
 
-    const actorName =
-      parsed.data.mode === "paid_offline"
-        ? await staffDisplayName(req.user?.id, req.user?.email)
-        : null;
     const result =
       parsed.data.mode === "resend"
         ? await resendWorkOrderInvoice({
@@ -1522,6 +1521,7 @@ export async function postWorkOrderComplete(
             phoneOverride: parsed.data.phoneOverride,
             emailOverride: parsed.data.emailOverride,
             userId: req.user?.id ?? null,
+            actor,
             apiBase: requestApiBase(req),
           })
         : parsed.data.mode === "paid_offline"
@@ -1533,6 +1533,7 @@ export async function postWorkOrderComplete(
               proofUrl: parsed.data.proofUrl,
               userId: req.user?.id ?? null,
               actorName,
+              actor,
               apiBase: requestApiBase(req),
             })
           : await completeWorkOrder({
@@ -1549,33 +1550,49 @@ export async function postWorkOrderComplete(
                   ? parsed.data.emailOverride
                   : undefined,
               userId: req.user?.id ?? null,
+              actor,
               apiBase: requestApiBase(req),
             });
 
+    const detail =
+      parsed.data.mode === "resend"
+        ? workOrder.number
+          ? `Invoice for work order ${workOrder.number} resent`
+          : "Work order invoice resent"
+        : parsed.data.mode === "paid_offline"
+          ? wasComplete
+            ? workOrder.number
+              ? `Invoice for work order ${workOrder.number} marked paid by check/cash`
+              : "Invoice marked paid by check/cash"
+            : workOrder.number
+              ? `Work order ${workOrder.number} marked complete (paid by check/cash)`
+              : "Work order marked complete (paid by check/cash)"
+          : wasComplete
+            ? workOrder.number
+              ? `Payment link reopened for work order ${workOrder.number}`
+              : "Payment link reopened"
+            : workOrder.number
+              ? `Work order ${workOrder.number} marked complete`
+              : "Work order marked complete";
     logNotificationAsync({
       entityType: "work_order",
       action: "updated",
       entityId: String(workOrder._id),
       customerRef: workOrder.customerRef ?? null,
-      summary:
-        parsed.data.mode === "resend"
-          ? workOrder.number
-            ? `Invoice for work order ${workOrder.number} resent`
-            : "Work order invoice resent"
-          : parsed.data.mode === "paid_offline"
-            ? workOrder.number
-              ? `Work order ${workOrder.number} marked complete (paid by check/cash)`
-              : "Work order marked complete (paid by check/cash)"
-            : workOrder.number
-              ? `Work order ${workOrder.number} marked complete`
-              : "Work order marked complete",
+      summary: result.reverted
+        ? `Check/cash payment reverted; ${detail}`
+        : detail,
       ...actorFromRequest(req.user),
     });
-    if (parsed.data.mode !== "resend" && workOrder.scheduledStart) {
+    if (
+      (parsed.data.mode !== "resend" || result.reverted) &&
+      workOrder.scheduledStart
+    ) {
       publishDashboardChanged();
     }
 
     if (result.offlinePayment) workOrder.paid = true;
+    else if (result.reverted) workOrder.paid = false;
     const lean = workOrder.toObject() as unknown as Record<string, unknown>;
     const [enriched] = await enrichWithAddress([lean]);
     res.json({

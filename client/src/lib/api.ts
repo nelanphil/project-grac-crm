@@ -2589,6 +2589,7 @@ export interface WorkOrderCompletionCheck {
   blockedReason: string | null;
   sendBlockedReason: string | null;
   invoiceOpen: boolean;
+  offlinePayment?: OfflinePayment | null;
   contacts: WorkOrderCompletionContact[];
 }
 

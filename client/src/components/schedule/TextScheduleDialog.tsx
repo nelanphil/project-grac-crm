@@ -19,12 +19,16 @@ export function TextScheduleButton({
   variant,
   disabled,
   className,
+  labelClassName,
+  iconClassName = "h-3.5 w-3.5",
 }: {
   userId: string;
   date: string;
   variant: "label" | "icon";
   disabled?: boolean;
   className?: string;
+  labelClassName?: string;
+  iconClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const labelClass =
@@ -47,8 +51,10 @@ export function TextScheduleButton({
         }}
         className={className ?? (variant === "icon" ? iconClass : labelClass)}
       >
-        <MessageSquare className="h-3.5 w-3.5" aria-hidden />
-        {variant === "label" ? "Text Schedule" : null}
+        <MessageSquare className={iconClassName} aria-hidden />
+        {variant === "label" ? (
+          <span className={labelClassName}>Text Schedule</span>
+        ) : null}
       </button>
       {open ? (
         <TextScheduleDialog

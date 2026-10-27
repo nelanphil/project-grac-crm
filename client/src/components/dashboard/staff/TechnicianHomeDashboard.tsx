@@ -638,59 +638,59 @@ export default function TechnicianHomeDashboard() {
             : "mx-auto w-full max-w-3xl"
       }`}
     >
-      <div className="space-y-3">
-        <h2 className="text-2xl font-bold text-[var(--staff-ink)]">Schedule</h2>
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4">
-          <div className="min-w-0 overflow-hidden">
-            {canSwitchTechnicians && technicians.length > 0 ? (
-              <select
-                aria-label="Technician"
-                value={subjectId}
-                onChange={(event) => selectTechnician(event.target.value)}
-                className="max-w-full truncate rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-sm font-medium text-[var(--staff-ink)]"
-              >
-                {technicians.map((tech) => (
-                  <option key={tech._id} value={tech._id}>
-                    {technicianName(tech)}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-          </div>
-          <div className="flex min-w-0 items-center justify-center gap-1.5">
-            <button
-              type="button"
-              aria-label="Previous day"
-              onClick={() => shiftFocus(-1)}
-              className="shrink-0 rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
-            >
-              <ChevronLeft className="h-4 w-4" aria-hidden />
-            </button>
-            <p className="min-w-0 truncate text-sm text-[var(--staff-muted)]">
-              {pageLoading
-                ? loadingLabel
-                : pageError
-                  ? periodLabel
-                  : `${periodLabel} · ${jobCountLabel(dayJobs.length)}`}
-            </p>
-            <button
-              type="button"
-              aria-label="Next day"
-              onClick={() => shiftFocus(1)}
-              className="shrink-0 rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
-            >
-              <ChevronRight className="h-4 w-4" aria-hidden />
-            </button>
-          </div>
-          <div className="flex justify-end">
-            <TextScheduleButton
-              userId={subjectId}
-              date={focusDate}
-              variant="label"
-              disabled={!subjectId}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)] disabled:cursor-not-allowed disabled:opacity-40"
-            />
-          </div>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:gap-x-4">
+        <h2 className="col-start-1 row-start-1 text-2xl font-bold text-[var(--staff-ink)] lg:col-span-3">
+          Schedule
+        </h2>
+        {canSwitchTechnicians && technicians.length > 0 ? (
+          <select
+            aria-label="Technician"
+            value={subjectId}
+            onChange={(event) => selectTechnician(event.target.value)}
+            className="col-start-2 row-start-1 max-w-[14rem] justify-self-end truncate rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-sm font-medium text-[var(--staff-ink)] lg:col-start-1 lg:row-start-2 lg:max-w-full lg:justify-self-start"
+          >
+            {technicians.map((tech) => (
+              <option key={tech._id} value={tech._id}>
+                {technicianName(tech)}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        <div className="col-start-1 row-start-2 flex min-w-0 items-center gap-1.5 lg:col-start-2 lg:justify-center">
+          <button
+            type="button"
+            aria-label="Previous day"
+            onClick={() => shiftFocus(-1)}
+            className="shrink-0 rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+          </button>
+          <p className="min-w-0 truncate text-sm text-[var(--staff-muted)]">
+            {pageLoading
+              ? loadingLabel
+              : pageError
+                ? periodLabel
+                : `${periodLabel} · ${jobCountLabel(dayJobs.length)}`}
+          </p>
+          <button
+            type="button"
+            aria-label="Next day"
+            onClick={() => shiftFocus(1)}
+            className="shrink-0 rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1 text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
+        <div className="col-start-2 row-start-2 flex justify-end lg:col-start-3">
+          <TextScheduleButton
+            userId={subjectId}
+            date={focusDate}
+            variant="label"
+            disabled={!subjectId}
+            labelClassName="hidden lg:inline"
+            iconClassName="h-4 w-4 lg:h-3.5 lg:w-3.5"
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] p-2 text-sm font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)] disabled:cursor-not-allowed disabled:opacity-40 lg:px-3 lg:py-1.5"
+          />
         </div>
       </div>
 
