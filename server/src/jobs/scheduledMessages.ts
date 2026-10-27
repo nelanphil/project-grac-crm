@@ -89,6 +89,7 @@ export async function runScheduledMessageJob(): Promise<{
           {
             userId: row.createdByUserRef ? String(row.createdByUserRef) : null,
             apiBase: resolvePublicApiBase(),
+            sendSource: "wizard",
           },
         );
         row.status = "sent";

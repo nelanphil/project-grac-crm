@@ -269,7 +269,11 @@ export class MessagingDispatchError extends Error {
 
 export async function dispatchMessagingBatch(
   data: MessagingSendInput,
-  options: { userId?: string | null; apiBase: string },
+  options: {
+    userId?: string | null;
+    apiBase: string;
+    sendSource?: "wizard";
+  },
 ) {
     await validateInvoiceMessage(data);
     let bodyTemplate = data.body?.trim() ?? "";
@@ -327,6 +331,7 @@ export async function dispatchMessagingBatch(
     const uniqueContactIds = [...new Set(data.contactIds)];
     const templateRef = data.templateId ?? null;
     const userId = options.userId ?? null;
+    const sendSource = options.sendSource === "wizard" ? "wizard" : "";
     const mediaUrls = data.mediaUrls ?? [];
     const channel = mediaUrls.length > 0 ? ("mms" as const) : ("sms" as const);
     const apiBase = options.apiBase.replace(/\/$/, "");
@@ -470,6 +475,7 @@ export async function dispatchMessagingBatch(
               ? "Phone number is invalid"
               : "Contact phone number is invalid",
             createdByUserRef: userId ?? null,
+            sendSource,
           });
           await touchThreadAfterMessage(thread._id, {
             direction: "outbound",
@@ -517,6 +523,7 @@ export async function dispatchMessagingBatch(
             status: "sent",
             twilioSid: sid,
             createdByUserRef: userId ?? null,
+            sendSource,
           });
           if (customerRef) {
             const preview = rendered.trim().slice(0, 80);
@@ -578,6 +585,7 @@ export async function dispatchMessagingBatch(
             status: "failed",
             errorMessage,
             createdByUserRef: userId ?? null,
+            sendSource,
           });
           await touchThreadAfterMessage(thread._id, {
             direction: "outbound",
@@ -715,6 +723,7 @@ export async function sendMessages(
     const result = await dispatchMessagingBatch(parsed.data, {
       userId: req.user?.id ?? null,
       apiBase: requestApiBase(req),
+      sendSource: "wizard",
     });
     res.json(result);
   } catch (err) {
@@ -844,7 +853,9 @@ export async function listScheduledMessages(
     const pageSize = PAGE_SIZES.has(pageSizeRaw) ? pageSizeRaw : 25;
 
     const statusRaw = String(req.query.status ?? "scheduled");
-    const filter: Record<string, unknown> = {};
+    const filter: Record<string, unknown> = {
+      inboxConversationRef: null,
+    };
     if (statusRaw !== "all") {
       if (
         !SCHEDULED_MESSAGE_STATUS_FILTERS.includes(
@@ -1175,16 +1186,34 @@ export async function listCommunications(
       filter.contactRef = String(req.query.contactId);
     }
     if (req.query.channel) {
-      const channel = String(req.query.channel);
-      if (["sms", "mms", "voice"].includes(channel)) {
-        filter.channel = channel;
-      }
+      const channels = String(req.query.channel)
+        .split(",")
+        .map((value) => value.trim())
+        .filter(
+          (value): value is "sms" | "mms" | "voice" =>
+            value === "sms" || value === "mms" || value === "voice",
+        );
+      if (channels.length === 1) filter.channel = channels[0];
+      else if (channels.length > 1) filter.channel = { $in: channels };
     }
     if (req.query.direction) {
       const direction = String(req.query.direction);
       if (["inbound", "outbound"].includes(direction)) {
         filter.direction = direction;
       }
+    }
+    if (req.query.sendSource === "wizard") {
+      filter.sendSource = "wizard";
+    }
+    if (req.query.status === "sent") {
+      filter.status = { $in: ["queued", "sent", "delivered"] };
+    } else if (req.query.status === "failed") {
+      filter.status = "failed";
+    }
+    const from = new Date(String(req.query.from ?? ""));
+    const to = new Date(String(req.query.to ?? ""));
+    if (!Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime())) {
+      filter.createdAt = { $gte: from, $lt: to };
     }
     if (req.query.unmatched === "1" || req.query.unmatched === "true") {
       filter.contactRef = null;

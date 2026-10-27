@@ -6838,8 +6838,12 @@ export async function getMessagingCommunications(
     accountSid?: string;
     customerId?: string;
     contactId?: string;
-    channel?: CommunicationChannel | "all";
+    channel?: CommunicationChannel | "sms,mms" | "all";
     direction?: CommunicationDirection;
+    sendSource?: "wizard";
+    status?: "sent" | "failed";
+    from?: string;
+    to?: string;
     unmatched?: boolean;
     page?: number;
     pageSize?: number;
@@ -6861,6 +6865,10 @@ export async function getMessagingCommunications(
     params.set("channel", options.channel);
   }
   if (options?.direction) params.set("direction", options.direction);
+  if (options?.sendSource) params.set("sendSource", options.sendSource);
+  if (options?.status) params.set("status", options.status);
+  if (options?.from) params.set("from", options.from);
+  if (options?.to) params.set("to", options.to);
   if (options?.unmatched) params.set("unmatched", "1");
   if (options?.page !== undefined) params.set("page", String(options.page));
   if (options?.pageSize !== undefined) {

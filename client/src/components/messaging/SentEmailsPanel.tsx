@@ -283,7 +283,7 @@ export default function SentEmailsPanel({
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+      <div className="overflow-clip rounded-xl border border-neutral-200 bg-white shadow-sm">
         {loading ? (
           <div className="flex items-center gap-2 px-4 py-8 text-sm text-neutral-500">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -297,7 +297,7 @@ export default function SentEmailsPanel({
           <ul className="divide-y divide-neutral-100">
             {groups.map((group) => (
               <li key={group.key}>
-                <div className="sticky top-0 z-10 flex items-baseline justify-between gap-3 border-b border-neutral-100 bg-neutral-50 px-4 py-2 text-xs font-medium text-neutral-500">
+                <div className="sticky top-0 z-20 flex items-baseline justify-between gap-3 border-b border-neutral-100 bg-neutral-50 px-4 py-2 text-xs font-medium text-neutral-500">
                   <span>{group.label}</span>
                   <span className="text-neutral-400">
                     {group.rows.length}

@@ -60,6 +60,8 @@ export interface ITwilioCommunication extends Document {
   missedCallTextSentAt?: Date | null;
   /** Marks an automatic reply so cooldown survives a wording change. */
   autoReply?: "missed-call" | "";
+  /** Set for texts sent from Message Wizard. Empty for inbox and system texts. */
+  sendSource?: "" | "wizard";
   createdAt: Date;
   updatedAt: Date;
 }
@@ -185,6 +187,11 @@ const twilioCommunicationSchema = new Schema<ITwilioCommunication>(
       enum: ["", "missed-call"],
       default: "",
     },
+    sendSource: {
+      type: String,
+      enum: ["", "wizard"],
+      default: "",
+    },
   },
   { timestamps: true },
 );
@@ -203,6 +210,7 @@ twilioCommunicationSchema.index({ customerRef: 1, createdAt: -1 });
 twilioCommunicationSchema.index({ contactRef: 1, createdAt: -1 });
 twilioCommunicationSchema.index({ fromNumber: 1, toNumber: 1, createdAt: -1 });
 twilioCommunicationSchema.index({ threadRef: 1, createdAt: 1 });
+twilioCommunicationSchema.index({ sendSource: 1, createdAt: -1 });
 
 export const TwilioCommunication = mongoose.model<ITwilioCommunication>(
   "TwilioCommunication",
