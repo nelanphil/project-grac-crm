@@ -1,14 +1,20 @@
 import { Router } from "express";
 import { authenticate, requirePermission } from "../middleware/auth.middleware";
 import {
+  uploadInboxMedia,
+  uploadInboxMediaMiddleware,
+} from "../controllers/inboxMedia.controller";
+import {
   addInboxNote,
   callInboxConversation,
+  cancelInboxScheduled,
   closeInboxConversation,
   getInboxContext,
   getInboxTimeline,
   linkInboxCustomer,
   listInboxChannels,
   listInboxConversations,
+  listInboxScheduled,
   listInboxTemplates,
   blockInboxConversation,
   deleteInboxConversation,
@@ -16,6 +22,7 @@ import {
   markInboxUnread,
   pinInboxConversation,
   reopenInboxConversation,
+  scheduleInboxSms,
   unblockInboxConversation,
   unpinInboxConversation,
   searchInboxCustomers,
@@ -29,6 +36,17 @@ const router = Router();
 
 router.use(authenticate);
 
+router.post(
+  "/media",
+  requirePermission("messages:write"),
+  uploadInboxMediaMiddleware,
+  uploadInboxMedia,
+);
+router.post(
+  "/scheduled/:scheduledId/cancel",
+  requirePermission("messages:write"),
+  cancelInboxScheduled,
+);
 router.get("/channels", requirePermission("messages:read"), listInboxChannels);
 router.get("/templates", requirePermission("messages:read"), listInboxTemplates);
 router.get("/customers", requirePermission("messages:read"), searchInboxCustomers);
@@ -88,10 +106,20 @@ router.delete(
   requirePermission("messages:write"),
   deleteInboxConversation,
 );
+router.get(
+  "/conversations/:id/scheduled",
+  requirePermission("messages:read"),
+  listInboxScheduled,
+);
 router.post(
   "/conversations/:id/sms",
   requirePermission("messages:write"),
   sendInboxSms,
+);
+router.post(
+  "/conversations/:id/sms/schedule",
+  requirePermission("messages:write"),
+  scheduleInboxSms,
 );
 router.post(
   "/conversations/:id/email",

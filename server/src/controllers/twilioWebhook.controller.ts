@@ -4,6 +4,7 @@ import twilio from "twilio";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
 import { MessageThread } from "../models/mongo/MessageThread";
 import { ITwilioAccount, TwilioAccount } from "../models/mongo/TwilioAccount";
+import { User } from "../models/mongo/User";
 import {
   mapTwilioCallStatus,
   mapTwilioMessageStatus,
@@ -21,11 +22,13 @@ import {
   touchFromTwilio,
 } from "../services/inboxConversation.service";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
+import { inboundCallTwiml } from "../services/inboundRing.service";
+import { handleMissedInboundCall } from "../services/missedCall.service";
 import {
+  appendVoiceActivity,
   formatVoicemailLine,
   handleIvrGather,
   mergeVoiceActivity,
-  startInboundIvr,
   voicemailTwiml,
 } from "../services/voiceIvr.service";
 import { buildClientDialTwiml, buildSayHangupTwiml } from "../utils/twilioVoiceTwiml";
@@ -115,6 +118,41 @@ const REJECT_TWIML =
   '<?xml version="1.0" encoding="UTF-8"?><Response><Reject/></Response>';
 
 const PREVIEW_LENGTH = 160;
+
+const TERMINAL_INBOUND_CALL = new Set([
+  "completed",
+  "busy",
+  "no-answer",
+  "failed",
+  "canceled",
+]);
+
+async function noteUnansweredInbound(
+  account: ITwilioAccount,
+  doc: {
+    channel?: string | null;
+    direction?: string | null;
+    twilioSid?: string | null;
+    fromNumber?: string | null;
+    toNumber?: string | null;
+    answeredAt?: Date | null;
+  },
+  status: string,
+): Promise<void> {
+  if (doc.channel !== "voice" || doc.direction !== "inbound") return;
+  if (!TERMINAL_INBOUND_CALL.has(status)) return;
+  if (doc.answeredAt) return;
+  try {
+    await handleMissedInboundCall({
+      account,
+      callSid: doc.twilioSid || "",
+      fromNumber: doc.fromNumber || "",
+      toNumber: doc.toNumber || "",
+    });
+  } catch (err) {
+    console.error("Missed-call text failed:", err);
+  }
+}
 
 function previewBody(text: string): string {
   const trimmed = text.trim();
@@ -340,6 +378,7 @@ export async function statusWebhook(
         const fresh = await TwilioCommunication.findById(existing._id);
         if (fresh) {
           await touchFromTwilio(fresh, { countUnread: false, publish: true });
+          await noteUnansweredInbound(account, fresh, status);
         }
       }
 
@@ -399,6 +438,7 @@ export async function statusWebhook(
         countUnread: resolved.direction === "inbound",
         publish: true,
       });
+      await noteUnansweredInbound(account, doc, status);
 
       res.status(200).send("OK");
       return;
@@ -485,7 +525,7 @@ export async function inboundVoiceWebhook(
       console.error("Twilio inbound voice ingest error:", err);
     }
 
-    const twiml = await startInboundIvr({
+    const twiml = await inboundCallTwiml({
       account,
       callSid,
       fromNumber,
@@ -596,6 +636,142 @@ export async function inboundVoiceRecordingWebhook(
     console.error("Twilio inbound voice recording webhook error:", err);
     if (account) {
       res.status(200).type("text/xml").send(thankYouHangupTwiml(account));
+      return;
+    }
+    res.status(200).type("text/xml").send(EMPTY_TWIML);
+  }
+}
+
+const ANSWERED_IGNORE = new Set([
+  "ringing",
+  "initiated",
+  "queued",
+  "no-answer",
+  "busy",
+  "failed",
+  "canceled",
+  "cancelled",
+]);
+
+function staffDisplayName(user: {
+  first_name?: string | null;
+  last_name?: string | null;
+} | null): string {
+  const name = [user?.first_name, user?.last_name].filter(Boolean).join(" ").trim();
+  return name || "a teammate";
+}
+
+// POST /webhooks/twilio/voice/inbound/answered
+export async function inboundVoiceAnsweredWebhook(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const account = await resolveAccount(req);
+    if (!account) {
+      res.status(403).send("Forbidden");
+      return;
+    }
+    const params = asStringRecord(req.body);
+    const status = (params.CallStatus || "").toLowerCase();
+    if (status && ANSWERED_IGNORE.has(status)) {
+      res.status(200).send("OK");
+      return;
+    }
+    const userId = String(req.query.userId || "");
+    const sids = [params.ParentCallSid, params.CallSid].filter(Boolean);
+    const doc = sids.length
+      ? await findVoiceCommunication(account.accountSid, sids)
+      : null;
+    if (!doc) {
+      res.status(200).send("OK");
+      return;
+    }
+    const answeredBy = Types.ObjectId.isValid(userId)
+      ? new Types.ObjectId(userId)
+      : null;
+    const updated = await TwilioCommunication.findOneAndUpdate(
+      { _id: doc._id, answeredAt: null },
+      {
+        $set: {
+          answeredAt: new Date(),
+          ...(answeredBy ? { answeredByUserRef: answeredBy } : {}),
+        },
+      },
+      { new: true },
+    );
+    if (updated) {
+      const user = answeredBy
+        ? await User.findById(answeredBy).select("first_name last_name").lean()
+        : null;
+      await appendVoiceActivity({
+        accountSid: account.accountSid,
+        callSid: updated.twilioSid || doc.twilioSid || "",
+        line: `Answered by ${staffDisplayName(user)}.`,
+      });
+      await touchFromTwilio(updated, { countUnread: false, publish: true });
+    }
+    res.status(200).send("OK");
+  } catch (err) {
+    console.error("POST /webhooks/twilio/voice/inbound/answered error:", err);
+    res.status(200).send("OK");
+  }
+}
+
+// POST /webhooks/twilio/voice/inbound/complete
+export async function inboundVoiceCompleteWebhook(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  let account: ITwilioAccount | null = null;
+  try {
+    account = await resolveAccount(req);
+    if (!account) {
+      res.status(403).type("text/xml").send(EMPTY_TWIML);
+      return;
+    }
+    const params = asStringRecord(req.body);
+    const dialStatus = (params.DialCallStatus || "").toLowerCase();
+    const callSid = params.CallSid || params.ParentCallSid || "";
+    const existing = callSid
+      ? await findVoiceCommunication(account.accountSid, [callSid])
+      : null;
+    if (
+      dialStatus === "completed" ||
+      dialStatus === "answered" ||
+      existing?.answeredAt
+    ) {
+      if (callSid && !existing?.answeredAt) {
+        await TwilioCommunication.updateOne(
+          {
+            accountSid: account.accountSid,
+            twilioSid: callSid,
+            channel: "voice",
+            answeredAt: null,
+          },
+          { $set: { answeredAt: new Date() } },
+        );
+      }
+      res.status(200).type("text/xml").send(EMPTY_TWIML);
+      return;
+    }
+    await handleMissedInboundCall({
+      account,
+      callSid,
+      fromNumber: params.From || params.Caller || "",
+      toNumber: params.To || params.Called || "",
+    });
+    res
+      .status(200)
+      .type("text/xml")
+      .send(voicemailTwiml(account, "Sorry we missed your call."));
+  } catch (err) {
+    console.error("POST /webhooks/twilio/voice/inbound/complete error:", err);
+    if (account) {
+      res
+        .status(200)
+        .type("text/xml")
+        .send(voicemailTwiml(account, "Sorry we missed your call."));
       return;
     }
     res.status(200).type("text/xml").send(EMPTY_TWIML);

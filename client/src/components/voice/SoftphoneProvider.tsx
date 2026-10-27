@@ -10,9 +10,18 @@ import {
   useState,
 } from "react";
 import type { Call, Device } from "@twilio/voice-sdk";
-import { ApiError, getVoiceToken, startVoiceCall } from "@/lib/api";
+import {
+  ApiError,
+  clearVoicePresence,
+  getVoiceToken,
+  getVoiceTokens,
+  sendVoicePresence,
+  startVoiceCall,
+  type VoiceAccessToken,
+} from "@/lib/api";
 import { useAuthStore } from "@/store/useAuthStore";
 import ActiveCallBar from "./ActiveCallBar";
+import IncomingCallModal from "./IncomingCallModal";
 
 export type SoftphonePhase =
   | "idle"
@@ -31,16 +40,31 @@ export type StartSoftphoneCall = {
   displayName?: string;
 };
 
+type IncomingInfo = {
+  callerName: string;
+  callerNumber: string;
+  lineLabel: string;
+  conversationId: string;
+};
+
 type SoftphoneContextValue = {
   phase: SoftphonePhase;
   muted: boolean;
   error: string | null;
   displayName: string;
   startedAt: number | null;
+  conversationId: string | null;
   startCall: (input: StartSoftphoneCall) => Promise<{ conversationId: string }>;
   hangup: () => void;
   mute: (next?: boolean) => void;
   sendDigits: (digits: string) => void;
+};
+
+type LiveDevice = {
+  accountId: string;
+  accountSid: string;
+  friendlyName: string;
+  device: Device;
 };
 
 const SoftphoneContext = createContext<SoftphoneContextValue | null>(null);
@@ -67,54 +91,119 @@ function microphoneMessage(err: unknown): string {
   return message;
 }
 
+function customParam(call: Call, name: string): string {
+  const value = call.customParameters?.get(name);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function ignoreCall(call: Call): void {
+  const withIgnore = call as Call & { ignore?: () => void };
+  if (typeof withIgnore.ignore === "function") withIgnore.ignore();
+}
+
 export default function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((state) => state.token);
+  const canCall = useAuthStore(
+    (state) => state.user?.permissions?.includes("messages:write") ?? false,
+  );
   const [phase, setPhase] = useState<SoftphonePhase>("idle");
-  const [trackedToken, setTrackedToken] = useState(token);
-  if (token !== trackedToken) {
-    setTrackedToken(token);
-    if (!token) setPhase("idle");
-  }
-  const deviceRef = useRef<{ accountId: string; device: Device } | null>(null);
+  const phaseRef = useRef(phase);
+  const devicesRef = useRef<Map<string, LiveDevice>>(new Map());
+  const lastSeenRef = useRef<string | null>(null);
+  const deviceLocks = useRef<Map<string, Promise<Device>>>(new Map());
   const callRef = useRef<Call | null>(null);
+  const incomingCallRef = useRef<Call | null>(null);
+  const incomingInfoRef = useRef<IncomingInfo | null>(null);
+  const [incoming, setIncoming] = useState<IncomingInfo | null>(null);
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const available = Boolean(token) && canCall;
+  const [trackedAvailable, setTrackedAvailable] = useState(available);
+  if (available !== trackedAvailable) {
+    setTrackedAvailable(available);
+    if (!available) {
+      setPhase("idle");
+      setIncoming(null);
+      setConversationId(null);
+    }
+  }
 
-  const clearDevice = useCallback(() => {
-    deviceRef.current?.device.destroy();
-    deviceRef.current = null;
+  const clearDevices = useCallback(() => {
+    for (const entry of devicesRef.current.values()) entry.device.destroy();
+    devicesRef.current.clear();
+    deviceLocks.current.clear();
   }, []);
 
-  useEffect(() => {
-    if (token) return;
-    callRef.current?.disconnect();
-    callRef.current = null;
-    clearDevice();
-  }, [token, clearDevice]);
-
-  useEffect(() => () => clearDevice(), [clearDevice]);
-
-  const finish = useCallback((next: SoftphonePhase, message?: string) => {
+  const finish = useCallback((next: SoftphonePhase, message?: string, source?: Call) => {
+    if (source && callRef.current && callRef.current !== source) return;
     callRef.current = null;
     setMuted(false);
     setPhase(next);
     if (message) setError(message);
     if (next === "ended") {
       window.setTimeout(() => {
-        setPhase((current) => (current === "ended" ? "idle" : current));
+        if (phaseRef.current !== "ended") return;
+        setPhase("idle");
+        setConversationId(null);
       }, 2500);
     }
   }, []);
 
-  const deviceFor = useCallback(
-    async (accountId: string) => {
-      if (!token) throw new Error("Sign in to place a call.");
-      const current = deviceRef.current;
-      if (current?.accountId === accountId) return current.device;
-      clearDevice();
-      const issued = await getVoiceToken(token, accountId);
+  const watchCall = useCallback(
+    (call: Call) => {
+      call.on("ringing", () => setPhase("ringing"));
+      call.on("accept", () => {
+        setPhase("in-progress");
+        setStartedAt(Date.now());
+      });
+      call.on("disconnect", () => finish("ended", undefined, call));
+      call.on("cancel", () => finish("ended", undefined, call));
+      call.on("reject", () => finish("error", "The call was rejected.", call));
+      call.on("error", (callError) => finish("error", microphoneMessage(callError), call));
+    },
+    [finish],
+  );
+
+  const showIncoming = useCallback((call: Call, lineFallback: string) => {
+    if (incomingCallRef.current) {
+      ignoreCall(call);
+      return;
+    }
+    const info: IncomingInfo = {
+      callerName: customParam(call, "callerName") || "Unknown",
+      callerNumber: customParam(call, "callerNumber") || call.parameters.From || "",
+      lineLabel: customParam(call, "lineLabel") || lineFallback || "Line",
+      conversationId: customParam(call, "conversationId"),
+    };
+    incomingCallRef.current = call;
+    incomingInfoRef.current = info;
+    setIncoming(info);
+    const clearIfCurrent = () => {
+      if (incomingCallRef.current !== call) return;
+      incomingCallRef.current = null;
+      incomingInfoRef.current = null;
+      setIncoming(null);
+    };
+    call.on("cancel", clearIfCurrent);
+    call.on("disconnect", clearIfCurrent);
+    call.on("reject", clearIfCurrent);
+  }, []);
+
+  const attachDevice = useCallback(async (issued: VoiceAccessToken) => {
+    const existing = devicesRef.current.get(issued.twilioAccountId);
+    if (existing) {
+      existing.device.updateToken(issued.token);
+      existing.accountSid = issued.accountSid;
+      existing.friendlyName = issued.friendlyName;
+      return existing.device;
+    }
+    const pending = deviceLocks.current.get(issued.twilioAccountId);
+    if (pending) return pending;
+
+    const creating = (async () => {
       const { Device: TwilioDevice } = await import("@twilio/voice-sdk");
       const device = new TwilioDevice(issued.token, {
         logLevel: "error",
@@ -123,18 +212,125 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
       device.on("tokenWillExpire", () => {
         const latest = useAuthStore.getState().token;
         if (!latest) return;
-        getVoiceToken(latest, accountId)
+        getVoiceToken(latest, issued.twilioAccountId)
           .then((next) => device.updateToken(next.token))
           .catch(() => undefined);
       });
       device.on("error", (deviceError) => {
+        if (!callRef.current) return;
         setError(microphoneMessage(deviceError));
         setPhase("error");
       });
-      deviceRef.current = { accountId, device };
+      device.on("incoming", (call) => {
+        showIncoming(call, issued.friendlyName);
+      });
+      try {
+        await device.register();
+      } catch (err) {
+        device.destroy();
+        throw err;
+      }
+      devicesRef.current.set(issued.twilioAccountId, {
+        accountId: issued.twilioAccountId,
+        accountSid: issued.accountSid,
+        friendlyName: issued.friendlyName,
+        device,
+      });
       return device;
+    })();
+
+    deviceLocks.current.set(issued.twilioAccountId, creating);
+    try {
+      return await creating;
+    } finally {
+      deviceLocks.current.delete(issued.twilioAccountId);
+    }
+  }, [showIncoming]);
+
+  useEffect(() => {
+    if (!token || !canCall) {
+      callRef.current?.disconnect();
+      callRef.current = null;
+      incomingCallRef.current = null;
+      incomingInfoRef.current = null;
+      clearDevices();
+      return;
+    }
+
+    const authToken = token;
+    let cancelled = false;
+
+    const sync = async () => {
+      try {
+        const issued = await getVoiceTokens(authToken);
+        if (cancelled) return;
+        const ids = new Set(issued.tokens.map((item) => item.twilioAccountId));
+        if (!callRef.current) {
+          for (const [id, entry] of devicesRef.current) {
+            if (ids.has(id)) continue;
+            entry.device.destroy();
+            devicesRef.current.delete(id);
+          }
+        }
+        for (const item of issued.tokens) {
+          if (cancelled) return;
+          await attachDevice(item);
+        }
+        if (cancelled) return;
+        const accountSids = issued.tokens
+          .map((item) => item.accountSid)
+          .filter(Boolean);
+        if (accountSids.length > 0) {
+          const presence = await sendVoicePresence(authToken, accountSids);
+          if (!cancelled) lastSeenRef.current = presence.lastSeenAt;
+        }
+      } catch {
+        // Incoming registration is best-effort. Outbound calls fetch a token on demand.
+      }
+    };
+
+    void sync();
+    const timer = window.setInterval(() => void sync(), 60_000);
+    const onHide = () => {
+      if (!lastSeenRef.current) return;
+      void clearVoicePresence(authToken, true, lastSeenRef.current);
+    };
+    const onShow = () => {
+      void sync();
+    };
+    window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", onShow);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pageshow", onShow);
+      const signedOut = useAuthStore.getState().token !== authToken;
+      if (signedOut) void clearVoicePresence(authToken, true);
+      else if (lastSeenRef.current) {
+        void clearVoicePresence(authToken, true, lastSeenRef.current);
+      }
+      callRef.current?.disconnect();
+      callRef.current = null;
+      incomingCallRef.current = null;
+      clearDevices();
+    };
+  }, [token, canCall, attachDevice, clearDevices]);
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  const deviceFor = useCallback(
+    async (accountId: string) => {
+      if (!token) throw new Error("Sign in to place a call.");
+      const current = devicesRef.current.get(accountId);
+      if (current) return current.device;
+      const issued = await getVoiceToken(token, accountId);
+      return attachDevice(issued);
     },
-    [token, clearDevice],
+    [token, attachDevice],
   );
 
   const startCall = useCallback(
@@ -148,19 +344,12 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
       setDisplayName(input.displayName || input.phone || "Call");
       try {
         const started = await startVoiceCall(token, input);
+        setConversationId(started.conversationId || null);
         setDisplayName(input.displayName || started.toNumber);
         const device = await deviceFor(started.twilioAccountId);
         const call = await device.connect({ params: { intentId: started.intentId } });
         callRef.current = call;
-        call.on("ringing", () => setPhase("ringing"));
-        call.on("accept", () => {
-          setPhase("in-progress");
-          setStartedAt(Date.now());
-        });
-        call.on("disconnect", () => finish("ended"));
-        call.on("cancel", () => finish("ended"));
-        call.on("reject", () => finish("error", "The call was rejected."));
-        call.on("error", (callError) => finish("error", microphoneMessage(callError)));
+        watchCall(call);
         return { conversationId: started.conversationId };
       } catch (err) {
         setPhase("error");
@@ -168,8 +357,44 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
         throw err;
       }
     },
-    [token, deviceFor, finish],
+    [token, deviceFor, watchCall],
   );
+
+  const acceptIncoming = useCallback(() => {
+    const call = incomingCallRef.current;
+    const info = incomingInfoRef.current;
+    if (!call || !info) return;
+    incomingCallRef.current = null;
+    incomingInfoRef.current = null;
+    setIncoming(null);
+    const previous = callRef.current;
+    callRef.current = call;
+    if (previous && previous !== call) previous.disconnect();
+    setDisplayName(info.callerName || info.callerNumber || "Call");
+    setConversationId(info.conversationId || null);
+    setError(null);
+    setMuted(false);
+    setStartedAt(null);
+    setPhase("connecting");
+    watchCall(call);
+    call.accept();
+  }, [watchCall]);
+
+  const declineIncoming = useCallback(() => {
+    const call = incomingCallRef.current;
+    incomingCallRef.current = null;
+    incomingInfoRef.current = null;
+    setIncoming(null);
+    call?.reject();
+  }, []);
+
+  const dismissIncoming = useCallback(() => {
+    const call = incomingCallRef.current;
+    incomingCallRef.current = null;
+    incomingInfoRef.current = null;
+    setIncoming(null);
+    if (call) ignoreCall(call);
+  }, []);
 
   const hangup = useCallback(() => {
     const call = callRef.current;
@@ -196,18 +421,40 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
       error,
       displayName,
       startedAt,
+      conversationId,
       startCall,
       hangup,
       mute,
       sendDigits,
     }),
-    [phase, muted, error, displayName, startedAt, startCall, hangup, mute, sendDigits],
+    [
+      phase,
+      muted,
+      error,
+      displayName,
+      startedAt,
+      conversationId,
+      startCall,
+      hangup,
+      mute,
+      sendDigits,
+    ],
   );
 
   return (
     <SoftphoneContext.Provider value={value}>
       {children}
       <ActiveCallBar />
+      {incoming ? (
+        <IncomingCallModal
+          callerName={incoming.callerName}
+          callerNumber={incoming.callerNumber}
+          lineLabel={incoming.lineLabel}
+          onAccept={acceptIncoming}
+          onDecline={declineIncoming}
+          onDismiss={dismissIncoming}
+        />
+      ) : null}
     </SoftphoneContext.Provider>
   );
 }

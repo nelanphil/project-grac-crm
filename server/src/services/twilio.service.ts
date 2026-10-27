@@ -279,6 +279,27 @@ export function voiceRecordingWebhookAbsoluteUrl(accountSid?: string): string {
   return webhookAbsoluteUrl("/webhooks/twilio/voice/recording", accountSid);
 }
 
+/** Relative path so the Dial action stays on the host that delivered the voice webhook. */
+export function voiceInboundCompletePath(accountSid?: string): string {
+  return webhookPath("/webhooks/twilio/voice/inbound/complete", accountSid);
+}
+
+export function voiceInboundAnsweredPath(
+  accountSid: string | undefined,
+  userId: string,
+): string {
+  const path = webhookPath(
+    "/webhooks/twilio/voice/inbound/answered",
+    accountSid,
+  );
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}userId=${encodeURIComponent(userId)}`;
+}
+
+export function voiceBrowserRecordingPath(accountSid?: string): string {
+  return webhookPath("/webhooks/twilio/voice/client/recording", accountSid);
+}
+
 export function messageWebhookAbsoluteUrl(accountSid?: string): string {
   return webhookAbsoluteUrl("/webhooks/twilio/message", accountSid);
 }

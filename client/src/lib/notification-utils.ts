@@ -94,8 +94,7 @@ export function notificationHref(
     case "contact_form": {
       const submitted = new Date(String(item.metadata.submittedAt ?? item.createdAt));
       const params = new URLSearchParams({
-        tab: "threads",
-        view: "contact-form",
+        tab: "contact-form",
       });
       if (!Number.isNaN(submitted.getTime())) {
         params.set("year", String(submitted.getFullYear()));
@@ -103,22 +102,8 @@ export function notificationHref(
       }
       return `/dashboard/messaging?${params.toString()}`;
     }
-    case "mailbox_message": {
-      const accountId = String(item.metadata.accountId ?? "");
-      const folder = item.metadata.folder === "sent" ? "sent" : "inbox";
-      const uid = Number(item.metadata.uid);
-      if (!accountId || !Number.isInteger(uid) || uid < 1) {
-        return "/dashboard/messaging?tab=threads&view=email";
-      }
-      const params = new URLSearchParams({
-        tab: "threads",
-        view: "email",
-        accountId,
-        folder,
-        uid: String(uid),
-      });
-      return `/dashboard/messaging?${params.toString()}`;
-    }
+    case "mailbox_message":
+      return "/dashboard/inboxes";
     default:
       return null;
   }

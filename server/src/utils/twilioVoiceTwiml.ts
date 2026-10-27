@@ -67,6 +67,62 @@ export function buildGatherTwiml(opts: {
   return response.toString();
 }
 
+const MAX_RING_CLIENTS = 10;
+
+export type RingAgentTarget = {
+  identity: string;
+  userId: string;
+};
+
+function twimlValue(value: string, fallback: string): string {
+  const cleaned = value.replace(/\s+/g, " ").trim().slice(0, 120);
+  return cleaned || fallback;
+}
+
+/** Ring up to 10 registered browsers at once. The first to answer is connected. */
+export function buildRingAgentsTwiml(input: {
+  agents: RingAgentTarget[];
+  actionUrl: string;
+  answeredUrlFor: (userId: string) => string;
+  recordingStatusCallbackUrl: string;
+  callerName: string;
+  callerNumber: string;
+  lineLabel: string;
+  conversationId: string;
+}): string {
+  const response = new twilio.twiml.VoiceResponse();
+  const dial = response.dial({
+    timeout: 25,
+    action: input.actionUrl,
+    method: "POST",
+    answerOnBridge: true,
+    record: "record-from-answer-dual",
+    recordingStatusCallback: input.recordingStatusCallbackUrl,
+    recordingStatusCallbackMethod: "POST",
+    recordingStatusCallbackEvent: ["completed"],
+  });
+  const callerName = twimlValue(input.callerName, "Unknown");
+  const callerNumber = twimlValue(input.callerNumber, "Unknown");
+  const lineLabel = twimlValue(input.lineLabel, "Line");
+  const conversationId = input.conversationId.trim().slice(0, 120);
+  for (const agent of input.agents.slice(0, MAX_RING_CLIENTS)) {
+    const identity = agent.identity.trim();
+    const userId = agent.userId.trim();
+    if (!identity || !userId) continue;
+    const client = dial.client({
+      statusCallback: input.answeredUrlFor(userId),
+      statusCallbackEvent: ["answered"],
+      statusCallbackMethod: "POST",
+    });
+    client.identity(identity);
+    client.parameter({ name: "callerName", value: callerName });
+    client.parameter({ name: "callerNumber", value: callerNumber });
+    client.parameter({ name: "lineLabel", value: lineLabel });
+    client.parameter({ name: "conversationId", value: conversationId });
+  }
+  return response.toString();
+}
+
 export function buildClientDialTwiml(input: {
   from: string;
   to: string;

@@ -302,7 +302,7 @@ export async function dispatchMessagingBatch(
         ? data.offerContractTemplateId
         : templateOfferId;
 
-    if (!bodyTemplate.trim()) {
+    if (!bodyTemplate.trim() && (data.mediaUrls ?? []).length === 0) {
       throw new MessagingDispatchError(400, "Message body is empty");
     }
 
@@ -408,6 +408,8 @@ export async function dispatchMessagingBatch(
           };
         }
         const rendered = composed.body;
+        const previewBody =
+          rendered.trim() || (mediaUrls.length > 0 ? "[Attachment]" : rendered);
         const contactRef = new Types.ObjectId(built.contact._id);
         const customerRef = built.customer
           ? new Types.ObjectId(built.customer._id)
@@ -472,7 +474,7 @@ export async function dispatchMessagingBatch(
           await touchThreadAfterMessage(thread._id, {
             direction: "outbound",
             channel,
-            body: rendered,
+            body: previewBody,
             at: new Date(),
           });
           await touchFromTwilio(failedMessage, {
@@ -537,7 +539,7 @@ export async function dispatchMessagingBatch(
           await touchThreadAfterMessage(thread._id, {
             direction: "outbound",
             channel,
-            body: rendered,
+            body: previewBody,
             at: new Date(),
           });
           await touchFromTwilio(sentMessage, {
@@ -580,7 +582,7 @@ export async function dispatchMessagingBatch(
           await touchThreadAfterMessage(thread._id, {
             direction: "outbound",
             channel,
-            body: rendered,
+            body: previewBody,
             at: new Date(),
           });
           await touchFromTwilio(failedSend, {

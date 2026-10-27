@@ -1,0 +1,597 @@
+"use client";
+
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import {
+  ChevronDown,
+  ChevronUp,
+  Edit3,
+  Eye,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Minus,
+  Send,
+  Sparkles,
+  X,
+} from "lucide-react";
+import EmailBodyEditor from "@/components/messaging/EmailBodyEditor";
+import type { InboxTimelineMessage, MailboxAddress } from "@/lib/api";
+import { formatAddressList, parseAddressList } from "@/lib/mailboxReply";
+import {
+  CANNED_REPLY_TEMPLATES,
+  renderFullReplyPreview,
+} from "@/lib/replyTemplate";
+
+export type InboxEmailDraft = {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  html: string;
+  useBrandTemplate: boolean;
+  includeQuoted: boolean;
+};
+
+type InboxEmailComposerProps = {
+  original: InboxTimelineMessage | null;
+  initialTo: string;
+  initialSubject: string;
+  initialHtml: string;
+  fromLabel: string;
+  sending: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onSend: (input: InboxEmailDraft) => void;
+};
+
+type WindowState = "docked" | "maximized" | "minimized";
+type TabView = "compose" | "preview";
+
+function isBlankHtml(html: string): boolean {
+  return (
+    html
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/gi, " ")
+      .trim().length === 0
+  );
+}
+
+function quoteFromMessage(message: InboxTimelineMessage): {
+  html: string;
+  text: string;
+  from: MailboxAddress[];
+  to: MailboxAddress[];
+  date: string | null;
+  subject: string;
+} {
+  return {
+    html: message.html,
+    text: message.body,
+    from: [{ name: message.senderName || "", address: message.from }],
+    to: message.to ? [{ name: "", address: message.to }] : [],
+    date: message.at,
+    subject: message.subject,
+  };
+}
+
+export default function InboxEmailComposer({
+  original,
+  initialTo,
+  initialSubject,
+  initialHtml,
+  fromLabel,
+  sending,
+  error,
+  onCancel,
+  onSend,
+}: InboxEmailComposerProps) {
+  const quote = useMemo(
+    () => (original ? quoteFromMessage(original) : null),
+    [original],
+  );
+
+  const [to, setTo] = useState(initialTo);
+  const [cc, setCc] = useState("");
+  const [bcc, setBcc] = useState("");
+  const [showCc, setShowCc] = useState(false);
+  const [showBcc, setShowBcc] = useState(false);
+  const [subject, setSubject] = useState(initialSubject);
+  const [html, setHtml] = useState(initialHtml || "<p></p>");
+  const [useBrandTemplate, setUseBrandTemplate] = useState(true);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [windowState, setWindowState] = useState<WindowState>("docked");
+  const [tabView, setTabView] = useState<TabView>("compose");
+  const [showQuoted, setShowQuoted] = useState(false);
+  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const templateMenuRef = useRef<HTMLDivElement>(null);
+  const submitRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (!templateMenuOpen) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        templateMenuRef.current &&
+        !templateMenuRef.current.contains(event.target as Node)
+      ) {
+        setTemplateMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [templateMenuOpen]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !sending) {
+        event.preventDefault();
+        submitRef.current();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [sending]);
+
+  const intro = !quote
+    ? ""
+    : quote.date
+      ? `On ${new Date(quote.date).toLocaleString()}, ${formatAddressList(quote.from)} wrote:`
+      : `${formatAddressList(quote.from)} wrote:`;
+
+  function submitReply() {
+    const toParsed = parseAddressList(to);
+    const ccParsed = parseAddressList(cc);
+    const bccParsed = parseAddressList(bcc);
+
+    if (
+      toParsed.invalid.length > 0 ||
+      ccParsed.invalid.length > 0 ||
+      bccParsed.invalid.length > 0
+    ) {
+      setLocalError("Enter valid email addresses, separated by commas.");
+      setTabView("compose");
+      return;
+    }
+    if (toParsed.ok.length === 0) {
+      setLocalError("Add at least one recipient.");
+      setTabView("compose");
+      return;
+    }
+    if (!subject.trim()) {
+      setLocalError("Add a subject.");
+      setTabView("compose");
+      return;
+    }
+    if (isBlankHtml(html)) {
+      setLocalError("Write a message before sending.");
+      setTabView("compose");
+      return;
+    }
+    setLocalError(null);
+    onSend({
+      to: toParsed.ok,
+      cc: ccParsed.ok,
+      bcc: bccParsed.ok,
+      subject: subject.trim(),
+      html,
+      useBrandTemplate,
+      includeQuoted: Boolean(quote),
+    });
+  }
+
+  useEffect(() => {
+    submitRef.current = submitReply;
+  });
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    submitReply();
+  }
+
+  function handleSelectTemplate(snippet: string) {
+    if (isBlankHtml(html)) {
+      setHtml(snippet);
+    } else {
+      setHtml(`${html}<br/>${snippet}`);
+    }
+    setTemplateMenuOpen(false);
+  }
+
+  const message = localError || error;
+  const fieldClass =
+    "w-full rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2.5 py-1 text-xs text-[var(--staff-ink)] outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange/30";
+
+  if (windowState === "minimized") {
+    return createPortal(
+      <div
+        className="fixed bottom-0 right-4 z-[80] flex max-w-sm items-center justify-between gap-3 rounded-t-xl border border-b-0 border-[var(--staff-border)] bg-brand-midnight px-4 py-2.5 text-white shadow-2xl transition-all hover:brightness-110 sm:right-6"
+        onClick={() => setWindowState("docked")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") setWindowState("docked");
+        }}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="rounded bg-brand-orange px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-white uppercase">
+            Reply
+          </span>
+          <p className="truncate text-xs font-medium text-neutral-200">
+            {subject || "New message"}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
+          <button
+            type="button"
+            title="Expand composer"
+            onClick={() => setWindowState("docked")}
+            className="rounded p-1 text-neutral-300 hover:bg-white/10 hover:text-white"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            title="Close composer"
+            onClick={onCancel}
+            className="rounded p-1 text-neutral-300 hover:bg-white/10 hover:text-white"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
+  const isMaximized = windowState === "maximized";
+  const containerClasses = isMaximized
+    ? "fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-3 backdrop-blur-xs sm:p-6"
+    : "fixed right-3 bottom-0 z-[80] flex h-[min(670px,calc(100vh-4rem))] w-[min(720px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-t-2xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-2xl sm:right-6";
+  const dialogClasses = isMaximized
+    ? "flex h-[min(820px,calc(100vh-3rem))] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-2xl"
+    : "flex h-full w-full flex-col overflow-hidden";
+
+  return createPortal(
+    <div className={containerClasses}>
+      <div className={dialogClasses}>
+        <header className="flex shrink-0 items-center justify-between bg-brand-midnight px-4 py-2.5 text-white select-none">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="rounded bg-brand-orange px-2 py-0.5 text-[11px] font-bold tracking-wider text-white uppercase">
+              Reply
+            </span>
+            <span className="truncate text-xs font-semibold text-white/90">
+              {subject || "Reply"}
+            </span>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <div className="mr-2 flex items-center rounded-lg bg-white/10 p-0.5 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setTabView("compose")}
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium transition-colors ${
+                  tabView === "compose"
+                    ? "bg-brand-orange text-white shadow-xs"
+                    : "text-neutral-300 hover:text-white"
+                }`}
+              >
+                <Edit3 className="h-3 w-3" />
+                Compose
+              </button>
+              <button
+                type="button"
+                onClick={() => setTabView("preview")}
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium transition-colors ${
+                  tabView === "preview"
+                    ? "bg-brand-orange text-white shadow-xs"
+                    : "text-neutral-300 hover:text-white"
+                }`}
+              >
+                <Eye className="h-3 w-3" />
+                Preview
+              </button>
+            </div>
+            <button
+              type="button"
+              title="Minimize"
+              onClick={() => setWindowState("minimized")}
+              className="rounded p-1 text-neutral-300 transition-colors hover:bg-white/15 hover:text-white"
+            >
+              <Minus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              title={isMaximized ? "Restore window" : "Maximize window"}
+              onClick={() => setWindowState(isMaximized ? "docked" : "maximized")}
+              className="rounded p-1 text-neutral-300 transition-colors hover:bg-white/15 hover:text-white"
+            >
+              {isMaximized ? (
+                <Minimize2 className="h-3.5 w-3.5" />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <button
+              type="button"
+              title="Close and discard"
+              onClick={onCancel}
+              className="rounded p-1 text-neutral-300 transition-colors hover:bg-red-600 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </header>
+
+        {tabView === "preview" ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--staff-canvas)] p-2 sm:p-4">
+            <div className="mb-2 flex shrink-0 items-center justify-between px-1 text-xs text-[var(--staff-muted)]">
+              <span className="font-medium text-[var(--staff-ink)]">Live email recipient view</span>
+              <span className="text-[11px]">
+                {useBrandTemplate
+                  ? "GMF branded letterhead and signature applied"
+                  : "Plain reply (no letterhead)"}
+              </span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-inner">
+              <iframe
+                title="Reply live preview"
+                sandbox=""
+                srcDoc={renderFullReplyPreview({
+                  bodyHtml: html,
+                  mode: "reply",
+                  useBrandTemplate,
+                  includeQuoted: Boolean(quote),
+                  original: quote ?? {
+                    html: "",
+                    text: "",
+                    from: [],
+                    to: [],
+                    date: null,
+                    subject: "",
+                  },
+                })}
+                className="h-full w-full border-0 bg-[var(--staff-canvas)]"
+              />
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={handleSubmit}
+            className="flex min-h-0 flex-1 flex-col space-y-2.5 overflow-y-auto bg-[var(--staff-surface)] px-4 py-3"
+          >
+            <div className="space-y-1.5 border-b border-[var(--staff-border)] pb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="w-10 shrink-0 text-xs font-medium text-[var(--staff-muted)]">
+                  To
+                </span>
+                <input
+                  type="text"
+                  value={to}
+                  onChange={(event) => setTo(event.target.value)}
+                  placeholder="recipient@example.com"
+                  className={fieldClass}
+                />
+                <div className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-[var(--staff-muted)]">
+                  {!showCc ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowCc(true)}
+                      className="hover:text-[var(--staff-ink)] hover:underline"
+                    >
+                      Cc
+                    </button>
+                  ) : null}
+                  {!showBcc ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowBcc(true)}
+                      className="hover:text-[var(--staff-ink)] hover:underline"
+                    >
+                      Bcc
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              {showCc ? (
+                <div className="flex items-center gap-2">
+                  <span className="w-10 shrink-0 text-xs font-medium text-[var(--staff-muted)]">
+                    Cc
+                  </span>
+                  <input
+                    type="text"
+                    value={cc}
+                    onChange={(event) => setCc(event.target.value)}
+                    placeholder="cc@example.com"
+                    className={fieldClass}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCc("");
+                      setShowCc(false);
+                    }}
+                    title="Remove Cc"
+                    className="text-[var(--staff-muted)] hover:text-[var(--staff-ink)]"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : null}
+              {showBcc ? (
+                <div className="flex items-center gap-2">
+                  <span className="w-10 shrink-0 text-xs font-medium text-[var(--staff-muted)]">
+                    Bcc
+                  </span>
+                  <input
+                    type="text"
+                    value={bcc}
+                    onChange={(event) => setBcc(event.target.value)}
+                    placeholder="bcc@example.com"
+                    className={fieldClass}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBcc("");
+                      setShowBcc(false);
+                    }}
+                    title="Remove Bcc"
+                    className="text-[var(--staff-muted)] hover:text-[var(--staff-ink)]"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : null}
+              <div className="flex items-center gap-2">
+                <span className="w-10 shrink-0 text-xs font-medium text-[var(--staff-muted)]">
+                  Subj
+                </span>
+                <input
+                  type="text"
+                  value={subject}
+                  onChange={(event) => setSubject(event.target.value)}
+                  placeholder="Subject"
+                  className={fieldClass}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="relative" ref={templateMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setTemplateMenuOpen((open) => !open)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[var(--staff-border)] bg-[var(--staff-cream)] px-2.5 py-1 text-xs font-medium text-[var(--staff-ink)] transition-colors hover:bg-[var(--staff-canvas)]"
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-brand-orange" />
+                  Insert quick template
+                  <ChevronDown className="h-3 w-3 text-[var(--staff-muted)]" />
+                </button>
+                {templateMenuOpen ? (
+                  <div className="absolute top-full left-0 z-30 mt-1 w-72 rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1.5 shadow-lg">
+                    <p className="px-2 py-1 text-[10px] font-semibold tracking-wider text-[var(--staff-muted)] uppercase">
+                      Canned company responses
+                    </p>
+                    <div className="space-y-0.5">
+                      {CANNED_REPLY_TEMPLATES.map((template) => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          onClick={() => handleSelectTemplate(template.body)}
+                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-[var(--staff-ink)] transition-colors hover:bg-[var(--staff-cream)]"
+                        >
+                          <div className="font-medium">{template.title}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              {fromLabel ? (
+                <div className="text-[11px] text-[var(--staff-muted)]">
+                  From: <span className="font-medium text-[var(--staff-ink)]">{fromLabel}</span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="min-h-[160px] flex-1">
+              <EmailBodyEditor
+                value={html}
+                onChange={setHtml}
+                placeholder="Write your reply message here…"
+              />
+            </div>
+
+            {quote ? (
+              <div className="shrink-0 overflow-hidden rounded-lg border border-[var(--staff-border)] bg-[var(--staff-cream)]">
+                <button
+                  type="button"
+                  onClick={() => setShowQuoted((open) => !open)}
+                  className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-[var(--staff-muted)] transition-colors hover:bg-[var(--staff-canvas)]"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    {showQuoted ? (
+                      <ChevronUp className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span className="truncate">{intro}</span>
+                  </div>
+                  <span className="ml-2 shrink-0 text-[11px]">
+                    {showQuoted ? "Hide quoted message" : "Show quoted message"}
+                  </span>
+                </button>
+                {showQuoted ? (
+                  <div className="border-t border-[var(--staff-border)] bg-[var(--staff-surface)] p-3">
+                    {quote.html ? (
+                      <iframe
+                        title="Quoted message body"
+                        sandbox=""
+                        srcDoc={quote.html}
+                        className="h-44 w-full border-0 bg-[var(--staff-surface)]"
+                      />
+                    ) : (
+                      <pre className="max-h-44 overflow-auto font-sans text-xs whitespace-pre-wrap text-[var(--staff-ink)]">
+                        {quote.text || "(No message body)"}
+                      </pre>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+          </form>
+        )}
+
+        {message ? (
+          <p className="shrink-0 border-t border-red-200 bg-red-50 px-4 py-2 text-xs font-medium text-red-700">
+            {message}
+          </p>
+        ) : null}
+
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--staff-border)] bg-[var(--staff-cream)] px-4 py-3">
+          <label
+            className="flex cursor-pointer items-center gap-2 text-xs font-medium text-[var(--staff-ink)] select-none"
+            title="Wraps the reply in Generator Maintenance of Florida letterhead, contact numbers, and Generac credentials"
+          >
+            <input
+              type="checkbox"
+              checked={useBrandTemplate}
+              onChange={(event) => setUseBrandTemplate(event.target.checked)}
+              className="h-4 w-4 cursor-pointer rounded border-[var(--staff-border)] accent-brand-orange"
+            />
+            <span className="inline-flex items-center gap-1.5">
+              Apply GMF branded template
+              <span className="rounded bg-brand-midnight px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                On brand
+              </span>
+            </span>
+          </label>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={sending}
+              className="rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] px-3 py-1.5 text-xs font-medium text-[var(--staff-ink)] transition-colors hover:bg-[var(--staff-canvas)] disabled:opacity-50"
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              onClick={submitReply}
+              disabled={sending}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#2f6fed] px-4 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-[#245ed0] disabled:opacity-60"
+            >
+              {sending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Send className="h-3.5 w-3.5" />
+              )}
+              Send reply
+            </button>
+          </div>
+        </footer>
+      </div>
+    </div>,
+    document.body,
+  );
+}

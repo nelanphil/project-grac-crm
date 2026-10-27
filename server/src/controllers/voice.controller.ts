@@ -5,7 +5,8 @@ import { z } from "zod";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { CustomerContact, activeContactFilter } from "../models/mongo/CustomerContact";
 import { InboxConversation } from "../models/mongo/InboxConversation";
-import { TwilioAccount } from "../models/mongo/TwilioAccount";
+import { ITwilioAccount, TwilioAccount } from "../models/mongo/TwilioAccount";
+import { VoiceAgentPresence } from "../models/mongo/VoiceAgentPresence";
 import { VoiceCallIntent } from "../models/mongo/VoiceCallIntent";
 import { decryptCredential } from "../utils/credentialsCrypto";
 import {
@@ -26,6 +27,10 @@ import { VOICE_INTENT_TTL_MS, voiceIdentity } from "../utils/voiceIntent";
 
 const AccessToken = twilio.jwt.AccessToken;
 const VoiceGrant = AccessToken.VoiceGrant;
+
+const presenceSchema = z.object({
+  accountSids: z.array(z.string().trim().min(1)).max(20),
+});
 
 const startCallSchema = z
   .object({
@@ -75,6 +80,33 @@ function browserCallingReady(account: {
   );
 }
 
+function issueVoiceToken(account: ITwilioAccount, identity: string): string {
+  const token = new AccessToken(
+    account.accountSid,
+    account.voiceApiKeySid,
+    decryptCredential(account.voiceApiKeySecretEncrypted),
+    { identity, ttl: 3600 },
+  );
+  token.addGrant(
+    new VoiceGrant({
+      outgoingApplicationSid: account.voiceTwimlAppSid,
+      incomingAllow: true,
+    }),
+  );
+  return token.toJwt();
+}
+
+async function browserCallingAccounts(accountSids?: string[]) {
+  const filter: Record<string, unknown> = {
+    isActive: true,
+    voiceApiKeySid: { $nin: ["", null] },
+    voiceTwimlAppSid: { $nin: ["", null] },
+  };
+  if (accountSids) filter.accountSid = { $in: accountSids };
+  const accounts = await TwilioAccount.find(filter).sort({ friendlyName: 1 });
+  return accounts.filter((account) => browserCallingReady(account));
+}
+
 export async function getVoiceToken(req: AuthRequest, res: Response): Promise<void> {
   try {
     if (!req.user?.id) {
@@ -98,22 +130,12 @@ export async function getVoiceToken(req: AuthRequest, res: Response): Promise<vo
     }
 
     const identity = voiceIdentity(req.user.id);
-    const token = new AccessToken(
-      account.accountSid,
-      account.voiceApiKeySid,
-      decryptCredential(account.voiceApiKeySecretEncrypted),
-      { identity, ttl: 3600 },
-    );
-    token.addGrant(
-      new VoiceGrant({
-        outgoingApplicationSid: account.voiceTwimlAppSid,
-        incomingAllow: false,
-      }),
-    );
     res.json({
-      token: token.toJwt(),
+      token: issueVoiceToken(account, identity),
       identity,
       twilioAccountId: String(account._id),
+      accountSid: account.accountSid,
+      friendlyName: account.friendlyName,
       expiresIn: 3600,
     });
   } catch (err) {
@@ -264,5 +286,107 @@ export async function startVoiceCall(req: AuthRequest, res: Response): Promise<v
     }
     console.error("POST /voice/calls error:", err);
     res.status(500).json({ message: "Failed to start the call" });
+  }
+}
+
+// GET /voice/tokens — one incoming-capable token per browser-calling account.
+export async function getVoiceTokens(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user?.id) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+    const identity = voiceIdentity(req.user.id);
+    const accounts = await browserCallingAccounts();
+    const tokens: Array<{
+      token: string;
+      identity: string;
+      twilioAccountId: string;
+      accountSid: string;
+      friendlyName: string;
+      expiresIn: number;
+    }> = [];
+    for (const account of accounts) {
+      try {
+        tokens.push({
+          token: issueVoiceToken(account, identity),
+          identity,
+          twilioAccountId: String(account._id),
+          accountSid: account.accountSid,
+          friendlyName: account.friendlyName,
+          expiresIn: 3600,
+        });
+      } catch (err) {
+        console.error(`[voice] skipped token for ${account.accountSid}:`, err);
+      }
+    }
+    res.json({ tokens });
+  } catch (err) {
+    console.error("GET /voice/tokens error:", err);
+    res.status(500).json({ message: "Failed to create calling tokens" });
+  }
+}
+
+// POST /voice/presence — heartbeat from a signed-in browser.
+export async function postVoicePresence(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user?.id || !Types.ObjectId.isValid(req.user.id)) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+    const parsed = presenceSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+    const userRef = new Types.ObjectId(req.user.id);
+    const identity = voiceIdentity(req.user.id);
+    const accounts = await browserCallingAccounts(parsed.data.accountSids);
+    const sids = accounts.map((account) => account.accountSid);
+    await VoiceAgentPresence.deleteMany({
+      userRef,
+      accountSid: { $nin: sids },
+    });
+    const now = new Date();
+    if (sids.length > 0) {
+      await VoiceAgentPresence.bulkWrite(
+        sids.map((accountSid) => ({
+          updateOne: {
+            filter: { userRef, accountSid },
+            update: { $set: { identity, lastSeenAt: now } },
+            upsert: true,
+          },
+        })),
+      );
+    }
+    res.json({ ok: true, lastSeenAt: now.toISOString() });
+  } catch (err) {
+    console.error("POST /voice/presence error:", err);
+    res.status(500).json({ message: "Failed to update calling presence" });
+  }
+}
+
+// DELETE /voice/presence — browser signed out or closed.
+export async function deleteVoicePresence(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!req.user?.id || !Types.ObjectId.isValid(req.user.id)) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+    const beforeRaw = typeof req.query.before === "string" ? req.query.before : "";
+    const before = beforeRaw ? new Date(beforeRaw) : null;
+    const filter: Record<string, unknown> = {
+      userRef: new Types.ObjectId(req.user.id),
+    };
+    if (before && !Number.isNaN(before.getTime())) {
+      filter.lastSeenAt = { $lte: before };
+    }
+    await VoiceAgentPresence.deleteMany(filter);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /voice/presence error:", err);
+    res.status(500).json({ message: "Failed to clear calling presence" });
   }
 }

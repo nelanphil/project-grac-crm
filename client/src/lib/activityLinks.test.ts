@@ -83,7 +83,7 @@ describe("activityHref", () => {
         },
         customerId,
       ),
-      "/dashboard/messaging?tab=threads&threadId=thread9",
+      "/dashboard/inboxes",
     );
     assert.equal(
       activityHref(

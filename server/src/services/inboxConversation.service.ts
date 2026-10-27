@@ -322,7 +322,11 @@ export async function touchFromTwilio(
     const channel: InboxChannel =
       doc.channel === "mms" || doc.channel === "voice" ? doc.channel : "sms";
     const body = doc.body || "";
-    if (!body.trim() && channel !== "voice" && direction === "outbound") return;
+    const outboundAttachment =
+      !body.trim() && channel === "mms" && direction === "outbound";
+    if (!body.trim() && !outboundAttachment && channel !== "voice" && direction === "outbound") {
+      return;
+    }
     const theirNumber = direction === "inbound" ? doc.fromNumber : doc.toNumber;
     const ourNumber = direction === "inbound" ? doc.toNumber : doc.fromNumber;
     const handle = inboxPhoneHandle(theirNumber);
@@ -333,7 +337,7 @@ export async function touchFromTwilio(
       handle,
       handleKind: "phone",
       at: doc.createdAt ? new Date(doc.createdAt) : new Date(),
-      preview: inboxPreview({ channel, body }),
+      preview: outboundAttachment ? "[Attachment]" : inboxPreview({ channel, body }),
       channel,
       direction,
       ourNumber: ourNumber || "",

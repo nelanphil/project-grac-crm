@@ -24,6 +24,10 @@ export interface IScheduledMessageSend extends Document {
   twilioAccountRef: Types.ObjectId;
   fromNumber: string;
   mediaUrls: string[];
+  /** Set when this row is a single text scheduled from an inbox conversation. */
+  inboxConversationRef?: Types.ObjectId | null;
+  contactRef?: Types.ObjectId | null;
+  toNumber?: string;
   renewalYear?: number | null;
   renewalMonth?: number | null;
   includePaymentLink: boolean;
@@ -50,11 +54,26 @@ const scheduledMessageSendSchema = new Schema<IScheduledMessageSend>(
       type: [String],
       required: true,
       validate: {
-        validator: (ids: string[]) => ids.length > 0 && ids.length <= 200,
+        validator(this: IScheduledMessageSend, ids: string[]) {
+          if (!Array.isArray(ids) || ids.length > 200) return false;
+          if (ids.length > 0) return true;
+          return Boolean(this.inboxConversationRef);
+        },
         message: "contactIds must have 1–200 recipients",
       },
     },
-    body: { type: String, required: true },
+    body: {
+      type: String,
+      default: "",
+      validate: {
+        validator(this: IScheduledMessageSend, value: string) {
+          if (typeof value === "string" && value.trim()) return true;
+          if (Array.isArray(this.mediaUrls) && this.mediaUrls.length > 0) return true;
+          return Boolean(this.templateRef);
+        },
+        message: "Message body is empty",
+      },
+    },
     templateRef: {
       type: Schema.Types.ObjectId,
       ref: "MessageTemplate",
@@ -68,6 +87,17 @@ const scheduledMessageSendSchema = new Schema<IScheduledMessageSend>(
     },
     fromNumber: { type: String, required: true, trim: true },
     mediaUrls: { type: [String], default: [] },
+    inboxConversationRef: {
+      type: Schema.Types.ObjectId,
+      ref: "InboxConversation",
+      default: null,
+    },
+    contactRef: {
+      type: Schema.Types.ObjectId,
+      ref: "CustomerContact",
+      default: null,
+    },
+    toNumber: { type: String, default: "", trim: true },
     renewalYear: { type: Number, default: null },
     renewalMonth: { type: Number, default: null },
     includePaymentLink: { type: Boolean, default: false },
@@ -121,6 +151,11 @@ const scheduledMessageSendSchema = new Schema<IScheduledMessageSend>(
 
 scheduledMessageSendSchema.index({ status: 1, scheduledAt: 1 });
 scheduledMessageSendSchema.index({ createdAt: -1 });
+scheduledMessageSendSchema.index({
+  inboxConversationRef: 1,
+  status: 1,
+  scheduledAt: 1,
+});
 
 export const ScheduledMessageSend = mongoose.model<IScheduledMessageSend>(
   "ScheduledMessageSend",

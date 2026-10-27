@@ -58,31 +58,14 @@ export function activityHref(
       return customerTab(customerId, "address");
     case "twilio_communication": {
       const threadId = idOf(metadata.threadId);
-      if (threadId) {
-        const params = new URLSearchParams({ tab: "threads", threadId });
-        return `/dashboard/messaging?${params.toString()}`;
-      }
+      if (threadId) return "/dashboard/inboxes";
       return customerTab(customerId, "communications");
     }
     case "email_communication":
     case "sms_message":
       return customerTab(customerId, "communications");
-    case "mailbox_message": {
-      const accountId = idOf(metadata.accountId);
-      const folder = metadata.folder === "sent" ? "sent" : "inbox";
-      const uid = Number(metadata.uid);
-      if (!accountId || !Number.isInteger(uid) || uid < 1) {
-        return "/dashboard/messaging?tab=threads&view=email";
-      }
-      const params = new URLSearchParams({
-        tab: "threads",
-        view: "email",
-        accountId,
-        folder,
-        uid: String(uid),
-      });
-      return `/dashboard/messaging?${params.toString()}`;
-    }
+    case "mailbox_message":
+      return "/dashboard/inboxes";
     default:
       return null;
   }

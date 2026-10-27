@@ -266,7 +266,7 @@ export default function StaffBriefingHome() {
   );
   const inboxLink = (
     <Link
-      href="/dashboard/messaging?tab=inbox"
+      href="/dashboard/inboxes"
       className="text-sm font-medium text-brand-orange hover:underline"
     >
       See all

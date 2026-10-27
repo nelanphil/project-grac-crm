@@ -98,6 +98,7 @@ export function renderFullReplyPreview(input: {
   bodyHtml: string;
   mode: MailboxReplyMode;
   useBrandTemplate: boolean;
+  includeQuoted?: boolean;
   original: {
     html?: string | null;
     text?: string | null;
@@ -132,7 +133,10 @@ export function renderFullReplyPreview(input: {
     quotedHeader = escapeHtml(when ? `On ${when}, ${who} wrote:` : `${who} wrote:`);
   }
 
-  const quotedBlock = `<div style="max-width:640px;margin:20px auto 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#64748b;">
+  const quotedBlock =
+    input.includeQuoted === false
+      ? ""
+      : `<div style="max-width:640px;margin:20px auto 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#64748b;">
     <p style="margin:0 0 8px 0;font-weight:500;">${quotedHeader}</p>
     <blockquote style="margin:0;padding-left:12px;border-left:2px solid #cbd5e1;color:#475569;">
       ${quotedBody}

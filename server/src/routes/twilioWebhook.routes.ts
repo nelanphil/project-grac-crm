@@ -2,6 +2,8 @@ import { Router } from "express";
 import express from "express";
 import {
   inboundMessageWebhook,
+  inboundVoiceAnsweredWebhook,
+  inboundVoiceCompleteWebhook,
   inboundVoiceGatherWebhook,
   inboundVoiceRecordingWebhook,
   inboundVoiceWebhook,
@@ -16,6 +18,8 @@ const router = Router();
 
 router.post("/message", inboundMessageWebhook);
 router.post("/status", statusWebhook);
+router.post("/voice/inbound/answered", inboundVoiceAnsweredWebhook);
+router.post("/voice/inbound/complete", inboundVoiceCompleteWebhook);
 router.post("/voice/gather", inboundVoiceGatherWebhook);
 router.post("/voice/recording", inboundVoiceRecordingWebhook);
 router.post("/voice/client/complete", clientVoiceCompleteWebhook);

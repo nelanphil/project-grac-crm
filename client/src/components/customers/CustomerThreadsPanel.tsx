@@ -150,7 +150,7 @@ export default function CustomerThreadsPanel({
                 {contactThreads.map((t) => (
                   <li key={t._id}>
                     <Link
-                      href={`/dashboard/messaging?tab=threads&threadId=${t._id}`}
+                      href="/dashboard/inboxes"
                       className="block rounded-lg border border-neutral-200 px-3 py-2 hover:border-brand-orange"
                     >
                       <div className="flex items-center justify-between gap-2">

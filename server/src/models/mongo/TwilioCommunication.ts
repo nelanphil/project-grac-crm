@@ -53,6 +53,11 @@ export interface ITwilioCommunication extends Document {
   createdByUserRef?: Types.ObjectId | null;
   errorMessage?: string | null;
   rawStatus?: string | null;
+  /** Set when a staff browser answers an inbound call. */
+  answeredAt?: Date | null;
+  answeredByUserRef?: Types.ObjectId | null;
+  /** Set once a missed inbound call has been handled, whether or not a text went out. */
+  missedCallTextSentAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -166,6 +171,13 @@ const twilioCommunicationSchema = new Schema<ITwilioCommunication>(
     },
     errorMessage: { type: String, default: null },
     rawStatus: { type: String, default: null },
+    answeredAt: { type: Date, default: null },
+    answeredByUserRef: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    missedCallTextSentAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

@@ -13,6 +13,7 @@ import { InboxConversation, IInboxConversation } from "../models/mongo/InboxConv
 import { Task } from "../models/mongo/Task";
 import { Invoice } from "../models/mongo/Invoice";
 import { MessageTemplate } from "../models/mongo/MessageTemplate";
+import { ScheduledMessageSend } from "../models/mongo/ScheduledMessageSend";
 import { MessageThread } from "../models/mongo/MessageThread";
 import { TwilioAccount } from "../models/mongo/TwilioAccount";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
@@ -54,8 +55,13 @@ import { publicMediaUrls } from "../utils/recordingPlayback";
 import { isPubliclyReachableApiHost } from "../utils/publicUrl";
 import { formatUsPhone } from "../utils/customerSites";
 import { normalizeAccountEmail } from "../utils/provisionCustomerAccount";
+import { sanitizeEmailBodyHtml } from "../utils/emailChrome";
 import {
   buildRfc822Message,
+  composeReplyHtml,
+  htmlToPlainText,
+  isBlankHtml,
+  renderBrandedReplyShell,
   replySubject,
   threadingHeaders,
 } from "../utils/mailboxReply";
@@ -69,6 +75,13 @@ import {
   touchThreadAfterMessage,
 } from "../utils/messageThreads";
 import { phoneLinesMatch } from "../utils/twilioPhoneLines";
+import { ScheduledAtError } from "../utils/scheduledEmail";
+import {
+  InboxSmsInputError,
+  inboxSendPreview,
+  normalizeInboxMediaUrls,
+  parseInboxScheduledAt,
+} from "../utils/inboxSms";
 
 const LIST_LIMIT = 40;
 const TIMELINE_LIMIT = 40;
@@ -109,6 +122,39 @@ function textToHtml(text: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
   return `<div>${escaped.replace(/\n/g, "<br>")}</div>`;
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_RECIPIENTS = 50;
+
+function parseRecipientField(value: unknown): { ok: string[]; invalid: string[] } {
+  const parts: string[] = [];
+  if (typeof value === "string") {
+    for (const part of value.split(/[,;]/)) {
+      const trimmed = part.trim();
+      if (trimmed) parts.push(trimmed);
+    }
+  } else if (Array.isArray(value)) {
+    for (const item of value) {
+      if (typeof item !== "string") continue;
+      const trimmed = item.trim();
+      if (trimmed) parts.push(trimmed);
+    }
+  }
+  const ok: string[] = [];
+  const invalid: string[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    if (part.length > 320 || !EMAIL_RE.test(part)) {
+      invalid.push(part);
+      continue;
+    }
+    const key = part.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ok.push(part);
+  }
+  return { ok, invalid };
 }
 
 type PopulatedCustomer = {
@@ -760,7 +806,194 @@ type CustomerContactMatch = {
   last?: string;
 };
 
+type InboxSmsInput = {
+  body?: unknown;
+  mediaUrls?: unknown;
+  templateId?: unknown;
+  contactId?: unknown;
+  toNumber?: unknown;
+  fromNumber?: unknown;
+  twilioAccountId?: unknown;
+};
+
+export type InboxSmsSendResult = {
+  summary: { total: number; sent: number; failed: number };
+  errorMessage?: string | null;
+};
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function inboxSendError(err: unknown, res: Response, logLabel: string): boolean {
+  if (
+    err instanceof InboxSmsInputError ||
+    err instanceof MessagingDispatchError ||
+    err instanceof StaffEmailBatchError ||
+    err instanceof ScheduledAtError
+  ) {
+    res.status(err.status).json({ message: err.message });
+    return true;
+  }
+  if (err instanceof TwilioServiceError) {
+    res.status(400).json({ message: err.message });
+    return true;
+  }
+  console.error(logLabel, err);
+  return false;
+}
+
+async function assertSmsTemplate(templateId: string | undefined): Promise<void> {
+  if (!templateId) return;
+  if (!Types.ObjectId.isValid(templateId)) {
+    throw new InboxSmsInputError("Invalid template");
+  }
+  const template = await MessageTemplate.findById(templateId)
+    .select("templateType deletedAt")
+    .lean();
+  if (!template || template.deletedAt) {
+    throw new InboxSmsInputError("Message template not found");
+  }
+  if (template.templateType === "email") {
+    throw new InboxSmsInputError("Cannot send an email template as SMS");
+  }
+}
+
+export async function sendInboxSmsCore(
+  convoId: string,
+  input: InboxSmsInput,
+  actor: { userId: string | null; apiBase: string },
+): Promise<InboxSmsSendResult> {
+  const convo = await loadConversation(convoId);
+  if (!convo) {
+    throw new MessagingDispatchError(404, "Conversation not found");
+  }
+  const body = typeof input.body === "string" ? input.body : "";
+  const text = body.trim();
+  if (text.length > 1600) {
+    throw new InboxSmsInputError("Message is too long");
+  }
+  const mediaUrls = normalizeInboxMediaUrls(input.mediaUrls);
+  const templateId = optionalString(input.templateId);
+  const contactId = optionalString(input.contactId);
+  const toNumber = optionalString(input.toNumber);
+  const fromNumber = optionalString(input.fromNumber);
+  const twilioAccountId = optionalString(input.twilioAccountId);
+  if (!text && mediaUrls.length === 0 && !templateId) {
+    throw new InboxSmsInputError("Write a message before sending.");
+  }
+  await assertSmsTemplate(templateId);
+  const contact = await contactForSend(convo, contactId, toNumber, "phone");
+  if (contact) {
+    const result = await dispatchMessagingBatch(
+      {
+        contactIds: [String(contact._id)],
+        body: text,
+        mediaUrls,
+        templateId,
+        twilioAccountId,
+        fromNumber: fromNumber || convo.ourNumber || undefined,
+        toOverride: toNumber,
+      },
+      { userId: actor.userId, apiBase: actor.apiBase },
+    );
+    const failed = result.results.find((item) => item.status === "failed");
+    return {
+      summary: result.summary,
+      errorMessage: failed && "error" in failed ? failed.error : null,
+    };
+  }
+  if (!text && mediaUrls.length === 0) {
+    throw new InboxSmsInputError("Write a message before sending.");
+  }
+  const rawTo = toNumber || (convo.handleKind === "phone" ? convo.handle : "");
+  const to = toE164(rawTo);
+  if (!to) {
+    throw new InboxSmsInputError("This conversation has no phone number.");
+  }
+  const account = await getTwilioAccountForSend(twilioAccountId);
+  const from = resolveFromNumber(account, fromNumber || convo.ourNumber || undefined);
+  const thread = await resolveThreadForInbound({
+    contactRef: null,
+    customerRef: null,
+    twilioAccountRef: account._id,
+    accountSid: account.accountSid,
+    ourNumber: from,
+    contactPhoneSnapshot: rawTo,
+  });
+  const channel = mediaUrls.length > 0 ? "mms" : "sms";
+  const preview = inboxSendPreview(text, mediaUrls.length);
+  const base = actor.apiBase.replace(/\/$/, "");
+  const callback = isPubliclyReachableApiHost(base)
+    ? `${base}/webhooks/twilio/status?accountSid=${encodeURIComponent(account.accountSid)}`
+    : undefined;
+  const { sid } = await sendSms({
+    account,
+    from,
+    to,
+    body: text,
+    mediaUrls,
+    statusCallbackUrl: callback,
+  });
+  const doc = await TwilioCommunication.create({
+    twilioAccountRef: account._id,
+    accountSid: account.accountSid,
+    channel,
+    direction: "outbound",
+    status: "sent",
+    fromNumber: from,
+    toNumber: to,
+    body: text,
+    mediaUrls,
+    twilioSid: sid,
+    threadRef: thread._id,
+    createdByUserRef: actor.userId,
+  });
+  await touchThreadAfterMessage(thread._id, {
+    direction: "outbound",
+    channel,
+    body: preview,
+    at: new Date(),
+  });
+  await touchFromTwilio(doc, {
+    countUnread: false,
+    publish: true,
+    actorUserId: actor.userId,
+  });
+  return { summary: { total: 1, sent: 1, failed: 0 }, errorMessage: null };
+}
+
 export async function sendInboxSms(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const result = await sendInboxSmsCore(
+      String(req.params.id),
+      req.body ?? {},
+      { userId: req.user?.id ?? null, apiBase: apiBase(req) },
+    );
+    res.json(result);
+  } catch (err) {
+    if (inboxSendError(err, res, "POST /inboxes/conversations/:id/sms error:")) return;
+    res.status(500).json({ message: "Failed to send the text" });
+  }
+}
+
+function publicInboxScheduled(row: {
+  _id: Types.ObjectId;
+  body?: string;
+  mediaUrls?: string[];
+  scheduledAt: Date;
+  status: string;
+}) {
+  return {
+    id: String(row._id),
+    body: row.body || "",
+    mediaUrls: row.mediaUrls ?? [],
+    scheduledAt: new Date(row.scheduledAt).toISOString(),
+    status: row.status,
+  };
+}
+
+export async function scheduleInboxSms(req: AuthRequest, res: Response): Promise<void> {
   try {
     const convo = await loadConversation(String(req.params.id));
     if (!convo) {
@@ -768,93 +1001,107 @@ export async function sendInboxSms(req: AuthRequest, res: Response): Promise<voi
       return;
     }
     const body = typeof req.body?.body === "string" ? req.body.body : "";
-    const templateId = typeof req.body?.templateId === "string" ? req.body.templateId : undefined;
-    const contactId = typeof req.body?.contactId === "string" ? req.body.contactId : undefined;
-    const toNumber = typeof req.body?.toNumber === "string" ? req.body.toNumber : undefined;
-    const fromNumber = typeof req.body?.fromNumber === "string" ? req.body.fromNumber : undefined;
-    const twilioAccountId =
-      typeof req.body?.twilioAccountId === "string" ? req.body.twilioAccountId : undefined;
-    if (!body.trim() && !templateId) {
-      res.status(400).json({ message: "Write a message before sending." });
-      return;
+    const text = body.trim();
+    if (text.length > 1600) {
+      throw new InboxSmsInputError("Message is too long");
     }
+    const mediaUrls = normalizeInboxMediaUrls(req.body?.mediaUrls);
+    const templateId = optionalString(req.body?.templateId);
+    const contactId = optionalString(req.body?.contactId);
+    const toNumber = optionalString(req.body?.toNumber);
+    const fromNumber = optionalString(req.body?.fromNumber);
+    const twilioAccountId = optionalString(req.body?.twilioAccountId);
+    if (!text && mediaUrls.length === 0 && !templateId) {
+      throw new InboxSmsInputError("Write a message before sending.");
+    }
+    await assertSmsTemplate(templateId);
+    const scheduledAt = parseInboxScheduledAt(req.body?.scheduledAt);
     const contact = await contactForSend(convo, contactId, toNumber, "phone");
-    if (contact) {
-      const result = await dispatchMessagingBatch(
-        {
-          contactIds: [String(contact._id)],
-          body,
-          mediaUrls: [],
-          templateId,
-          twilioAccountId,
-          fromNumber: fromNumber || convo.ourNumber || undefined,
-          toOverride: toNumber,
-        },
-        { userId: req.user?.id ?? null, apiBase: apiBase(req) },
-      );
-      res.json(result);
-      return;
-    }
-    const rawTo =
-      toNumber || (convo.handleKind === "phone" ? convo.handle : "");
-    const to = toE164(rawTo);
-    if (!to) {
-      res.status(400).json({ message: "This conversation has no phone number." });
-      return;
+    if (!contact) {
+      if (!text && mediaUrls.length === 0) {
+        throw new InboxSmsInputError("Write a message before sending.");
+      }
+      const rawTo = toNumber || (convo.handleKind === "phone" ? convo.handle : "");
+      if (!toE164(rawTo)) {
+        throw new InboxSmsInputError("This conversation has no phone number.");
+      }
     }
     const account = await getTwilioAccountForSend(twilioAccountId);
     const from = resolveFromNumber(account, fromNumber || convo.ourNumber || undefined);
-    const thread = await resolveThreadForInbound({
-      contactRef: null,
-      customerRef: null,
+    const userId =
+      req.user?.id && Types.ObjectId.isValid(req.user.id)
+        ? new Types.ObjectId(req.user.id)
+        : null;
+    const row = await ScheduledMessageSend.create({
+      contactIds: contact ? [String(contact._id)] : [],
+      body: text,
+      templateRef: templateId ? new Types.ObjectId(templateId) : null,
       twilioAccountRef: account._id,
-      accountSid: account.accountSid,
-      ourNumber: from,
-      contactPhoneSnapshot: rawTo,
-    });
-    const { sid } = await sendSms({
-      account,
-      from,
-      to,
-      body: body.trim(),
-      statusCallbackUrl: statusCallback(req, account.accountSid),
-    });
-    const doc = await TwilioCommunication.create({
-      twilioAccountRef: account._id,
-      accountSid: account.accountSid,
-      channel: "sms",
-      direction: "outbound",
-      status: "sent",
       fromNumber: from,
-      toNumber: to,
-      body: body.trim(),
-      twilioSid: sid,
-      threadRef: thread._id,
-      createdByUserRef: req.user?.id ?? null,
+      mediaUrls,
+      inboxConversationRef: convo._id,
+      contactRef: contact?._id ?? null,
+      toNumber: toNumber || "",
+      scheduledAt,
+      status: "scheduled",
+      createdByUserRef: userId,
     });
-    await touchThreadAfterMessage(thread._id, {
-      direction: "outbound",
-      channel: "sms",
-      body: body.trim(),
-      at: new Date(),
-    });
-    await touchFromTwilio(doc, {
-      countUnread: false,
-      publish: true,
-      actorUserId: req.user?.id ?? null,
-    });
-    res.json({ summary: { total: 1, sent: 1, failed: 0 } });
+    publishDashboardChanged();
+    res.status(201).json({ scheduled: publicInboxScheduled(row) });
   } catch (err) {
-    if (err instanceof MessagingDispatchError || err instanceof StaffEmailBatchError) {
-      res.status(err.status).json({ message: err.message });
+    if (inboxSendError(err, res, "POST /inboxes/conversations/:id/sms/schedule error:")) return;
+    res.status(500).json({ message: "Failed to schedule the text" });
+  }
+}
+
+export async function listInboxScheduled(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const convo = await loadConversation(String(req.params.id));
+    if (!convo) {
+      res.status(404).json({ message: "Conversation not found" });
       return;
     }
-    if (err instanceof TwilioServiceError) {
-      res.status(400).json({ message: err.message });
+    const rows = await ScheduledMessageSend.find({
+      inboxConversationRef: convo._id,
+      status: "scheduled",
+    })
+      .sort({ scheduledAt: 1 })
+      .limit(20)
+      .lean();
+    res.json({ scheduled: rows.map((row) => publicInboxScheduled(row)) });
+  } catch (err) {
+    console.error("GET /inboxes/conversations/:id/scheduled error:", err);
+    res.status(500).json({ message: "Failed to load scheduled texts" });
+  }
+}
+
+export async function cancelInboxScheduled(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const id = String(req.params.scheduledId);
+    if (!Types.ObjectId.isValid(id)) {
+      res.status(400).json({ message: "Invalid scheduled message id" });
       return;
     }
-    console.error("POST /inboxes/conversations/:id/sms error:", err);
-    res.status(500).json({ message: "Failed to send the text" });
+    const row = await ScheduledMessageSend.findOne({
+      _id: id,
+      inboxConversationRef: { $ne: null },
+    });
+    if (!row) {
+      res.status(404).json({ message: "Scheduled text not found" });
+      return;
+    }
+    if (row.status !== "scheduled") {
+      res.status(400).json({ message: "Only upcoming texts can be cancelled" });
+      return;
+    }
+    row.status = "cancelled";
+    row.cancelledAt = new Date();
+    await row.save();
+    publishDashboardChanged();
+    res.json({ scheduled: publicInboxScheduled(row) });
+  } catch (err) {
+    console.error("POST /inboxes/scheduled/:scheduledId/cancel error:", err);
+    res.status(500).json({ message: "Failed to cancel the scheduled text" });
   }
 }
 
@@ -871,19 +1118,43 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
       return;
     }
     const contactId = typeof req.body?.contactId === "string" ? req.body.contactId : undefined;
-    const requestedTo = typeof req.body?.to === "string" ? req.body.to : "";
-    const contact = await contactForSend(convo, contactId, requestedTo, "email");
-    const toEmail = normalizeAccountEmail(
-      requestedTo || contact?.email || (convo.handleKind === "email" ? convo.handle : ""),
-    );
-    if (!toEmail) {
+    const toField = parseRecipientField(req.body?.to);
+    const ccField = parseRecipientField(req.body?.cc);
+    const bccField = parseRecipientField(req.body?.bcc);
+    if (
+      toField.invalid.length > 0 ||
+      ccField.invalid.length > 0 ||
+      bccField.invalid.length > 0
+    ) {
+      res.status(400).json({ message: "Enter valid email addresses." });
+      return;
+    }
+    if (
+      toField.ok.length > MAX_RECIPIENTS ||
+      ccField.ok.length > MAX_RECIPIENTS ||
+      bccField.ok.length > MAX_RECIPIENTS
+    ) {
+      res.status(400).json({ message: "Too many recipients." });
+      return;
+    }
+    const contact = await contactForSend(convo, contactId, toField.ok[0], "email");
+    const toList = [...toField.ok];
+    if (toList.length === 0) {
+      const fallback = normalizeAccountEmail(
+        contact?.email || (convo.handleKind === "email" ? convo.handle : ""),
+      );
+      if (fallback) toList.push(fallback);
+    }
+    if (toList.length === 0) {
       res.status(400).json({ message: "This conversation has no email address." });
       return;
     }
+    const rawHtml = typeof req.body?.html === "string" ? req.body.html : "";
+    const hasHtml = rawHtml.trim().length > 0;
     let subject = typeof req.body?.subject === "string" ? req.body.subject.trim() : "";
     let text = typeof req.body?.body === "string" ? req.body.body.trim() : "";
     const templateId = typeof req.body?.templateId === "string" ? req.body.templateId : "";
-    if (templateId && Types.ObjectId.isValid(templateId) && (!text || !subject)) {
+    if (templateId && Types.ObjectId.isValid(templateId) && ((!hasHtml && !text) || !subject)) {
       const template = await MessageTemplate.findOne({
         _id: templateId,
         deletedAt: null,
@@ -891,12 +1162,12 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
       }).lean();
       if (template) {
         if (!subject) subject = template.subject || "";
-        if (!text) text = template.body || "";
+        if (!hasHtml && !text) text = template.body || "";
         if (contact) {
           const built = await buildTemplateContextForContact(String(contact._id));
           if (built) {
             subject = renderMessageTemplate(subject, built.context);
-            text = renderMessageTemplate(text, built.context);
+            if (!hasHtml) text = renderMessageTemplate(text, built.context);
           }
         }
       }
@@ -912,9 +1183,49 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
       res.status(400).json({ message: "Add a subject." });
       return;
     }
-    if (!text) {
-      res.status(400).json({ message: "Write a message before sending." });
+    if (subject.length > 300) {
+      res.status(400).json({ message: "Subject is too long." });
       return;
+    }
+    const useBrandTemplate = req.body?.useBrandTemplate !== false;
+    const includeQuoted = req.body?.includeQuoted !== false;
+    let html: string;
+    if (hasHtml) {
+      if (rawHtml.length > 100_000) {
+        res.status(400).json({ message: "Message is too long." });
+        return;
+      }
+      const bodyHtml = sanitizeEmailBodyHtml(rawHtml);
+      if (isBlankHtml(bodyHtml)) {
+        res.status(400).json({ message: "Write a message before sending." });
+        return;
+      }
+      const quotedAt = latest?.receivedAt ?? latest?.createdAt ?? null;
+      html =
+        latest && includeQuoted
+          ? composeReplyHtml({
+              mode: "reply",
+              bodyHtml,
+              useBrandTemplate,
+              original: {
+                html: latest.html || "",
+                text: latest.body || "",
+                from: [{ name: latest.fromName || "", address: latest.fromEmail || "" }],
+                to: [{ name: "", address: latest.toEmail || "" }],
+                date: quotedAt ? new Date(quotedAt).toISOString() : null,
+                subject: latest.subject || "",
+              },
+            })
+          : useBrandTemplate
+            ? renderBrandedReplyShell(bodyHtml)
+            : bodyHtml;
+      text = htmlToPlainText(html);
+    } else {
+      if (!text) {
+        res.status(400).json({ message: "Write a message before sending." });
+        return;
+      }
+      html = textToHtml(text);
     }
     const account = await loadActiveEmailAccount(emailAccountId);
     const headers = latest?.messageId
@@ -923,9 +1234,10 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
           references: latest.references ?? [],
         })
       : {};
-    const html = textToHtml(text);
     const sent = await sendWithEmailAccount(account, {
-      to: toEmail,
+      to: toList.join(", "),
+      cc: ccField.ok.length > 0 ? ccField.ok.join(", ") : undefined,
+      bcc: bccField.ok.length > 0 ? bccField.ok.join(", ") : undefined,
       subject,
       text,
       html,
@@ -937,7 +1249,7 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
         : null;
     await recordSentMailboxEmail({
       account,
-      to: [toEmail],
+      to: toList,
       subject,
       html,
       text,
@@ -951,8 +1263,8 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
     try {
       const raw = buildRfc822Message({
         from: formatFrom(account.fromName, account.fromEmail),
-        to: [toEmail],
-        cc: [],
+        to: toList,
+        cc: ccField.ok,
         subject,
         text,
         html,

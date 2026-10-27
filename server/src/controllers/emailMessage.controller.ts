@@ -674,6 +674,11 @@ export async function listEmailMessages(
     if (req.query.status === "sent" || req.query.status === "failed") {
       filter.status = req.query.status;
     }
+    const from = new Date(String(req.query.from ?? ""));
+    const to = new Date(String(req.query.to ?? ""));
+    if (!Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime())) {
+      filter.createdAt = { $gte: from, $lt: to };
+    }
 
     const [total, rows] = await Promise.all([
       EmailCommunication.countDocuments(filter),

@@ -10,6 +10,7 @@ import {
   importContactFormSubmissions,
   markContactFormSubmissionRead,
 } from "@/lib/api";
+import { MONTH_NAMES, monthBounds } from "@/lib/monthRange";
 
 function formatTime(iso: string): string {
   const date = new Date(iso);
@@ -17,31 +18,9 @@ function formatTime(iso: string): string {
   return date.toLocaleString();
 }
 
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
 type ContactFormSubmissionsPanelProps = {
   token: string;
 };
-
-function monthBounds(year: number, month: number): { from: string; to: string } {
-  return {
-    from: new Date(year, month, 1).toISOString(),
-    to: new Date(year, month + 1, 1).toISOString(),
-  };
-}
 
 export default function ContactFormSubmissionsPanel({
   token,

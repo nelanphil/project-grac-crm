@@ -1,5 +1,7 @@
+import { sendInboxSmsCore } from "../controllers/inboxes.controller";
 import { dispatchMessagingBatch } from "../controllers/messaging.controller";
 import { ScheduledMessageSend } from "../models/mongo/ScheduledMessageSend";
+import { scheduledMessageRoute } from "../utils/inboxSms";
 import { resolvePublicApiBase } from "../utils/publicUrl";
 
 const MAX_PER_TICK = 3;
@@ -32,6 +34,33 @@ export async function runScheduledMessageJob(): Promise<{
 
       claimed += 1;
       try {
+        if (scheduledMessageRoute(row) === "inbox") {
+          const result = await sendInboxSmsCore(
+            String(row.inboxConversationRef),
+            {
+              body: row.body,
+              mediaUrls: row.mediaUrls ?? [],
+              templateId: row.templateRef ? String(row.templateRef) : undefined,
+              contactId: row.contactRef ? String(row.contactRef) : undefined,
+              toNumber: row.toNumber || undefined,
+              fromNumber: row.fromNumber,
+              twilioAccountId: String(row.twilioAccountRef),
+            },
+            {
+              userId: row.createdByUserRef ? String(row.createdByUserRef) : null,
+              apiBase: resolvePublicApiBase(),
+            },
+          );
+          if (result.summary.sent < 1) {
+            throw new Error(result.errorMessage || "Failed to send the scheduled text");
+          }
+          row.status = "sent";
+          row.summary = result.summary;
+          row.errorMessage = null;
+          await row.save();
+          sent += 1;
+          continue;
+        }
         const result = await dispatchMessagingBatch(
           {
             contactIds: row.contactIds,

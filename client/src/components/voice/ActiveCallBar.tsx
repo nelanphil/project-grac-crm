@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Mic, MicOff, PhoneOff } from "lucide-react";
 import DialPad from "./DialPad";
 import { useSoftphone } from "./SoftphoneProvider";
@@ -73,6 +74,15 @@ export default function ActiveCallBar() {
           </button>
         </div>
       </div>
+      {phone.conversationId &&
+      (phone.phase === "in-progress" || phone.phase === "ended") ? (
+        <Link
+          href={`/dashboard/inboxes?c=${phone.conversationId}`}
+          className="mt-2 inline-block text-xs font-medium underline opacity-80"
+        >
+          Open conversation
+        </Link>
+      ) : null}
       {phone.error ? <p className="mt-2 text-xs text-red-200">{phone.error}</p> : null}
       {keypad && phone.phase !== "ended" && phone.phase !== "error" ? (
         <div className="mt-3">

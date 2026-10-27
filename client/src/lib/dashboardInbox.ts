@@ -7,7 +7,6 @@ import {
   markMailboxMessageSeen,
   markMessagingThreadRead,
   type MailboxAddress,
-  type MessageThreadItem,
 } from "@/lib/api";
 import { contactDisplayName } from "@/components/messaging/conversationUtils";
 
@@ -32,15 +31,10 @@ function emailSender(from: MailboxAddress[]): string {
   return first.name.trim() || first.address || "Unknown";
 }
 
-function inboxHrefForThread(thread: MessageThreadItem): string {
-  return `/dashboard/messaging?tab=inbox&threadId=${encodeURIComponent(thread._id)}`;
-}
-
 function contactFormHref(createdAt: string): string {
   const date = new Date(createdAt);
   const params = new URLSearchParams({
-    tab: "threads",
-    view: "contact-form",
+    tab: "contact-form",
   });
   if (!Number.isNaN(date.getTime())) {
     params.set("year", String(date.getFullYear()));
@@ -83,7 +77,7 @@ async function loadUnreadEmails(token: string): Promise<InboxPreview[]> {
                 message.snippet.trim() ||
                 "(no subject)",
               at: message.date,
-              href: `/dashboard/messaging?tab=inbox&view=email&accountId=${encodeURIComponent(account._id)}&folder=inbox&uid=${message.uid}`,
+              href: "/dashboard/inboxes",
               readTarget: {
                 type: "email",
                 accountId: account._id,
@@ -137,7 +131,7 @@ export async function loadUnreadInbox(token: string): Promise<InboxPreview[]> {
     title: contactDisplayName(thread),
     preview: thread.lastMessagePreview.trim() || "Text message",
     at: thread.lastMessageAt,
-    href: inboxHrefForThread(thread),
+    href: "/dashboard/inboxes",
     readTarget: { type: "text", threadId: thread._id },
   }));
   return [...texts, ...emails, ...contactForms].sort((left, right) => {

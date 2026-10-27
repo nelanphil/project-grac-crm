@@ -6731,21 +6731,60 @@ export async function placeMessagingCall(
   );
 }
 
-export async function getVoiceToken(
-  token: string,
-  twilioAccountId?: string,
-): Promise<{
+export type VoiceAccessToken = {
   token: string;
   identity: string;
   twilioAccountId: string;
+  accountSid: string;
+  friendlyName: string;
   expiresIn: number;
-}> {
+};
+
+export async function getVoiceToken(
+  token: string,
+  twilioAccountId?: string,
+): Promise<VoiceAccessToken> {
   const params = new URLSearchParams();
   if (twilioAccountId) params.set("twilioAccountId", twilioAccountId);
   const qs = params.toString();
   return authRequest(`/voice/token${qs ? `?${qs}` : ""}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getVoiceTokens(
+  token: string,
+): Promise<{ tokens: VoiceAccessToken[] }> {
+  return authRequest("/voice/tokens", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function sendVoicePresence(
+  token: string,
+  accountSids: string[],
+): Promise<{ ok: boolean; lastSeenAt: string }> {
+  return authRequest("/voice/presence", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ accountSids }),
+  });
+}
+
+export async function clearVoicePresence(
+  token: string,
+  keepalive = false,
+  before?: string | null,
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (before) params.set("before", before);
+  const qs = params.toString();
+  await authRequest(`/voice/presence${qs ? `?${qs}` : ""}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+    keepalive,
   });
 }
 
@@ -7500,6 +7539,8 @@ export async function getSentEmails(
     contactId?: string;
     emailAccountId?: string;
     status?: "sent" | "failed";
+    from?: string;
+    to?: string;
     page?: number;
     pageSize?: number;
   },
@@ -7516,6 +7557,8 @@ export async function getSentEmails(
     params.set("emailAccountId", options.emailAccountId);
   }
   if (options?.status) params.set("status", options.status);
+  if (options?.from) params.set("from", options.from);
+  if (options?.to) params.set("to", options.to);
   if (options?.page !== undefined) params.set("page", String(options.page));
   if (options?.pageSize !== undefined) {
     params.set("pageSize", String(options.pageSize));
@@ -8136,18 +8179,47 @@ export async function reopenInboxConversation(
   });
 }
 
+export interface InboxScheduledMessage {
+  id: string;
+  body: string;
+  mediaUrls: string[];
+  scheduledAt: string;
+  status: string;
+}
+
+export interface InboxMediaUpload {
+  url: string;
+  mimeType: string;
+  size: number;
+  name: string;
+}
+
+export async function uploadInboxMedia(
+  token: string,
+  file: File,
+): Promise<InboxMediaUpload> {
+  const payload = new FormData();
+  payload.append("file", file);
+  return authRequest<InboxMediaUpload>("/inboxes/media", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: payload,
+  });
+}
+
 export async function sendInboxSms(
   token: string,
   id: string,
   data: {
     body?: string;
+    mediaUrls?: string[];
     templateId?: string;
     contactId?: string;
     toNumber?: string;
     fromNumber?: string;
     twilioAccountId?: string;
   },
-): Promise<{ summary?: { sent: number; failed: number } }> {
+): Promise<{ summary?: { sent: number; failed: number }; errorMessage?: string | null }> {
   return authRequest(`/inboxes/conversations/${id}/sms`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -8155,16 +8227,62 @@ export async function sendInboxSms(
   });
 }
 
+export async function scheduleInboxSms(
+  token: string,
+  id: string,
+  data: {
+    body?: string;
+    mediaUrls?: string[];
+    templateId?: string;
+    contactId?: string;
+    toNumber?: string;
+    fromNumber?: string;
+    twilioAccountId?: string;
+    scheduledAt: string;
+  },
+): Promise<{ scheduled: InboxScheduledMessage }> {
+  return authRequest(`/inboxes/conversations/${id}/sms/schedule`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listInboxScheduled(
+  token: string,
+  id: string,
+): Promise<{ scheduled: InboxScheduledMessage[] }> {
+  return authRequest(`/inboxes/conversations/${id}/scheduled`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function cancelInboxScheduled(
+  token: string,
+  scheduledId: string,
+): Promise<{ scheduled: InboxScheduledMessage }> {
+  return authRequest(`/inboxes/scheduled/${scheduledId}/cancel`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export async function sendInboxEmail(
   token: string,
   id: string,
   data: {
-    body: string;
+    body?: string;
+    html?: string;
     subject?: string;
     emailAccountId?: string;
     contactId?: string;
-    to?: string;
+    to?: string | string[];
+    cc?: string[];
+    bcc?: string[];
     templateId?: string;
+    useBrandTemplate?: boolean;
+    includeQuoted?: boolean;
   },
 ): Promise<{ sent: boolean }> {
   return authRequest(`/inboxes/conversations/${id}/email`, {

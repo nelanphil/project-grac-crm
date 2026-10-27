@@ -461,7 +461,7 @@ export default function CommunicationHistoryPanel({
               {canWrite && row.contactRef ? (
                 <div className="mt-2 flex gap-2">
                   <Link
-                    href={`/dashboard/messaging?tab=threads&contactId=${row.contactRef}`}
+                    href="/dashboard/inboxes"
                     className="inline-flex items-center gap-1 text-xs font-medium text-brand-orange hover:underline"
                   >
                     <MessageSquare className="h-3.5 w-3.5" />

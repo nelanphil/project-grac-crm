@@ -1,19 +1,23 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   InboxChannels,
   InboxConversationItem,
   InboxContext,
   InboxTemplate,
+  InboxScheduledMessage,
   InboxTimelineMessage,
   callInboxConversation,
+  cancelInboxScheduled,
   closeInboxConversation,
   getInboxContext,
   getInboxTemplates,
   getInboxTimeline,
+  listInboxScheduled,
   reopenInboxConversation,
+  scheduleInboxSms,
   sendInboxEmail,
   sendInboxSms,
 } from "@/lib/api";
@@ -21,17 +25,21 @@ import {
   crmPlaybackSrc,
   formatDuration,
 } from "@/components/messaging/conversationUtils";
+import { replySubject } from "@/lib/mailboxReply";
 import { clockTime, dayLabel, emailDisplayHtml, emailPlainText } from "./inboxFormat";
 import CallFollowUp from "./CallFollowUp";
+import InboxEmailComposer, { InboxEmailDraft } from "./InboxEmailComposer";
+import InboxSmsComposer from "./InboxSmsComposer";
 import {
   Check,
   ChevronLeft,
+  Clock,
   Mail,
+  Maximize2,
   MessageSquare,
   MoreHorizontal,
   Phone,
   Search,
-  Send,
 } from "lucide-react";
 
 type ConversationThreadProps = {
@@ -51,7 +59,21 @@ type ConversationThreadProps = {
 };
 
 function isImage(url: string): boolean {
-  return /\.(png|jpe?g|gif|webp)(\?|$)/i.test(url);
+  if (/\.(png|jpe?g|gif|webp)(\?|#|$)/i.test(url)) return true;
+  return /res\.cloudinary\.com\/[^/]+\/image\/upload\//i.test(url);
+}
+
+function plainTextToHtml(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "<p></p>";
+  const escaped = trimmed
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return escaped
+    .split(/\n{2,}/)
+    .map((block) => `<p>${block.replace(/\n/g, "<br>")}</p>`)
+    .join("");
 }
 
 export default function ConversationThread({
@@ -85,6 +107,13 @@ export default function ConversationThread({
   const [templateId, setTemplateId] = useState("");
   const [templates, setTemplates] = useState<InboxTemplate[]>([]);
   const [sending, setSending] = useState(false);
+  const [scheduled, setScheduled] = useState<InboxScheduledMessage[]>([]);
+  const [scheduledFor, setScheduledFor] = useState(conversationId);
+  if (scheduledFor !== conversationId) {
+    setScheduledFor(conversationId);
+    setScheduled([]);
+  }
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [contacts, setContacts] = useState<InboxContext["contacts"]>([]);
   const scroller = useRef<HTMLDivElement>(null);
@@ -145,7 +174,22 @@ export default function ConversationThread({
     setBody("");
     setSubject("");
     setTemplateId("");
+    setAdvancedOpen(false);
   }, [conversation]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listInboxScheduled(token, conversationId)
+      .then((result) => {
+        if (!cancelled) setScheduled(result.scheduled);
+      })
+      .catch(() => {
+        if (!cancelled) setScheduled([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, conversationId, refreshKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -184,6 +228,23 @@ export default function ConversationThread({
   );
   const phoneContacts = contacts.filter((contact) => contact.phone);
   const emailContacts = contacts.filter((contact) => contact.email);
+  const latestInbound = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.channel === "email" && message.direction === "inbound") return message;
+    }
+    return null;
+  }, [messages]);
+  const selectedEmail =
+    emailContacts.find((contact) => contact.id === contactId)?.email ||
+    conversation?.email ||
+    "";
+  const emailAccount = (channels?.emailAccounts ?? []).find(
+    (account) => account.id === emailAccountId,
+  );
+  const fromLabel = emailAccount
+    ? `${emailAccount.fromName} · ${emailAccount.fromEmail}`
+    : "";
 
   async function loadOlder() {
     if (!nextBefore) return;
@@ -197,32 +258,88 @@ export default function ConversationThread({
     setNextBefore(result.nextBefore);
   }
 
-  async function onSend(event: FormEvent) {
-    event.preventDefault();
+  function smsPayload(mediaUrls: string[]) {
+    const chosen = numbers.find((number) => number.phoneNumber === fromNumber);
+    return {
+      body,
+      mediaUrls,
+      templateId: templateId || undefined,
+      contactId: contactId || undefined,
+      fromNumber: fromNumber || undefined,
+      twilioAccountId: chosen?.accountId,
+    };
+  }
+
+  async function onSendSms(mediaUrls: string[]) {
     if (!canWrite || sending) return;
     setSending(true);
     setError(null);
     try {
-      if (channel === "email") {
-        await sendInboxEmail(token, conversationId, {
-          body,
-          subject,
-          emailAccountId: emailAccountId || undefined,
-          contactId: contactId || undefined,
-          templateId: templateId || undefined,
-        });
-      } else {
-        const chosen = numbers.find((number) => number.phoneNumber === fromNumber);
-        await sendInboxSms(token, conversationId, {
-          body,
-          templateId: templateId || undefined,
-          contactId: contactId || undefined,
-          fromNumber: fromNumber || undefined,
-          twilioAccountId: chosen?.accountId,
-        });
+      const result = await sendInboxSms(token, conversationId, smsPayload(mediaUrls));
+      if ((result.summary?.sent ?? 1) < 1 && (result.summary?.failed ?? 0) > 0) {
+        throw new ApiError(result.errorMessage || "Send failed", 400);
       }
       setBody("");
       setSubject("");
+      stickToBottom.current = true;
+      onActivity();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Send failed");
+      throw err;
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function onScheduleSms(input: { mediaUrls: string[]; scheduledAt: string }) {
+    if (!canWrite || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      await scheduleInboxSms(token, conversationId, {
+        ...smsPayload(input.mediaUrls),
+        scheduledAt: input.scheduledAt,
+      });
+      setBody("");
+      setSubject("");
+      onActivity();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not schedule the text");
+      throw err;
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function onCancelScheduled(id: string) {
+    setError(null);
+    try {
+      await cancelInboxScheduled(token, id);
+      onActivity();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not cancel the scheduled text");
+    }
+  }
+
+  async function onAdvancedSend(draft: InboxEmailDraft) {
+    if (!canWrite || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      await sendInboxEmail(token, conversationId, {
+        html: draft.html,
+        subject: draft.subject,
+        to: draft.to,
+        cc: draft.cc,
+        bcc: draft.bcc,
+        useBrandTemplate: draft.useBrandTemplate,
+        includeQuoted: draft.includeQuoted,
+        emailAccountId: emailAccountId || undefined,
+        contactId: contactId || undefined,
+      });
+      setBody("");
+      setSubject("");
+      setAdvancedOpen(false);
       stickToBottom.current = true;
       onActivity();
     } catch (err) {
@@ -464,15 +581,15 @@ export default function ConversationThread({
       </div>
       {error ? <p className="px-4 pb-1 text-xs text-red-500">{error}</p> : null}
       {canWrite ? (
-        <form
-          onSubmit={onSend}
-          className="border-t border-[var(--staff-border)] bg-[var(--staff-surface)] p-3"
-        >
-          <div className="mb-2 flex flex-wrap items-center gap-2">
+        <div className="relative z-10 border-t border-[var(--staff-border)] bg-[var(--staff-surface)] p-3">
+          <div className={`flex flex-wrap items-center gap-2 ${channel === "sms" ? "mb-2" : ""}`}>
             <div className="flex rounded-lg bg-[var(--staff-cream)] p-0.5">
               <button
                 type="button"
-                onClick={() => setChannel("sms")}
+                onClick={() => {
+                  setChannel("sms");
+                  setAdvancedOpen(false);
+                }}
                 className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium ${
                   channel === "sms"
                     ? "bg-[var(--staff-surface)] text-[var(--staff-ink)]"
@@ -557,33 +674,81 @@ export default function ConversationThread({
                 ))}
               </select>
             ) : null}
+            {channel === "email" ? (
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen(true)}
+                className="inline-flex items-center gap-1 rounded-md border border-[var(--staff-border)] px-2 py-1 text-[11px] font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+                Expand Email
+              </button>
+            ) : null}
           </div>
-          {channel === "email" ? (
-            <input
-              value={subject}
-              onChange={(event) => setSubject(event.target.value)}
-              placeholder="Subject"
-              className="mb-2 w-full rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2 py-1.5 text-sm text-[var(--staff-ink)] outline-none"
+          {channel === "sms" && scheduled.length > 0 ? (
+            <ul className="mb-2 space-y-1">
+              {scheduled.map((item) => (
+                <li
+                  key={item.id}
+                  className="flex items-center gap-2 rounded-md bg-[var(--staff-cream)] px-2 py-1 text-[11px] text-[var(--staff-ink)]"
+                >
+                  <Clock className="h-3 w-3 shrink-0 text-[var(--staff-muted)]" />
+                  <span className="shrink-0 text-[var(--staff-muted)]">
+                    {new Date(item.scheduledAt).toLocaleString(undefined, {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {item.body.trim() || "[Attachment]"}
+                    {item.mediaUrls.length > 0 && item.body.trim()
+                      ? ` · ${item.mediaUrls.length} file${item.mediaUrls.length === 1 ? "" : "s"}`
+                      : ""}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void onCancelScheduled(item.id)}
+                    className="font-medium text-[#2f6fed]"
+                  >
+                    Cancel
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {channel === "sms" ? (
+            <InboxSmsComposer
+              token={token}
+              body={body}
+              sending={sending}
+              onBodyChange={setBody}
+              onSend={onSendSms}
+              onSchedule={onScheduleSms}
             />
           ) : null}
-          <div className="flex items-end gap-2">
-            <textarea
-              value={body}
-              onChange={(event) => setBody(event.target.value)}
-              rows={2}
-              placeholder={channel === "email" ? "Write an email…" : "Write a message…"}
-              className="min-h-[2.5rem] flex-1 resize-none rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2 py-1.5 text-sm text-[var(--staff-ink)] outline-none"
-            />
-            <button
-              type="submit"
-              disabled={sending || !body.trim()}
-              className="inline-flex items-center gap-1 rounded-md bg-[#2f6fed] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-            >
-              <Send className="h-3.5 w-3.5" />
-              Send
-            </button>
-          </div>
-        </form>
+        </div>
+      ) : null}
+      {advancedOpen && canWrite ? (
+        <InboxEmailComposer
+          original={latestInbound}
+          initialTo={selectedEmail}
+          initialSubject={
+            subject.trim() ||
+            (latestInbound?.subject ? replySubject(latestInbound.subject, "reply") : "")
+          }
+          initialHtml={plainTextToHtml(body)}
+          fromLabel={fromLabel}
+          sending={sending}
+          error={error}
+          onCancel={() => {
+            setAdvancedOpen(false);
+            setError(null);
+          }}
+          onSend={(draft) => void onAdvancedSend(draft)}
+        />
       ) : null}
     </div>
   );

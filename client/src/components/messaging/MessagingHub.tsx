@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
   EmailSendAccountItem,
@@ -56,9 +56,9 @@ import EmailCreatePanel from "./EmailCreatePanel";
 import { EmailBodyEditorHandle } from "./EmailBodyEditor";
 import ScheduledEmailsPanel from "./ScheduledEmailsPanel";
 import ScheduledMessagesPanel from "./ScheduledMessagesPanel";
+import ContactFormSubmissionsPanel from "./ContactFormSubmissionsPanel";
 import SentEmailsPanel from "./SentEmailsPanel";
 import TemplatesPanel from "./TemplatesPanel";
-import InboxPanel, { InboxView } from "./InboxPanel";
 
 const MAX_SEND = 200;
 
@@ -71,7 +71,7 @@ type MessagingTab =
   | "templates"
   | "create"
   | "email"
-  | "threads"
+  | "contact-form"
   | "scheduled-emails"
   | "scheduled-messages";
 
@@ -100,9 +100,12 @@ function smsMergeFieldsFrom(fields: MergeFieldItem[]): MergeFieldItem[] {
   return [...visible, SMS_PAYMENT_LINK_FIELD];
 }
 
-function messagingTabFromQuery(tab: string | null): MessagingTab {
-  if (tab === "inbox" || tab === "threads") return "threads";
-  if (tab === "sent-emails") return "email";
+function messagingTabFromQuery(
+  tab: string | null,
+  view: string | null,
+): MessagingTab {
+  if (view === "contact-form" || tab === "contact-form") return "contact-form";
+  if (tab === "sent-emails" || view === "sent-emails") return "email";
   if (
     tab === "templates" ||
     tab === "create" ||
@@ -112,25 +115,21 @@ function messagingTabFromQuery(tab: string | null): MessagingTab {
   ) {
     return tab;
   }
-  return "threads";
+  return "contact-form";
 }
 
 export default function MessagingHub() {
   const token = useAuthStore((s) => s.token);
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialContactId = searchParams.get("contactId");
   const initialInvoiceId = searchParams.get("invoiceId");
   const [invoiceAmountCents, setInvoiceAmountCents] = useState<number>();
   const initialTab = searchParams.get("tab");
-  const initialInboxView: InboxView =
-    searchParams.get("view") === "email"
-      ? "email"
-      : searchParams.get("view") === "contact-form"
-        ? "contact-form"
-        : "text";
+  const initialView = searchParams.get("view");
 
   const [activeTab, setActiveTab] = useState<MessagingTab>(
-    messagingTabFromQuery(initialTab),
+    messagingTabFromQuery(initialTab, initialView),
   );
 
   const initialEmailSubTab: EmailSubTab =
@@ -165,24 +164,20 @@ export default function MessagingHub() {
     setActiveTab("email");
     setEmailSubTab("sent-emails");
   }
-  const mailboxLink =
-    searchParams.get("view") === "email" &&
-    searchParams.get("accountId") &&
-    (searchParams.get("uid") || searchParams.get("messageId"))
+  const legacyInboxLink =
+    (initialTab === "threads" || initialTab === "inbox") &&
+    initialView !== "contact-form" &&
+    initialView !== "sent-emails" &&
+    !sentEmailId;
+  const contactFormLink =
+    initialView === "contact-form" || initialTab === "contact-form"
       ? searchParams.toString()
       : "";
-  const [appliedMailboxLink, setAppliedMailboxLink] = useState(mailboxLink);
-  if (mailboxLink && mailboxLink !== appliedMailboxLink) {
-    setAppliedMailboxLink(mailboxLink);
-    setActiveTab("threads");
-  }
-  const contactFormLink =
-    searchParams.get("view") === "contact-form" ? searchParams.toString() : "";
   const [appliedContactFormLink, setAppliedContactFormLink] =
     useState(contactFormLink);
   if (contactFormLink && contactFormLink !== appliedContactFormLink) {
     setAppliedContactFormLink(contactFormLink);
-    setActiveTab("threads");
+    setActiveTab("contact-form");
   }
 
   const [templates, setTemplates] = useState<MessageTemplateItem[]>([]);
@@ -284,6 +279,10 @@ export default function MessagingHub() {
   const [emailShowSelectAllPrompt, setEmailShowSelectAllPrompt] =
     useState(false);
   const [emailSelectingAll, setEmailSelectingAll] = useState(false);
+
+  useEffect(() => {
+    if (legacyInboxLink) router.replace("/dashboard/inboxes");
+  }, [legacyInboxLink, router]);
 
   useEffect(() => {
     selectedIdsRef.current = selectedIds;
@@ -1391,14 +1390,14 @@ export default function MessagingHub() {
     }
   }
 
-  if (!token) return null;
+  if (!token || legacyInboxLink) return null;
 
   return (
     <div className="space-y-4">
       <MobileTabBar className="border-b border-neutral-200">
         {(
           [
-            ["threads", "Inbox"],
+            ["contact-form", "Contact Form"],
             ["templates", "Templates"],
             ["create", "Message Wizard"],
             ["email", "Email Wizard"],
@@ -1788,17 +1787,7 @@ export default function MessagingHub() {
       ) : activeTab === "scheduled-emails" ? (
         <ScheduledEmailsPanel token={token} />
       ) : (
-        <InboxPanel
-          token={token}
-          accounts={accounts}
-          initialView={initialInboxView}
-          initialEmailAccountId={searchParams.get("accountId") ?? ""}
-          initialEmailFolder={
-            searchParams.get("folder") === "sent" ? "sent" : "inbox"
-          }
-          initialEmailUid={Number(searchParams.get("uid")) || null}
-          initialEmailMessageId={searchParams.get("messageId") ?? ""}
-        />
+        <ContactFormSubmissionsPanel token={token} />
       )}
     </div>
   );
