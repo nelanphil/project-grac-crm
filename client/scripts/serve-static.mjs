@@ -44,7 +44,14 @@ function contentTypeFor(filePath) {
 }
 
 function sendFile(res, filePath, status = 200) {
-  res.writeHead(status, { "Content-Type": contentTypeFor(filePath) });
+  const headers = { "Content-Type": contentTypeFor(filePath) };
+  const ext = path.extname(filePath).toLowerCase();
+  // HTML and the build stamp must not be cached, or a deployed update stays
+  // invisible to browsers that already loaded the previous page.
+  if (ext === ".html" || path.basename(filePath) === "version.json") {
+    headers["Cache-Control"] = "no-store";
+  }
+  res.writeHead(status, headers);
   fs.createReadStream(filePath).pipe(res);
 }
 

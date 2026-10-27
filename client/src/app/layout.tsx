@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import CrashBoundary from "@/components/crash/CrashBoundary";
 import SiteChrome from "@/components/layout/SiteChrome";
+import NewBuildToast from "@/components/ui/NewBuildToast";
 import { COMPANY } from "@/lib/constants";
 import {
   OG_IMAGE,
@@ -78,6 +79,7 @@ export default function RootLayout({
       <body className="flex min-h-full flex-col">
         <CrashBoundary>
           <SiteChrome>{children}</SiteChrome>
+          <NewBuildToast />
         </CrashBoundary>
       </body>
     </html>

@@ -6,6 +6,7 @@
     "dev:client": "next dev -p 3009",
     "dev": "npm run dev:client",
     "build": "next build",
+    "postbuild": "node scripts/write-version.mjs",
     "start:client": "next start",
     "start:static": "node scripts/serve-static.mjs",
     "start": "npm run start:client",
