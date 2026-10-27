@@ -7,16 +7,26 @@ import {
 } from "../models/mongo/TwilioAccount";
 import {
   createTwilioAccountSchema,
+  enableBrowserCallingSchema,
   previewTwilioNumbersSchema,
   updateTwilioAccountSchema,
 } from "../schemas/twilioAccount.schema";
+import { readCurrentNgrokBase } from "../services/devTunnel.service";
+import { ensureVoiceIntelligenceService } from "../services/callTranscription.service";
 import { encryptCredential } from "../utils/credentialsCrypto";
+import twilio from "twilio";
+import {
+  isPubliclyReachableApiHost,
+  resolvePublicApiBase,
+  resolveVoiceWebhookBase,
+} from "../utils/publicUrl";
 import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
 import {
   configureIncomingNumbersWebhooks,
+  getAccountAuthToken,
   getTwilioCredentialPair,
   getTwilioRuntimeEnvironment,
   listIncomingPhoneNumbers,
@@ -25,7 +35,6 @@ import {
   syncAccountPhoneLines,
   voiceWebhookAbsoluteUrl,
 } from "../services/twilio.service";
-import { isPubliclyReachableApiHost } from "../utils/publicUrl";
 import { DEFAULT_SAY_VOICE, resolveSayVoice } from "../utils/twilioVoices";
 import {
   applySubmittedLabels,
@@ -85,6 +94,11 @@ function toPublic(doc: ITwilioAccount | Record<string, unknown>) {
     hasAuthToken: Boolean(d.authTokenEncrypted),
     testAccountSid: d.testAccountSid ?? null,
     hasTestAuthToken: Boolean(d.testAuthTokenEncrypted),
+    browserCalling: Boolean(
+      d.voiceApiKeySid && d.voiceApiKeySecretEncrypted && d.voiceTwimlAppSid,
+    ),
+    voicePublicBaseUrl:
+      typeof d.voicePublicBaseUrl === "string" ? d.voicePublicBaseUrl : "",
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
   };
@@ -342,4 +356,77 @@ export async function deleteTwilioAccount(
   });
 
   res.json({ message: "Twilio account deleted" });
+}
+
+export async function enableBrowserCalling(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  await ensureTwilioPhoneLineShape();
+  const account = await TwilioAccount.findById(req.params.id);
+  if (!account) {
+    res.status(404).json({ message: "Twilio account not found" });
+    return;
+  }
+
+  const detected = resolvePublicApiBase(req);
+  const development = process.env.NODE_ENV !== "production";
+  const parsed = enableBrowserCallingSchema.safeParse(req.body ?? {});
+  const requested = development && parsed.success ? parsed.data.publicApiUrl : "";
+  const ngrokBase = development ? await readCurrentNgrokBase() : null;
+  const base = resolveVoiceWebhookBase(
+    detected,
+    development ? requested || ngrokBase || account.voicePublicBaseUrl : "",
+  );
+  if (!base) {
+    res.status(400).json({
+      message:
+        process.env.NODE_ENV === "production"
+          ? "Browser calling needs a public PUBLIC_API_URL so Twilio can reach the voice webhook."
+          : "Start ngrok for this API, or paste a public tunnel URL, then enable browser calling.",
+    });
+    return;
+  }
+
+  const voiceUrl = `${base}/webhooks/twilio/voice/client?accountSid=${encodeURIComponent(account.accountSid)}`;
+
+  try {
+    const client = twilio(account.accountSid, getAccountAuthToken(account));
+    if (account.voiceTwimlAppSid) {
+      await client.applications(account.voiceTwimlAppSid).update({
+        voiceUrl,
+        voiceMethod: "POST",
+      });
+    } else {
+      const app = await client.applications.create({
+        friendlyName: "GRAC browser calling",
+        voiceUrl,
+        voiceMethod: "POST",
+      });
+      account.voiceTwimlAppSid = app.sid;
+    }
+
+    if (!account.voiceApiKeySid || !account.voiceApiKeySecretEncrypted) {
+      const key = await client.newKeys.create({
+        friendlyName: "GRAC browser calling",
+      });
+      account.voiceApiKeySid = key.sid;
+      account.voiceApiKeySecretEncrypted = encryptCredential(key.secret);
+    }
+
+    account.voicePublicBaseUrl = base;
+    try {
+      await ensureVoiceIntelligenceService(account, base);
+    } catch (err) {
+      console.warn(
+        "[voice] could not prepare call transcription:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    await account.save();
+    res.json({ account: toPublic(account) });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to enable browser calling";
+    res.status(400).json({ message });
+  }
 }

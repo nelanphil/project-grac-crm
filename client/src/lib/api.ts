@@ -17,6 +17,7 @@ export class ApiError extends Error {
     public status: number,
     public errors?: Record<string, string[]>,
     public code?: string,
+    public payload?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -254,6 +255,7 @@ async function authRequest<T>(
       res.status,
       body.errors,
       typeof body.code === "string" ? body.code : undefined,
+      body,
     );
   }
 
@@ -1038,7 +1040,7 @@ export interface CustomerAddress {
 
 export interface CustomerContact {
   _id: string;
-  customerRef: string;
+  customerRef: string | null;
   first: string;
   last: string;
   phone: string;
@@ -1624,6 +1626,75 @@ export async function deleteCustomerContact(
   await authRequest<void>(`/customers/${customerId}/contacts/${contactId}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function detachCustomerContact(
+  token: string,
+  customerId: string,
+  contactId: string,
+): Promise<{ contact: CustomerContact }> {
+  return authRequest<{ contact: CustomerContact }>(
+    `/customers/${customerId}/contacts/${contactId}/detach`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export interface DirectoryContact {
+  _id: string;
+  first: string;
+  last: string;
+  phone: string;
+  email: string;
+  label: string;
+  isPrimary: boolean;
+  customerRef: string | null;
+  customerName: string | null;
+}
+
+export async function searchDirectoryContacts(
+  token: string,
+  search: string,
+  limit = 20,
+): Promise<{ contacts: DirectoryContact[] }> {
+  const params = new URLSearchParams();
+  if (search.trim()) params.set("search", search.trim());
+  params.set("limit", String(limit));
+  return authRequest<{ contacts: DirectoryContact[] }>(`/contacts?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createDirectoryContact(
+  token: string,
+  data: {
+    first: string;
+    last: string;
+    phone: string;
+    email?: string;
+    customerId?: string;
+  },
+): Promise<{ contact: DirectoryContact }> {
+  return authRequest<{ contact: DirectoryContact }>("/contacts", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function attachDirectoryContact(
+  token: string,
+  contactId: string,
+  customerId: string,
+): Promise<{ contact: DirectoryContact }> {
+  return authRequest<{ contact: DirectoryContact }>(`/contacts/${contactId}/attach`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ customerId }),
   });
 }
 
@@ -4923,6 +4994,8 @@ export interface TwilioAccountItem {
   hasAuthToken: boolean;
   testAccountSid: string | null;
   hasTestAuthToken: boolean;
+  browserCalling: boolean;
+  voicePublicBaseUrl: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -4946,6 +5019,21 @@ export async function getTwilioAccounts(
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+export async function enableBrowserCalling(
+  token: string,
+  accountId: string,
+  publicApiUrl?: string,
+): Promise<{ account: TwilioAccountItem }> {
+  return authRequest<{ account: TwilioAccountItem }>(
+    `/twilio-accounts/${accountId}/voice/enable`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(publicApiUrl ? { publicApiUrl } : {}),
+    },
+  );
 }
 
 export async function previewTwilioNumbers(
@@ -5784,6 +5872,92 @@ export async function saveServiceAreas(
 // Cloudinary credentials and public image assets
 // ---------------------------------------------------------------------------
 
+export interface XaiCredentialsItem {
+  _id: string;
+  model: string;
+  isActive: boolean;
+  hasApiKey: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getXaiCredentials(
+  token: string,
+): Promise<{ credentials: XaiCredentialsItem | null }> {
+  return authRequest("/xai-credentials", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function saveXaiCredentials(
+  token: string,
+  data: { apiKey?: string; model?: string; isActive?: boolean },
+): Promise<{ credentials: XaiCredentialsItem }> {
+  return authRequest("/xai-credentials", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteXaiCredentials(token: string): Promise<{ message: string }> {
+  return authRequest("/xai-credentials", {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface XaiModelChoice {
+  id: string;
+  aliases: string[];
+}
+
+export async function listXaiModels(
+  token: string,
+  data: { apiKey?: string } = {},
+): Promise<{ models: XaiModelChoice[] }> {
+  return authRequest("/xai-credentials/models", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function testXaiCredentials(
+  token: string,
+  data: { apiKey?: string; model?: string },
+): Promise<{ ok: boolean; message: string }> {
+  return authRequest("/xai-credentials/test", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function rateCallTranscript(
+  token: string,
+  communicationId: string,
+  data: { stars: number; comment?: string },
+): Promise<{ rating: { stars: number; comment: string } }> {
+  return authRequest(`/inboxes/messages/${communicationId}/transcript-rating`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function dismissCallTaskPrompt(
+  token: string,
+  communicationId: string,
+): Promise<{ dismissed: boolean }> {
+  return authRequest(`/inboxes/messages/${communicationId}/task-prompt/dismiss`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({}),
+  });
+}
+
 export interface CloudinaryCredentialsItem {
   _id: string;
   cloudName: string;
@@ -6081,7 +6255,7 @@ export interface MessagingContactItem {
   email: string;
   label: string;
   isPrimary: boolean;
-  customerRef: string;
+  customerRef: string | null;
   customer: {
     _id: string;
     accountName?: string;
@@ -6184,7 +6358,7 @@ export interface MessageThreadItem {
     last: string;
     phone: string;
     label: string;
-    customerRef: string;
+    customerRef: string | null;
   } | null;
   customer: {
     _id: string;
@@ -6213,6 +6387,7 @@ export interface MessagingWebhookInfo {
   voiceWebhookUrl: string;
   recordingWebhookUrl: string;
   statusWebhookUrl: string;
+  devTunnelUrl: string | null;
   accounts: Array<{
     _id: string;
     friendlyName: string;
@@ -6545,6 +6720,47 @@ export async function placeMessagingCall(
       body: JSON.stringify(data),
     },
   );
+}
+
+export async function getVoiceToken(
+  token: string,
+  twilioAccountId?: string,
+): Promise<{
+  token: string;
+  identity: string;
+  twilioAccountId: string;
+  expiresIn: number;
+}> {
+  const params = new URLSearchParams();
+  if (twilioAccountId) params.set("twilioAccountId", twilioAccountId);
+  const qs = params.toString();
+  return authRequest(`/voice/token${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function startVoiceCall(
+  token: string,
+  data: {
+    contactId?: string;
+    phone?: string;
+    conversationId?: string;
+    twilioAccountId?: string;
+    fromNumber?: string;
+  },
+): Promise<{
+  intentId: string;
+  conversationId: string;
+  twilioAccountId: string;
+  fromNumber: string;
+  toNumber: string;
+}> {
+  return authRequest("/voice/calls", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
 }
 
 export async function getMessagingCommunications(
@@ -6899,7 +7115,8 @@ export type NotificationEntityType =
   | "estimate"
   | "discount_code"
   | "mailbox_message"
-  | "contact_form";
+  | "contact_form"
+  | "task";
 
 export type NotificationAction =
   | "created"
@@ -7663,6 +7880,9 @@ export interface InboxConversationItem {
   status: "open" | "closed";
   readAt: string | null;
   readByName: string | null;
+  pinned: boolean;
+  blocked: boolean;
+  openTaskCount: number;
   ourNumber: string;
   emailAccountId: string | null;
 }
@@ -7688,6 +7908,12 @@ export interface InboxTimelineMessage {
   }[];
   durationSeconds: number | null;
   transcript: string;
+  transcriptStatus?: "none" | "pending" | "completed" | "failed";
+  callSummary?: string;
+  suggestedTask?: { title: string; description: string; dueInDays: number | null } | null;
+  transcriptRating?: { stars: number; comment: string } | null;
+  followUpTask?: { id: string; title: string } | null;
+  taskPromptDismissed?: boolean;
   emailAccountId: string | null;
   imapUid: number | null;
 }
@@ -7728,13 +7954,15 @@ export interface InboxContext {
     authorName: string;
     createdAt: string;
   }[];
+  conversationId?: string;
 }
 
 export interface InboxChannels {
   twilioAccounts: {
     id: string;
     friendlyName: string;
-    numbers: { phoneNumber: string; label: string }[];
+    browserCalling: boolean;
+    numbers: { phoneNumber: string; label: string; voice: boolean }[];
   }[];
   emailAccounts: {
     id: string;
@@ -7769,8 +7997,13 @@ export async function getInboxConversations(
     channel?: "" | "text" | "email" | "voice" | "sms" | "mms";
     q?: string;
     cursor?: string;
+    blocked?: boolean;
   } = {},
-): Promise<{ conversations: InboxConversationItem[]; nextCursor: string | null }> {
+): Promise<{
+  conversations: InboxConversationItem[];
+  pinned?: InboxConversationItem[];
+  nextCursor: string | null;
+}> {
   return authRequest(
     `/inboxes/conversations${inboxQuery({
       status: options.status,
@@ -7778,6 +8011,7 @@ export async function getInboxConversations(
       channel: options.channel,
       q: options.q,
       cursor: options.cursor,
+      blocked: options.blocked ? "1" : undefined,
     })}`,
     { method: "GET", headers: { Authorization: `Bearer ${token}` } },
   );
@@ -7787,6 +8021,7 @@ export async function getInboxTimeline(
   token: string,
   id: string,
   before?: string,
+  limit?: number,
 ): Promise<{
   conversation: InboxConversationItem | null;
   messages: InboxTimelineMessage[];
@@ -7794,7 +8029,10 @@ export async function getInboxTimeline(
   nextBefore: string | null;
 }> {
   return authRequest(
-    `/inboxes/conversations/${id}/timeline${inboxQuery({ before })}`,
+    `/inboxes/conversations/${id}/timeline${inboxQuery({
+      before,
+      limit: limit ? String(limit) : undefined,
+    })}`,
     { method: "GET", headers: { Authorization: `Bearer ${token}` } },
   );
 }
@@ -7805,6 +8043,66 @@ export async function markInboxConversationRead(
 ): Promise<{ conversation: InboxConversationItem }> {
   return authRequest(`/inboxes/conversations/${id}/read`, {
     method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function markInboxConversationUnread(
+  token: string,
+  id: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/conversations/${id}/unread`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function pinInboxConversation(
+  token: string,
+  id: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/conversations/${id}/pin`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function unpinInboxConversation(
+  token: string,
+  id: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/conversations/${id}/unpin`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function blockInboxConversation(
+  token: string,
+  id: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/conversations/${id}/block`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function unblockInboxConversation(
+  token: string,
+  id: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/conversations/${id}/unblock`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function deleteInboxConversation(
+  token: string,
+  id: string,
+): Promise<{ deleted: boolean }> {
+  return authRequest(`/inboxes/conversations/${id}`, {
+    method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
 }
@@ -7928,6 +8226,107 @@ export async function searchInboxCustomers(
 export async function getInboxChannels(token: string): Promise<InboxChannels> {
   return authRequest("/inboxes/channels", {
     method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface TaskItem {
+  id: string;
+  title: string;
+  description: string;
+  status: "open" | "done";
+  dueAt: string | null;
+  completedAt: string | null;
+  assigneeId: string | null;
+  assigneeName: string;
+  createdByName: string;
+  customerId: string | null;
+  customerName: string;
+  conversationId: string | null;
+  conversationName: string;
+  source: "inbox" | "manual";
+}
+
+export interface TaskAssignee {
+  id: string;
+  name: string;
+}
+
+export async function getTasks(
+  token: string,
+  options: {
+    assignee?: "me" | "all" | string;
+    status?: "" | "open" | "done";
+    due?: "" | "overdue" | "today" | "upcoming";
+    customerId?: string;
+    conversationId?: string;
+  } = {},
+): Promise<{ tasks: TaskItem[] }> {
+  return authRequest(
+    `/tasks${inboxQuery({
+      assignee: options.assignee,
+      status: options.status,
+      due: options.due,
+      customerId: options.customerId,
+      conversationId: options.conversationId,
+    })}`,
+    { method: "GET", headers: { Authorization: `Bearer ${token}` } },
+  );
+}
+
+export async function getTaskAssignees(
+  token: string,
+): Promise<{ assignees: TaskAssignee[] }> {
+  return authRequest("/tasks/assignees", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createTask(
+  token: string,
+  data: {
+    title: string;
+    description?: string;
+    dueAt?: string | null;
+    assigneeId?: string | null;
+    conversationId?: string;
+    customerId?: string;
+    communicationId?: string;
+    source?: "inbox" | "manual";
+  },
+): Promise<{ task: TaskItem }> {
+  return authRequest("/tasks", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateTask(
+  token: string,
+  id: string,
+  data: {
+    title?: string;
+    description?: string;
+    dueAt?: string | null;
+    assigneeId?: string | null;
+    status?: "open" | "done";
+  },
+): Promise<{ task: TaskItem }> {
+  return authRequest(`/tasks/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteTask(
+  token: string,
+  id: string,
+): Promise<{ deleted: boolean }> {
+  return authRequest(`/tasks/${id}`, {
+    method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
 }

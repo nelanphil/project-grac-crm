@@ -1,7 +1,12 @@
 import { Types } from "mongoose";
-import { Customer } from "../models/mongo/Customer";
+import { Customer, activeCustomerFilter } from "../models/mongo/Customer";
+import {
+  CustomerContact,
+  activeContactFilter,
+} from "../models/mongo/CustomerContact";
 import { EmailCommunication } from "../models/mongo/EmailCommunication";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
+import { InboxBlock } from "../models/mongo/InboxBlock";
 import {
   InboxChannel,
   InboxConversation,
@@ -9,6 +14,7 @@ import {
   InboxHandleKind,
   IInboxConversation,
 } from "../models/mongo/InboxConversation";
+import { Task } from "../models/mongo/Task";
 import { publishDashboardChanged } from "./dashboardLive";
 import { customerDisplayName } from "./notification.service";
 import {
@@ -17,6 +23,12 @@ import {
   normalizePhoneDigits,
 } from "../utils/customerSites";
 import { normalizeAccountEmail } from "../utils/provisionCustomerAccount";
+import { phoneLinesMatch } from "../utils/twilioPhoneLines";
+import { resolveInboxCustomer } from "./inboxCustomerResolve.service";
+
+const notMerged = {
+  $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
+};
 
 const PREVIEW_LENGTH = 160;
 
@@ -87,6 +99,76 @@ async function labelForCustomer(
   return customer ? customerDisplayName(customer) : "";
 }
 
+export type InboxLifecycle = {
+  status: "open" | "closed";
+  unreadCount: number;
+  readAt: Date | null;
+  deletedAt: Date | null;
+  historyFrom: Date | null;
+  blocked: boolean;
+};
+
+/**
+ * Next inbox flags after a message. A blocked chat stays quiet. A deleted
+ * chat comes back on a newer message and hides history from before the delete.
+ * Staff replies reopen a chat that was marked done, unless this is a backfill.
+ */
+export function nextInboxLifecycle(
+  state: InboxLifecycle,
+  input: {
+    direction: InboxDirection;
+    at: Date;
+    newer: boolean;
+    countUnread: boolean;
+    reopen: boolean;
+  },
+): InboxLifecycle {
+  if (state.blocked) return { ...state };
+  const next: InboxLifecycle = { ...state };
+
+  if (input.newer && input.reopen && state.deletedAt) {
+    next.historyFrom = state.deletedAt;
+    next.deletedAt = null;
+    next.status = "open";
+  }
+
+  if (input.countUnread) {
+    next.unreadCount = (state.unreadCount || 0) + 1;
+    next.readAt = null;
+    if (input.reopen) next.status = "open";
+    return next;
+  }
+
+  if (input.direction === "outbound" && input.newer) {
+    next.unreadCount = 0;
+    if (!state.readAt) next.readAt = input.at;
+    if (input.reopen && (state.status === "closed" || state.deletedAt)) {
+      next.status = "open";
+    }
+    return next;
+  }
+
+  if (
+    input.direction === "inbound" &&
+    input.newer &&
+    input.reopen &&
+    state.status === "closed"
+  ) {
+    next.status = "open";
+  }
+
+  return next;
+}
+
+export async function isInboxHandleBlocked(
+  handle: string,
+  handleKind: InboxHandleKind,
+): Promise<boolean> {
+  if (!handle) return false;
+  const hit = await InboxBlock.exists({ handle, handleKind });
+  return Boolean(hit);
+}
+
 function conversationFilter(input: {
   customerRef?: Types.ObjectId | null;
   handle: string;
@@ -110,9 +192,10 @@ export async function touchInboxConversation(
   if (!handle && !input.customerRef) return null;
 
   const customerRef = asObjectId(input.customerRef);
+  const customerLabel = await labelForCustomer(customerRef);
   const named =
+    customerLabel ||
     input.displayName?.trim() ||
-    (await labelForCustomer(customerRef)) ||
     (input.handleKind === "phone" ? formatUsPhone(handle) : handle);
   const filter = conversationFilter({
     customerRef,
@@ -122,6 +205,9 @@ export async function touchInboxConversation(
   const at = input.at instanceof Date ? input.at : new Date(input.at);
   const countUnread = Boolean(input.countUnread) && input.direction === "inbound";
   const reopen = input.reopen !== false;
+  const listedBlocked = handle
+    ? await isInboxHandleBlocked(handle, input.handleKind)
+    : false;
 
   let convo = await InboxConversation.findOne(filter);
   if (!convo) {
@@ -135,17 +221,18 @@ export async function touchInboxConversation(
         lastPreview: input.preview,
         lastChannel: input.channel,
         lastDirection: input.direction,
-        unreadCount: countUnread ? 1 : 0,
+        unreadCount: listedBlocked || !countUnread ? 0 : 1,
         readAt: input.direction === "outbound" ? at : null,
         readByUserRef:
           input.direction === "outbound" && input.actorUserId
             ? asObjectId(input.actorUserId)
             : null,
         status: "open",
+        blocked: listedBlocked,
         ourNumber: input.ourNumber || "",
         emailAccountRef: input.emailAccountRef ?? null,
       });
-      if (input.publish !== false) publishDashboardChanged();
+      if (!listedBlocked && input.publish !== false) publishDashboardChanged();
       return convo;
     } catch (err) {
       if (!isDuplicateKey(err)) throw err;
@@ -154,6 +241,7 @@ export async function touchInboxConversation(
     }
   }
 
+  if (listedBlocked) convo.blocked = true;
   const previous = convo.lastMessageAt
     ? new Date(convo.lastMessageAt).getTime()
     : null;
@@ -166,33 +254,51 @@ export async function touchInboxConversation(
     if (input.ourNumber) convo.ourNumber = input.ourNumber;
     if (input.emailAccountRef) convo.emailAccountRef = input.emailAccountRef;
   }
-  if (named && (customerRef || !convo.displayName)) convo.displayName = named;
-  if (customerRef) convo.customerRef = customerRef;
+  if (customerRef) {
+    convo.customerRef = customerRef;
+    if (customerLabel) convo.displayName = customerLabel;
+  } else if (named && !convo.displayName) {
+    convo.displayName = named;
+  }
 
-  if (countUnread) {
-    convo.unreadCount = (convo.unreadCount || 0) + 1;
+  const hadReadAt = Boolean(convo.readAt);
+  const wasClosed = convo.status === "closed" || Boolean(convo.deletedAt);
+  const next = nextInboxLifecycle(
+    {
+      status: convo.status,
+      unreadCount: convo.unreadCount || 0,
+      readAt: convo.readAt ?? null,
+      deletedAt: convo.deletedAt ?? null,
+      historyFrom: convo.historyFrom ?? null,
+      blocked: Boolean(convo.blocked),
+    },
+    {
+      direction: input.direction,
+      at,
+      newer,
+      countUnread,
+      reopen,
+    },
+  );
+  convo.status = next.status;
+  convo.unreadCount = next.unreadCount;
+  convo.deletedAt = next.deletedAt;
+  convo.historyFrom = next.historyFrom;
+  if (!next.readAt) {
     convo.readAt = null;
     convo.readByUserRef = null;
-    if (reopen) {
-      convo.status = "open";
-      convo.closedAt = null;
-      convo.closedByUserRef = null;
-    }
-  } else if (input.direction === "outbound" && newer) {
-    convo.unreadCount = 0;
-    if (!convo.readAt) {
-      convo.readAt = at;
-      const actor = asObjectId(input.actorUserId);
-      if (actor) convo.readByUserRef = actor;
-    }
-  } else if (input.direction === "inbound" && newer && reopen && convo.status === "closed") {
-    convo.status = "open";
+  } else if (!hadReadAt) {
+    convo.readAt = next.readAt;
+    const actor = asObjectId(input.actorUserId);
+    if (actor) convo.readByUserRef = actor;
+  }
+  if (next.status === "open" && wasClosed) {
     convo.closedAt = null;
     convo.closedByUserRef = null;
   }
 
   await convo.save();
-  if (input.publish !== false) publishDashboardChanged();
+  if (!convo.blocked && input.publish !== false) publishDashboardChanged();
   return convo;
 }
 
@@ -257,19 +363,19 @@ type EmailTouchSource = {
 export async function touchFromEmail(
   doc: EmailTouchSource,
   opts?: { countUnread?: boolean; publish?: boolean; reopen?: boolean; actorUserId?: string | null },
-): Promise<void> {
+): Promise<IInboxConversation | null> {
   try {
     const direction = doc.direction === "inbound" ? "inbound" : "outbound";
     const theirEmail = direction === "inbound" ? doc.fromEmail : doc.toEmail;
     const handle = inboxEmailHandle(theirEmail);
     const customerRef = asObjectId(doc.customerRef);
-    if (!handle && !customerRef) return;
+    if (!handle && !customerRef) return null;
     const at = doc.receivedAt
       ? new Date(doc.receivedAt)
       : doc.createdAt
         ? new Date(doc.createdAt)
         : new Date();
-    await touchInboxConversation({
+    return await touchInboxConversation({
       customerRef,
       handle,
       handleKind: "email",
@@ -290,6 +396,240 @@ export async function touchFromEmail(
     });
   } catch (err) {
     console.error("[inboxes] email touch failed:", err);
+    return null;
+  }
+}
+
+async function blockHandles(
+  convo: IInboxConversation,
+): Promise<{ handle: string; handleKind: InboxHandleKind }[]> {
+  const found = new Map<string, { handle: string; handleKind: InboxHandleKind }>();
+  const add = (raw: string | null | undefined, kind: InboxHandleKind) => {
+    const handle = kind === "email" ? inboxEmailHandle(raw) : inboxPhoneHandle(raw || "");
+    if (!handle) return;
+    found.set(`${kind}:${handle}`, { handle, handleKind: kind });
+  };
+  add(convo.handle, convo.handleKind);
+  if (!convo.customerRef) return [...found.values()];
+  const customer = await Customer.findById(convo.customerRef).select("phone email").lean();
+  if (customer) {
+    add(customer.phone, "phone");
+    add(customer.email, "email");
+  }
+  const contacts = await CustomerContact.find({
+    customerRef: convo.customerRef,
+    ...activeContactFilter,
+  })
+    .select("phone email")
+    .lean();
+  for (const contact of contacts) {
+    add(contact.phone, "phone");
+    add(contact.email, "email");
+  }
+  return [...found.values()];
+}
+
+/** Block or unblock every phone and email this conversation can be reached on. */
+export async function setInboxBlocked(
+  convo: IInboxConversation,
+  blocked: boolean,
+  userId: string | null,
+): Promise<void> {
+  const handles = await blockHandles(convo);
+  if (blocked && handles.length > 0) {
+    await InboxBlock.bulkWrite(
+      handles.map((row) => ({
+        updateOne: {
+          filter: { handle: row.handle, handleKind: row.handleKind },
+          update: {
+            $setOnInsert: {
+              handle: row.handle,
+              handleKind: row.handleKind,
+              blockedByUserRef: asObjectId(userId),
+            },
+          },
+          upsert: true,
+        },
+      })),
+    );
+  } else if (!blocked && handles.length > 0) {
+    await InboxBlock.deleteMany({ $or: handles });
+  }
+  await InboxConversation.updateMany(
+    {
+      $or: [
+        { _id: convo._id },
+        ...handles.map((row) => ({ handle: row.handle, handleKind: row.handleKind })),
+      ],
+    },
+    { $set: { blocked } },
+  );
+}
+
+/** Attach an unknown conversation to a customer and fold it into that customer's thread. */
+export async function linkInboxConversationToCustomer(
+  convo: IInboxConversation,
+  customerId: Types.ObjectId,
+): Promise<IInboxConversation> {
+  const customer = await Customer.findOne({
+    _id: customerId,
+    ...activeCustomerFilter,
+    ...notMerged,
+  })
+    .select("accountName first last")
+    .lean();
+  if (!customer) return convo;
+
+  await Task.updateMany(
+    { inboxConversationRef: convo._id },
+    { $set: { customerRef: customer._id } },
+  );
+
+  const contacts = await CustomerContact.find({
+    customerRef: customer._id,
+    ...activeContactFilter,
+  })
+    .select("phone email")
+    .lean();
+  const contact = contacts.find((row) =>
+    convo.handleKind === "phone"
+      ? phoneLinesMatch(row.phone || "", convo.handle)
+      : normalizeAccountEmail(row.email || "") === normalizeAccountEmail(convo.handle),
+  );
+  const contactRef = contact?._id ?? null;
+
+  if (convo.handleKind === "email") {
+    const handle = inboxEmailHandle(convo.handle);
+    if (handle) {
+      await EmailCommunication.updateMany(
+        { customerRef: null, $or: [{ fromEmail: handle }, { toEmail: handle }] },
+        { $set: { customerRef: customer._id, contactRef } },
+      );
+    }
+  } else {
+    const handle = inboxPhoneHandle(convo.handle);
+    if (handle) {
+      const pattern = new RegExp(`${handle}$`);
+      await TwilioCommunication.updateMany(
+        {
+          customerRef: null,
+          $or: [{ fromNumber: pattern }, { toNumber: pattern }],
+        },
+        { $set: { customerRef: customer._id, contactRef } },
+      );
+    }
+  }
+
+  const existing = await InboxConversation.findOne({
+    customerRef: customer._id,
+    _id: { $ne: convo._id },
+  });
+  if (existing) {
+    const sourceAt = convo.lastMessageAt ? new Date(convo.lastMessageAt).getTime() : 0;
+    const targetAt = existing.lastMessageAt ? new Date(existing.lastMessageAt).getTime() : 0;
+    if (sourceAt >= targetAt) {
+      existing.lastMessageAt = convo.lastMessageAt;
+      existing.lastPreview = convo.lastPreview;
+      if (convo.lastChannel) existing.lastChannel = convo.lastChannel;
+      if (convo.lastDirection) existing.lastDirection = convo.lastDirection;
+      existing.ourNumber = convo.ourNumber || existing.ourNumber;
+      existing.emailAccountRef = convo.emailAccountRef || existing.emailAccountRef;
+      existing.handle = convo.handle;
+      existing.handleKind = convo.handleKind;
+    }
+    existing.unreadCount = (existing.unreadCount || 0) + (convo.unreadCount || 0);
+    existing.displayName = customerDisplayName(customer);
+    if (convo.lastDirection === "inbound" && sourceAt >= targetAt) {
+      existing.status = "open";
+    }
+    await Task.updateMany(
+      { inboxConversationRef: convo._id },
+      { $set: { customerRef: customer._id, inboxConversationRef: existing._id } },
+    );
+    await existing.save();
+    await convo.deleteOne();
+    return existing;
+  }
+
+  convo.customerRef = customer._id;
+  convo.displayName = customerDisplayName(customer);
+  await convo.save();
+  return convo;
+}
+
+/** Link an unknown conversation when the handle matches one customer. */
+export async function ensureInboxCustomer(
+  convo: IInboxConversation,
+): Promise<IInboxConversation> {
+  if (convo.customerRef) return convo;
+  const customerId = await resolveInboxCustomer({
+    handle: convo.handle,
+    handleKind: convo.handleKind,
+    fromName: convo.displayName,
+  });
+  if (!customerId) return convo;
+  return linkInboxConversationToCustomer(convo, customerId);
+}
+
+async function claimUnresolvedMessages(): Promise<void> {
+  const cache = new Map<string, Types.ObjectId | null>();
+  async function customerFor(
+    handle: string,
+    handleKind: InboxHandleKind,
+    fromName?: string,
+  ): Promise<Types.ObjectId | null> {
+    const key = `${handleKind}:${handle}`;
+    if (cache.has(key)) return cache.get(key) ?? null;
+    const customerId = await resolveInboxCustomer({ handle, handleKind, fromName });
+    cache.set(key, customerId);
+    return customerId;
+  }
+
+  const emails = EmailCommunication.find({
+    customerRef: null,
+    direction: "inbound",
+  })
+    .select("fromEmail fromName")
+    .cursor();
+  for await (const doc of emails) {
+    const handle = inboxEmailHandle(doc.fromEmail);
+    if (!handle) continue;
+    const customerId = await customerFor(handle, "email", doc.fromName || "");
+    if (!customerId) continue;
+    await EmailCommunication.updateOne(
+      { _id: doc._id, customerRef: null },
+      { $set: { customerRef: customerId } },
+    );
+  }
+
+  const texts = TwilioCommunication.find({ customerRef: null })
+    .select("fromNumber toNumber direction")
+    .cursor();
+  for await (const doc of texts) {
+    const direction = doc.direction === "outbound" ? "outbound" : "inbound";
+    const raw = direction === "inbound" ? doc.fromNumber : doc.toNumber;
+    const handle = inboxPhoneHandle(raw);
+    if (!handle) continue;
+    const customerId = await customerFor(handle, "phone");
+    if (!customerId) continue;
+    await TwilioCommunication.updateOne(
+      { _id: doc._id, customerRef: null },
+      { $set: { customerRef: customerId } },
+    );
+  }
+}
+
+async function dropResolvedUnknowns(): Promise<void> {
+  const unknowns = await InboxConversation.find({ customerRef: null });
+  for (const convo of unknowns) {
+    const customerId = await resolveInboxCustomer({
+      handle: convo.handle,
+      handleKind: convo.handleKind,
+      fromName: convo.displayName,
+    });
+    if (!customerId) continue;
+    const survivor = await InboxConversation.findOne({ customerRef: customerId });
+    if (survivor) await convo.deleteOne();
   }
 }
 
@@ -327,6 +667,7 @@ export async function rebuildInboxConversations(): Promise<{
   conversations: number;
   messages: number;
 }> {
+  await claimUnresolvedMessages();
   const map = new Map<string, RebuildDraft>();
   let messages = 0;
 
@@ -466,6 +807,7 @@ export async function rebuildInboxConversations(): Promise<{
     }
   }
 
+  // Refresh unread only. Leave deletedAt, historyFrom, blocked, and pins alone.
   await InboxConversation.updateMany(
     {
       lastDirection: "inbound",
@@ -480,6 +822,7 @@ export async function rebuildInboxConversations(): Promise<{
     { lastDirection: "outbound" },
     { $set: { unreadCount: 0 } },
   );
+  await dropResolvedUnknowns();
 
   return { conversations: ops.length, messages };
 }

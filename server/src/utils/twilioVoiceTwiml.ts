@@ -67,6 +67,27 @@ export function buildGatherTwiml(opts: {
   return response.toString();
 }
 
+export function buildClientDialTwiml(input: {
+  from: string;
+  to: string;
+  actionUrl: string;
+  recordingStatusCallbackUrl: string;
+}): string {
+  const response = new twilio.twiml.VoiceResponse();
+  const dial = response.dial({
+    callerId: input.from,
+    action: input.actionUrl,
+    method: "POST",
+    timeout: 30,
+    record: "record-from-answer-dual",
+    recordingStatusCallback: input.recordingStatusCallbackUrl,
+    recordingStatusCallbackMethod: "POST",
+    recordingStatusCallbackEvent: ["completed"],
+  });
+  dial.number(input.to);
+  return response.toString();
+}
+
 export function buildOutboundSayTwiml(
   text: string,
   voice?: string | null,

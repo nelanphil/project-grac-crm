@@ -9,6 +9,7 @@ import {
   Settings2,
   MessageSquare,
   Inbox,
+  ListTodo,
   Map,
   MapPin,
   ShieldCheck,
@@ -70,6 +71,12 @@ export const NAV_SECTIONS: NavSection[] = [
         href: "/dashboard/inboxes",
         label: "Inboxes",
         icon: Inbox,
+        includeRoles: ["admin", "super-admin"],
+      },
+      {
+        href: "/dashboard/tasks",
+        label: "Tasks",
+        icon: ListTodo,
         includeRoles: ["admin", "super-admin"],
       },
       {

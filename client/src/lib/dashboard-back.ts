@@ -35,6 +35,7 @@ const PATH_LABELS: { prefix: string; label: string }[] = [
   { prefix: "/dashboard/messaging/history", label: "Back to message history" },
   { prefix: "/dashboard/messaging", label: "Back to messaging" },
   { prefix: "/dashboard/inboxes", label: "Back to inboxes" },
+  { prefix: "/dashboard/tasks", label: "Back to tasks" },
   { prefix: "/dashboard/users/job-roles", label: "Back to job roles" },
   { prefix: "/dashboard/users/roles", label: "Back to roles" },
   { prefix: "/dashboard/users", label: "Back to users" },

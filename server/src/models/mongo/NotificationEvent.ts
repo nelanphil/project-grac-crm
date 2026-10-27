@@ -25,6 +25,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "discount_code",
   "mailbox_message",
   "contact_form",
+  "task",
 ] as const;
 
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPES)[number];

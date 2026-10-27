@@ -1,13 +1,18 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Loader2, Plus, UserRound } from "lucide-react";
 import {
   ApiError,
   CustomerContact,
   CustomerDetail,
+  DirectoryContact,
+  attachDirectoryContact,
   createCustomerContact,
   deleteCustomerContact,
+  detachCustomerContact,
+  getCustomerContacts,
+  searchDirectoryContacts,
   updateCustomerContact,
 } from "@/lib/api";
 import { formatCustomerName } from "@/lib/formatName";
@@ -77,6 +82,9 @@ function ContactCardContent({
   const [form, setForm] = useState<ContactFormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
+  const [linkQuery, setLinkQuery] = useState("");
+  const [linkMatches, setLinkMatches] = useState<DirectoryContact[]>([]);
 
   const primaryAddress =
     customer.addresses?.find((a) => a.isPrimary) ?? customer.addresses?.[0];
@@ -92,6 +100,28 @@ function ContactCardContent({
     : [customer.address, customer.city, customer.state, customer.zip]
         .filter(Boolean)
         .join(", ");
+
+  useEffect(() => {
+    if (!linking) return;
+    const query = linkQuery.trim();
+    if (!linking || query.length < 2) return;
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      searchDirectoryContacts(token, query)
+        .then((result) => {
+          if (cancelled) return;
+          const owned = new Set(contacts.map((contact) => contact._id));
+          setLinkMatches(result.contacts.filter((contact) => !owned.has(contact._id)));
+        })
+        .catch(() => {
+          if (!cancelled) setLinkMatches([]);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [linking, linkQuery, token, contacts]);
 
   function publishContacts(next: CustomerContact[]) {
     setContacts(next);
@@ -177,6 +207,48 @@ function ContactCardContent({
           ? err.message
           : "Failed to set primary contact.",
       );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDetach(contactId: string) {
+    if (contacts.length <= 1) {
+      setError("A customer must keep at least one contact.");
+      return;
+    }
+    if (!window.confirm("Remove this contact from the customer? The contact stays in the directory.")) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await detachCustomerContact(token, customer._id, contactId);
+      let next = contacts.filter((contact) => contact._id !== contactId);
+      if (!next.some((contact) => contact.isPrimary) && next[0]) {
+        next = next.map((contact, index) => ({ ...contact, isPrimary: index === 0 }));
+      }
+      publishContacts(next);
+      if (editingId === contactId) cancelForm();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to remove contact.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleAttach(contactId: string) {
+    setSaving(true);
+    setError(null);
+    try {
+      await attachDirectoryContact(token, contactId, customer._id);
+      const refreshed = await getCustomerContacts(token, customer._id);
+      publishContacts(refreshed.contacts);
+      setLinking(false);
+      setLinkQuery("");
+      setLinkMatches([]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to add contact.");
     } finally {
       setSaving(false);
     }
@@ -278,6 +350,14 @@ function ContactCardContent({
                     <button
                       type="button"
                       disabled={saving || contacts.length <= 1}
+                      onClick={() => handleDetach(contact._id)}
+                      className="font-medium text-neutral-600 hover:underline disabled:opacity-50"
+                    >
+                      Remove from customer
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving || contacts.length <= 1}
                       onClick={() => handleDelete(contact._id)}
                       className="font-medium text-red-600 hover:underline disabled:opacity-50"
                     >
@@ -299,14 +379,65 @@ function ContactCardContent({
       </div>
 
       {canWrite && !adding && !editingId ? (
-        <button
-          type="button"
-          onClick={startAdd}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-orange hover:underline"
-        >
-          <Plus className="h-4 w-4" />
-          Add contact
-        </button>
+        <div className="flex flex-wrap gap-4">
+          <button
+            type="button"
+            onClick={startAdd}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-orange hover:underline"
+          >
+            <Plus className="h-4 w-4" />
+            Add contact
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLinking((open) => !open);
+              setLinkQuery("");
+              setLinkMatches([]);
+              setError(null);
+            }}
+            className="text-sm font-medium text-neutral-600 hover:underline"
+          >
+            Add existing contact
+          </button>
+        </div>
+      ) : null}
+
+      {linking && canWrite ? (
+        <div className="space-y-2 rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+            Add existing contact
+          </p>
+          <input
+            value={linkQuery}
+            onChange={(event) => setLinkQuery(event.target.value)}
+            placeholder="Search name, phone, or email"
+            className="w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+          />
+          {linkQuery.trim().length >= 2 && linkMatches.length === 0 ? (
+            <p className="text-xs text-neutral-500">No matching contacts</p>
+          ) : null}
+          <ul className="space-y-1">
+            {(linkQuery.trim().length >= 2 ? linkMatches : []).map((match) => (
+              <li key={match._id}>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void handleAttach(match._id)}
+                  className="flex w-full items-baseline justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-white disabled:opacity-50"
+                >
+                  <span className="text-brand-dark">
+                    {formatCustomerName(match.first, match.last) || "Unnamed contact"}
+                    <span className="ml-2 text-xs text-neutral-500">{formatPhone(match.phone)}</span>
+                  </span>
+                  <span className="shrink-0 text-xs text-neutral-400">
+                    {match.customerName || "No customer"}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       {(adding || editingId) && canWrite ? (

@@ -33,6 +33,7 @@ const ALL_PERMISSIONS = [
   "reports:read",
   "integrations:read", "integrations:write", "integrations:delete",
   "messages:read", "messages:write",
+  "tasks:read", "tasks:write",
   "job-roles:manage",
 ];
 
@@ -74,6 +75,8 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "integrations:delete"],
   ["admin", "messages:read"],
   ["admin", "messages:write"],
+  ["admin", "tasks:read"],
+  ["admin", "tasks:write"],
   ["admin", "job-roles:manage"],
 
   // manager — leads, accounts, customers, jobs; read users
@@ -191,6 +194,24 @@ const MESSAGES_PERMISSIONS: [UserRole, string][] = [
   ["admin", "messages:write"],
 ];
 
+const TASK_PERMISSIONS: [UserRole, string][] = [
+  ["super-admin", "tasks:read"],
+  ["super-admin", "tasks:write"],
+  ["admin", "tasks:read"],
+  ["admin", "tasks:write"],
+];
+
+/** Insert task permissions for existing deployments (idempotent). */
+export async function ensureTasksPermissions(): Promise<void> {
+  for (const [role, permission] of TASK_PERMISSIONS) {
+    await RolePermission.updateOne(
+      { role, permission },
+      { $setOnInsert: { role, permission } },
+      { upsert: true },
+    );
+  }
+}
+
 /** Insert messaging permissions for existing deployments (idempotent). */
 export async function ensureMessagesPermissions(): Promise<void> {
   for (const [role, permission] of MESSAGES_PERMISSIONS) {
@@ -294,6 +315,7 @@ const NAV_GRANT_RULES: {
   { href: "/dashboard/leads", excludeRoles: ["customer"] },
   { href: "/dashboard/messaging", includeRoles: ["admin", "super-admin"] },
   { href: "/dashboard/inboxes", includeRoles: ["admin", "super-admin"] },
+  { href: "/dashboard/tasks", includeRoles: ["admin", "super-admin"] },
   { href: "/dashboard/control-panel", includeRoles: ["admin", "super-admin"] },
   { href: "/dashboard/customers", excludeRoles: ["customer"] },
   { href: "/dashboard/contact", excludeRoles: ["customer"] },

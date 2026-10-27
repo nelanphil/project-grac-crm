@@ -26,6 +26,7 @@ const ENTITY_LABELS: Record<NotificationEntityType, string> = {
   discount_code: "Discount code",
   mailbox_message: "Email",
   contact_form: "Contact form",
+  task: "Task",
 };
 
 export function notificationEntityLabel(type: NotificationEntityType): string {
@@ -50,6 +51,11 @@ export function notificationHref(
   if (item.entityType === "estimate_note") {
     const id = String(item.metadata.estimateId ?? "");
     if (id) return `/dashboard/estimates/detail?id=${id}`;
+  }
+  if (item.entityType === "task") {
+    const conversationId = String(item.metadata.conversationId ?? "");
+    if (conversationId) return `/dashboard/inboxes?c=${conversationId}`;
+    return "/dashboard/tasks";
   }
 
   if (item.customerRef) {

@@ -13,6 +13,7 @@ import {
   formatTwilioLine,
   getMessagingWebhookInfo,
   getTwilioAccounts,
+  enableBrowserCalling,
   MessagingWebhookInfo,
   previewTwilioNumbers,
   syncTwilioAccountNumbers,
@@ -137,11 +138,95 @@ function mergeLineLabels(
   });
 }
 
+function BrowserCallingControl({
+  account,
+  callingPublic,
+  tunnelUrl,
+  ngrokUrl,
+  onTunnelUrl,
+  enabling,
+  canEnable,
+  onEnable,
+}: {
+  account: TwilioAccountItem;
+  callingPublic: boolean;
+  tunnelUrl: string;
+  ngrokUrl: string;
+  onTunnelUrl: (value: string) => void;
+  enabling: boolean;
+  canEnable: boolean;
+  onEnable: () => void;
+}) {
+  const typed = tunnelUrl.trim();
+  const ngrokMoved =
+    Boolean(ngrokUrl) &&
+    account.browserCalling &&
+    account.voicePublicBaseUrl !== ngrokUrl;
+  return (
+    <div className="mt-1 max-w-xs">
+      {!callingPublic && ngrokUrl ? (
+        <p className="text-[11px] font-normal leading-snug text-neutral-500">
+          ngrok is forwarding{" "}
+          <span className="break-all font-medium text-brand-dark">{ngrokUrl}</span>.
+          {ngrokMoved
+            ? " That address changed, and Twilio is being updated to match."
+            : " Enable calling once. A new ngrok address is sent to Twilio automatically."}
+        </p>
+      ) : null}
+      {!callingPublic && !ngrokUrl ? (
+        <>
+          <label className="block text-[11px] font-medium text-neutral-500">
+            Public API URL
+            <input
+              value={tunnelUrl}
+              onChange={(event) => onTunnelUrl(event.target.value)}
+              placeholder="https://your-tunnel.example.com"
+              spellCheck={false}
+              className="mt-1 w-full rounded-md border border-neutral-300 px-2 py-1 text-xs font-normal text-brand-dark outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+            />
+          </label>
+          <p className="mt-1 text-[11px] font-normal leading-snug text-neutral-500">
+            {typed && !webhookHostIsPublic(typed)
+              ? "That address is still local. Start ngrok for port 4009, or paste its public https address."
+              : "This development server is on localhost. Run ngrok http 4009 and this field fills in, or paste a public tunnel URL."}
+          </p>
+        </>
+      ) : null}
+      <button
+        type="button"
+        onClick={onEnable}
+        disabled={!canEnable || enabling}
+        title={
+          canEnable
+            ? "Create the Twilio API key and TwiML app used for browser calls"
+            : "Start ngrok for port 4009 so Twilio can reach this development server."
+        }
+        className="mt-1 block text-left text-xs font-medium text-brand-orange hover:underline disabled:cursor-not-allowed disabled:text-neutral-400 disabled:no-underline"
+      >
+        {enabling
+          ? "Enabling…"
+          : account.browserCalling
+            ? "Refresh browser calling"
+            : "Enable browser calling"}
+      </button>
+    </div>
+  );
+}
+
 function AccountStatusBadges({ account }: { account: TwilioAccountItem }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
       <EnvironmentBadge environment={account.environment} />
       <ActiveBadge isActive={account.isActive} />
+      <span
+        className={`rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
+          account.browserCalling
+            ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+            : "bg-neutral-100 text-neutral-500 ring-neutral-200"
+        }`}
+      >
+        {account.browserCalling ? "Browser calling" : "No browser calling"}
+      </span>
     </span>
   );
 }
@@ -163,6 +248,8 @@ export default function TwilioAccountsCard() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [enablingId, setEnablingId] = useState<string | null>(null);
+  const [tunnelUrl, setTunnelUrl] = useState("");
   const [loadingNumbers, setLoadingNumbers] = useState(false);
 
   useEffect(() => {
@@ -175,6 +262,8 @@ export default function TwilioAccountsCard() {
       .then(([{ accounts: list }, hooks]) => {
         setAccounts(list);
         setWebhookInfo(hooks);
+        const saved = list.find((account) => account.voicePublicBaseUrl)?.voicePublicBaseUrl;
+        if (saved) setTunnelUrl((current) => current || saved);
       })
       .catch((err) =>
         setError(
@@ -321,6 +410,50 @@ export default function TwilioAccountsCard() {
       );
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  const callingPublic = webhookInfo
+    ? webhookHostIsPublic(webhookInfo.voiceWebhookUrl)
+    : false;
+  const ngrokUrl =
+    webhookInfo?.devTunnelUrl && webhookHostIsPublic(webhookInfo.devTunnelUrl)
+      ? webhookInfo.devTunnelUrl.replace(/\/+$/, "")
+      : "";
+  const tunnelReady = webhookHostIsPublic(tunnelUrl);
+  const canEnableCalling = callingPublic || Boolean(ngrokUrl) || tunnelReady;
+
+  useEffect(() => {
+    if (!token || callingPublic) return;
+    const handle = window.setInterval(() => {
+      void Promise.all([getTwilioAccounts(token), getMessagingWebhookInfo(token)])
+        .then(([{ accounts: list }, hooks]) => {
+          setAccounts(list);
+          setWebhookInfo(hooks);
+        })
+        .catch(() => undefined);
+    }, 15000);
+    return () => window.clearInterval(handle);
+  }, [token, callingPublic]);
+
+  async function handleEnableCalling(id: string) {
+    if (!token || !canEnableCalling) return;
+    setEnablingId(id);
+    setError(null);
+    try {
+      const { account } = await enableBrowserCalling(
+        token,
+        id,
+        callingPublic ? undefined : ngrokUrl || tunnelUrl.trim(),
+      );
+      setAccounts((prev) => prev.map((row) => (row._id === account._id ? account : row)));
+      if (account.voicePublicBaseUrl) setTunnelUrl(account.voicePublicBaseUrl);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to enable browser calling.",
+      );
+    } finally {
+      setEnablingId(null);
     }
   }
 
@@ -782,7 +915,21 @@ export default function TwilioAccountsCard() {
                       : "Missing auth token"}
                   </>
                 }
-                badges={<AccountStatusBadges account={account} />}
+                badges={
+                  <div>
+                    <AccountStatusBadges account={account} />
+                    <BrowserCallingControl
+                      account={account}
+                      callingPublic={callingPublic}
+                      tunnelUrl={tunnelUrl}
+                      ngrokUrl={ngrokUrl}
+                      onTunnelUrl={setTunnelUrl}
+                      enabling={enablingId === account._id}
+                      canEnable={canEnableCalling}
+                      onEnable={() => void handleEnableCalling(account._id)}
+                    />
+                  </div>
+                }
                 fields={
                   <>
                     <DataField
@@ -878,8 +1025,18 @@ export default function TwilioAccountsCard() {
                                 .join(", ")
                             : "—"}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td className="px-6 py-4 align-top">
                           <AccountStatusBadges account={account} />
+                          <BrowserCallingControl
+                            account={account}
+                            callingPublic={callingPublic}
+                            tunnelUrl={tunnelUrl}
+                      ngrokUrl={ngrokUrl}
+                            onTunnelUrl={setTunnelUrl}
+                            enabling={enablingId === account._id}
+                            canEnable={canEnableCalling}
+                            onEnable={() => void handleEnableCalling(account._id)}
+                          />
                         </td>
                         <td className="px-6 py-4 text-right whitespace-nowrap">
                           <button

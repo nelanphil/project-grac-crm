@@ -626,7 +626,7 @@ export default function MessagingHub() {
         ...emailContacts.map((c) => c.customerRef),
         ...Object.values(emailSelectedContactsById).map((c) => c.customerRef),
       ]),
-    ].filter(Boolean);
+    ].filter((id): id is string => Boolean(id));
     if (customerIds.length === 0) return;
 
     let cancelled = false;
@@ -639,7 +639,7 @@ export default function MessagingHub() {
         setEmailContacts((prev) => {
           let changed = false;
           const next = prev.map((c) => {
-            const value = map.get(c.customerRef);
+            const value = c.customerRef ? map.get(c.customerRef) : undefined;
             if (value === undefined || c.hasPayableInvoice === value) return c;
             changed = true;
             return { ...c, hasPayableInvoice: value };
@@ -650,7 +650,7 @@ export default function MessagingHub() {
           let changed = false;
           const next = { ...prev };
           for (const [id, contact] of Object.entries(prev)) {
-            const value = map.get(contact.customerRef);
+            const value = contact.customerRef ? map.get(contact.customerRef) : undefined;
             if (value === undefined || contact.hasPayableInvoice === value) {
               continue;
             }
@@ -679,7 +679,7 @@ export default function MessagingHub() {
         ...contacts.map((c) => c.customerRef),
         ...Object.values(selectedContactsById).map((c) => c.customerRef),
       ]),
-    ].filter(Boolean);
+    ].filter((id): id is string => Boolean(id));
     if (customerIds.length === 0) return;
 
     let cancelled = false;
@@ -692,7 +692,7 @@ export default function MessagingHub() {
         setContacts((prev) => {
           let changed = false;
           const next = prev.map((c) => {
-            const value = map.get(c.customerRef);
+            const value = c.customerRef ? map.get(c.customerRef) : undefined;
             if (value === undefined || c.hasPayableInvoice === value) return c;
             changed = true;
             return { ...c, hasPayableInvoice: value };
@@ -703,7 +703,7 @@ export default function MessagingHub() {
           let changed = false;
           const next = { ...prev };
           for (const [id, contact] of Object.entries(prev)) {
-            const value = map.get(contact.customerRef);
+            const value = contact.customerRef ? map.get(contact.customerRef) : undefined;
             if (value === undefined || contact.hasPayableInvoice === value) {
               continue;
             }

@@ -20,6 +20,7 @@ import {
 } from "@/lib/api";
 import { formatCustomerName } from "@/lib/formatName";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useSoftphone } from "@/components/voice/SoftphoneProvider";
 
 type ChannelFilter = "all" | CommunicationChannel | "email";
 
@@ -82,6 +83,7 @@ export default function CommunicationHistoryPanel({
   channel: channelProp,
 }: CommunicationHistoryPanelProps) {
   const canWrite = useAuthStore((s) => s.hasPermission("messages:write"));
+  const softphone = useSoftphone();
   const isAdmin = useAuthStore((s) =>
     s.hasRole("admin", "super-admin"),
   );
@@ -188,6 +190,26 @@ export default function CommunicationHistoryPanel({
   if (!isAdmin) return null;
 
   async function handleCall(targetContactId: string) {
+    const account = accounts.find((a) => a._id === accountId) || accounts[0];
+    const label = contactNameById.get(targetContactId) || "contact";
+    setCallingContactId(targetContactId);
+    setError(null);
+    try {
+      await softphone.startCall({
+        contactId: targetContactId,
+        displayName: label,
+        twilioAccountId: account?._id,
+        fromNumber: account?.phoneNumbers.find((line) => line.voice)?.phoneNumber,
+      });
+      setPage(1);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Call failed.");
+    } finally {
+      setCallingContactId(null);
+    }
+  }
+
+  async function handleAutomatedCall(targetContactId: string) {
     const account = accounts.find((a) => a._id === accountId) || accounts[0];
     if (!account) {
       setError("Configure an active Twilio account first.");
@@ -457,6 +479,14 @@ export default function CommunicationHistoryPanel({
                       <Phone className="h-3.5 w-3.5" />
                     )}
                     Call
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAutomatedCall(row.contactRef!)}
+                    disabled={callingContactId === row.contactRef}
+                    className="text-xs font-medium text-neutral-500 hover:text-brand-dark disabled:opacity-50"
+                  >
+                    Automated message
                   </button>
                 </div>
               ) : null}

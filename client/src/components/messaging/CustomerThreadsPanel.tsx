@@ -14,6 +14,7 @@ import {
   sendMessagingMessages,
   type TwilioCommunicationItem,
 } from "@/lib/api";
+import { useSoftphone } from "@/components/voice/SoftphoneProvider";
 import MessageBubble from "./MessageBubble";
 import {
   contactDisplayName,
@@ -111,6 +112,7 @@ export default function CustomerThreadsPanel({
   initialContactId,
   onBack,
 }: CustomerThreadsPanelProps) {
+  const softphone = useSoftphone();
   const contactThreads = useMemo(
     () => uniqueContactThreads(threads),
     [threads],
@@ -293,6 +295,26 @@ export default function CustomerThreadsPanel({
   async function handleCall() {
     if (!threadDetail || !contactRef) return;
     const label = contactDisplayName(threadDetail.thread);
+    setCalling(true);
+    setError(null);
+    try {
+      await softphone.startCall({
+        contactId: contactRef,
+        displayName: label,
+        twilioAccountId: threadDetail.thread.twilioAccountRef,
+        fromNumber: threadDetail.thread.ourNumber,
+      });
+      refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Call failed.");
+    } finally {
+      setCalling(false);
+    }
+  }
+
+  async function handleAutomatedCall() {
+    if (!threadDetail || !contactRef) return;
+    const label = contactDisplayName(threadDetail.thread);
     if (!window.confirm(`Place an outbound call to ${label}?`)) return;
     setCalling(true);
     setError(null);
@@ -472,6 +494,14 @@ export default function CustomerThreadsPanel({
                     <Phone className="h-3.5 w-3.5" />
                   )}
                   <span className="hidden sm:inline">Call</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAutomatedCall}
+                  disabled={calling}
+                  className="text-xs font-medium text-neutral-500 hover:underline disabled:opacity-50"
+                >
+                  Automated
                 </button>
               </div>
             ) : null}

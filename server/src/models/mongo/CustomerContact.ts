@@ -1,10 +1,17 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
+import {
+  canonicalPhoneDigits,
+  normalizePhoneDigits,
+} from "../../utils/customerSites";
 
 export interface ICustomerContact extends Document {
-  customerRef: Types.ObjectId;
+  /** Null when the person is not attached to a customer. */
+  customerRef: Types.ObjectId | null;
   first: string;
   last: string;
   phone: string;
+  /** Canonical digits for exact phone lookup. Empty when the phone is blank. */
+  phoneDigits: string;
   email: string;
   label: string;
   isPrimary: boolean;
@@ -22,12 +29,13 @@ const customerContactSchema = new Schema<ICustomerContact>(
     customerRef: {
       type: Schema.Types.ObjectId,
       ref: "Customer",
-      required: true,
+      default: null,
       index: true,
     },
     first: { type: String, default: "" },
     last: { type: String, default: "" },
     phone: { type: String, default: "" },
+    phoneDigits: { type: String, default: "", index: true },
     email: { type: String, default: "" },
     label: { type: String, default: "" },
     isPrimary: { type: Boolean, default: false, index: true },
@@ -44,6 +52,15 @@ const customerContactSchema = new Schema<ICustomerContact>(
 );
 
 customerContactSchema.index({ customerRef: 1, isPrimary: -1 });
+
+/** US 10-digit form when possible, otherwise every digit. Empty for a blank phone. */
+export function contactPhoneDigits(phone: string | null | undefined): string {
+  return canonicalPhoneDigits(phone) || normalizePhoneDigits(phone);
+}
+
+customerContactSchema.pre("save", function syncPhoneDigits() {
+  this.phoneDigits = contactPhoneDigits(this.phone);
+});
 
 export const activeContactFilter = { deletedAt: null } as const;
 

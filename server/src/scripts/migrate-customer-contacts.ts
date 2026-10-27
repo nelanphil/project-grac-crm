@@ -66,7 +66,9 @@ async function main(): Promise<void> {
     .select("_id customerRef")
     .lean();
   const customersWithContacts = new Set(
-    existingContacts.map((c) => c.customerRef.toString())
+    existingContacts
+      .map((c) => (c.customerRef ? c.customerRef.toString() : ""))
+      .filter(Boolean),
   );
   log(`${customersWithContacts.size} customers already have contacts`);
 

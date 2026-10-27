@@ -81,6 +81,7 @@ import { composeSmsPaymentBody } from "../utils/smsPaymentLink";
 import { resolveSmsPaymentUrl } from "../services/smsPaymentLink.service";
 import { paymentAmountLabel, previewPaymentSummary, validateInvoiceMessage } from "../services/checkoutLink.service";
 import { CheckoutError } from "../services/checkout.service";
+import { readCurrentNgrokBase } from "../services/devTunnel.service";
 
 const PAGE_SIZES = new Set([25, 50, 100, 150, 200, 250]);
 const SEND_CONCURRENCY = 5;
@@ -1340,7 +1341,7 @@ function toPublicThread(
           last: contact.last ?? "",
           phone: contact.phone ?? "",
           label: contact.label ?? "",
-          customerRef: String(contact.customerRef),
+          customerRef: contact.customerRef ? String(contact.customerRef) : null,
         }
       : null,
     customer: customer
@@ -1654,6 +1655,8 @@ export async function getWebhookInfo(
   res: Response,
 ): Promise<void> {
   const base = resolvePublicApiBase(req);
+  const devTunnelUrl =
+    process.env.NODE_ENV === "production" ? null : await readCurrentNgrokBase();
 
   const accounts = await TwilioAccount.find()
     .select("_id friendlyName accountSid isActive")
@@ -1667,6 +1670,7 @@ export async function getWebhookInfo(
     voiceWebhookUrl: `${base}/webhooks/twilio/voice`,
     recordingWebhookUrl: `${base}/webhooks/twilio/voice/recording`,
     statusWebhookUrl: `${base}/webhooks/twilio/status`,
+    devTunnelUrl,
     accounts: accounts.map((a) => ({
       _id: String(a._id),
       friendlyName: a.friendlyName,

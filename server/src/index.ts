@@ -9,6 +9,7 @@ import {
   ensureContractPermissions,
   ensureIntegrationsPermissions,
   ensureMessagesPermissions,
+  ensureTasksPermissions,
   ensureEstimatePermissions,
   ensureProductPermissions,
   ensureDiscountPermissions,
@@ -27,6 +28,7 @@ import { seedInvoiceTemplates } from "./models/mongo/InvoiceTemplate";
 import { seedServiceAreas } from "./models/mongo/ServiceArea";
 import { ensureTwilioPhoneLineShape } from "./models/mongo/TwilioAccount";
 import { startRenewalInvoiceScheduler } from "./jobs/scheduler";
+import { startDevTunnelSync, stopDevTunnelSync } from "./services/devTunnel.service";
 import { startMailboxIdle, stopMailboxIdle } from "./services/mailboxIdle";
 import { applyCompanyTaxRateToOpenDocuments } from "./services/taxSettings";
 
@@ -42,6 +44,7 @@ async function bootstrap(): Promise<void> {
   await ensureContractPermissions();
   await ensureIntegrationsPermissions();
   await ensureMessagesPermissions();
+  await ensureTasksPermissions();
   await ensureEstimatePermissions();
   await ensureProductPermissions();
   await ensureDiscountPermissions();
@@ -59,6 +62,7 @@ async function bootstrap(): Promise<void> {
 
   startRenewalInvoiceScheduler();
   startMailboxIdle();
+  startDevTunnelSync();
 
   const server = app.listen(env.port, () => {
     console.log(`Server running on http://localhost:${env.port}`);
@@ -67,6 +71,7 @@ async function bootstrap(): Promise<void> {
   const shutdown = async () => {
     console.log("Shutting down...");
     stopMailboxIdle();
+    stopDevTunnelSync();
     server.close();
     await disconnectMongoDB();
     process.exit(0);

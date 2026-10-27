@@ -32,6 +32,10 @@ export const createTwilioAccountSchema = z.object({
   sayVoice: sayVoiceSchema.optional(),
 });
 
+export const enableBrowserCallingSchema = z.object({
+  publicApiUrl: z.string().trim().optional().default(""),
+});
+
 export const updateTwilioAccountSchema = z.object({
   accountSid: accountSidSchema.optional(),
   friendlyName: z.string().trim().min(1).max(120).optional(),

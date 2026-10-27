@@ -13,6 +13,7 @@ import {
   createEquipment,
   deleteCustomerAddress,
   deleteCustomerContact,
+  detachCustomerContactFromCustomer,
   deleteEquipment,
   getCustomerAddresses,
   getCustomerById,
@@ -169,6 +170,11 @@ router.delete(
   "/:id/contacts/:contactId",
   requirePermission("customers:write"),
   deleteCustomerContact,
+);
+router.post(
+  "/:id/contacts/:contactId/detach",
+  requirePermission("customers:write"),
+  detachCustomerContactFromCustomer,
 );
 
 router.get(

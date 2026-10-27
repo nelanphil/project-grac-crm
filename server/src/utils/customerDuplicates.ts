@@ -281,7 +281,10 @@ export async function findPhoneMatches(
 
   const missingContactCustomerIds = contacts
     .map((contact) => contact.customerRef)
-    .filter((id) => id && !byId.has(id.toString()));
+    .filter((id): id is Types.ObjectId => {
+      if (!id) return false;
+      return !byId.has(id.toString());
+    });
   const extra = await loadCustomersByIds(
     missingContactCustomerIds,
     excludeId,
@@ -329,7 +332,10 @@ export async function findEmailMatches(
 
   const missingContactCustomerIds = contacts
     .map((contact) => contact.customerRef)
-    .filter((id) => id && !byId.has(id.toString()));
+    .filter((id): id is Types.ObjectId => {
+      if (!id) return false;
+      return !byId.has(id.toString());
+    });
   const extra = await loadCustomersByIds(
     missingContactCustomerIds,
     excludeId,

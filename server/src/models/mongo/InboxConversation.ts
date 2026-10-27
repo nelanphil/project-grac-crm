@@ -25,6 +25,12 @@ export interface IInboxConversation extends Document {
   status: InboxConversationStatus;
   closedAt: Date | null;
   closedByUserRef: Types.ObjectId | null;
+  pinnedAt: Date | null;
+  pinnedByUserRef: Types.ObjectId | null;
+  blocked: boolean;
+  deletedAt: Date | null;
+  /** Messages at or before this time stay hidden after a deleted chat comes back. */
+  historyFrom: Date | null;
   ourNumber: string;
   emailAccountRef: Types.ObjectId | null;
   createdAt: Date;
@@ -74,6 +80,15 @@ const inboxConversationSchema = new Schema<IInboxConversation>(
       ref: "User",
       default: null,
     },
+    pinnedAt: { type: Date, default: null },
+    pinnedByUserRef: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    blocked: { type: Boolean, default: false, index: true },
+    deletedAt: { type: Date, default: null },
+    historyFrom: { type: Date, default: null },
     ourNumber: { type: String, default: "" },
     emailAccountRef: {
       type: Schema.Types.ObjectId,

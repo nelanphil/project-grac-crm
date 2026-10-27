@@ -343,10 +343,10 @@ export async function dispatchStaffEmailBatch(
             );
           }
         }
-        const minted = await paymentLinkForCustomer(
-          built.contact.customerRef,
-          offerInvoiceId,
-        );
+        const customerId = built.contact.customerRef;
+        const minted = customerId
+          ? await paymentLinkForCustomer(customerId, offerInvoiceId)
+          : null;
         if (minted) {
           paymentUrl = minted.payUrl;
           paymentLabel = paymentAmountLabel(

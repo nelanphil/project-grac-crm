@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import { runMailboxAutoReplyJob } from "./mailboxAutoReply";
 import { runRenewalInvoiceJob } from "./renewalInvoices";
+import { runTaskReminderJob } from "./taskReminders";
 import { runScheduledEmailJob } from "./scheduledEmails";
 import { runScheduledMessageJob } from "./scheduledMessages";
 import { refreshExpiringSquareOAuthTokens } from "../services/squareOAuth.service";
@@ -19,6 +20,13 @@ export function startRenewalInvoiceScheduler(): void {
       })
       .catch((err) => {
         console.error("[renewal-invoices] job failed", err);
+      });
+    void runTaskReminderJob()
+      .then((result) => {
+        if (result.reminded > 0) console.log("[task-reminders]", result);
+      })
+      .catch((err) => {
+        console.error("[task-reminders] job failed", err);
       });
   });
 
@@ -69,6 +77,7 @@ export function startRenewalInvoiceScheduler(): void {
   });
 
   console.log("[renewal-invoices] scheduler started (daily 06:00)");
+  console.log("[task-reminders] scheduler started (daily 06:00)");
   console.log("[square-oauth-refresh] scheduler started (every 12h)");
   console.log("[scheduled-emails] scheduler started (every minute)");
   console.log("[scheduled-messages] scheduler started (every minute)");

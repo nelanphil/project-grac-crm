@@ -22,6 +22,7 @@ import {
   formatDuration,
 } from "@/components/messaging/conversationUtils";
 import { clockTime, dayLabel, emailDisplayHtml, emailPlainText } from "./inboxFormat";
+import CallFollowUp from "./CallFollowUp";
 import {
   Check,
   ChevronLeft,
@@ -38,10 +39,15 @@ type ConversationThreadProps = {
   conversationId: string;
   channels: InboxChannels | null;
   canWrite: boolean;
+  canTasks?: boolean;
   refreshKey: number;
   onBack: () => void;
   onActivity: () => void;
   onConversation: (conversation: InboxConversationItem) => void;
+  onAction?: (
+    action: "done" | "pin" | "block" | "delete" | "task",
+    conversation: InboxConversationItem,
+  ) => void;
 };
 
 function isImage(url: string): boolean {
@@ -53,10 +59,12 @@ export default function ConversationThread({
   conversationId,
   channels,
   canWrite,
+  canTasks = false,
   refreshKey,
   onBack,
   onActivity,
   onConversation,
+  onAction,
 }: ConversationThreadProps) {
   const [conversation, setConversation] = useState<InboxConversationItem | null>(null);
   const [messages, setMessages] = useState<InboxTimelineMessage[]>([]);
@@ -241,6 +249,11 @@ export default function ConversationThread({
   }
 
   async function onDone() {
+    if (conversation && onAction) {
+      onAction("done", conversation);
+      setMenuOpen(false);
+      return;
+    }
     try {
       const result =
         conversation?.status === "closed"
@@ -328,6 +341,52 @@ export default function ConversationThread({
               >
                 {conversation?.status === "closed" ? "Reopen" : "Mark done"}
               </button>
+              {canTasks && conversation ? (
+                <button
+                  type="button"
+                  className="block w-full px-3 py-1.5 text-left text-xs text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                  onClick={() => {
+                    onAction?.("task", conversation);
+                    setMenuOpen(false);
+                  }}
+                >
+                  Create task
+                </button>
+              ) : null}
+              {canWrite && conversation ? (
+                <>
+                  <button
+                    type="button"
+                    className="block w-full px-3 py-1.5 text-left text-xs text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                    onClick={() => {
+                      onAction?.("pin", conversation);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {conversation.pinned ? "Unpin" : "Pin"}
+                  </button>
+                  <button
+                    type="button"
+                    className="block w-full px-3 py-1.5 text-left text-xs text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+                    onClick={() => {
+                      onAction?.("block", conversation);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {conversation.blocked ? "Unblock" : "Block"}
+                  </button>
+                  <button
+                    type="button"
+                    className="block w-full px-3 py-1.5 text-left text-xs text-red-500 hover:bg-[var(--staff-cream)]"
+                    onClick={() => {
+                      onAction?.("delete", conversation);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    Delete conversation
+                  </button>
+                </>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -374,6 +433,17 @@ export default function ConversationThread({
               ) : null}
               <MessageCard
                 message={message}
+                token={token}
+                conversationId={conversationId}
+                customerId={conversation?.customerId || undefined}
+                displayName={conversation?.displayName || "customer"}
+                canWrite={canWrite}
+                canTasks={canTasks}
+                onMessage={(patch) =>
+                  setMessages((current) =>
+                    current.map((item) => (item.id === message.id ? { ...item, ...patch } : item)),
+                  )
+                }
                 expanded={Boolean(expanded[message.id])}
                 onToggle={() =>
                   setExpanded((current) => ({
@@ -521,10 +591,24 @@ export default function ConversationThread({
 
 function MessageCard({
   message,
+  token,
+  conversationId,
+  customerId,
+  displayName,
+  canWrite,
+  canTasks,
+  onMessage,
   expanded,
   onToggle,
 }: {
   message: InboxTimelineMessage;
+  token: string;
+  conversationId: string;
+  customerId?: string;
+  displayName: string;
+  canWrite: boolean;
+  canTasks: boolean;
+  onMessage: (patch: Partial<InboxTimelineMessage>) => void;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -544,13 +628,16 @@ function MessageCard({
           <span>{clockTime(message.at)}</span>
         </div>
         {recording ? <audio controls src={recording} className="mt-2 w-full" /> : null}
-        {message.transcript ? (
-          <p className="mt-2 whitespace-pre-wrap text-[13px] text-[var(--staff-ink)]">
-            {message.transcript}
-          </p>
-        ) : (
-          <p className="mt-2 text-[13px] text-[var(--staff-muted)]">No transcript yet.</p>
-        )}
+        <CallFollowUp
+          token={token}
+          message={message}
+          conversationId={conversationId}
+          customerId={customerId}
+          displayName={displayName}
+          canWrite={canWrite}
+          canTasks={canTasks}
+          onChange={onMessage}
+        />
       </div>
     );
   }

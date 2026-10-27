@@ -1,4 +1,4 @@
-import { InboxConversationItem } from "@/lib/api";
+import { InboxConversationItem, InboxTimelineMessage } from "@/lib/api";
 
 const PALETTE = [
   "#e85d4c",
@@ -106,4 +106,57 @@ export function emailPlainText(value: string): string {
 export function emailDisplayHtml(html: string): string {
   const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   return (body ? body[1] : html).trim();
+}
+
+function markdownStamp(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function callLength(seconds: number | null): string {
+  if (seconds == null || seconds <= 0) return "";
+  const total = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  if (minutes === 0) return ` (${rest}s)`;
+  return ` (${minutes}m ${rest}s)`;
+}
+
+export function conversationMarkdown(
+  item: InboxConversationItem,
+  messages: InboxTimelineMessage[],
+): string {
+  const lines = [
+    `# ${item.displayName || item.phone || item.email || "Conversation"}`,
+  ];
+  if (item.phone) lines.push(item.phone);
+  if (item.email) lines.push(item.email);
+  lines.push("");
+  for (const message of messages) {
+    if (message.channel === "voice") {
+      const who = message.direction === "outbound" ? "You called" : "Called you";
+      lines.push(`**${who}**${callLength(message.durationSeconds)} (${markdownStamp(message.at)})`);
+      const spoken = (message.transcript || message.body || "").trim();
+      if (spoken && spoken !== "Voice message") lines.push(spoken);
+      lines.push("");
+      continue;
+    }
+    const who =
+      message.direction === "outbound"
+        ? message.senderName || "You"
+        : item.displayName || "Customer";
+    const body =
+      message.channel === "email"
+        ? [message.subject, message.body].filter(Boolean).join("\n")
+        : message.body;
+    lines.push(`**${who}** (${markdownStamp(message.at)}): ${body || ""}`);
+    lines.push("");
+  }
+  return lines.join("\n").trim();
 }

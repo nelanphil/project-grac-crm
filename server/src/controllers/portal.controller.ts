@@ -78,7 +78,7 @@ function trimStr(value: unknown): string {
 
 function refsInclude(
   refs: Types.ObjectId[],
-  customerRef: Types.ObjectId | undefined,
+  customerRef: Types.ObjectId | null | undefined,
 ): boolean {
   if (!customerRef) return false;
   const id = String(customerRef);

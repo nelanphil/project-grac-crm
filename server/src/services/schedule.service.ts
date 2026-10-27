@@ -396,7 +396,9 @@ export async function enrichScheduleWorkOrders(
     : [];
   for (const contact of primaryContacts) {
     const phone = contact.phone?.trim();
-    if (phone) phoneByCustomer.set(contact.customerRef.toString(), phone);
+    if (phone && contact.customerRef) {
+      phoneByCustomer.set(contact.customerRef.toString(), phone);
+    }
   }
   const userById = new Map(
     users.map((u) => [

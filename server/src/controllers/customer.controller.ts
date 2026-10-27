@@ -45,6 +45,7 @@ import {
   ensureCustomerContactFromFlat,
   LastContactError,
   softDeleteCustomerContact,
+  detachCustomerContact,
   syncCustomerPrimaryContactFields,
 } from "../utils/customerContacts";
 import { ensureCustomerLoginForPrimaryEmail } from "../utils/ensureCustomerLogin";
@@ -294,7 +295,7 @@ function formatEquipment(doc: {
 
 function formatContact(doc: {
   _id: mongoose.Types.ObjectId;
-  customerRef: mongoose.Types.ObjectId;
+  customerRef: mongoose.Types.ObjectId | null;
   first?: string;
   last?: string;
   phone?: string;
@@ -308,7 +309,7 @@ function formatContact(doc: {
 }) {
   return {
     _id: doc._id.toString(),
-    customerRef: doc.customerRef.toString(),
+    customerRef: doc.customerRef ? doc.customerRef.toString() : null,
     first: doc.first ?? "",
     last: doc.last ?? "",
     phone: doc.phone ?? "",
@@ -2953,6 +2954,74 @@ export async function deleteCustomerContact(
     res.status(204).send();
   } catch (err) {
     console.error("DELETE /customers/:id/contacts/:contactId error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// POST /customers/:id/contacts/:contactId/detach
+export async function detachCustomerContactFromCustomer(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
+    if (!customer) return;
+    if (customer.mergedIntoRef) {
+      res.status(404).json({ message: "Customer not found" });
+      return;
+    }
+
+    const contactId = String(req.params.contactId);
+    if (!mongoose.Types.ObjectId.isValid(contactId)) {
+      res.status(400).json({ message: "Invalid contact id" });
+      return;
+    }
+
+    const contact = await CustomerContact.findOne({
+      _id: contactId,
+      customerRef: customer._id,
+      ...activeContactFilter,
+    });
+    if (!contact) {
+      res.status(404).json({ message: "Contact not found" });
+      return;
+    }
+
+    const previousEmail = customer.email ?? "";
+    let wasPrimary = false;
+    try {
+      ({ wasPrimary } = await detachCustomerContact(contact));
+    } catch (err) {
+      if (err instanceof LastContactError) {
+        res.status(409).json({ message: err.message });
+        return;
+      }
+      throw err;
+    }
+
+    if (wasPrimary) {
+      await ensureCustomerLoginForPrimaryEmail(customer._id, { previousEmail });
+    }
+
+    const custName = customerDisplayName(customer);
+    const contactName = `${contact.first} ${contact.last}`.trim() || "Contact";
+    logNotificationAsync({
+      entityType: "contact",
+      action: "updated",
+      entityId: contactId,
+      customerRef: customer._id,
+      summary: `Contact ${contactName} removed from ${custName}`,
+      metadata: { customerName: custName, contactName },
+      ...actorFromRequest(req.user),
+    });
+
+    res.json({ contact: formatContact(contact.toObject()) });
+  } catch (err) {
+    console.error("POST /customers/:id/contacts/:contactId/detach error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }

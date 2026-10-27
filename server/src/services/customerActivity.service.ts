@@ -78,6 +78,7 @@ const ENTITY_CATEGORY: Record<string, ActivityCategory> = {
   estimate_note: "note",
   mailbox_message: "communication",
   contact_form: "communication",
+  task: "note",
   lead: "account",
   user: "auth",
   discount_code: "payment",

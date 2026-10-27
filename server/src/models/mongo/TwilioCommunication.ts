@@ -26,6 +26,23 @@ export interface ITwilioCommunication extends Document {
   body: string;
   /** Voice call transcript. Empty string for SMS/MMS and when unknown. */
   transcript: string;
+  transcriptStatus: "none" | "pending" | "completed" | "failed";
+  transcriptSource: "basic" | "intelligence" | "";
+  intelligenceTranscriptSid: string;
+  callSummary: string;
+  suggestedTask: {
+    title: string;
+    description: string;
+    dueInDays: number | null;
+  };
+  transcriptRating: {
+    stars: number | null;
+    comment: string;
+    ratedByUserRef: Types.ObjectId | null;
+    ratedAt: Date | null;
+  };
+  followUpTaskRef: Types.ObjectId | null;
+  taskPromptDismissedAt: Date | null;
   mediaUrls: string[];
   durationSeconds?: number | null;
   twilioSid?: string | null;
@@ -88,6 +105,35 @@ const twilioCommunicationSchema = new Schema<ITwilioCommunication>(
     toNumber: { type: String, required: true, trim: true },
     body: { type: String, default: "" },
     transcript: { type: String, default: "" },
+    transcriptStatus: {
+      type: String,
+      enum: ["none", "pending", "completed", "failed"],
+      default: "none",
+    },
+    transcriptSource: {
+      type: String,
+      enum: ["basic", "intelligence", ""],
+      default: "",
+    },
+    intelligenceTranscriptSid: { type: String, default: "", index: true },
+    callSummary: { type: String, default: "" },
+    suggestedTask: {
+      title: { type: String, default: "" },
+      description: { type: String, default: "" },
+      dueInDays: { type: Number, default: null },
+    },
+    transcriptRating: {
+      stars: { type: Number, default: null },
+      comment: { type: String, default: "" },
+      ratedByUserRef: { type: Schema.Types.ObjectId, ref: "User", default: null },
+      ratedAt: { type: Date, default: null },
+    },
+    followUpTaskRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Task",
+      default: null,
+    },
+    taskPromptDismissedAt: { type: Date, default: null },
     mediaUrls: { type: [String], default: [] },
     durationSeconds: { type: Number, default: null },
     twilioSid: { type: String, default: null },

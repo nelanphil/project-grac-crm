@@ -10,11 +10,13 @@ import { CustomerNote } from "../models/mongo/CustomerNote";
 import { EmailAccount } from "../models/mongo/EmailAccount";
 import { EmailCommunication } from "../models/mongo/EmailCommunication";
 import { InboxConversation, IInboxConversation } from "../models/mongo/InboxConversation";
+import { Task } from "../models/mongo/Task";
 import { Invoice } from "../models/mongo/Invoice";
 import { MessageTemplate } from "../models/mongo/MessageTemplate";
 import { MessageThread } from "../models/mongo/MessageThread";
 import { TwilioAccount } from "../models/mongo/TwilioAccount";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
+import { parseTranscriptRating } from "../utils/transcriptRating";
 import { User } from "../models/mongo/User";
 import { WorkOrder, activeWorkOrderFilter } from "../models/mongo/WorkOrder";
 import { formatFrom, sendWithEmailAccount } from "../services/email.service";
@@ -24,9 +26,13 @@ import {
 } from "../services/emailMessage.service";
 import { recordSentMailboxEmail } from "../services/emailInboxSync.service";
 import {
+  ensureInboxCustomer,
   inboxPhoneHandle,
+  linkInboxConversationToCustomer,
+  setInboxBlocked,
   touchFromTwilio,
 } from "../services/inboxConversation.service";
+import { publishDashboardChanged } from "../services/dashboardLive";
 import {
   MessagingDispatchError,
   dispatchMessagingBatch,
@@ -156,9 +162,11 @@ function publicConversation(row: {
   status?: string;
   readAt?: Date | null;
   readByUserRef?: unknown;
+  pinnedAt?: Date | null;
+  blocked?: boolean;
   ourNumber?: string;
   emailAccountRef?: Types.ObjectId | null;
-}) {
+}, openTaskCount = 0) {
   const customer = customerOf(row.customerRef);
   const reader =
     row.readByUserRef &&
@@ -191,9 +199,21 @@ function publicConversation(row: {
     status: row.status || "open",
     readAt: row.readAt ? new Date(row.readAt).toISOString() : null,
     readByName: personName(reader) || null,
+    pinned: Boolean(row.pinnedAt),
+    blocked: Boolean(row.blocked),
+    openTaskCount,
     ourNumber: row.ourNumber || "",
     emailAccountId: row.emailAccountRef ? String(row.emailAccountRef) : null,
   };
+}
+
+async function openTaskCounts(ids: Types.ObjectId[]): Promise<Map<string, number>> {
+  if (ids.length === 0) return new Map();
+  const rows = await Task.aggregate<{ _id: Types.ObjectId; count: number }>([
+    { $match: { inboxConversationRef: { $in: ids }, status: "open" } },
+    { $group: { _id: "$inboxConversationRef", count: { $sum: 1 } } },
+  ]);
+  return new Map(rows.map((row) => [String(row._id), row.count]));
 }
 
 function decodeCursor(raw: string): { at: Date; id: Types.ObjectId } | null {
@@ -205,47 +225,77 @@ function decodeCursor(raw: string): { at: Date; id: Types.ObjectId } | null {
   return { at, id: new Types.ObjectId(id) };
 }
 
+function listQuery(req: AuthRequest): Record<string, unknown>[] {
+  const showBlocked = req.query.blocked === "1" || req.query.blocked === "true";
+  const status = String(req.query.status || "open");
+  const filterName = String(req.query.filter || "");
+  const channel = String(req.query.channel || "");
+  const q = String(req.query.q || "").trim();
+  const and: Record<string, unknown>[] = [{ deletedAt: null }];
+  if (showBlocked) {
+    and.push({ blocked: true });
+  } else {
+    and.push({ blocked: { $ne: true } });
+    if (status === "open" || status === "closed") and.push({ status });
+    if (filterName === "unread") and.push({ unreadCount: { $gt: 0 } });
+    if (filterName === "unresponded") and.push({ lastDirection: "inbound" });
+  }
+  if (channel === "text") and.push({ lastChannel: { $in: ["sms", "mms"] } });
+  else if (channel === "sms" || channel === "mms" || channel === "voice" || channel === "email") {
+    and.push({ lastChannel: channel });
+  }
+  if (q) {
+    const rx = new RegExp(escapeRegex(q), "i");
+    and.push({ $or: [{ displayName: rx }, { handle: rx }] });
+  }
+  return and;
+}
+
+async function loadConversationPage(filter: Record<string, unknown>, limit: number) {
+  return InboxConversation.find(filter)
+    .sort({ lastMessageAt: -1, _id: -1 })
+    .limit(limit)
+    .populate("customerRef", "accountName first last phone email")
+    .populate("readByUserRef", "first_name last_name")
+    .lean();
+}
+
 export async function listInboxConversations(
   req: AuthRequest,
   res: Response,
 ): Promise<void> {
   try {
-    const status = String(req.query.status || "open");
-    const filterName = String(req.query.filter || "");
-    const channel = String(req.query.channel || "");
-    const q = String(req.query.q || "").trim();
-    const and: Record<string, unknown>[] = [];
-    if (status === "open" || status === "closed") and.push({ status });
-    if (filterName === "unread") and.push({ unreadCount: { $gt: 0 } });
-    if (filterName === "unresponded") and.push({ lastDirection: "inbound" });
-    if (channel === "text") and.push({ lastChannel: { $in: ["sms", "mms"] } });
-    else if (channel === "sms" || channel === "mms" || channel === "voice" || channel === "email") {
-      and.push({ lastChannel: channel });
-    }
-    if (q) {
-      const rx = new RegExp(escapeRegex(q), "i");
-      and.push({ $or: [{ displayName: rx }, { handle: rx }] });
-    }
+    const base = listQuery(req);
     const cursor = decodeCursor(String(req.query.cursor || ""));
+    const pageAnd = [...base, { pinnedAt: null }];
     if (cursor) {
-      and.push({
+      pageAnd.push({
         $or: [
           { lastMessageAt: { $lt: cursor.at } },
           { lastMessageAt: cursor.at, _id: { $lt: cursor.id } },
         ],
       });
     }
-    const rows = await InboxConversation.find(and.length ? { $and: and } : {})
-      .sort({ lastMessageAt: -1, _id: -1 })
-      .limit(LIST_LIMIT + 1)
-      .populate("customerRef", "accountName first last phone email")
-      .populate("readByUserRef", "first_name last_name")
-      .lean();
+    const rows = await loadConversationPage({ $and: pageAnd }, LIST_LIMIT + 1);
     const hasMore = rows.length > LIST_LIMIT;
     const page = hasMore ? rows.slice(0, LIST_LIMIT) : rows;
+    const pinned = cursor
+      ? []
+      : await InboxConversation.find({ $and: [...base, { pinnedAt: { $ne: null } }] })
+          .sort({ pinnedAt: -1, _id: -1 })
+          .limit(100)
+          .populate("customerRef", "accountName first last phone email")
+          .populate("readByUserRef", "first_name last_name")
+          .lean();
+    const counts = await openTaskCounts(
+      [...pinned, ...page].map((row) => row._id as Types.ObjectId),
+    );
+    const presentRow = (row: (typeof page)[number]) =>
+      publicConversation(row as never, counts.get(String(row._id)) || 0);
     const last = page[page.length - 1];
     res.json({
-      conversations: page.map((row) => publicConversation(row as never)),
+      pinned: cursor ? undefined : pinned.map(presentRow),
+      conversations: page.map(presentRow),
       nextCursor:
         hasMore && last?.lastMessageAt
           ? `${new Date(last.lastMessageAt).toISOString()}_${String(last._id)}`
@@ -305,15 +355,16 @@ export async function getInboxTimeline(
     const beforeRaw = String(req.query.before || "");
     const before = beforeRaw ? new Date(beforeRaw) : null;
     const beforeOk = before && !Number.isNaN(before.getTime()) ? before : null;
+    const afterRaw = convo.historyFrom ? new Date(convo.historyFrom) : null;
+    const after = afterRaw && !Number.isNaN(afterRaw.getTime()) ? afterRaw : null;
+    const createdRange: { $lt?: Date; $gt?: Date } = {};
+    if (beforeOk) createdRange.$lt = beforeOk;
+    if (after) createdRange.$gt = after;
+    const createdAt =
+      createdRange.$lt || createdRange.$gt ? { createdAt: createdRange } : {};
     const match = commFilter(convo);
-    const twilioQuery = {
-      ...match.twilio,
-      ...(beforeOk ? { createdAt: { $lt: beforeOk } } : {}),
-    };
-    const emailQuery = {
-      ...match.email,
-      ...(beforeOk ? { createdAt: { $lt: beforeOk } } : {}),
-    };
+    const twilioQuery = { ...match.twilio, ...createdAt };
+    const emailQuery = { ...match.email, ...createdAt };
     const [twilio, emails] = await Promise.all([
       match.twilio._id === null
         ? Promise.resolve([])
@@ -345,10 +396,23 @@ export async function getInboxTimeline(
       attachments: { filename: string; size: number; contentType: string; partId: string }[];
       durationSeconds: number | null;
       transcript: string;
+      transcriptStatus: string;
+      callSummary: string;
+      suggestedTask: { title: string; description: string; dueInDays: number | null } | null;
+      transcriptRating: { stars: number; comment: string } | null;
+      followUpTask: { id: string; title: string } | null;
+      taskPromptDismissed: boolean;
       emailAccountId: string | null;
       imapUid: number | null;
       actorId: string | null;
     };
+    const followUpIds = twilio.flatMap((doc) =>
+      doc.followUpTaskRef ? [doc.followUpTaskRef] : [],
+    );
+    const followUpTasks = followUpIds.length
+      ? await Task.find({ _id: { $in: followUpIds } }).select("title").lean()
+      : [];
+    const followUpTitles = new Map(followUpTasks.map((task) => [String(task._id), task.title]));
     const items: Item[] = [
       ...twilio.map((doc) => ({
         id: String(doc._id),
@@ -367,6 +431,30 @@ export async function getInboxTimeline(
         attachments: [],
         durationSeconds: doc.durationSeconds ?? null,
         transcript: doc.transcript || "",
+        transcriptStatus: doc.channel === "voice" ? doc.transcriptStatus || "none" : "none",
+        callSummary: doc.callSummary || "",
+        suggestedTask:
+          doc.suggestedTask?.title
+            ? {
+                title: doc.suggestedTask.title,
+                description: doc.suggestedTask.description || "",
+                dueInDays: doc.suggestedTask.dueInDays ?? null,
+              }
+            : null,
+        transcriptRating:
+          doc.transcriptRating?.stars
+            ? {
+                stars: doc.transcriptRating.stars,
+                comment: doc.transcriptRating.comment || "",
+              }
+            : null,
+        followUpTask: doc.followUpTaskRef
+          ? {
+              id: String(doc.followUpTaskRef),
+              title: followUpTitles.get(String(doc.followUpTaskRef)) || "Task",
+            }
+          : null,
+        taskPromptDismissed: Boolean(doc.taskPromptDismissedAt),
         emailAccountId: null,
         imapUid: null,
         actorId: doc.createdByUserRef ? String(doc.createdByUserRef) : null,
@@ -395,6 +483,12 @@ export async function getInboxTimeline(
           })),
           durationSeconds: null,
           transcript: "",
+          transcriptStatus: "none",
+          callSummary: "",
+          suggestedTask: null,
+          transcriptRating: null,
+          followUpTask: null,
+          taskPromptDismissed: false,
           emailAccountId: doc.emailAccountRef ? String(doc.emailAccountRef) : null,
           imapUid: doc.imapUid ?? null,
           actorId: doc.createdByUserRef ? String(doc.createdByUserRef) : null,
@@ -413,8 +507,11 @@ export async function getInboxTimeline(
       .populate("customerRef", "accountName first last phone email")
       .populate("readByUserRef", "first_name last_name")
       .lean();
+    const counts = populated ? await openTaskCounts([populated._id as Types.ObjectId]) : new Map();
     res.json({
-      conversation: populated ? publicConversation(populated as never) : null,
+      conversation: populated
+        ? publicConversation(populated as never, counts.get(String(populated._id)) || 0)
+        : null,
       messages: page.map(({ atMs: _atMs, actorId, ...item }) => ({
         ...item,
         senderName:
@@ -439,7 +536,16 @@ async function present(id: Types.ObjectId, res: Response): Promise<void> {
     res.status(404).json({ message: "Conversation not found" });
     return;
   }
-  res.json({ conversation: publicConversation(row as never) });
+  const counts = await openTaskCounts([row._id as Types.ObjectId]);
+  res.json({
+    conversation: publicConversation(row as never, counts.get(String(row._id)) || 0),
+  });
+}
+
+function actorId(req: AuthRequest): Types.ObjectId | null {
+  return req.user?.id && Types.ObjectId.isValid(req.user.id)
+    ? new Types.ObjectId(req.user.id)
+    : null;
 }
 
 export async function markInboxRead(req: AuthRequest, res: Response): Promise<void> {
@@ -509,6 +615,110 @@ export async function reopenInboxConversation(req: AuthRequest, res: Response): 
   } catch (err) {
     console.error("POST /inboxes/conversations/:id/reopen error:", err);
     res.status(500).json({ message: "Failed to reopen the conversation" });
+  }
+}
+
+export async function markInboxUnread(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const convo = await loadConversation(String(req.params.id));
+    if (!convo) {
+      res.status(404).json({ message: "Conversation not found" });
+      return;
+    }
+    convo.unreadCount = Math.max(1, convo.unreadCount || 0);
+    convo.readAt = null;
+    convo.readByUserRef = null;
+    await convo.save();
+    publishDashboardChanged();
+    await present(convo._id, res);
+  } catch (err) {
+    console.error("POST /inboxes/conversations/:id/unread error:", err);
+    res.status(500).json({ message: "Failed to mark the conversation unread" });
+  }
+}
+
+export async function pinInboxConversation(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const convo = await loadConversation(String(req.params.id));
+    if (!convo) {
+      res.status(404).json({ message: "Conversation not found" });
+      return;
+    }
+    convo.pinnedAt = new Date();
+    convo.pinnedByUserRef = actorId(req);
+    await convo.save();
+    publishDashboardChanged();
+    await present(convo._id, res);
+  } catch (err) {
+    console.error("POST /inboxes/conversations/:id/pin error:", err);
+    res.status(500).json({ message: "Failed to pin the conversation" });
+  }
+}
+
+export async function unpinInboxConversation(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const convo = await loadConversation(String(req.params.id));
+    if (!convo) {
+      res.status(404).json({ message: "Conversation not found" });
+      return;
+    }
+    convo.pinnedAt = null;
+    convo.pinnedByUserRef = null;
+    await convo.save();
+    publishDashboardChanged();
+    await present(convo._id, res);
+  } catch (err) {
+    console.error("POST /inboxes/conversations/:id/unpin error:", err);
+    res.status(500).json({ message: "Failed to unpin the conversation" });
+  }
+}
+
+export async function blockInboxConversation(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const convo = await loadConversation(String(req.params.id));
+    if (!convo) {
+      res.status(404).json({ message: "Conversation not found" });
+      return;
+    }
+    await setInboxBlocked(convo, true, req.user?.id ?? null);
+    publishDashboardChanged();
+    await present(convo._id, res);
+  } catch (err) {
+    console.error("POST /inboxes/conversations/:id/block error:", err);
+    res.status(500).json({ message: "Failed to block the conversation" });
+  }
+}
+
+export async function unblockInboxConversation(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const convo = await loadConversation(String(req.params.id));
+    if (!convo) {
+      res.status(404).json({ message: "Conversation not found" });
+      return;
+    }
+    await setInboxBlocked(convo, false, req.user?.id ?? null);
+    publishDashboardChanged();
+    await present(convo._id, res);
+  } catch (err) {
+    console.error("POST /inboxes/conversations/:id/unblock error:", err);
+    res.status(500).json({ message: "Failed to unblock the conversation" });
+  }
+}
+
+export async function deleteInboxConversation(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const convo = await loadConversation(String(req.params.id));
+    if (!convo) {
+      res.status(404).json({ message: "Conversation not found" });
+      return;
+    }
+    convo.deletedAt = new Date();
+    await convo.save();
+    publishDashboardChanged();
+    res.json({ deleted: true });
+  } catch (err) {
+    console.error("DELETE /inboxes/conversations/:id error:", err);
+    res.status(500).json({ message: "Failed to delete the conversation" });
   }
 }
 
@@ -877,58 +1087,8 @@ export async function linkInboxCustomer(req: AuthRequest, res: Response): Promis
       res.status(404).json({ message: "Customer not found" });
       return;
     }
-    const contacts = await CustomerContact.find({
-      customerRef: customer._id,
-      ...activeContactFilter,
-    }).lean();
-    const contact = contacts.find((row) =>
-      convo.handleKind === "phone"
-        ? phoneLinesMatch(row.phone || "", convo.handle)
-        : normalizeAccountEmail(row.email || "") === normalizeAccountEmail(convo.handle),
-    );
-    const contactRef = contact?._id ?? null;
-    const match = commFilter(convo);
-    if (match.twilio._id !== null) {
-      await TwilioCommunication.updateMany(match.twilio, {
-        $set: { customerRef: customer._id, contactRef },
-      });
-    }
-    if (match.email._id !== null) {
-      await EmailCommunication.updateMany(match.email, {
-        $set: { customerRef: customer._id, contactRef },
-      });
-    }
-    const existing = await InboxConversation.findOne({
-      customerRef: customer._id,
-      _id: { $ne: convo._id },
-    });
-    if (existing) {
-      const sourceAt = convo.lastMessageAt ? new Date(convo.lastMessageAt).getTime() : 0;
-      const targetAt = existing.lastMessageAt ? new Date(existing.lastMessageAt).getTime() : 0;
-      if (sourceAt >= targetAt) {
-        existing.lastMessageAt = convo.lastMessageAt;
-        existing.lastPreview = convo.lastPreview;
-        if (convo.lastChannel) existing.lastChannel = convo.lastChannel;
-        if (convo.lastDirection) existing.lastDirection = convo.lastDirection;
-        existing.ourNumber = convo.ourNumber || existing.ourNumber;
-        existing.emailAccountRef = convo.emailAccountRef || existing.emailAccountRef;
-        existing.handle = convo.handle;
-        existing.handleKind = convo.handleKind;
-      }
-      existing.unreadCount = (existing.unreadCount || 0) + (convo.unreadCount || 0);
-      existing.displayName = customerDisplayName(customer);
-      if (convo.lastDirection === "inbound" && sourceAt >= targetAt) {
-        existing.status = "open";
-      }
-      await existing.save();
-      await convo.deleteOne();
-      await present(existing._id, res);
-      return;
-    }
-    convo.customerRef = customer._id;
-    convo.displayName = customerDisplayName(customer);
-    await convo.save();
-    await present(convo._id, res);
+    const linked = await linkInboxConversationToCustomer(convo, customer._id);
+    await present(linked._id, res);
   } catch (err) {
     console.error("POST /inboxes/conversations/:id/link-customer error:", err);
     res.status(500).json({ message: "Failed to link the customer" });
@@ -937,13 +1097,23 @@ export async function linkInboxCustomer(req: AuthRequest, res: Response): Promis
 
 export async function getInboxContext(req: AuthRequest, res: Response): Promise<void> {
   try {
-    const convo = await loadConversation(String(req.params.id));
-    if (!convo) {
+    const loaded = await loadConversation(String(req.params.id));
+    if (!loaded) {
       res.status(404).json({ message: "Conversation not found" });
       return;
     }
+    const convo = await ensureInboxCustomer(loaded);
+    const moved =
+      String(convo._id) !== String(loaded._id) ? String(convo._id) : undefined;
     if (!convo.customerRef) {
-      res.json({ customer: null, contacts: [], workOrders: [], invoices: [], notes: [] });
+      res.json({
+        customer: null,
+        contacts: [],
+        workOrders: [],
+        invoices: [],
+        notes: [],
+        conversationId: moved,
+      });
       return;
     }
     const customer = await Customer.findById(convo.customerRef)
@@ -1025,6 +1195,7 @@ export async function getInboxContext(req: AuthRequest, res: Response): Promise<
           createdAt: new Date(note.createdAt).toISOString(),
         };
       }),
+      conversationId: moved,
     });
   } catch (err) {
     console.error("GET /inboxes/conversations/:id/context error:", err);
@@ -1129,7 +1300,9 @@ export async function listInboxChannels(_req: AuthRequest, res: Response): Promi
   try {
     const [twilio, email] = await Promise.all([
       TwilioAccount.find({ isActive: true })
-        .select("friendlyName phoneNumbers")
+        .select(
+          "friendlyName phoneNumbers voiceApiKeySid voiceApiKeySecretEncrypted voiceTwimlAppSid",
+        )
         .sort({ friendlyName: 1 })
         .lean(),
       EmailAccount.find({ isActive: true })
@@ -1141,11 +1314,17 @@ export async function listInboxChannels(_req: AuthRequest, res: Response): Promi
       twilioAccounts: twilio.map((account) => ({
         id: String(account._id),
         friendlyName: account.friendlyName,
+        browserCalling: Boolean(
+          account.voiceApiKeySid &&
+            account.voiceApiKeySecretEncrypted &&
+            account.voiceTwimlAppSid,
+        ),
         numbers: (account.phoneNumbers ?? [])
           .filter((line) => line.phoneNumber)
           .map((line) => ({
             phoneNumber: line.phoneNumber,
             label: line.label || line.twilioFriendlyName || line.phoneNumber,
+            voice: Boolean(line.voice),
           })),
       })),
       emailAccounts: email.map((account) => ({
@@ -1184,4 +1363,54 @@ export async function listInboxTemplates(req: AuthRequest, res: Response): Promi
     console.error("GET /inboxes/templates error:", err);
     res.status(500).json({ message: "Failed to load templates" });
   }
+}
+
+export async function rateCallTranscript(req: AuthRequest, res: Response): Promise<void> {
+  const rating = parseTranscriptRating({
+    stars: req.body?.stars,
+    comment: req.body?.comment,
+  });
+  if (!rating) {
+    res.status(400).json({ message: "Choose a rating from 1 to 5." });
+    return;
+  }
+  if (!Types.ObjectId.isValid(String(req.params.communicationId || ""))) {
+    res.status(404).json({ message: "Call not found" });
+    return;
+  }
+  const doc = await TwilioCommunication.findOne({
+    _id: req.params.communicationId,
+    channel: "voice",
+  });
+  if (!doc) {
+    res.status(404).json({ message: "Call not found" });
+    return;
+  }
+  doc.transcriptRating = {
+    stars: rating.stars,
+    comment: rating.comment,
+    ratedByUserRef: req.user?.id ? new Types.ObjectId(req.user.id) : null,
+    ratedAt: new Date(),
+  };
+  await doc.save();
+  res.json({
+    rating: { stars: rating.stars, comment: rating.comment },
+  });
+}
+
+export async function dismissCallTaskPrompt(req: AuthRequest, res: Response): Promise<void> {
+  if (!Types.ObjectId.isValid(String(req.params.communicationId || ""))) {
+    res.status(404).json({ message: "Call not found" });
+    return;
+  }
+  const doc = await TwilioCommunication.findOneAndUpdate(
+    { _id: req.params.communicationId, channel: "voice" },
+    { $set: { taskPromptDismissedAt: new Date() } },
+    { new: true },
+  );
+  if (!doc) {
+    res.status(404).json({ message: "Call not found" });
+    return;
+  }
+  res.json({ dismissed: true });
 }

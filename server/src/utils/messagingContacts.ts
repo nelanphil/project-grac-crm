@@ -23,7 +23,7 @@ export interface HubContactItem {
   email: string;
   label: string;
   isPrimary: boolean;
-  customerRef: string;
+  customerRef: string | null;
   customer: {
     _id: string;
     accountName?: string;
@@ -38,6 +38,14 @@ export interface HubContactItem {
   renewalDueDate: string | null;
   contractType: string | null;
   hasPayableInvoice?: boolean;
+}
+
+export function keepHubContact(
+  customerRef: { toString(): string } | null | undefined,
+  activeCustomerIds: ReadonlySet<string>,
+): boolean {
+  if (!customerRef) return true;
+  return activeCustomerIds.has(String(customerRef));
 }
 
 function escapeRegex(value: string): string {
@@ -164,8 +172,24 @@ export async function searchHubContacts(options: {
       : contactHasValidPhone(c.phone),
   );
 
+  const emptyCustomer = {
+    _id: "",
+    accountName: "",
+    first: "",
+    last: "",
+    address: "",
+    city: "",
+    state: "",
+    zip: "",
+    phone: "",
+  };
+
   const customerIds = [
-    ...new Set(eligible.map((c) => String(c.customerRef))),
+    ...new Set(
+      eligible
+        .map((c) => (c.customerRef ? String(c.customerRef) : ""))
+        .filter((id) => Types.ObjectId.isValid(id)),
+    ),
   ];
   const customers = await Customer.find({
     _id: { $in: customerIds },
@@ -177,34 +201,40 @@ export async function searchHubContacts(options: {
 
   const customerById = new Map(customers.map((c) => [String(c._id), c]));
 
+  const activeCustomerIds = new Set(customerById.keys());
   const activeContacts = eligible.filter((c) =>
-    customerById.has(String(c.customerRef)),
+    keepHubContact(c.customerRef, activeCustomerIds),
   );
 
   const total = activeContacts.length;
   const start = (page - 1) * pageSize;
   const pageRows = activeContacts.slice(start, start + pageSize);
 
+  const renewalIds = pageRows
+    .map((c) => c.customerRef)
+    .filter((id): id is Types.ObjectId => Boolean(id));
   const renewalMap = options.scope
-    ? await resolveRenewalsForCustomers(
-        pageRows.map((c) => c.customerRef),
-        options.scope,
-      )
+    ? await resolveRenewalsForCustomers(renewalIds, options.scope)
     : new Map();
 
   const payableIds =
     channel === "email" || channel === "sms"
-      ? await payableInvoiceCustomerIds(
-          pageRows.map((c) => String(c.customerRef)),
-        )
+      ? await payableInvoiceCustomerIds(renewalIds.map((id) => String(id)))
       : null;
 
   const contacts = pageRows.map((c) => {
-    const customer = customerById.get(String(c.customerRef))!;
-    const renewalInfo = renewalMap.get(String(c.customerRef)) ?? {
-      renewalDueDate: null as Date | null,
-      contractType: null as string | null,
-    };
+    const customer = c.customerRef
+      ? customerById.get(String(c.customerRef))
+      : undefined;
+    const renewalInfo = c.customerRef
+      ? (renewalMap.get(String(c.customerRef)) ?? {
+          renewalDueDate: null as Date | null,
+          contractType: null as string | null,
+        })
+      : {
+          renewalDueDate: null as Date | null,
+          contractType: null as string | null,
+        };
 
     return {
       _id: String(c._id),
@@ -214,24 +244,30 @@ export async function searchHubContacts(options: {
       email: c.email ?? "",
       label: c.label ?? "",
       isPrimary: Boolean(c.isPrimary),
-      customerRef: String(c.customerRef),
-      customer: {
-        _id: String(customer._id),
-        accountName: customer.accountName ?? "",
-        first: customer.first ?? "",
-        last: customer.last ?? "",
-        address: customer.address ?? "",
-        city: customer.city ?? "",
-        state: customer.state ?? "",
-        zip: customer.zip ?? "",
-        phone: customer.phone ?? "",
-      },
+      customerRef: c.customerRef ? String(c.customerRef) : null,
+      customer: customer
+        ? {
+            _id: String(customer._id),
+            accountName: customer.accountName ?? "",
+            first: customer.first ?? "",
+            last: customer.last ?? "",
+            address: customer.address ?? "",
+            city: customer.city ?? "",
+            state: customer.state ?? "",
+            zip: customer.zip ?? "",
+            phone: customer.phone ?? "",
+          }
+        : emptyCustomer,
       renewalDueDate: renewalInfo.renewalDueDate
         ? renewalInfo.renewalDueDate.toISOString()
         : null,
       contractType: renewalInfo.contractType,
       ...(payableIds
-        ? { hasPayableInvoice: payableIds.has(String(c.customerRef)) }
+        ? {
+            hasPayableInvoice: c.customerRef
+              ? payableIds.has(String(c.customerRef))
+              : false,
+          }
         : {}),
     };
   });

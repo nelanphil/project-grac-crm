@@ -103,9 +103,9 @@ export function messagingContactFromInvoice(
     email: contact.email,
     label: contact.label,
     isPrimary: contact.isPrimary,
-    customerRef: contact.customerRef,
+    customerRef: contact.customerRef ?? "",
     customer: {
-      _id: contact.customerRef,
+      _id: contact.customerRef ?? "",
       accountName: customer?.name,
       first: "",
       last: "",

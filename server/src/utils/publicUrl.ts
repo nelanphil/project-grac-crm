@@ -69,6 +69,31 @@ export function isPubliclyReachableApiHost(urlOrHost: string): boolean {
   );
 }
 
+/**
+ * Base URL Twilio should call for browser-calling TwiML.
+ * A public detected host wins. Otherwise a development tunnel URL is used.
+ * Returns null when neither host is one Twilio can reach.
+ */
+export function resolveVoiceWebhookBase(
+  detected: string,
+  override?: string | null,
+): string | null {
+  const detectedBase = detected.trim().replace(/\/+$/, "");
+  if (isPubliclyReachableApiHost(detectedBase)) return detectedBase;
+
+  const raw = override?.trim() ?? "";
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (!isPubliclyReachableApiHost(url.hostname)) return null;
+  return url.origin;
+}
+
 /** Frontend base used for post-OAuth redirects. */
 export function resolveClientBaseUrl(): string {
   const raw = env.clientUrl.split(",")[0]?.trim().replace(/\/+$/, "") || "";

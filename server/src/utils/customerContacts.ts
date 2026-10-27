@@ -8,9 +8,19 @@ import {
 import { ensureCustomerLoginForPrimaryEmail } from "./ensureCustomerLogin";
 import { normalizePhoneDigits } from "./customerSites";
 
+export function lastContactBlock(
+  activeCount: number,
+  action: "delete" | "detach",
+): string | null {
+  if (activeCount > 1) return null;
+  return action === "detach"
+    ? "A customer must keep at least one contact."
+    : "Cannot delete the last contact on a customer.";
+}
+
 export class LastContactError extends Error {
-  constructor() {
-    super("Cannot delete the last contact on a customer.");
+  constructor(message = "Cannot delete the last contact on a customer.") {
+    super(message);
     this.name = "LastContactError";
   }
 }
@@ -187,7 +197,7 @@ export async function ensureCustomerContactFromFlat(
   return { contactId: contactDoc._id as Types.ObjectId, created: true };
 }
 
-/** Soft-delete a contact. Refuses if it is the last active contact. */
+/** Soft-delete a contact. Refuses if it is the last active contact on a customer. */
 export async function softDeleteCustomerContact(
   contact: ICustomerContact,
 ): Promise<{ wasPrimary: boolean }> {
@@ -195,12 +205,14 @@ export async function softDeleteCustomerContact(
     return { wasPrimary: false };
   }
 
-  const total = await CustomerContact.countDocuments({
-    customerRef: contact.customerRef,
-    ...activeContactFilter,
-  });
-  if (total <= 1) {
-    throw new LastContactError();
+  if (contact.customerRef) {
+    const total = await CustomerContact.countDocuments({
+      customerRef: contact.customerRef,
+      ...activeContactFilter,
+    });
+    if (total <= 1) {
+      throw new LastContactError(lastContactBlock(total, "delete") ?? undefined);
+    }
   }
 
   const wasPrimary = contact.isPrimary;
@@ -208,7 +220,7 @@ export async function softDeleteCustomerContact(
   contact.isPrimary = false;
   await contact.save();
 
-  if (wasPrimary) {
+  if (wasPrimary && contact.customerRef) {
     const next = await CustomerContact.findOne({
       customerRef: contact.customerRef,
       ...activeContactFilter,
@@ -219,6 +231,50 @@ export async function softDeleteCustomerContact(
     }
   }
 
-  await syncCustomerPrimaryContactFields(contact.customerRef);
+  if (contact.customerRef) {
+    await syncCustomerPrimaryContactFields(contact.customerRef);
+  }
   return { wasPrimary };
+}
+
+/**
+ * Take a contact off its customer without deleting it.
+ * A customer must keep at least one contact.
+ */
+export async function detachCustomerContact(
+  contact: ICustomerContact,
+): Promise<{ wasPrimary: boolean; previousCustomerId: Types.ObjectId | null }> {
+  const previousCustomerId = contact.customerRef;
+  if (!previousCustomerId || contact.deletedAt) {
+    return { wasPrimary: false, previousCustomerId: null };
+  }
+
+  const total = await CustomerContact.countDocuments({
+    customerRef: previousCustomerId,
+    ...activeContactFilter,
+  });
+  if (total <= 1) {
+    throw new LastContactError(
+      lastContactBlock(total, "detach") ?? "A customer must keep at least one contact.",
+    );
+  }
+
+  const wasPrimary = contact.isPrimary;
+  contact.customerRef = null;
+  contact.isPrimary = false;
+  await contact.save();
+
+  if (wasPrimary) {
+    const next = await CustomerContact.findOne({
+      customerRef: previousCustomerId,
+      ...activeContactFilter,
+    }).sort({ createdAt: 1 });
+    if (next) {
+      next.isPrimary = true;
+      await next.save();
+    }
+  }
+
+  await syncCustomerPrimaryContactFields(previousCustomerId);
+  return { wasPrimary, previousCustomerId };
 }

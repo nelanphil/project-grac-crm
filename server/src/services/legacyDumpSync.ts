@@ -1912,6 +1912,7 @@ export async function runLegacyDumpSync(options: {
       return extras;
     }
     for (const contact of contacts) {
+      if (!contact.customerRef) continue;
       const extras = extrasFor(contact.customerRef);
       const phone = normalizePhoneDigits(contact.phone);
       if (phone.length >= 7) extras.phones.push(phone);

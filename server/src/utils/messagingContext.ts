@@ -162,7 +162,7 @@ export async function buildTemplateContextForContact(
     last: string;
     phone: string;
     email: string;
-    customerRef: string;
+    customerRef: string | null;
   };
   customer: {
     _id: string;
@@ -178,17 +178,19 @@ export async function buildTemplateContextForContact(
   if (!Types.ObjectId.isValid(contactId)) return null;
 
   const contact = await CustomerContact.findById(contactId).lean();
-  if (!contact) return null;
+  if (!contact || contact.deletedAt) return null;
 
-  const customer = await Customer.findById(contact.customerRef)
-    .select("_id first last address city state zip deletedAt mergedIntoRef")
-    .lean();
+  const loaded = contact.customerRef
+    ? await Customer.findById(contact.customerRef)
+        .select("_id first last address city state zip deletedAt mergedIntoRef")
+        .lean()
+    : null;
+  const customer =
+    loaded && !loaded.deletedAt && !loaded.mergedIntoRef ? loaded : null;
 
-  if (!customer || customer.deletedAt || customer.mergedIntoRef) {
-    return null;
-  }
-
-  const renewal = await resolveRenewalForCustomer(contact.customerRef, renewalScope);
+  const renewal = customer
+    ? await resolveRenewalForCustomer(customer._id, renewalScope)
+    : { renewalDueDate: null, contractType: null };
 
   const first = contact.first ?? "";
   const last = contact.last ?? "";
@@ -200,12 +202,12 @@ export async function buildTemplateContextForContact(
     full_name: fullName,
     phone: contact.phone ?? "",
     email: contact.email ?? "",
-    customer_first: customer.first ?? "",
-    customer_last: customer.last ?? "",
-    address: customer.address ?? "",
-    city: customer.city ?? "",
-    state: customer.state ?? "",
-    zip: customer.zip ?? "",
+    customer_first: customer?.first ?? "",
+    customer_last: customer?.last ?? "",
+    address: customer?.address ?? "",
+    city: customer?.city ?? "",
+    state: customer?.state ?? "",
+    zip: customer?.zip ?? "",
     renewal_due_date: formatDateForTemplate(renewal.renewalDueDate),
     contract_type: renewal.contractType ?? "",
     payment_link: "",
@@ -219,17 +221,19 @@ export async function buildTemplateContextForContact(
       last,
       phone: contact.phone ?? "",
       email: contact.email ?? "",
-      customerRef: String(contact.customerRef),
+      customerRef: customer ? String(customer._id) : null,
     },
-    customer: {
-      _id: String(customer._id),
-      first: customer.first ?? "",
-      last: customer.last ?? "",
-      address: customer.address ?? "",
-      city: customer.city ?? "",
-      state: customer.state ?? "",
-      zip: customer.zip ?? "",
-    },
+    customer: customer
+      ? {
+          _id: String(customer._id),
+          first: customer.first ?? "",
+          last: customer.last ?? "",
+          address: customer.address ?? "",
+          city: customer.city ?? "",
+          state: customer.state ?? "",
+          zip: customer.zip ?? "",
+        }
+      : null,
     renewal,
   };
 }

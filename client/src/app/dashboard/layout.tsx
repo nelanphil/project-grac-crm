@@ -11,6 +11,7 @@ import { canAccessNavPath } from "@/lib/dashboard-nav";
 import { isStaffRole } from "@/lib/dashboard-role";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useHasHydrated } from "@/store/useHasHydrated";
+import SoftphoneProvider from "@/components/voice/SoftphoneProvider";
 
 export default function DashboardLayout({
   children,
@@ -90,6 +91,7 @@ export default function DashboardLayout({
   const isWideLayout = !pathname.startsWith("/dashboard/settings");
 
   return (
+    <SoftphoneProvider>
     <div
       className={`mx-auto flex gap-8 py-6 md:py-10 print:block print:max-w-none print:gap-0 print:px-0 print:py-0 uppercase ${
         isWideLayout
@@ -100,5 +102,6 @@ export default function DashboardLayout({
       {showNav && <DashboardNav />}
       <main className="min-w-0 flex-1 print:w-full">{children}</main>
     </div>
+    </SoftphoneProvider>
   );
 }

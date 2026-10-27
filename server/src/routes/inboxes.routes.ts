@@ -10,11 +10,19 @@ import {
   listInboxChannels,
   listInboxConversations,
   listInboxTemplates,
+  blockInboxConversation,
+  deleteInboxConversation,
   markInboxRead,
+  markInboxUnread,
+  pinInboxConversation,
   reopenInboxConversation,
+  unblockInboxConversation,
+  unpinInboxConversation,
   searchInboxCustomers,
   sendInboxEmail,
   sendInboxSms,
+  rateCallTranscript,
+  dismissCallTaskPrompt,
 } from "../controllers/inboxes.controller";
 
 const router = Router();
@@ -51,6 +59,36 @@ router.post(
   reopenInboxConversation,
 );
 router.post(
+  "/conversations/:id/unread",
+  requirePermission("messages:write"),
+  markInboxUnread,
+);
+router.post(
+  "/conversations/:id/pin",
+  requirePermission("messages:write"),
+  pinInboxConversation,
+);
+router.post(
+  "/conversations/:id/unpin",
+  requirePermission("messages:write"),
+  unpinInboxConversation,
+);
+router.post(
+  "/conversations/:id/block",
+  requirePermission("messages:write"),
+  blockInboxConversation,
+);
+router.post(
+  "/conversations/:id/unblock",
+  requirePermission("messages:write"),
+  unblockInboxConversation,
+);
+router.delete(
+  "/conversations/:id",
+  requirePermission("messages:write"),
+  deleteInboxConversation,
+);
+router.post(
   "/conversations/:id/sms",
   requirePermission("messages:write"),
   sendInboxSms,
@@ -74,6 +112,16 @@ router.post(
   "/conversations/:id/context",
   requirePermission("messages:write"),
   addInboxNote,
+);
+router.put(
+  "/messages/:communicationId/transcript-rating",
+  requirePermission("messages:write"),
+  rateCallTranscript,
+);
+router.post(
+  "/messages/:communicationId/task-prompt/dismiss",
+  requirePermission("messages:write"),
+  dismissCallTaskPrompt,
 );
 
 export default router;

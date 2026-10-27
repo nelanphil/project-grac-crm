@@ -5,6 +5,7 @@ import { DashboardHistoryTracker } from "@/components/dashboard/DashboardBackLin
 import { isJobTerminalPopoutPath } from "@/utils/jobTerminalWindow";
 import StaffIconSidebar from "./StaffIconSidebar";
 import StaffTopBar from "./StaffTopBar";
+import SoftphoneProvider from "@/components/voice/SoftphoneProvider";
 
 export default function StaffDashboardShell({
   children,
@@ -23,6 +24,7 @@ export default function StaffDashboardShell({
   }
 
   return (
+    <SoftphoneProvider>
     <div className="staff-dashboard flex w-full min-h-[calc(100vh-0px)] max-w-full overflow-x-clip bg-[var(--staff-canvas)] print:bg-white print:min-h-0">
       <DashboardHistoryTracker />
       <div className="hidden lg:block print:hidden">
@@ -37,5 +39,6 @@ export default function StaffDashboardShell({
         </div>
       </div>
     </div>
+    </SoftphoneProvider>
   );
 }

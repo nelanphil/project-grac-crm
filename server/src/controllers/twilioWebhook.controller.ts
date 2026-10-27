@@ -1,19 +1,25 @@
 import { Request, Response } from "express";
 import { Types } from "mongoose";
+import twilio from "twilio";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
 import { MessageThread } from "../models/mongo/MessageThread";
-import { ITwilioAccount } from "../models/mongo/TwilioAccount";
+import { ITwilioAccount, TwilioAccount } from "../models/mongo/TwilioAccount";
 import {
   mapTwilioCallStatus,
   mapTwilioMessageStatus,
 } from "../utils/communicationFormat";
 import {
   fetchRecordingTranscript,
+  getAccountAuthToken,
   resolveAccountFromWebhook,
 } from "../services/twilio.service";
 import { touchThreadAfterMessage } from "../utils/messageThreads";
 import { publishDashboardChanged } from "../services/dashboardLive";
-import { touchFromTwilio } from "../services/inboxConversation.service";
+import {
+  inboxPhoneHandle,
+  isInboxHandleBlocked,
+  touchFromTwilio,
+} from "../services/inboxConversation.service";
 import { describeTwilioError } from "../utils/twilioErrorCodes";
 import {
   formatVoicemailLine,
@@ -22,8 +28,15 @@ import {
   startInboundIvr,
   voicemailTwiml,
 } from "../services/voiceIvr.service";
-import { buildSayHangupTwiml } from "../utils/twilioVoiceTwiml";
+import { buildClientDialTwiml, buildSayHangupTwiml } from "../utils/twilioVoiceTwiml";
 import { resolveSayVoice } from "../utils/twilioVoices";
+import { VoiceCallIntent } from "../models/mongo/VoiceCallIntent";
+import { evaluateVoiceIntent } from "../utils/voiceIntent";
+import { resolvePublicApiBase, resolveVoiceWebhookBase } from "../utils/publicUrl";
+import {
+  completeCallTranscript,
+  startCallTranscript,
+} from "../services/callTranscription.service";
 import {
   findVoiceCommunication,
   inboundVoiceBody,
@@ -98,6 +111,8 @@ function collectMediaUrls(params: Record<string, string>): string[] {
 
 const EMPTY_TWIML =
   '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
+const REJECT_TWIML =
+  '<?xml version="1.0" encoding="UTF-8"?><Response><Reject/></Response>';
 
 const PREVIEW_LENGTH = 160;
 
@@ -137,7 +152,11 @@ export async function inboundMessageWebhook(
       mediaUrls: collectMediaUrls(params),
       rawStatus: params.SmsStatus || params.MessageStatus || "received",
     });
-    publishDashboardChanged();
+    const fromHandle = inboxPhoneHandle(params.From || "");
+    const blocked = fromHandle
+      ? await isInboxHandleBlocked(fromHandle, "phone")
+      : false;
+    if (!blocked) publishDashboardChanged();
 
     res.status(200).type("text/xml").send(EMPTY_TWIML);
   } catch (err) {
@@ -443,6 +462,11 @@ export async function inboundVoiceWebhook(
     const callSid = params.CallSid || "";
     const fromNumber = params.From || params.Caller || "";
     const toNumber = params.To || params.Called || "";
+    const caller = inboxPhoneHandle(fromNumber);
+    if (caller && (await isInboxHandleBlocked(caller, "phone"))) {
+      res.status(200).type("text/xml").send(REJECT_TWIML);
+      return;
+    }
     if (!callSid) {
       res.status(200).type("text/xml").send(voicemailTwiml(account));
       return;
@@ -556,6 +580,16 @@ export async function inboundVoiceRecordingWebhook(
       recordingUrl: recordingUrlFromParams(params) || undefined,
       durationSeconds: parseDurationSeconds(params),
     });
+    if (params.RecordingSid) {
+      const saved = await findVoiceCommunication(account.accountSid, [
+        callSid,
+        params.ParentCallSid || "",
+      ].filter(Boolean));
+      if (saved) {
+        if (saved.transcript && !saved.transcriptSource) saved.transcriptSource = "basic";
+        await startCallTranscript(account, saved, params.RecordingSid);
+      }
+    }
 
     res.status(200).type("text/xml").send(thankYouHangupTwiml(account));
   } catch (err) {
@@ -564,6 +598,259 @@ export async function inboundVoiceRecordingWebhook(
       res.status(200).type("text/xml").send(thankYouHangupTwiml(account));
       return;
     }
+    res.status(200).type("text/xml").send(EMPTY_TWIML);
+  }
+}
+
+function clientIdentity(from: string): string {
+  return from.replace(/^client:/i, "");
+}
+
+function voiceClientActionUrl(intentId: string, storedBase?: string): string {
+  const base =
+    resolveVoiceWebhookBase(resolvePublicApiBase(), storedBase) ||
+    resolvePublicApiBase().replace(/\/$/, "");
+  return `${base}/webhooks/twilio/voice/client/complete?intentId=${encodeURIComponent(intentId)}`;
+}
+
+function voiceClientRecordingUrl(intentId: string, storedBase?: string): string {
+  const base =
+    resolveVoiceWebhookBase(resolvePublicApiBase(), storedBase) ||
+    resolvePublicApiBase().replace(/\/$/, "");
+  return `${base}/webhooks/twilio/voice/client/recording?intentId=${encodeURIComponent(intentId)}`;
+}
+
+function voiceStatusLabel(status: string, durationSeconds: number): string {
+  const label =
+    status === "completed"
+      ? "Call answered"
+      : status === "no-answer"
+        ? "No answer"
+        : status === "busy"
+          ? "Busy"
+          : status === "failed"
+            ? "Call failed"
+            : status === "canceled"
+              ? "Call canceled"
+              : "Call ended";
+  return durationSeconds > 0 ? `${label} · ${durationSeconds}s` : label;
+}
+
+// POST /webhooks/twilio/voice/client
+export async function clientVoiceWebhook(req: Request, res: Response): Promise<void> {
+  try {
+    const account = await resolveAccount(req);
+    if (!account) {
+      res.status(403).type("text/xml").send(EMPTY_TWIML);
+      return;
+    }
+    const params = asStringRecord(req.body);
+    const intentId = params.intentId || String(req.query.intentId || "");
+    const callSid = params.CallSid || "";
+    if (!Types.ObjectId.isValid(intentId) || !callSid) {
+      res.status(200).type("text/xml").send(buildSayHangupTwiml("This call could not be connected."));
+      return;
+    }
+    const intent = await VoiceCallIntent.findById(intentId);
+    if (!intent || intent.accountSid !== account.accountSid) {
+      res.status(200).type("text/xml").send(buildSayHangupTwiml("This call could not be connected."));
+      return;
+    }
+    const decision = evaluateVoiceIntent({
+      userId: String(intent.userRef),
+      expiresAt: intent.expiresAt,
+      twilioCallSid: intent.twilioCallSid || "",
+      identity: clientIdentity(params.From || ""),
+      callSid,
+      now: new Date(),
+    });
+    if (!decision.ok) {
+      console.warn("[voice] client webhook refused:", decision.message);
+      res.status(200).type("text/xml").send(buildSayHangupTwiml("This call could not be connected."));
+      return;
+    }
+
+    if (!decision.replay) {
+      intent.twilioCallSid = callSid;
+      await intent.save();
+      const doc = await TwilioCommunication.create({
+        twilioAccountRef: intent.twilioAccountRef,
+        accountSid: intent.accountSid,
+        channel: "voice",
+        direction: "outbound",
+        status: "ringing",
+        fromNumber: intent.fromNumber,
+        toNumber: intent.toNumber,
+        body: "Outbound call",
+        mediaUrls: [],
+        twilioSid: callSid,
+        customerRef: intent.customerRef,
+        contactRef: intent.contactRef,
+        threadRef: intent.threadRef,
+        createdByUserRef: intent.userRef,
+      });
+      if (intent.threadRef) {
+        await touchThreadAfterMessage(intent.threadRef, {
+          direction: "outbound",
+          channel: "voice",
+          body: "Outbound call",
+          at: new Date(),
+        });
+      }
+      await touchFromTwilio(doc, {
+        countUnread: false,
+        publish: true,
+        actorUserId: String(intent.userRef),
+      });
+    }
+
+    res.status(200).type("text/xml").send(
+      buildClientDialTwiml({
+        from: intent.fromNumber,
+        to: intent.toNumber,
+        actionUrl: voiceClientActionUrl(intentId, account.voicePublicBaseUrl),
+        recordingStatusCallbackUrl: voiceClientRecordingUrl(intentId, account.voicePublicBaseUrl),
+      }),
+    );
+  } catch (err) {
+    console.error("POST /webhooks/twilio/voice/client error:", err);
+    res.status(200).type("text/xml").send(buildSayHangupTwiml("This call could not be connected."));
+  }
+}
+
+// POST /webhooks/twilio/voice/client/recording
+export async function clientVoiceRecordingWebhook(req: Request, res: Response): Promise<void> {
+  try {
+    const account = await resolveAccount(req);
+    if (!account) {
+      res.status(403).send("Forbidden");
+      return;
+    }
+    const params = asStringRecord(req.body);
+    if ((params.RecordingStatus || "").toLowerCase() !== "completed") {
+      res.status(200).send("OK");
+      return;
+    }
+    const intentId = String(req.query.intentId || "");
+    const intent = Types.ObjectId.isValid(intentId)
+      ? await VoiceCallIntent.findById(intentId).select("twilioCallSid").lean()
+      : null;
+    const callSids = [params.CallSid, params.ParentCallSid, intent?.twilioCallSid || ""].filter(
+      Boolean,
+    );
+    const doc = callSids.length
+      ? await TwilioCommunication.findOne({ twilioSid: { $in: callSids }, channel: "voice" })
+      : null;
+    if (doc) {
+      const recordingUrl = recordingUrlFromParams(params);
+      if (recordingUrl && !doc.mediaUrls.includes(recordingUrl)) {
+        doc.mediaUrls.unshift(recordingUrl);
+        await doc.save();
+      }
+      await startCallTranscript(account, doc, params.RecordingSid || "");
+      await touchFromTwilio(doc, {
+        countUnread: false,
+        publish: true,
+        actorUserId: doc.createdByUserRef ? String(doc.createdByUserRef) : null,
+      });
+    }
+    res.status(200).send("OK");
+  } catch (err) {
+    console.error("POST /webhooks/twilio/voice/client/recording error:", err);
+    res.status(200).send("OK");
+  }
+}
+
+function intelligenceBody(req: Request): Record<string, unknown> {
+  if (req.body && typeof req.body === "object" && !Array.isArray(req.body)) {
+    return req.body as Record<string, unknown>;
+  }
+  return {};
+}
+
+// POST /webhooks/twilio/intelligence
+export async function intelligenceWebhook(req: Request, res: Response): Promise<void> {
+  try {
+    const body = intelligenceBody(req);
+    const transcriptSid = String(body.transcript_sid || body.transcriptSid || "");
+    const eventType = String(body.event_type || body.eventType || "");
+    if (eventType && !/transcript/i.test(eventType)) {
+      res.status(200).send("OK");
+      return;
+    }
+    const hint = String(req.query.accountSid || body.account_sid || "");
+    const account = hint ? await TwilioAccount.findOne({ accountSid: hint }) : null;
+    if (!account) {
+      res.status(403).send("Forbidden");
+      return;
+    }
+    const raw = (req as Request & { rawBody?: string }).rawBody || "";
+    const signature = req.get("X-Twilio-Signature") || "";
+    const token = getAccountAuthToken(account);
+    const urls = new Set(webhookUrlCandidates(req));
+    if (account.voicePublicBaseUrl) {
+      urls.add(`${account.voicePublicBaseUrl.replace(/\/+$/, "")}${req.originalUrl || req.url || ""}`);
+    }
+    const signed = [...urls].some((url) => {
+      if (raw && twilio.validateRequestWithBody(token, signature, url, raw)) return true;
+      return twilio.validateRequest(token, signature, url, asStringRecord(req.body));
+    });
+    if (!signed) {
+      res.status(403).send("Forbidden");
+      return;
+    }
+    if (transcriptSid) await completeCallTranscript(transcriptSid);
+    res.status(200).send("OK");
+  } catch (err) {
+    console.error("POST /webhooks/twilio/intelligence error:", err);
+    res.status(200).send("OK");
+  }
+}
+
+// POST /webhooks/twilio/voice/client/complete
+export async function clientVoiceCompleteWebhook(req: Request, res: Response): Promise<void> {
+  try {
+    const account = await resolveAccount(req);
+    if (!account) {
+      res.status(403).type("text/xml").send(EMPTY_TWIML);
+      return;
+    }
+    const params = asStringRecord(req.body);
+    const callSid = params.CallSid || "";
+    const status = mapTwilioCallStatus(params.DialCallStatus || params.CallStatus);
+    const durationSeconds = Math.max(0, parseInt(params.DialCallDuration || "0", 10) || 0);
+    const body = voiceStatusLabel(status, durationSeconds);
+    const doc = callSid
+      ? await TwilioCommunication.findOne({ twilioSid: callSid, channel: "voice" })
+      : null;
+    if (doc) {
+      doc.status = status;
+      doc.durationSeconds = durationSeconds;
+      doc.body = body;
+      doc.rawStatus = params.DialCallStatus || params.CallStatus || "";
+      await doc.save();
+      if (doc.threadRef) {
+        await MessageThread.updateOne(
+          { _id: doc.threadRef },
+          {
+            $set: {
+              lastMessageAt: new Date(),
+              lastMessagePreview: body,
+              lastMessageChannel: "voice",
+              lastMessageDirection: "outbound",
+            },
+          },
+        );
+      }
+      await touchFromTwilio(doc, {
+        countUnread: false,
+        publish: true,
+        actorUserId: doc.createdByUserRef ? String(doc.createdByUserRef) : null,
+      });
+    }
+    res.status(200).type("text/xml").send(EMPTY_TWIML);
+  } catch (err) {
+    console.error("POST /webhooks/twilio/voice/client/complete error:", err);
     res.status(200).type("text/xml").send(EMPTY_TWIML);
   }
 }

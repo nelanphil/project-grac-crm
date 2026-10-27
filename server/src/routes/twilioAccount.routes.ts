@@ -11,6 +11,7 @@ import {
   syncTwilioAccountNumbers,
   updateTwilioAccount,
   deleteTwilioAccount,
+  enableBrowserCalling,
 } from "../controllers/twilioAccount.controller";
 
 const router = Router();
@@ -31,6 +32,11 @@ router.post(
   "/:id/sync-numbers",
   requirePermission("integrations:write"),
   syncTwilioAccountNumbers,
+);
+router.post(
+  "/:id/voice/enable",
+  requirePermission("integrations:write"),
+  enableBrowserCalling,
 );
 router.patch("/:id", requirePermission("integrations:write"), updateTwilioAccount);
 router.delete("/:id", requirePermission("integrations:delete"), deleteTwilioAccount);

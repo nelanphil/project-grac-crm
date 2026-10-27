@@ -9,7 +9,7 @@ import {
   activeContactFilter,
 } from "../models/mongo/CustomerContact";
 import { publishDashboardChanged } from "./dashboardLive";
-import { matchCustomersByEmail } from "./mailboxCustomers.service";
+import { resolveInboxCustomer } from "./inboxCustomerResolve.service";
 import {
   highestInboxUid,
   listInboxMessagesAfterUid,
@@ -64,21 +64,22 @@ async function storeInbound(
   account: IEmailAccount,
   message: MailboxMessageDetail,
   publish: boolean,
-): Promise<boolean> {
+): Promise<{ inserted: boolean; notify: boolean }> {
+  const skip = { inserted: false, notify: false };
   const from = message.from[0];
   const fromEmail = normalizeAccountEmail(from?.address || "");
-  if (!fromEmail) return false;
-  if (fromEmail === normalizeAccountEmail(account.fromEmail)) return false;
+  if (!fromEmail) return skip;
+  if (fromEmail === normalizeAccountEmail(account.fromEmail)) return skip;
 
   const toEmail =
     normalizeAccountEmail(message.to[0]?.address || "") ||
     normalizeAccountEmail(account.fromEmail);
-  const matched = await matchCustomersByEmail([fromEmail]);
-  const customer = matched.get(fromEmail) ?? null;
-  const customerRef =
-    customer && Types.ObjectId.isValid(customer.id)
-      ? new Types.ObjectId(customer.id)
-      : null;
+  const resolved = await resolveInboxCustomer({
+    handle: fromEmail,
+    handleKind: "email",
+    fromName: from?.name || "",
+  });
+  const customerRef = resolved && Types.ObjectId.isValid(resolved) ? resolved : null;
   let contactRef: Types.ObjectId | null = null;
   if (customerRef) {
     const contact = await CustomerContact.findOne({
@@ -137,14 +138,14 @@ async function storeInbound(
     },
   );
   const doc = result.value;
-  if (!doc) return false;
+  if (!doc) return skip;
   const inserted = Boolean(result.lastErrorObject?.upserted);
-  await touchFromEmail(doc, {
+  const touched = await touchFromEmail(doc, {
     countUnread: inserted,
     publish,
     reopen: true,
   });
-  return inserted;
+  return { inserted, notify: inserted && !touched?.blocked };
 }
 
 async function advanceUid(accountId: Types.ObjectId, uid: number): Promise<void> {
@@ -172,13 +173,13 @@ export async function syncAccountInbox(accountId: string): Promise<void> {
     }
 
     const messages = await listInboxMessagesAfterUid(account, cursor, BATCH);
-    let inserted = 0;
+    let notify = false;
     for (const message of messages) {
-      const created = await storeInbound(account, message, false);
-      if (created) inserted += 1;
+      const stored = await storeInbound(account, message, false);
+      if (stored.notify) notify = true;
       await advanceUid(account._id, message.uid);
     }
-    if (inserted > 0) publishDashboardChanged();
+    if (notify) publishDashboardChanged();
     if (messages.length >= BATCH) {
       setTimeout(() => {
         void syncAccountInbox(accountId).catch((err) => {
@@ -201,20 +202,22 @@ export async function importInboxHistory(
 ): Promise<number> {
   let afterUid = 0;
   let imported = 0;
+  let notify = false;
   let highest = 0;
   for (;;) {
     const messages = await listInboxMessagesSince(account, since, afterUid, BATCH);
     if (messages.length === 0) break;
     for (const message of messages) {
-      const created = await storeInbound(account, message, false);
-      if (created) imported += 1;
+      const stored = await storeInbound(account, message, false);
+      if (stored.inserted) imported += 1;
+      if (stored.notify) notify = true;
       if (message.uid > highest) highest = message.uid;
       afterUid = message.uid;
     }
     if (messages.length < BATCH) break;
   }
   if (highest > 0) await advanceUid(account._id, highest);
-  if (imported > 0) publishDashboardChanged();
+  if (notify) publishDashboardChanged();
   return imported;
 }
 
@@ -236,11 +239,10 @@ export async function recordSentMailboxEmail(input: {
   let customerRef = input.customerRef ?? null;
   let contactRef = input.contactRef ?? null;
   if (!customerRef) {
-    const matched = await matchCustomersByEmail([toEmail]);
-    const customer = matched.get(toEmail) ?? null;
-    if (customer && Types.ObjectId.isValid(customer.id)) {
-      customerRef = new Types.ObjectId(customer.id);
-    }
+    customerRef = await resolveInboxCustomer({
+      handle: toEmail,
+      handleKind: "email",
+    });
   }
   if (customerRef && !contactRef) {
     const contact = await CustomerContact.findOne({

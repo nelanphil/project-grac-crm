@@ -14,6 +14,12 @@ export interface ITwilioAccount extends Document {
   isActive: boolean;
   /** Twilio <Say> voice used for IVR, voicemail, and outbound calls. */
   sayVoice: string;
+  voiceApiKeySid: string;
+  voiceApiKeySecretEncrypted: string;
+  voiceTwimlAppSid: string;
+  voiceIntelligenceServiceSid: string;
+  /** Public origin used for the browser-calling TwiML App when this API is local. */
+  voicePublicBaseUrl: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -65,6 +71,11 @@ const twilioAccountSchema = new Schema<ITwilioAccount>(
       type: Boolean,
       default: true,
     },
+    voiceApiKeySid: { type: String, trim: true, default: "" },
+    voiceApiKeySecretEncrypted: { type: String, default: "" },
+    voiceTwimlAppSid: { type: String, trim: true, default: "" },
+    voiceIntelligenceServiceSid: { type: String, trim: true, default: "" },
+    voicePublicBaseUrl: { type: String, trim: true, default: "" },
     sayVoice: {
       type: String,
       trim: true,
