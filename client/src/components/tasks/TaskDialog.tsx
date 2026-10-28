@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { CircleHelp } from "lucide-react";
 import {
   ApiError,
   TaskAssignee,
@@ -22,6 +23,9 @@ type TaskDraft = {
   customerId?: string;
   communicationId?: string;
   dueAt?: string;
+  onSchedule?: boolean;
+  scheduledTechnicianId?: string;
+  scheduledStart?: string;
 };
 
 type TaskDialogProps = {
@@ -45,6 +49,32 @@ function fromLocalInput(value: string): string | null {
 }
 
 const DURATIONS = [15, 30, 45, 60, 90, 120];
+
+const DUE_HINT =
+  "Deadline for the assignee. Overdue, today, and upcoming use this date.";
+const SCHEDULE_HINT =
+  "When the task shows on the technician's calendar. It can be a different time than the due date.";
+
+function FieldHint({ label, hint }: { label: string; hint: string }) {
+  return (
+    <span className="group relative inline-flex items-center gap-1">
+      {label}
+      <button
+        type="button"
+        aria-label={hint}
+        className="rounded-full text-[var(--staff-muted)] outline-none hover:text-[var(--staff-ink)] focus-visible:text-[var(--staff-ink)]"
+      >
+        <CircleHelp className="h-3.5 w-3.5" />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute top-full left-0 z-30 mt-1.5 hidden w-[240px] rounded-md border border-[var(--staff-border)] bg-[var(--staff-cream)] px-2.5 py-2 text-left text-[11px] font-normal leading-snug text-[var(--staff-ink)] shadow-lg group-hover:block group-focus-within:block"
+      >
+        {hint}
+      </span>
+    </span>
+  );
+}
 
 function quickDue(dayOffset: number, hour: number): string {
   const date = new Date();
@@ -72,11 +102,19 @@ export default function TaskDialog({
   );
   const [assigneeId, setAssigneeId] = useState(task?.assigneeId || me?.id || "");
   const [assignees, setAssignees] = useState<TaskAssignee[]>([]);
-  const [onSchedule, setOnSchedule] = useState(Boolean(task?.onSchedule));
-  const [technicianId, setTechnicianId] = useState(task?.scheduledTechnicianId || "");
+  const [onSchedule, setOnSchedule] = useState(
+    task ? Boolean(task.onSchedule) : Boolean(draft?.onSchedule),
+  );
+  const [technicianId, setTechnicianId] = useState(
+    task?.scheduledTechnicianId || draft?.scheduledTechnicianId || "",
+  );
   const [technicians, setTechnicians] = useState<TechnicianListItem[]>([]);
   const [scheduledAt, setScheduledAt] = useState(
-    task?.scheduledStart ? localInput(new Date(task.scheduledStart)) : "",
+    task?.scheduledStart
+      ? localInput(new Date(task.scheduledStart))
+      : draft?.scheduledStart
+        ? localInput(new Date(draft.scheduledStart))
+        : "",
   );
   const [minutes, setMinutes] = useState(task?.scheduledMinutes || 30);
   const [saving, setSaving] = useState(false);
@@ -164,7 +202,7 @@ export default function TaskDialog({
           />
         </label>
         <label className="mt-3 block text-xs font-medium text-[var(--staff-muted)]">
-          Due
+          <FieldHint label="Due" hint={DUE_HINT} />
           <input
             type="datetime-local"
             value={due}
@@ -237,7 +275,7 @@ export default function TaskDialog({
               </select>
             </label>
             <label className="block text-xs font-medium text-[var(--staff-muted)]">
-              Date and time
+              <FieldHint label="Date and time" hint={SCHEDULE_HINT} />
               <input
                 type="datetime-local"
                 value={scheduledAt}

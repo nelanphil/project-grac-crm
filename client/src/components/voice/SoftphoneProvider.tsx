@@ -94,12 +94,82 @@ function errorText(err: unknown, fallback: string): string {
   return fallback;
 }
 
-function microphoneMessage(err: unknown): string {
+const MIC_BLOCKED =
+  "Microphone is blocked. On iPhone: tap aA in the address bar > Website Settings > Microphone > Allow, then try again.";
+
+const CALLS_UNSUPPORTED =
+  "This browser can't make calls. Open the site in Safari or Chrome.";
+
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+
+type AudioContextCtor = typeof AudioContext;
+
+let sharedAudio: AudioContext | null = null;
+
+function isIos(): boolean {
+  if (typeof navigator === "undefined") return false;
+  if (/iPad|iPhone|iPod/i.test(navigator.userAgent)) return true;
+  return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+}
+
+function audioContextCtor(): AudioContextCtor | null {
+  if (typeof window === "undefined") return null;
+  const scoped = window as Window & { webkitAudioContext?: AudioContextCtor };
+  return window.AudioContext ?? scoped.webkitAudioContext ?? null;
+}
+
+function voiceErrorCode(err: unknown): number | null {
+  if (!err || typeof err !== "object" || !("code" in err)) return null;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === "number" && Number.isFinite(code)) return code;
+  if (typeof code === "string" && /^\d+$/.test(code)) return Number(code);
+  return null;
+}
+
+function callFailureMessage(err: unknown): string {
+  console.error("Voice call failed:", err);
+  const name = err instanceof Error ? err.name : "";
+  const code = voiceErrorCode(err);
+  if (name === "NotAllowedError" || code === 31401 || code === 31402) return MIC_BLOCKED;
   const message = errorText(err, "The call failed.");
-  if (/31401|permission|notallowed|microphone/i.test(message)) {
-    return "Allow microphone access in the browser to place a call.";
+  return code == null ? message : `Call failed (${code}): ${message}`;
+}
+
+function releaseMic(stream: MediaStream | null | undefined): void {
+  stream?.getTracks().forEach((track) => track.stop());
+}
+
+function primeAudioOutput(): void {
+  const Ctor = audioContextCtor();
+  if (Ctor) {
+    if (!sharedAudio || sharedAudio.state === "closed") sharedAudio = new Ctor();
+    const source = sharedAudio.createBufferSource();
+    source.buffer = sharedAudio.createBuffer(1, 1, 22050);
+    source.connect(sharedAudio.destination);
+    try {
+      source.start(0);
+    } catch {
+      // The context can close between the check above and playback.
+    }
+    void sharedAudio.resume().catch(() => undefined);
   }
-  return message;
+  const audio = new Audio(SILENT_WAV);
+  audio.setAttribute("playsinline", "");
+  const played = audio.play();
+  if (played) void played.catch(() => undefined);
+}
+
+function beginMicCapture(): Promise<MediaStream> {
+  if (
+    typeof window === "undefined" ||
+    !window.isSecureContext ||
+    typeof navigator.mediaDevices?.getUserMedia !== "function"
+  ) {
+    throw new Error(CALLS_UNSUPPORTED);
+  }
+  primeAudioOutput();
+  return navigator.mediaDevices.getUserMedia({ audio: true });
 }
 
 function customParam(call: Call, name: string): string {
@@ -173,7 +243,7 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
       call.on("disconnect", () => finish("ended", undefined, call));
       call.on("cancel", () => finish("ended", undefined, call));
       call.on("reject", () => finish("error", "The call was rejected.", call));
-      call.on("error", (callError) => finish("error", microphoneMessage(callError), call));
+      call.on("error", (callError) => finish("error", callFailureMessage(callError), call));
     },
     [finish],
   );
@@ -219,6 +289,7 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
       const device = new TwilioDevice(issued.token, {
         logLevel: "error",
         closeProtection: true,
+        ...(isIos() ? { disableAudioContextSounds: true } : {}),
       });
       device.on("tokenWillExpire", () => {
         const latest = useAuthStore.getState().token;
@@ -229,7 +300,7 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
       });
       device.on("error", (deviceError) => {
         if (!callRef.current) return;
-        setError(microphoneMessage(deviceError));
+        setError(callFailureMessage(deviceError));
         setPhase("error");
       });
       device.on("incoming", (call) => {
@@ -348,13 +419,29 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
     async (input: StartSoftphoneCall) => {
       if (!token) throw new Error("Sign in to place a call.");
       if (callRef.current) throw new Error("Finish the current call first.");
+      let mic: Promise<MediaStream>;
+      try {
+        mic = beginMicCapture();
+      } catch (err) {
+        setDisplayName(input.displayName || input.phone || "Call");
+        setPhase("error");
+        setError(callFailureMessage(err));
+        throw err;
+      }
+      let probe: MediaStream | null = null;
+      const captured = mic.then((stream) => {
+        probe = stream;
+        return stream;
+      });
       setPhase("connecting");
       setError(null);
       setMuted(false);
       setStartedAt(null);
       setDisplayName(input.displayName || input.phone || "Call");
       try {
-        const started = await startVoiceCall(token, input);
+        const [started] = await Promise.all([startVoiceCall(token, input), captured]);
+        releaseMic(probe);
+        probe = null;
         setConversationId(started.conversationId || null);
         setDisplayName(input.displayName || started.toNumber);
         const device = await deviceFor(started.twilioAccountId);
@@ -363,8 +450,10 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
         watchCall(call);
         return { conversationId: started.conversationId };
       } catch (err) {
+        releaseMic(probe);
+        void captured.then((stream) => releaseMic(stream)).catch(() => undefined);
         setPhase("error");
-        setError(microphoneMessage(err));
+        setError(callFailureMessage(err));
         throw err;
       }
     },
@@ -375,6 +464,23 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
     const call = incomingCallRef.current;
     const info = incomingInfoRef.current;
     if (!call || !info) return;
+    let mic: Promise<MediaStream>;
+    try {
+      mic = beginMicCapture();
+    } catch (err) {
+      incomingCallRef.current = null;
+      incomingInfoRef.current = null;
+      setIncoming(null);
+      try {
+        call.reject();
+      } catch {
+        // The caller may already have hung up.
+      }
+      setDisplayName(info.callerName || info.callerNumber || "Call");
+      setPhase("error");
+      setError(callFailureMessage(err));
+      return;
+    }
     incomingCallRef.current = null;
     incomingInfoRef.current = null;
     setIncoming(null);
@@ -388,8 +494,22 @@ export default function SoftphoneProvider({ children }: { children: React.ReactN
     setStartedAt(null);
     setPhase("connecting");
     watchCall(call);
-    call.accept();
-  }, [watchCall]);
+    void mic
+      .then((stream) => {
+        releaseMic(stream);
+        if (callRef.current !== call) return;
+        call.accept();
+      })
+      .catch((err: unknown) => {
+        call.removeAllListeners("reject");
+        try {
+          call.reject();
+        } catch {
+          // The caller may already have hung up.
+        }
+        finish("error", callFailureMessage(err), call);
+      });
+  }, [watchCall, finish]);
 
   const declineIncoming = useCallback(() => {
     const call = incomingCallRef.current;

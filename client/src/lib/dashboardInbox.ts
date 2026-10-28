@@ -1,18 +1,13 @@
 import {
   getContactFormSubmissions,
-  getEmailAccounts,
-  getMailboxMessages,
-  getMessagingThreads,
+  getInboxConversations,
   markContactFormSubmissionRead,
-  markMailboxMessageSeen,
-  markMessagingThreadRead,
-  type MailboxAddress,
+  markInboxConversationRead,
+  type InboxConversationItem,
 } from "@/lib/api";
-import { contactDisplayName } from "@/components/messaging/conversationUtils";
 
 export type InboxReadTarget =
-  | { type: "text"; threadId: string }
-  | { type: "email"; accountId: string; uid: number }
+  | { type: "inbox"; conversationId: string }
   | { type: "contact-form"; submissionId: string };
 
 export type InboxPreview = {
@@ -25,11 +20,7 @@ export type InboxPreview = {
   readTarget: InboxReadTarget;
 };
 
-function emailSender(from: MailboxAddress[]): string {
-  const first = from[0];
-  if (!first) return "Unknown";
-  return first.name.trim() || first.address || "Unknown";
-}
+const INBOX_PREVIEW_LIMIT = 100;
 
 function contactFormHref(createdAt: string): string {
   const date = new Date(createdAt);
@@ -52,47 +43,32 @@ function excerpt(content: string): string {
   return `${text.slice(0, 157)}…`;
 }
 
-async function loadUnreadEmails(token: string): Promise<InboxPreview[]> {
-  try {
-    const { accounts } = await getEmailAccounts(token);
-    const connected = accounts.filter(
-      (account) => account.isActive && account.imapHost.trim(),
-    );
-    const mailboxes = await Promise.all(
-      connected.map(async (account) => {
-        try {
-          const { messages } = await getMailboxMessages(
-            token,
-            account._id,
-            "inbox",
-          );
-          return messages
-            .filter((message) => !message.seen)
-            .map((message): InboxPreview => ({
-              id: `email-${account._id}-${message.uid}`,
-              kind: "Email",
-              title: emailSender(message.from),
-              preview:
-                message.subject.trim() ||
-                message.snippet.trim() ||
-                "(no subject)",
-              at: message.date,
-              href: "/dashboard/inboxes",
-              readTarget: {
-                type: "email",
-                accountId: account._id,
-                uid: message.uid,
-              },
-            }));
-        } catch {
-          return [] as InboxPreview[];
-        }
-      }),
-    );
-    return mailboxes.flat();
-  } catch {
-    return [];
-  }
+function conversationPreview(item: InboxConversationItem): InboxPreview {
+  return {
+    id: `inbox-${item.id}`,
+    kind: item.lastChannel === "email" ? "Email" : "Text",
+    title: item.displayName.trim() || item.handle || "Unknown",
+    preview: item.lastPreview.trim() || (item.lastChannel === "email" ? "Email" : "Text message"),
+    at: item.lastMessageAt,
+    href: `/dashboard/inboxes?c=${item.id}`,
+    readTarget: { type: "inbox", conversationId: item.id },
+  };
+}
+
+async function loadUnreadConversations(token: string): Promise<InboxPreview[]> {
+  const collected: InboxConversationItem[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await getInboxConversations(token, {
+      status: "open",
+      filter: "unread",
+      cursor,
+    });
+    if (!cursor) collected.push(...(page.pinned ?? []));
+    collected.push(...page.conversations);
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor && collected.length < INBOX_PREVIEW_LIMIT);
+  return collected.slice(0, INBOX_PREVIEW_LIMIT).map(conversationPreview);
 }
 
 async function loadUnreadContactForms(token: string): Promise<InboxPreview[]> {
@@ -120,21 +96,11 @@ async function loadUnreadContactForms(token: string): Promise<InboxPreview[]> {
 }
 
 export async function loadUnreadInbox(token: string): Promise<InboxPreview[]> {
-  const [threadsResult, emails, contactForms] = await Promise.all([
-    getMessagingThreads(token, { unread: true, page: 1, pageSize: 100 }),
-    loadUnreadEmails(token),
+  const [conversations, contactForms] = await Promise.all([
+    loadUnreadConversations(token),
     loadUnreadContactForms(token),
   ]);
-  const texts: InboxPreview[] = threadsResult.threads.map((thread) => ({
-    id: `text-${thread._id}`,
-    kind: "Text",
-    title: contactDisplayName(thread),
-    preview: thread.lastMessagePreview.trim() || "Text message",
-    at: thread.lastMessageAt,
-    href: "/dashboard/inboxes",
-    readTarget: { type: "text", threadId: thread._id },
-  }));
-  return [...texts, ...emails, ...contactForms].sort((left, right) => {
+  return [...conversations, ...contactForms].sort((left, right) => {
     const leftTime = left.at ? new Date(left.at).getTime() : 0;
     const rightTime = right.at ? new Date(right.at).getTime() : 0;
     return rightTime - leftTime;
@@ -146,12 +112,8 @@ export async function markInboxPreviewRead(
   item: InboxPreview,
 ): Promise<void> {
   const target = item.readTarget;
-  if (target.type === "text") {
-    await markMessagingThreadRead(token, target.threadId);
-    return;
-  }
-  if (target.type === "email") {
-    await markMailboxMessageSeen(token, target.accountId, target.uid, "inbox");
+  if (target.type === "inbox") {
+    await markInboxConversationRead(token, target.conversationId);
     return;
   }
   await markContactFormSubmissionRead(token, target.submissionId);

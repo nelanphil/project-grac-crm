@@ -39,6 +39,7 @@ import ThemeToggle from "@/components/theme/ThemeToggle";
 import NavItemGroup from "@/components/dashboard/NavItemGroup";
 import { RootDropZone } from "@/components/dashboard/NavDropTargets";
 import CustomerHeaderSearch from "@/components/dashboard/staff/CustomerHeaderSearch";
+import TaskDialog from "@/components/tasks/TaskDialog";
 
 const navCollision: CollisionDetection = (args) => {
   const pointerHits = pointerWithin(args);
@@ -61,8 +62,10 @@ export default function StaffTopBar() {
   const canWriteEstimates = useAuthStore((s) =>
     s.hasPermission("estimates:write"),
   );
+  const canWriteTasks = useAuthStore((s) => s.hasPermission("tasks:write"));
   const [mobileOpen, setMobileOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const [creatingTask, setCreatingTask] = useState(false);
   const [editMode, setEditMode] = useState(false);
 
   const baseSections = useMemo(
@@ -239,6 +242,18 @@ export default function StaffTopBar() {
         >
           Estimate
         </Link>
+      ) : null}
+      {canWriteTasks ? (
+        <button
+          type="button"
+          className="block w-full px-4 py-2.5 text-left text-sm text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+          onClick={() => {
+            closeMenus();
+            setCreatingTask(true);
+          }}
+        >
+          New Task
+        </button>
       ) : null}
       <Link
         href="/dashboard/orders"
@@ -491,6 +506,16 @@ export default function StaffTopBar() {
                 </nav>
               </div>
             </div>,
+            document.body,
+          )
+        : null}
+      {creatingTask && token && typeof document !== "undefined"
+        ? createPortal(
+            <TaskDialog
+              token={token}
+              onClose={() => setCreatingTask(false)}
+              onSaved={() => setCreatingTask(false)}
+            />,
             document.body,
           )
         : null}

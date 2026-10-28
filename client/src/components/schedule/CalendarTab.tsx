@@ -412,6 +412,7 @@ function ScheduleRail({
   technicianPane,
   technicianColors,
   tasks = [],
+  onCreateTask,
 }: {
   dayLabel: string;
   dayJobs: WorkOrderListItem[];
@@ -434,6 +435,7 @@ function ScheduleRail({
   technicianPane?: ReactNode;
   technicianColors: Record<string, string>;
   tasks?: TaskItem[];
+  onCreateTask?: () => void;
 }) {
   const empty = dayJobs.length === 0 && undatedJobs.length === 0 && tasks.length === 0;
   const showTechnicians = pane === "technicians" && technicianPane;
@@ -441,7 +443,20 @@ function ScheduleRail({
   return (
     <aside className="flex h-full max-h-[44rem] min-h-0 flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm lg:max-h-none">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-semibold text-brand-dark">{dayLabel}</h2>
+        <div className="flex min-w-0 items-center gap-2">
+          {onCreateTask ? (
+            <button
+              type="button"
+              onClick={onCreateTask}
+              className="shrink-0 rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs font-medium text-brand-dark hover:bg-neutral-100"
+            >
+              Task
+            </button>
+          ) : null}
+          <h2 className="min-w-0 truncate text-base font-semibold text-brand-dark">
+            {dayLabel}
+          </h2>
+        </div>
         {showTechnicians ? null : (
           <button
             type="button"
@@ -937,6 +952,7 @@ export default function CalendarTab({
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [railTasks, setRailTasks] = useState<TaskItem[]>([]);
   const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
+  const [creatingTask, setCreatingTask] = useState(false);
   const [calendarUnscheduled, setCalendarUnscheduled] = useState<
     WorkOrderListItem[]
   >([]);
@@ -2753,6 +2769,9 @@ export default function CalendarTab({
       technicianPane={technicianPane}
       technicianColors={technicianColors}
       tasks={railTasks}
+      onCreateTask={
+        canManageTasks ? () => setCreatingTask(true) : undefined
+      }
     />
   ) : null;
 
@@ -3235,6 +3254,27 @@ export default function CalendarTab({
           onClose={() => setEditingTask(null)}
           onSaved={() => {
             setEditingTask(null);
+            void load();
+          }}
+        />
+      ) : null}
+
+      {creatingTask && token ? (
+        <TaskDialog
+          token={token}
+          draft={{
+            dueAt: localDateTimeToIso(selectedDate, "09:00"),
+            ...(mapRailPane === "technicians" && effectiveTechId
+              ? {
+                  onSchedule: true,
+                  scheduledTechnicianId: effectiveTechId,
+                  scheduledStart: localDateTimeToIso(selectedDate, "09:00"),
+                }
+              : {}),
+          }}
+          onClose={() => setCreatingTask(false)}
+          onSaved={() => {
+            setCreatingTask(false);
             void load();
           }}
         />
