@@ -58,14 +58,14 @@ import { formatUsPhone } from "../utils/customerSites";
 import { normalizeAccountEmail } from "../utils/provisionCustomerAccount";
 import { sanitizeEmailBodyHtml } from "../utils/emailChrome";
 import {
+  ReplyEmailFormat,
+  buildReplyEmail,
   buildRfc822Message,
-  composeReplyHtml,
-  htmlToPlainText,
   isBlankHtml,
-  renderBrandedReplyShell,
   replySubject,
   threadingHeaders,
 } from "../utils/mailboxReply";
+import { ReplyTargetError, resolveReplyTarget } from "../utils/inboxReplyTarget";
 import { renderMessageTemplate } from "../utils/messageTemplate";
 import {
   buildTemplateContextForContact,
@@ -77,6 +77,7 @@ import {
 } from "../utils/messageThreads";
 import { phoneLinesMatch } from "../utils/twilioPhoneLines";
 import { ScheduledAtError } from "../utils/scheduledEmail";
+import { setSimpleFormat, simpleFormatRecipients } from "../utils/emailPreferences";
 import {
   EmailAttachmentError,
   MAX_EMAIL_ATTACHMENTS,
@@ -1229,11 +1230,19 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
       }
     }
     const match = commFilter(convo);
-    const latest = match.email._id === null
-      ? null
-      : await EmailCommunication.findOne({ ...match.email, direction: "inbound" })
-          .sort({ createdAt: -1 })
-          .lean();
+    const scoped = match.email._id !== null;
+    const latest = await resolveReplyTarget(req.body?.replyToEmailId, {
+      byId: (id) =>
+        scoped
+          ? EmailCommunication.findOne({ $and: [match.email, { _id: id }] }).lean()
+          : Promise.resolve(null),
+      latestInbound: () =>
+        scoped
+          ? EmailCommunication.findOne({ ...match.email, direction: "inbound" })
+              .sort({ createdAt: -1 })
+              .lean()
+          : Promise.resolve(null),
+    });
     if (!subject && latest?.subject) subject = replySubject(latest.subject, "reply");
     if (!subject) {
       res.status(400).json({ message: "Add a subject." });
@@ -1246,6 +1255,8 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
     const useBrandTemplate = req.body?.useBrandTemplate !== false;
     const includeQuoted = req.body?.includeQuoted !== false;
     let html: string;
+    let format: ReplyEmailFormat = "plain";
+    let fallback = false;
     if (hasHtml) {
       if (rawHtml.length > 100_000) {
         res.status(400).json({ message: "Message is too long." });
@@ -1256,26 +1267,31 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
         res.status(400).json({ message: "Write a message before sending." });
         return;
       }
+      const simpleFor = await simpleFormatRecipients([...toList, ...ccField.ok]);
       const quotedAt = latest?.receivedAt ?? latest?.createdAt ?? null;
-      html =
-        latest && includeQuoted
-          ? composeReplyHtml({
-              mode: "reply",
-              bodyHtml,
-              useBrandTemplate,
-              original: {
-                html: latest.html || "",
-                text: latest.body || "",
-                from: [{ name: latest.fromName || "", address: latest.fromEmail || "" }],
-                to: [{ name: "", address: latest.toEmail || "" }],
-                date: quotedAt ? new Date(quotedAt).toISOString() : null,
-                subject: latest.subject || "",
-              },
-            })
-          : useBrandTemplate
-            ? renderBrandedReplyShell(bodyHtml)
-            : bodyHtml;
-      text = htmlToPlainText(html);
+      const built = buildReplyEmail({
+        bodyHtml,
+        useBrandTemplate,
+        simpleFormat: simpleFor.size > 0,
+        quote:
+          latest && includeQuoted
+            ? {
+                mode: "reply",
+                original: {
+                  html: latest.html || "",
+                  text: latest.body || "",
+                  from: [{ name: latest.fromName || "", address: latest.fromEmail || "" }],
+                  to: [{ name: "", address: latest.toEmail || "" }],
+                  date: quotedAt ? new Date(quotedAt).toISOString() : null,
+                  subject: latest.subject || "",
+                },
+              }
+            : null,
+      });
+      html = built.html;
+      text = built.text;
+      format = built.format;
+      fallback = built.fallback;
     } else {
       if (!text) {
         res.status(400).json({ message: "Write a message before sending." });
@@ -1284,10 +1300,11 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
       html = textToHtml(text);
     }
     const account = await loadActiveEmailAccount(emailAccountId);
-    const headers = latest?.messageId
+    const threadMessageId = latest?.messageId || latest?.providerMessageId || "";
+    const headers = threadMessageId
       ? threadingHeaders({
-          messageId: latest.messageId,
-          references: latest.references ?? [],
+          messageId: threadMessageId,
+          references: latest?.references ?? [],
         })
       : {};
     const sent = await sendWithEmailAccount(account, {
@@ -1339,14 +1356,48 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
       const message = err instanceof Error ? err.message : "Sent copy failed.";
       console.error("[inboxes] could not append sent copy:", message);
     }
-    res.json({ sent: true });
+    res.json({ sent: true, format, fallback });
   } catch (err) {
-    if (err instanceof StaffEmailBatchError || err instanceof EmailAttachmentError) {
+    if (
+      err instanceof StaffEmailBatchError ||
+      err instanceof EmailAttachmentError ||
+      err instanceof ReplyTargetError
+    ) {
       res.status(err.status).json({ message: err.message });
       return;
     }
     console.error("POST /inboxes/conversations/:id/email error:", err);
     res.status(500).json({ message: "Failed to send the email" });
+  }
+}
+
+export async function getInboxEmailFormat(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const emails = parseRecipientField(req.query.emails).ok.slice(0, MAX_RECIPIENTS);
+    const simple = await simpleFormatRecipients(emails);
+    res.json({ simpleFormat: [...simple] });
+  } catch (err) {
+    console.error("GET /inboxes/email-format error:", err);
+    res.status(500).json({ message: "Failed to load email format" });
+  }
+}
+
+export async function setInboxEmailFormat(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const email = parseRecipientField(req.body?.email).ok[0];
+    if (!email) {
+      res.status(400).json({ message: "Enter a valid email address." });
+      return;
+    }
+    if (typeof req.body?.simpleFormat !== "boolean") {
+      res.status(400).json({ message: "simpleFormat must be true or false." });
+      return;
+    }
+    await setSimpleFormat(email, req.body.simpleFormat);
+    res.json({ email: email.toLowerCase(), simpleFormat: req.body.simpleFormat });
+  } catch (err) {
+    console.error("PUT /inboxes/email-format error:", err);
+    res.status(500).json({ message: "Failed to save email format" });
   }
 }
 

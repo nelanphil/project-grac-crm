@@ -90,6 +90,26 @@ export function renderBrandedReplyShell(bodyHtml: string): string {
 </table>`;
 }
 
+/** Plain layout for recipients whose mail apps hide or strip the branded template. */
+export function renderSimpleReplyShell(bodyHtml: string): string {
+  const content = bodyHtml.trim() || "<p></p>";
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#231f20;">
+${content}
+<p style="margin:16px 0 0 0;">${escapeHtml(COMPANY.name)}<br>
+${escapeHtml(COMPANY.phone)}<br>
+<a href="mailto:${escapeHtml(COMPANY.email)}">${escapeHtml(COMPANY.email)}</a></p>
+</div>`;
+}
+
+function quotablePreviewHtml(html: string): string {
+  return html
+    .replace(/<head[\s\S]*?<\/head>/gi, "")
+    .replace(/<(style|script|title)[\s\S]*?<\/\1>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<\/?(html|body|meta|link)\b[^>]*>/gi, "")
+    .trim();
+}
+
 /**
  * Builds the full HTML document for live preview in the composer iframe,
  * including the message body (branded or plain) plus the formatted quoted thread.
@@ -98,6 +118,7 @@ export function renderFullReplyPreview(input: {
   bodyHtml: string;
   mode: MailboxReplyMode;
   useBrandTemplate: boolean;
+  simpleFormat?: boolean;
   includeQuoted?: boolean;
   original: {
     html?: string | null;
@@ -108,12 +129,15 @@ export function renderFullReplyPreview(input: {
     subject: string;
   };
 }): string {
-  const content = input.useBrandTemplate
-    ? renderBrandedReplyShell(input.bodyHtml)
-    : `<div style="max-width:640px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#231f20;">${input.bodyHtml}</div>`;
+  const content = input.simpleFormat
+    ? renderSimpleReplyShell(input.bodyHtml)
+    : input.useBrandTemplate
+      ? renderBrandedReplyShell(input.bodyHtml)
+      : `<div style="max-width:640px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#231f20;">${input.bodyHtml}</div>`;
 
-  const quotedBody = input.original.html?.trim()
-    ? input.original.html
+  const cleanedQuote = quotablePreviewHtml(input.original.html ?? "");
+  const quotedBody = cleanedQuote
+    ? cleanedQuote
     : `<pre style="white-space:pre-wrap;font-family:sans-serif;margin:0;">${escapeHtml(input.original.text || "(no message body)")}</pre>`;
 
   let quotedHeader = "";

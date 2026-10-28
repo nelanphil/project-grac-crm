@@ -1,12 +1,13 @@
 import { IEmailAccount } from "../models/mongo/EmailAccount";
 import { formatFrom, sendWithEmailAccount } from "./email.service";
 import { sanitizeEmailBodyHtml } from "../utils/emailChrome";
+import { simpleFormatRecipients } from "../utils/emailPreferences";
 import {
+  buildReplyEmail,
   buildRfc822Message,
-  composeReplyHtml,
-  htmlToPlainText,
   isBlankHtml,
   MailboxReplyMode,
+  ReplyEmailFormat,
   threadingHeaders,
 } from "../utils/mailboxReply";
 import {
@@ -32,7 +33,12 @@ export async function sendMailboxReply(input: {
   html: string;
   useBrandTemplate?: boolean;
   automatic?: boolean;
-}): Promise<{ sent: true; savedToSent: boolean }> {
+}): Promise<{
+  sent: true;
+  savedToSent: boolean;
+  format: ReplyEmailFormat;
+  fallback: boolean;
+}> {
   if (input.to.length === 0) {
     throw new MailboxError("Add at least one recipient.", 400);
   }
@@ -46,17 +52,21 @@ export async function sendMailboxReply(input: {
     input.folder,
     input.uid,
   );
-  const html = composeReplyHtml({
-    mode: input.mode,
+  const simpleFor = await simpleFormatRecipients([...input.to, ...input.cc]);
+  const { html, text, format, fallback } = buildReplyEmail({
     bodyHtml,
-    useBrandTemplate: input.useBrandTemplate,
-    original: {
-      html: original.html,
-      text: original.text,
-      from: original.from,
-      to: original.to,
-      date: original.date,
-      subject: original.subject,
+    useBrandTemplate: Boolean(input.useBrandTemplate),
+    simpleFormat: simpleFor.size > 0,
+    quote: {
+      mode: input.mode,
+      original: {
+        html: original.html,
+        text: original.text,
+        from: original.from,
+        to: original.to,
+        date: original.date,
+        subject: original.subject,
+      },
     },
   });
   const headers: Record<string, string> = {
@@ -79,7 +89,7 @@ export async function sendMailboxReply(input: {
     cc: joinAddresses(input.cc),
     bcc: joinAddresses(input.bcc),
     subject: input.subject,
-    text: htmlToPlainText(html),
+    text,
     html,
     headers,
   });
@@ -91,7 +101,7 @@ export async function sendMailboxReply(input: {
       to: input.to,
       cc: input.cc,
       subject: input.subject,
-      text: htmlToPlainText(html),
+      text,
       html,
       headers,
       messageId: result.messageId,
@@ -110,7 +120,7 @@ export async function sendMailboxReply(input: {
       to: input.to,
       subject: input.subject,
       html,
-      text: htmlToPlainText(html),
+      text,
       messageId: result.messageId,
       inReplyTo: headers["In-Reply-To"],
       references: headers.References ? headers.References.split(/\s+/) : [],
@@ -120,5 +130,5 @@ export async function sendMailboxReply(input: {
     console.error("[inboxes] could not store sent email:", message);
   }
 
-  return { sent: true, savedToSent };
+  return { sent: true, savedToSent, format, fallback };
 }

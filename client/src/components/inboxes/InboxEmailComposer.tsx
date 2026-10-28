@@ -17,7 +17,13 @@ import {
   X,
 } from "lucide-react";
 import EmailBodyEditor from "@/components/messaging/EmailBodyEditor";
-import type { InboxTimelineMessage, MailboxAddress } from "@/lib/api";
+import {
+  ApiError,
+  getInboxEmailFormat,
+  setInboxEmailFormat,
+  type InboxTimelineMessage,
+  type MailboxAddress,
+} from "@/lib/api";
 import {
   attachmentKey,
   formatAttachmentSize,
@@ -38,10 +44,17 @@ export type InboxEmailDraft = {
   useBrandTemplate: boolean;
   includeQuoted: boolean;
   attachments: File[];
+  replyToEmailId: string;
 };
 
+export const NEW_EMAIL_TARGET = "new";
+
 type InboxEmailComposerProps = {
+  token: string;
   original: InboxTimelineMessage | null;
+  replyOptions: InboxTimelineMessage[];
+  replyTargetId: string;
+  onChangeReplyTarget: (id: string) => void;
   initialTo: string;
   initialSubject: string;
   initialHtml: string;
@@ -82,8 +95,24 @@ function quoteFromMessage(message: InboxTimelineMessage): {
   };
 }
 
+function replyOptionLabel(message: InboxTimelineMessage): string {
+  const who =
+    message.direction === "outbound"
+      ? `You to ${message.to || "recipient"}`
+      : message.senderName || message.from || "Unknown sender";
+  const when = new Date(message.at).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `${message.subject || "(no subject)"} · ${who} · ${when}`;
+}
+
 export default function InboxEmailComposer({
+  token,
   original,
+  replyOptions,
+  replyTargetId,
+  onChangeReplyTarget,
   initialTo,
   initialSubject,
   initialHtml,
@@ -113,6 +142,76 @@ export default function InboxEmailComposer({
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
+  const [toTouched, setToTouched] = useState(false);
+  const [subjectTouched, setSubjectTouched] = useState(false);
+  const [seenTargetId, setSeenTargetId] = useState(replyTargetId);
+  const [simpleRecipients, setSimpleRecipients] = useState<string[]>([]);
+  const [savingFormat, setSavingFormat] = useState(false);
+
+  if (seenTargetId !== replyTargetId) {
+    setSeenTargetId(replyTargetId);
+    if (!toTouched) setTo(initialTo);
+    if (!subjectTouched) setSubject(initialSubject);
+  }
+
+  const toAddresses = useMemo(
+    () => parseAddressList(to).ok.map((address) => address.toLowerCase()),
+    [to],
+  );
+  const formatLookupKey = useMemo(
+    () =>
+      [...new Set([...toAddresses, ...parseAddressList(cc).ok.map((a) => a.toLowerCase())])]
+        .sort()
+        .join(","),
+    [toAddresses, cc],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      const emails = formatLookupKey ? formatLookupKey.split(",") : [];
+      if (emails.length === 0) {
+        setSimpleRecipients([]);
+        return;
+      }
+      getInboxEmailFormat(token, emails)
+        .then((result) => {
+          if (!cancelled) setSimpleRecipients(result.simpleFormat);
+        })
+        .catch(() => {
+          if (!cancelled) setSimpleRecipients([]);
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [token, formatLookupKey]);
+
+  const simpleFormatActive = simpleRecipients.length > 0;
+  const allToSimple =
+    toAddresses.length > 0 && toAddresses.every((address) => simpleRecipients.includes(address));
+
+  async function toggleSimpleFormat(on: boolean) {
+    if (toAddresses.length === 0) {
+      setLocalError("Add a recipient first.");
+      return;
+    }
+    setSavingFormat(true);
+    try {
+      await Promise.all(toAddresses.map((address) => setInboxEmailFormat(token, address, on)));
+      setSimpleRecipients((current) =>
+        on
+          ? [...new Set([...current, ...toAddresses])]
+          : current.filter((address) => !toAddresses.includes(address)),
+      );
+      setLocalError(null);
+    } catch (err) {
+      setLocalError(err instanceof ApiError ? err.message : "Could not save the email format.");
+    } finally {
+      setSavingFormat(false);
+    }
+  }
   const templateMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const submitRef = useRef<() => void>(() => {});
@@ -187,6 +286,7 @@ export default function InboxEmailComposer({
       useBrandTemplate,
       includeQuoted: Boolean(quote),
       attachments,
+      replyToEmailId: original ? original.id : NEW_EMAIL_TARGET,
     });
   }
 
@@ -238,6 +338,8 @@ export default function InboxEmailComposer({
   }
 
   const message = localError || error;
+  const modeLabel = original ? "Reply" : "New email";
+  const brandApplied = useBrandTemplate && !simpleFormatActive;
   const fieldClass =
     "w-full rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2.5 py-1 text-xs text-[var(--staff-ink)] outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange/30";
 
@@ -254,7 +356,7 @@ export default function InboxEmailComposer({
       >
         <div className="flex min-w-0 items-center gap-2">
           <span className="rounded bg-brand-orange px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-white uppercase">
-            Reply
+            {modeLabel}
           </span>
           <p className="truncate text-xs font-medium text-neutral-200">
             {subject || "New message"}
@@ -303,10 +405,10 @@ export default function InboxEmailComposer({
         <header className="flex shrink-0 items-center justify-between bg-brand-midnight px-4 py-2.5 text-white select-none">
           <div className="flex min-w-0 items-center gap-2">
             <span className="rounded bg-brand-orange px-2 py-0.5 text-[11px] font-bold tracking-wider text-white uppercase">
-              Reply
+              {modeLabel}
             </span>
             <span className="truncate text-xs font-semibold text-white/90">
-              {subject || "Reply"}
+              {subject || modeLabel}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -372,9 +474,11 @@ export default function InboxEmailComposer({
             <div className="mb-2 flex shrink-0 items-center justify-between px-1 text-xs text-[var(--staff-muted)]">
               <span className="font-medium text-[var(--staff-ink)]">Live email recipient view</span>
               <span className="text-[11px]">
-                {useBrandTemplate
-                  ? "GMF branded letterhead and signature applied"
-                  : "Plain reply (no letterhead)"}
+                {simpleFormatActive
+                  ? "Simple format (recipient can't see the branded layout)"
+                  : useBrandTemplate
+                    ? "GMF branded letterhead and signature applied"
+                    : "Plain reply (no letterhead)"}
               </span>
             </div>
             <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-[var(--staff-border)] bg-[var(--staff-surface)] shadow-inner">
@@ -385,6 +489,7 @@ export default function InboxEmailComposer({
                   bodyHtml: html,
                   mode: "reply",
                   useBrandTemplate,
+                  simpleFormat: simpleFormatActive,
                   includeQuoted: Boolean(quote),
                   original: quote ?? {
                     html: "",
@@ -410,6 +515,25 @@ export default function InboxEmailComposer({
             }`}
           >
             <div className="space-y-1.5 border-b border-[var(--staff-border)] pb-2.5">
+              <label className="flex items-center gap-2">
+                <span className="w-10 shrink-0 text-xs font-medium text-[var(--staff-muted)]">
+                  Reply
+                </span>
+                <select
+                  value={original ? original.id : NEW_EMAIL_TARGET}
+                  onChange={(event) => onChangeReplyTarget(event.target.value)}
+                  disabled={sending}
+                  title="Choose which email this reply quotes and threads onto"
+                  className={fieldClass}
+                >
+                  {replyOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {replyOptionLabel(option)}
+                    </option>
+                  ))}
+                  <option value={NEW_EMAIL_TARGET}>New email (no thread)</option>
+                </select>
+              </label>
               <div className="flex items-center gap-2">
                 <span className="w-10 shrink-0 text-xs font-medium text-[var(--staff-muted)]">
                   To
@@ -417,7 +541,10 @@ export default function InboxEmailComposer({
                 <input
                   type="text"
                   value={to}
-                  onChange={(event) => setTo(event.target.value)}
+                  onChange={(event) => {
+                    setTo(event.target.value);
+                    setToTouched(true);
+                  }}
                   placeholder="recipient@example.com"
                   className={fieldClass}
                 />
@@ -499,7 +626,10 @@ export default function InboxEmailComposer({
                 <input
                   type="text"
                   value={subject}
-                  onChange={(event) => setSubject(event.target.value)}
+                  onChange={(event) => {
+                    setSubject(event.target.value);
+                    setSubjectTouched(true);
+                  }}
                   placeholder="Subject"
                   className={fieldClass}
                 />
@@ -563,6 +693,13 @@ export default function InboxEmailComposer({
                 </div>
               ) : null}
             </div>
+
+            {simpleFormatActive ? (
+              <p className="shrink-0 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
+                {simpleRecipients.join(", ")} {simpleRecipients.length === 1 ? "gets" : "get"} the
+                simple format, so the branded layout is skipped for this email.
+              </p>
+            ) : null}
 
             <div className="min-h-[160px] flex-1">
               <EmailBodyEditor
@@ -651,23 +788,46 @@ export default function InboxEmailComposer({
         ) : null}
 
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--staff-border)] bg-[var(--staff-cream)] px-4 py-3">
-          <label
-            className="flex cursor-pointer items-center gap-2 text-xs font-medium text-[var(--staff-ink)] select-none"
-            title="Wraps the reply in Generator Maintenance of Florida letterhead, contact numbers, and Generac credentials"
-          >
-            <input
-              type="checkbox"
-              checked={useBrandTemplate}
-              onChange={(event) => setUseBrandTemplate(event.target.checked)}
-              className="h-4 w-4 cursor-pointer rounded border-[var(--staff-border)] accent-brand-orange"
-            />
-            <span className="inline-flex items-center gap-1.5">
-              Apply GMF branded template
-              <span className="rounded bg-brand-midnight px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                On brand
+          <div className="flex flex-col gap-1.5">
+            <label
+              className={`flex items-center gap-2 text-xs font-medium text-[var(--staff-ink)] select-none ${
+                simpleFormatActive ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+              }`}
+              title={
+                simpleFormatActive
+                  ? "A recipient is set to the simple format, so the branded layout is skipped"
+                  : "Wraps the reply in Generator Maintenance of Florida letterhead, contact numbers, and Generac credentials"
+              }
+            >
+              <input
+                type="checkbox"
+                checked={brandApplied}
+                disabled={simpleFormatActive}
+                onChange={(event) => setUseBrandTemplate(event.target.checked)}
+                className="h-4 w-4 cursor-pointer rounded border-[var(--staff-border)] accent-brand-orange disabled:cursor-not-allowed"
+              />
+              <span className="inline-flex items-center gap-1.5">
+                Apply GMF branded template
+                <span className="rounded bg-brand-midnight px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  On brand
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+            <label
+              className="flex cursor-pointer items-center gap-2 text-[11px] text-[var(--staff-muted)] select-none"
+              title="Remembered for each To address. Use it when someone tells you our emails arrive blank."
+            >
+              <input
+                type="checkbox"
+                checked={allToSimple}
+                disabled={savingFormat || toAddresses.length === 0}
+                onChange={(event) => void toggleSimpleFormat(event.target.checked)}
+                className="h-3.5 w-3.5 cursor-pointer rounded border-[var(--staff-border)] accent-brand-orange disabled:cursor-not-allowed"
+              />
+              Recipient sees blank emails: always send simple format
+              {savingFormat ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            </label>
+          </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -688,7 +848,7 @@ export default function InboxEmailComposer({
               ) : (
                 <Send className="h-3.5 w-3.5" />
               )}
-              Send reply
+              {original ? "Send reply" : "Send"}
             </button>
           </div>
         </footer>

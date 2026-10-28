@@ -1,3 +1,11 @@
+import {
+  emailPlainText,
+  ensureVisibleBody,
+  quotableHtml,
+  quotePlainText,
+  wrapEmailDocument,
+} from "./safeEmailHtml";
+
 export type MailboxReplyAddress = {
   name: string;
   address: string;
@@ -186,8 +194,9 @@ export function formatMailboxAddress(list: MailboxReplyAddress[]): string {
 }
 
 function quoteBodyHtml(html: string, text: string): string {
-  const body = html.trim()
-    ? html
+  const cleaned = quotableHtml(html);
+  const body = cleaned
+    ? cleaned
     : `<pre style="white-space:pre-wrap;font-family:sans-serif">${escapeHtml(text)}</pre>`;
   return `<blockquote style="margin:8px 0 0;padding-left:12px;border-left:2px solid #cccccc">${body}</blockquote>`;
 }
@@ -242,39 +251,107 @@ export function renderBrandedReplyShell(bodyHtml: string): string {
 </table>`;
 }
 
+/** Plain layout for recipients whose mail apps hide or strip the branded template. */
+export function renderSimpleReplyShell(bodyHtml: string): string {
+  const content = bodyHtml.trim() || "<p></p>";
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#231f20;">
+${content}
+<p style="margin:16px 0 0 0;">${escapeHtml(COMPANY.name)}<br>
+${escapeHtml(COMPANY.phone)}<br>
+<a href="mailto:${escapeHtml(COMPANY.email)}">${escapeHtml(COMPANY.email)}</a></p>
+</div>`;
+}
+
+const SIGNATURE_TEXT = [COMPANY.name, COMPANY.phone, COMPANY.email].join("\n");
+
+export type ReplyQuoteOriginal = {
+  html: string;
+  text: string;
+  from: MailboxReplyAddress[];
+  to: MailboxReplyAddress[];
+  date: string | null;
+  subject: string;
+};
+
+function quoteHeaderLines(mode: MailboxReplyMode, original: ReplyQuoteOriginal): string[] {
+  if (mode === "forward") {
+    return [
+      "---------- Forwarded message ---------",
+      `From: ${formatMailboxAddress(original.from) || "Unknown"}`,
+      `Date: ${formatQuoteDate(original.date) || "Unknown"}`,
+      `Subject: ${original.subject || "(no subject)"}`,
+      `To: ${formatMailboxAddress(original.to) || "Unknown"}`,
+    ];
+  }
+  const who = formatMailboxAddress(original.from) || "someone";
+  const when = formatQuoteDate(original.date);
+  return [when ? `On ${when}, ${who} wrote:` : `${who} wrote:`];
+}
+
+function quoteSectionHtml(mode: MailboxReplyMode, original: ReplyQuoteOriginal): string {
+  const header = quoteHeaderLines(mode, original)
+    .map((line) => escapeHtml(line))
+    .join("<br>");
+  const quoted = quoteBodyHtml(original.html, original.text);
+  return `<br><div style="max-width:640px;margin:16px auto 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#64748b;"><p style="margin:0 0 6px 0;">${header}</p>${quoted}</div>`;
+}
+
 export function composeReplyHtml(input: {
   mode: MailboxReplyMode;
   bodyHtml: string;
   useBrandTemplate?: boolean;
-  original: {
-    html: string;
-    text: string;
-    from: MailboxReplyAddress[];
-    to: MailboxReplyAddress[];
-    date: string | null;
-    subject: string;
-  };
+  original: ReplyQuoteOriginal;
 }): string {
   const content = input.useBrandTemplate
     ? renderBrandedReplyShell(input.bodyHtml)
     : input.bodyHtml;
-  const original = quoteBodyHtml(input.original.html, input.original.text);
-  if (input.mode === "forward") {
-    const header = [
-      "---------- Forwarded message ---------",
-      `From: ${formatMailboxAddress(input.original.from) || "Unknown"}`,
-      `Date: ${formatQuoteDate(input.original.date) || "Unknown"}`,
-      `Subject: ${input.original.subject || "(no subject)"}`,
-      `To: ${formatMailboxAddress(input.original.to) || "Unknown"}`,
-    ]
-      .map((line) => escapeHtml(line))
-      .join("<br>");
-    return `${content}<br><div style="max-width:640px;margin:16px auto 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#64748b;"><p style="margin:0 0 6px 0;">${header}</p>${original}</div>`;
+  return `${content}${quoteSectionHtml(input.mode, input.original)}`;
+}
+
+export type ReplyEmailFormat = "branded" | "simple" | "plain";
+
+/**
+ * Builds the full outgoing email (HTML document and text part). Falls back to the simple
+ * layout when the recipient prefers it or when our message would not be visible.
+ */
+export function buildReplyEmail(input: {
+  bodyHtml: string;
+  useBrandTemplate: boolean;
+  simpleFormat?: boolean;
+  quote?: { mode: MailboxReplyMode; original: ReplyQuoteOriginal } | null;
+}): { html: string; text: string; format: ReplyEmailFormat; fallback: boolean } {
+  const quote = input.quote ?? null;
+  const preferred: ReplyEmailFormat = input.simpleFormat
+    ? "simple"
+    : input.useBrandTemplate
+      ? "branded"
+      : "plain";
+  const build = (simple: boolean) => {
+    const format = simple ? "simple" : preferred;
+    const content =
+      format === "simple"
+        ? renderSimpleReplyShell(input.bodyHtml)
+        : format === "branded"
+          ? renderBrandedReplyShell(input.bodyHtml)
+          : input.bodyHtml;
+    return wrapEmailDocument(
+      quote ? `${content}${quoteSectionHtml(quote.mode, quote.original)}` : content,
+    );
+  };
+  const checked = ensureVisibleBody(input.bodyHtml, build, preferred === "simple");
+  const format: ReplyEmailFormat = checked.simple ? "simple" : preferred;
+
+  const parts = [emailPlainText(input.bodyHtml)];
+  if (format !== "plain") parts.push(SIGNATURE_TEXT);
+  if (quote) {
+    const quotedText =
+      quote.original.text.trim() || emailPlainText(quotableHtml(quote.original.html));
+    parts.push(
+      [...quoteHeaderLines(quote.mode, quote.original), quotePlainText(quotedText)].join("\n"),
+    );
   }
-  const who = formatMailboxAddress(input.original.from) || "someone";
-  const when = formatQuoteDate(input.original.date);
-  const intro = when ? `On ${when}, ${who} wrote:` : `${who} wrote:`;
-  return `${content}<br><div style="max-width:640px;margin:16px auto 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#64748b;"><p style="margin:0 0 6px 0;">${escapeHtml(intro)}</p>${original}</div>`;
+  const text = parts.filter((part) => part.trim()).join("\n\n") || emailPlainText(checked.html);
+  return { html: checked.html, text, format, fallback: checked.fallback };
 }
 
 export function threadingHeaders(input: {

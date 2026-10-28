@@ -32,13 +32,14 @@ export default function TapToPayButton({
   }, []);
 
   if (platform === "unsupported") return null;
+  const target = platform;
 
   async function start() {
     setBusy(true);
     onError(null);
     try {
       const charge = await startInvoicePosCharge(token, invoiceId);
-      window.location.href = buildSquarePosUrl(platform, charge);
+      window.location.href = buildSquarePosUrl(target, charge);
     } catch (err) {
       onError(
         err instanceof ApiError ? err.message : "Failed to start Tap to Pay.",

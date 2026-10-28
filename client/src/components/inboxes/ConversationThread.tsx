@@ -28,7 +28,7 @@ import {
 import { replySubject } from "@/lib/mailboxReply";
 import { clockTime, dayLabel, emailDisplayHtml, emailPlainText } from "./inboxFormat";
 import CallFollowUp from "./CallFollowUp";
-import InboxEmailComposer, { InboxEmailDraft } from "./InboxEmailComposer";
+import InboxEmailComposer, { InboxEmailDraft, NEW_EMAIL_TARGET } from "./InboxEmailComposer";
 import InboxSmsComposer from "./InboxSmsComposer";
 import {
   Check,
@@ -39,6 +39,7 @@ import {
   MessageSquare,
   MoreHorizontal,
   Phone,
+  Reply,
   Search,
 } from "lucide-react";
 
@@ -129,6 +130,13 @@ export default function ConversationThread({
     setScheduled([]);
   }
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [replyTargetId, setReplyTargetId] = useState("");
+  const [replyTargetFor, setReplyTargetFor] = useState(conversationId);
+  if (replyTargetFor !== conversationId) {
+    setReplyTargetFor(conversationId);
+    setReplyTargetId("");
+  }
+  const [sendNotice, setSendNotice] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [contacts, setContacts] = useState<InboxContext["contacts"]>([]);
   const scroller = useRef<HTMLDivElement>(null);
@@ -258,10 +266,30 @@ export default function ConversationThread({
     }
     return null;
   }, [messages]);
+  const emailMessages = useMemo(
+    () => messages.filter((message) => message.channel === "email").reverse(),
+    [messages],
+  );
+  const replyTarget =
+    replyTargetId === NEW_EMAIL_TARGET
+      ? null
+      : (replyTargetId && emailMessages.find((message) => message.id === replyTargetId)) ||
+        latestInbound;
   const selectedEmail =
     emailContacts.find((contact) => contact.id === contactId)?.email ||
     conversation?.email ||
     "";
+  const replyTargetAddress =
+    replyTargetId && replyTarget
+      ? replyTarget.direction === "outbound"
+        ? replyTarget.to
+        : replyTarget.from
+      : "";
+
+  function openReplyTo(messageId: string) {
+    setReplyTargetId(messageId);
+    setAdvancedOpen(true);
+  }
   const emailAccount = (channels?.emailAccounts ?? []).find(
     (account) => account.id === emailAccountId,
   );
@@ -348,8 +376,9 @@ export default function ConversationThread({
     if (!canWrite || sending) return;
     setSending(true);
     setError(null);
+    setSendNotice(null);
     try {
-      await sendInboxEmail(token, conversationId, {
+      const result = await sendInboxEmail(token, conversationId, {
         html: draft.html,
         subject: draft.subject,
         to: draft.to,
@@ -358,11 +387,18 @@ export default function ConversationThread({
         useBrandTemplate: draft.useBrandTemplate,
         includeQuoted: draft.includeQuoted,
         attachments: draft.attachments,
+        replyToEmailId: draft.replyToEmailId,
         emailAccountId: emailAccountId || undefined,
         contactId: contactId || undefined,
       });
+      if (result.fallback) {
+        setSendNotice(
+          "Sent in the simple format because the branded layout would have hidden the message.",
+        );
+      }
       setBody("");
       setSubject("");
+      setReplyTargetId("");
       setAdvancedOpen(false);
       stickToBottom.current = true;
       onActivity();
@@ -585,6 +621,9 @@ export default function ConversationThread({
                     current.map((item) => (item.id === message.id ? { ...item, ...patch } : item)),
                   )
                 }
+                onReply={
+                  message.channel === "email" ? () => openReplyTo(message.id) : undefined
+                }
                 expanded={Boolean(expanded[message.id])}
                 onToggle={() =>
                   setExpanded((current) => ({
@@ -604,6 +643,9 @@ export default function ConversationThread({
         ) : null}
       </div>
       {error ? <p className="px-4 pb-1 text-xs text-red-500">{error}</p> : null}
+      {sendNotice ? (
+        <p className="px-4 pb-1 text-xs text-amber-700">{sendNotice}</p>
+      ) : null}
       {canWrite ? (
         <div className="relative z-10 border-t border-[var(--staff-border)] bg-[var(--staff-surface)] p-3">
           <div className={`flex flex-wrap items-center gap-2 ${channel === "sms" ? "mb-2" : ""}`}>
@@ -757,11 +799,15 @@ export default function ConversationThread({
       ) : null}
       {advancedOpen && canWrite ? (
         <InboxEmailComposer
-          original={latestInbound}
-          initialTo={selectedEmail}
+          token={token}
+          original={replyTarget}
+          replyOptions={emailMessages}
+          replyTargetId={replyTarget ? replyTarget.id : NEW_EMAIL_TARGET}
+          onChangeReplyTarget={setReplyTargetId}
+          initialTo={replyTargetAddress || selectedEmail}
           initialSubject={
             subject.trim() ||
-            (latestInbound?.subject ? replySubject(latestInbound.subject, "reply") : "")
+            (replyTarget?.subject ? replySubject(replyTarget.subject, "reply") : "")
           }
           initialHtml={plainTextToHtml(body)}
           fromLabel={fromLabel}
@@ -769,6 +815,7 @@ export default function ConversationThread({
           error={error}
           onCancel={() => {
             setAdvancedOpen(false);
+            setReplyTargetId("");
             setError(null);
           }}
           onSend={(draft) => void onAdvancedSend(draft)}
@@ -787,6 +834,7 @@ function MessageCard({
   canWrite,
   canTasks,
   onMessage,
+  onReply,
   expanded,
   onToggle,
 }: {
@@ -798,6 +846,7 @@ function MessageCard({
   canWrite: boolean;
   canTasks: boolean;
   onMessage: (patch: Partial<InboxTimelineMessage>) => void;
+  onReply?: () => void;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -843,7 +892,20 @@ function MessageCard({
               {message.subject || "(no subject)"}
             </h3>
           </div>
-          <Mail className="h-3.5 w-3.5 shrink-0 text-[var(--staff-muted)]" />
+          <div className="flex shrink-0 items-center gap-1.5">
+            {canWrite && onReply ? (
+              <button
+                type="button"
+                onClick={onReply}
+                title="Reply to this email"
+                className="inline-flex items-center gap-1 rounded-md border border-[var(--staff-border)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--staff-ink)] hover:bg-[var(--staff-cream)]"
+              >
+                <Reply className="h-3 w-3" />
+                Reply
+              </button>
+            ) : null}
+            <Mail className="h-3.5 w-3.5 text-[var(--staff-muted)]" />
+          </div>
         </div>
         {expanded && message.html ? (
           <div

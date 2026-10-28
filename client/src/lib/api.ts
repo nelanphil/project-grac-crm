@@ -8532,9 +8532,10 @@ export async function sendInboxEmail(
     templateId?: string;
     useBrandTemplate?: boolean;
     includeQuoted?: boolean;
+    replyToEmailId?: string;
     attachments?: File[];
   },
-): Promise<{ sent: boolean }> {
+): Promise<{ sent: boolean; format?: "branded" | "simple" | "plain"; fallback?: boolean }> {
   const { attachments, ...fields } = data;
   let body: string | FormData = JSON.stringify(fields);
   if (attachments && attachments.length > 0) {
@@ -8547,6 +8548,29 @@ export async function sendInboxEmail(
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body,
+  });
+}
+
+export async function getInboxEmailFormat(
+  token: string,
+  emails: string[],
+): Promise<{ simpleFormat: string[] }> {
+  const query = new URLSearchParams({ emails: emails.join(",") });
+  return authRequest(`/inboxes/email-format?${query.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function setInboxEmailFormat(
+  token: string,
+  email: string,
+  simpleFormat: boolean,
+): Promise<{ email: string; simpleFormat: boolean }> {
+  return authRequest("/inboxes/email-format", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ email, simpleFormat }),
   });
 }
 

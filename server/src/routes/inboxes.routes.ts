@@ -29,6 +29,8 @@ import {
   sendInboxEmail,
   sendInboxSms,
   uploadInboxEmailAttachmentsMiddleware,
+  getInboxEmailFormat,
+  setInboxEmailFormat,
   rateCallTranscript,
   dismissCallTaskPrompt,
 } from "../controllers/inboxes.controller";
@@ -127,6 +129,16 @@ router.post(
   requirePermission("messages:write"),
   uploadInboxEmailAttachmentsMiddleware,
   sendInboxEmail,
+);
+router.get(
+  "/email-format",
+  requirePermission("messages:read"),
+  getInboxEmailFormat,
+);
+router.put(
+  "/email-format",
+  requirePermission("messages:write"),
+  setInboxEmailFormat,
 );
 router.post(
   "/conversations/:id/call",

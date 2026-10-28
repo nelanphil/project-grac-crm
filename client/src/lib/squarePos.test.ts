@@ -116,10 +116,9 @@ describe("parsePosCallback", () => {
       "com.squareup.pos.CLIENT_TRANSACTION_ID": "client-9",
       "com.squareup.pos.REQUEST_METADATA": "payload.sig",
     });
-    assert.equal(parsePosCallback(success)?.ok, true);
-    if (parsePosCallback(success)?.ok) {
-      assert.equal(parsePosCallback(success)?.transactionId, "order-9");
-    }
+    const parsed = parsePosCallback(success);
+    assert.ok(parsed?.ok);
+    assert.equal(parsed.transactionId, "order-9");
 
     const failed = new URLSearchParams({
       "com.squareup.pos.ERROR_CODE": "user_not_logged_in",

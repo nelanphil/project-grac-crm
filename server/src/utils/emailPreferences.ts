@@ -73,7 +73,33 @@ export async function isEmailChannelEnabled(
     : prefs.generalNotifications;
 }
 
-/** Conservative merge when two addresses collide: off wins. */
+export async function simpleFormatRecipients(emails: string[]): Promise<Set<string>> {
+  const normalized = [
+    ...new Set(emails.map((email) => normalizeAccountEmail(email)).filter(Boolean)),
+  ];
+  if (normalized.length === 0) return new Set();
+  const rows = await EmailPreference.find({
+    email: { $in: normalized },
+    simpleFormat: true,
+  })
+    .select("email")
+    .lean();
+  return new Set(rows.map((row) => row.email));
+}
+
+export async function setSimpleFormat(email: string, on: boolean): Promise<void> {
+  const normalized = normalizeAccountEmail(email);
+  if (!normalized) {
+    throw new Error("Email is required");
+  }
+  await EmailPreference.findOneAndUpdate(
+    { email: normalized },
+    { $set: { email: normalized, simpleFormat: on } },
+    { upsert: true, setDefaultsOnInsert: true },
+  );
+}
+
+/** Conservative merge when two addresses collide: off wins (simple format: on wins). */
 export async function renameEmailPreferences(
   fromEmail: string,
   toEmail: string,
@@ -92,6 +118,7 @@ export async function renameEmailPreferences(
       existing.generalNotifications !== false;
     conflict.billingAlerts =
       conflict.billingAlerts !== false && existing.billingAlerts !== false;
+    conflict.simpleFormat = Boolean(conflict.simpleFormat || existing.simpleFormat);
     await conflict.save();
     await existing.deleteOne();
     return;

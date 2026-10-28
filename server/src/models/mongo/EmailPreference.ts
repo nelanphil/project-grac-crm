@@ -4,6 +4,8 @@ export interface IEmailPreference extends Document {
   email: string;
   generalNotifications: boolean;
   billingAlerts: boolean;
+  /** Recipient's mail app hides the branded layout; send the simple one. */
+  simpleFormat: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -19,6 +21,7 @@ const emailPreferenceSchema = new Schema<IEmailPreference>(
     },
     generalNotifications: { type: Boolean, default: true },
     billingAlerts: { type: Boolean, default: true },
+    simpleFormat: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

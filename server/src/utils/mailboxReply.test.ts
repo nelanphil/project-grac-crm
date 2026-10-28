@@ -211,4 +211,22 @@ describe("composeReplyHtml", () => {
     assert.match(html, /Service renewal/);
     assert.match(html, /Original/);
   });
+
+  it("drops the original email's style rules so they can't hide our reply", () => {
+    const html = composeReplyHtml({
+      mode: "reply",
+      bodyHtml: "<p>See you then.</p>",
+      original: {
+        html: "<html><head><style>body{display:none}</style></head><body><p>Hello</p></body></html>",
+        text: "Hello",
+        from,
+        to,
+        date: null,
+        subject: "Service renewal",
+      },
+    });
+    assert.doesNotMatch(html, /<style|display:none|<head/);
+    assert.match(html, /See you then/);
+    assert.match(html, /Hello/);
+  });
 });
