@@ -26,7 +26,7 @@ const PhoneInput = forwardRef<HTMLInputElement, PhoneInputProps>(
         type="tel"
         inputMode="tel"
         autoComplete={autoComplete}
-        maxLength={14}
+        maxLength={32}
         placeholder={placeholder}
         value={typeof value === "string" ? formatUsPhoneInput(value) : value}
         onChange={(e) => {

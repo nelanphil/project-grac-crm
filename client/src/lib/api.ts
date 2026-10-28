@@ -7770,6 +7770,10 @@ export type LegacyDumpOrphanWoRow = {
   customerId: number;
 };
 
+export type LegacyDumpAmbiguousWoRow = LegacyDumpMissingWoRow & {
+  candidateIds: string[];
+};
+
 export type LegacyDumpAuditReport = {
   customersPresent: number;
   customersIdentityLinked: LegacyDumpIdentityRow[];
@@ -7777,8 +7781,11 @@ export type LegacyDumpAuditReport = {
   customersCollisions: LegacyDumpCollisionRow[];
   wosPresent: number;
   wosFuzzy: number;
+  wosLinked?: number;
+  wosSkippedSameDay?: number;
   wosMissing: LegacyDumpMissingWoRow[];
   wosOrphan: LegacyDumpOrphanWoRow[];
+  wosAmbiguous?: LegacyDumpAmbiguousWoRow[];
 };
 
 export type LegacyDumpImportSummary = {
@@ -7799,6 +7806,9 @@ export type LegacyDumpImportSummary = {
   workOrdersSkippedDuplicateLegacy?: number;
   workOrdersSkippedUserMismatch?: number;
   workOrdersSkippedNonOwner?: number;
+  workOrdersLinked?: number;
+  workOrdersAmbiguous?: number;
+  workOrdersSkippedSameDay?: number;
   ascCustomers?: number;
   contractsCreated?: number;
   contractsUpdated?: number;

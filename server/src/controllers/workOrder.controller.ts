@@ -47,6 +47,7 @@ import {
   estimatedMinutesForWorkOrder,
   findOverlappingJob,
   isDispatcherRole,
+  scheduleOverlapShouldBlock,
   rangeUtc,
   retainRouteLock,
   scheduleDesiredWindow,
@@ -526,6 +527,26 @@ export async function createWorkOrder(
       }
     }
 
+    if (
+      workOrder.scheduledStart &&
+      workOrder.scheduledEnd &&
+      createCrew.length > 0
+    ) {
+      for (const userId of createCrew) {
+        const overlap = await findOverlappingJob({
+          userId,
+          start: workOrder.scheduledStart,
+          end: workOrder.scheduledEnd,
+        });
+        if (overlap) {
+          res.status(409).json({
+            message: "This time overlaps another job for that technician",
+          });
+          return;
+        }
+      }
+    }
+
     if (timeWindowIsInvalid(workOrder.startTime, workOrder.endTime)) {
       res.status(400).json({ message: "End time must be after start time" });
       return;
@@ -743,6 +764,9 @@ export async function updateWorkOrder(
     const prevScheduledStart = workOrder.scheduledStart
       ? new Date(workOrder.scheduledStart)
       : null;
+    const prevScheduledEnd = workOrder.scheduledEnd
+      ? new Date(workOrder.scheduledEnd)
+      : null;
     const prevAppointmentDate = prevScheduledStart
       ? formatLocalDate(prevScheduledStart)
       : null;
@@ -914,7 +938,20 @@ export async function updateWorkOrder(
         return;
       }
 
-      if (!shouldPlace && workOrder.scheduledStart && workOrder.scheduledEnd) {
+      if (
+        !shouldPlace &&
+        workOrder.scheduledStart &&
+        workOrder.scheduledEnd &&
+        scheduleOverlapShouldBlock({
+          completed: Boolean(workOrder.completed),
+          previousStart: prevScheduledStart,
+          nextStart: workOrder.scheduledStart,
+          previousEnd: prevScheduledEnd,
+          nextEnd: workOrder.scheduledEnd,
+          previousCrew: prevCrew,
+          nextCrew,
+        })
+      ) {
         for (const userId of nextCrew) {
           const overlap = await findOverlappingJob({
             userId,

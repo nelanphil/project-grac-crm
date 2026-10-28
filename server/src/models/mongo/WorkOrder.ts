@@ -26,6 +26,8 @@ export interface IWorkOrderPart {
 
 export interface IWorkOrder extends Document {
   legacyId: number;
+  /** Set when a site-dump row was attached to a work order created in the CRM. */
+  legacyLinkedAt: Date | null;
   number?: string;
   userId: number;
   customerId: number; // references Customer.legacyId
@@ -130,6 +132,7 @@ const workOrderPartSchema = new Schema<IWorkOrderPart>(
 const workOrderSchema = new Schema<IWorkOrder>(
   {
     legacyId: { type: Number, index: true },
+    legacyLinkedAt: { type: Date, default: null },
     number: { type: String, default: undefined },
     userId: { type: Number, index: true },
     customerId: { type: Number, index: true, required: true },

@@ -173,14 +173,93 @@ export function toPublicStaff(user: LeanUser): PublicStaff {
   };
 }
 
+/** Canceled appointments do not occupy a technician. */
+export function notCanceledAppointmentFilter(): Record<string, unknown> {
+  return {
+    $or: [
+      { appointmentCanceledAt: null },
+      { appointmentCanceledAt: { $exists: false } },
+    ],
+  };
+}
+
+export type TechnicianDayBlock = {
+  id: string;
+  start: Date;
+  end: Date;
+  label: string;
+};
+
+/**
+ * Non-canceled visits for one technician. A shared crew visit is busy time
+ * for every assigned technician, including when the visit is completed.
+ */
+export function blocksForTechnician(
+  visits: Array<{
+    id: string;
+    assigneeIds: string[];
+    start: Date | null;
+    end: Date | null;
+    label: string;
+    canceled?: boolean;
+  }>,
+  userId: string,
+  excludeIds: string[] = [],
+): TechnicianDayBlock[] {
+  const skip = new Set(excludeIds);
+  const blocks: TechnicianDayBlock[] = [];
+  for (const visit of visits) {
+    if (visit.canceled || skip.has(visit.id)) continue;
+    if (!visit.assigneeIds.includes(userId)) continue;
+    if (!(visit.start instanceof Date) || !(visit.end instanceof Date)) continue;
+    if (
+      Number.isNaN(visit.start.getTime()) ||
+      Number.isNaN(visit.end.getTime()) ||
+      visit.end.getTime() <= visit.start.getTime()
+    ) {
+      continue;
+    }
+    blocks.push({
+      id: visit.id,
+      start: visit.start,
+      end: visit.end,
+      label: visit.label,
+    });
+  }
+  return blocks;
+}
+
+/**
+ * Reject a save only when an open appointment's time or crew actually changes.
+ * Completed jobs stay editable (paid, notes) even if they already overlap.
+ */
+export function scheduleOverlapShouldBlock(opts: {
+  completed: boolean;
+  previousStart: Date | null;
+  nextStart: Date | null;
+  previousEnd: Date | null;
+  nextEnd: Date | null;
+  previousCrew: string[];
+  nextCrew: string[];
+}): boolean {
+  if (opts.completed || !opts.nextStart || !opts.nextEnd) return false;
+  const startChanged =
+    (opts.previousStart?.getTime() ?? null) !== opts.nextStart.getTime();
+  const endChanged =
+    (opts.previousEnd?.getTime() ?? null) !== opts.nextEnd.getTime();
+  const crewChanged =
+    opts.previousCrew.length !== opts.nextCrew.length ||
+    opts.previousCrew.some((id, index) => id !== opts.nextCrew[index]);
+  return startChanged || endChanged || crewChanged;
+}
+
 export async function findOverlappingJob(opts: {
   userId: string;
   start: Date;
   end: Date;
   excludeId?: string;
 }): Promise<{ _id: mongoose.Types.ObjectId } | null> {
-  const filter: Record<string, unknown> = {
-    ...assigneeInFilter([opts.userId]),
+  const bounds: Record<string, unknown> = {
     scheduledStart: { $ne: null },
     scheduledEnd: { $ne: null },
     $expr: {
@@ -191,9 +270,17 @@ export async function findOverlappingJob(opts: {
     },
   };
   if (opts.excludeId && mongoose.Types.ObjectId.isValid(opts.excludeId)) {
-    filter._id = { $ne: new mongoose.Types.ObjectId(opts.excludeId) };
+    bounds._id = { $ne: new mongoose.Types.ObjectId(opts.excludeId) };
   }
-  return WorkOrder.findOne(filter).select("_id").lean();
+  return WorkOrder.findOne({
+    $and: [
+      assigneeInFilter([opts.userId]),
+      bounds,
+      notCanceledAppointmentFilter(),
+    ],
+  })
+    .select("_id")
+    .lean();
 }
 
 export function availabilityWarning(opts: {
@@ -2838,9 +2925,19 @@ export async function planRouteForUser(opts: {
   let visit = limited.jobs;
   const lockById = lockArrivalById(opts.lockedStops);
   for (const row of visit) {
-    const crew = crewIdStrings(row.job);
-    if (crew.length > 1 && row.job.scheduledStart instanceof Date) {
-      lockById.set(String(row.job._id), row.job.scheduledStart);
+    const id = String(row.job._id);
+    if (
+      !lockById.has(id) &&
+      row.job.routeLocked &&
+      row.job.scheduledStart instanceof Date
+    ) {
+      lockById.set(id, row.job.scheduledStart);
+    }
+    if (crewIdStrings(row.job).length > 1 && row.job.scheduledStart instanceof Date) {
+      lockById.set(id, row.job.scheduledStart);
+    }
+    if (row.job.completed && row.job.scheduledStart instanceof Date) {
+      lockById.set(id, row.job.scheduledStart);
     }
   }
   const dayWindow = resolveDayWindow(
@@ -2931,8 +3028,32 @@ export async function planRouteForUser(opts: {
 
   if (workRange) {
     const legs = route?.legs ?? [];
+    const external = await techDayBlocks({
+      userId: String(user._id),
+      date: opts.date,
+      excludeIds: visit.map((row) => String(row.job._id)),
+    });
+    const occupied = [...external];
+    for (const row of visit) {
+      const locked = lockById.get(String(row.job._id));
+      if (!locked) continue;
+      const end = addMinutes(locked, estimatedMinutesForWorkOrder(row.job));
+      const hit = occupied.find((block) =>
+        rangesOverlap(locked, end, block.start, block.end),
+      );
+      if (hit) {
+        warnings.push(`${placeJobLabel(row.job)} overlaps ${hit.label}.`);
+      }
+      occupied.push({
+        start: locked,
+        end,
+        point: row.coords,
+        label: placeJobLabel(row.job),
+      });
+    }
     let cursorEnd = workRange.start;
-    visit.forEach((row, index) => {
+    for (let index = 0; index < visit.length; index += 1) {
+      const row = visit[index]!;
       const driveMinutes =
         index === 0 ? 0 : (legs[index]?.durationMinutes ?? 0);
       const earliest =
@@ -2940,7 +3061,34 @@ export async function planRouteForUser(opts: {
           ? new Date(workRange.start)
           : addMinutes(cursorEnd, driveMinutes);
       const locked = lockById.get(String(row.job._id)) ?? null;
-      const arrival = locked ?? earliest;
+      let arrival = locked ?? earliest;
+      if (!locked) {
+        const desired = desiredStartOnDate(row.job.desiredStartTime, opts.date);
+        if (desired && desired.getTime() > arrival.getTime()) arrival = desired;
+        const duration = estimatedMinutesForWorkOrder(row.job);
+        const opened = await firstOpenStart({
+          desired: arrival,
+          duration,
+          windowStart: arrival,
+          previous: null,
+          blocks: occupied,
+          dest: row.coords,
+          destLabel: placeJobLabel(row.job),
+          driveBetween: async () => 0,
+        });
+        if (desired && opened.getTime() > desired.getTime() + 1000) {
+          warnings.push(
+            `${placeJobLabel(row.job)} moved from ${formatRouteClock(desired)} to ${formatRouteClock(opened)} (overlap)`,
+          );
+        }
+        arrival = opened;
+        occupied.push({
+          start: arrival,
+          end: addMinutes(arrival, duration),
+          point: row.coords,
+          label: placeJobLabel(row.job),
+        });
+      }
       if (locked && locked.getTime() + 1000 < earliest.getTime()) {
         warnings.push(
           `${placeJobLabel(row.job)} stays at ${formatRouteClock(locked)}, which is earlier than the stop before it allows.`,
@@ -2954,10 +3102,10 @@ export async function planRouteForUser(opts: {
       const stop = stops.find(
         (item) => item.workOrderId === String(row.job._id),
       );
-      if (!stop) return;
+      if (!stop) continue;
       stop.arrival = arrival.toISOString();
       stop.departure = departure.toISOString();
-    });
+    }
   }
 
   return {
@@ -2991,8 +3139,47 @@ function createdAtMs(job: DayJob): number {
 
 function isFixedVisit(job: DayJob, exceptId?: string): boolean {
   if (exceptId && String(job._id) === exceptId) return false;
+  if (job.appointmentCanceledAt) return false;
   if (!(job.scheduledStart instanceof Date)) return false;
+  if (job.completed) return true;
   return crewIdStrings(job).length > 1 || Boolean(job.routeLocked);
+}
+
+function desiredStartOnDate(
+  desiredStartTime: string | null | undefined,
+  date: string,
+): Date | null {
+  const value = desiredStartTime?.trim() ?? "";
+  if (!value || !isHhMm(value)) return null;
+  return localDateToUtc(date, value);
+}
+
+/** Completed, route-locked, and multi-technician visits keep their start. */
+function hardLockStops(
+  jobs: Array<{
+    _id: { toString(): string };
+    completed?: boolean | null;
+    routeLocked?: boolean | null;
+    scheduledStart?: Date | null;
+    assignedUserRef?: { toString(): string } | null;
+    assignedUserRefs?: Array<{ toString(): string }> | null;
+  }>,
+): Array<{ workOrderId: string; arrival: string }> {
+  const locks: Array<{ workOrderId: string; arrival: string }> = [];
+  for (const job of jobs) {
+    if (!(job.scheduledStart instanceof Date)) continue;
+    if (Number.isNaN(job.scheduledStart.getTime())) continue;
+    const fixed =
+      Boolean(job.completed) ||
+      Boolean(job.routeLocked) ||
+      crewIdStrings(job).length > 1;
+    if (!fixed) continue;
+    locks.push({
+      workOrderId: String(job._id),
+      arrival: job.scheduledStart.toISOString(),
+    });
+  }
+  return locks;
 }
 
 /** First start that is not inside an existing block, after the previous stop and drive. */
@@ -3041,6 +3228,175 @@ async function firstOpenStart(opts: {
   return start;
 }
 
+export type StopToPlace = {
+  id: string;
+  label: string;
+  durationMinutes: number;
+  hardLock: boolean;
+  lockedStart: Date | null;
+  desiredStart: Date | null;
+  point: LatLng | null;
+};
+
+/**
+ * Place stops so they do not overlap obstacles or each other.
+ * Hard locks stay put and throw when they collide. A note time is only a
+ * preference: the next stop slides later and a warning names the move.
+ */
+export async function placeStopsWithoutOverlap(opts: {
+  ordered: StopToPlace[];
+  obstacles: TimeBlock[];
+  windowStart: Date;
+  driveBetween?: DriveBetween;
+}): Promise<{
+  placements: Array<{ id: string; start: Date; end: Date }>;
+  warnings: string[];
+}> {
+  const driveBetween: DriveBetween = opts.driveBetween ?? (async () => 0);
+  const obstacles = opts.obstacles.map((block) => ({ ...block }));
+  const warnings: string[] = [];
+  const placements: Array<{ id: string; start: Date; end: Date }> = [];
+
+  for (const stop of opts.ordered) {
+    if (!stop.hardLock) continue;
+    if (
+      !(stop.lockedStart instanceof Date) ||
+      Number.isNaN(stop.lockedStart.getTime())
+    ) {
+      throw routeError(`${stop.label} is locked but has no start time.`);
+    }
+    const end = addMinutes(stop.lockedStart, stop.durationMinutes);
+    const hit = obstacles.find((block) =>
+      rangesOverlap(stop.lockedStart!, end, block.start, block.end),
+    );
+    if (hit) {
+      throw routeError(`${stop.label} overlaps ${hit.label}.`, 409);
+    }
+    obstacles.push({
+      start: stop.lockedStart,
+      end,
+      point: stop.point,
+      label: stop.label,
+    });
+    placements.push({ id: stop.id, start: stop.lockedStart, end });
+  }
+
+  let routePrev: TimeBlock | null = null;
+  for (const stop of opts.ordered) {
+    if (stop.hardLock) {
+      const placed = placements.find((row) => row.id === stop.id);
+      if (placed && (!routePrev || placed.end.getTime() > routePrev.end.getTime())) {
+        routePrev = {
+          start: placed.start,
+          end: placed.end,
+          point: stop.point,
+          label: stop.label,
+        };
+      }
+      continue;
+    }
+    const desired =
+      stop.desiredStart && !Number.isNaN(stop.desiredStart.getTime())
+        ? stop.desiredStart
+        : routePrev
+          ? routePrev.end
+          : opts.windowStart;
+    const start = await firstOpenStart({
+      desired,
+      duration: stop.durationMinutes,
+      windowStart: opts.windowStart,
+      previous: routePrev,
+      blocks: obstacles,
+      dest: stop.point,
+      destLabel: stop.label,
+      driveBetween,
+    });
+    const laterThanNote =
+      stop.desiredStart != null &&
+      start.getTime() > stop.desiredStart.getTime() + 1000;
+    const heldAtWindowOpen =
+      stop.desiredStart != null &&
+      stop.desiredStart.getTime() < opts.windowStart.getTime() &&
+      start.getTime() <= opts.windowStart.getTime() + 1000;
+    if (laterThanNote && !heldAtWindowOpen) {
+      warnings.push(
+        `${stop.label} moved from ${formatRouteClock(stop.desiredStart!)} to ${formatRouteClock(start)} (overlap)`,
+      );
+    }
+    const end = addMinutes(start, stop.durationMinutes);
+    const block: TimeBlock = {
+      start,
+      end,
+      point: stop.point,
+      label: stop.label,
+    };
+    obstacles.push(block);
+    if (!routePrev || end.getTime() > routePrev.end.getTime()) routePrev = block;
+    placements.push({ id: stop.id, start, end });
+  }
+
+  return { placements, warnings };
+}
+
+/** Busy blocks for one technician on a local day, including completed visits. */
+export async function techDayBlocks(opts: {
+  userId: string;
+  date: string;
+  excludeIds?: string[];
+}): Promise<TimeBlock[]> {
+  const dayStart = localDateToUtc(opts.date, "00:00");
+  const dayEnd = localDateToUtc(opts.date, "23:59");
+  const jobs = await WorkOrder.find({
+    $and: [
+      assigneeInFilter([opts.userId]),
+      {
+        scheduledStart: { $gte: dayStart, $lte: dayEnd },
+        scheduledEnd: { $ne: null },
+      },
+      notCanceledAppointmentFilter(),
+    ],
+  })
+    .select(
+      "_id customerName scheduledStart scheduledEnd addressRef assignedUserRef assignedUserRefs appointmentCanceledAt",
+    )
+    .lean();
+  const blocks = blocksForTechnician(
+    jobs.map((job) => ({
+      id: String(job._id),
+      assigneeIds: crewIdStrings(job),
+      start: job.scheduledStart ? new Date(job.scheduledStart) : null,
+      end: job.scheduledEnd ? new Date(job.scheduledEnd) : null,
+      label: placeJobLabel(job),
+      canceled: Boolean(job.appointmentCanceledAt),
+    })),
+    opts.userId,
+    opts.excludeIds ?? [],
+  );
+  const addressIds = [
+    ...new Set(
+      jobs
+        .map((job) => (job.addressRef ? String(job.addressRef) : ""))
+        .filter((id) => id.length > 0),
+    ),
+  ];
+  const points = await coordsByAddressId(addressIds);
+  const addressById = new Map(
+    jobs.map((job) => [
+      String(job._id),
+      job.addressRef ? String(job.addressRef) : "",
+    ]),
+  );
+  return blocks.map((block) => {
+    const addressId = addressById.get(block.id) ?? "";
+    return {
+      start: block.start,
+      end: block.end,
+      label: block.label,
+      point: addressId ? (points.get(addressId) ?? null) : null,
+    };
+  });
+}
+
 export async function applyPlannedRoute(opts: {
   userId: string;
   date: string;
@@ -3069,9 +3425,14 @@ export async function applyPlannedRoute(opts: {
   const dayStart = localDateToUtc(opts.date, "00:00");
   const dayEnd = localDateToUtc(opts.date, "23:59");
   const existing = await WorkOrder.find({
-    ...assigneeInFilter([user._id]),
-    scheduledStart: { $gte: dayStart, $lte: dayEnd },
-    completed: { $ne: true },
+    $and: [
+      assigneeInFilter([user._id]),
+      {
+        scheduledStart: { $gte: dayStart, $lte: dayEnd },
+        completed: { $ne: true },
+      },
+      notCanceledAppointmentFilter(),
+    ],
   }).select("_id customerName");
   const included = new Set(opts.orderedWorkOrderIds);
   const omitted = existing.filter((job) => !included.has(String(job._id)));
@@ -3129,41 +3490,43 @@ export async function applyPlannedRoute(opts: {
     ) {
       lockById.set(String(job._id), job.scheduledStart);
     }
+    if (job.completed && job.scheduledStart instanceof Date) {
+      lockById.set(String(job._id), job.scheduledStart);
+    }
   }
-  const obstacles: TimeBlock[] = [];
+  const external = await techDayBlocks({
+    userId: String(user._id),
+    date: opts.date,
+    excludeIds: sequence.map((job) => String(job._id)),
+  });
+  const placed = await placeStopsWithoutOverlap({
+    ordered: sequence.map((job) => {
+      const id = String(job._id);
+      const locked = lockById.get(id) ?? null;
+      return {
+        id,
+        label: placeJobLabel(job),
+        durationMinutes: estimatedMinutesForWorkOrder(job),
+        hardLock: locked != null,
+        lockedStart: locked,
+        desiredStart: desiredStartOnDate(job.desiredStartTime, opts.date),
+        point: pointFor(job),
+      };
+    }),
+    obstacles: external,
+    windowStart: workRange.start,
+    driveBetween,
+  });
+  for (const message of placed.warnings) warn(message);
+  const placementById = new Map(placed.placements.map((row) => [row.id, row]));
   for (const job of sequence) {
-    const locked = lockById.get(String(job._id));
-    if (!locked) continue;
-    const duration = estimatedMinutesForWorkOrder(job);
-    obstacles.push({
-      start: locked,
-      end: addMinutes(locked, duration),
-      point: pointFor(job),
-      label: placeJobLabel(job),
-    });
-  }
-  let routePrev: TimeBlock | null = null;
-  for (const job of sequence) {
-    const duration = estimatedMinutesForWorkOrder(job);
-    const locked = lockById.get(String(job._id)) ?? null;
-    const dest = pointFor(job);
-    const label = placeJobLabel(job);
-    const start: Date = locked
-      ? locked
-      : await firstOpenStart({
-          desired: routePrev ? routePrev.end : workRange.start,
-          duration,
-          windowStart: workRange.start,
-          previous: routePrev,
-          blocks: obstacles,
-          dest,
-          destLabel: label,
-          driveBetween,
-        });
-    const end = addMinutes(start, duration);
+    const slot = placementById.get(String(job._id));
+    if (!slot) continue;
+    const start = slot.start;
+    const end = slot.end;
     job.scheduledStart = start;
     job.scheduledEnd = end;
-    job.estimatedMinutes = duration;
+    job.estimatedMinutes = estimatedMinutesForWorkOrder(job);
     job.routeLocked = routeLockedForAppliedStop(String(job._id), lockById);
     job.appointmentCanceledAt = null;
     job.appointmentCanceledBy = null;
@@ -3181,9 +3544,6 @@ export async function applyPlannedRoute(opts: {
       end,
     });
     if (hoursWarn) warn(`${placeJobLabel(job)}: ${hoursWarn}`);
-    const block: TimeBlock = { start, end, point: dest, label };
-    if (!locked) obstacles.push(block);
-    if (!routePrev || end.getTime() > routePrev.end.getTime()) routePrev = block;
   }
 
   for (const job of sequence) {
@@ -3503,6 +3863,7 @@ export async function findSharedSlot(opts: {
         scheduledEnd: { $ne: null },
         ...(exclude ? { _id: { $ne: exclude } } : {}),
       },
+      notCanceledAppointmentFilter(),
     ],
   })
     .select("scheduledStart scheduledEnd")
@@ -3778,9 +4139,14 @@ export async function placeWorkOrder(opts: {
   const dayStart = localDateToUtc(opts.date, "00:00");
   const dayEnd = localDateToUtc(opts.date, "23:59");
   const existing = await WorkOrder.find({
-    ...assigneeInFilter([assignee._id]),
-    scheduledStart: { $gte: dayStart, $lte: dayEnd },
-    _id: { $ne: dropped._id },
+    $and: [
+      assigneeInFilter([assignee._id]),
+      {
+        scheduledStart: { $gte: dayStart, $lte: dayEnd },
+        _id: { $ne: dropped._id },
+      },
+      notCanceledAppointmentFilter(),
+    ],
   }).sort({ scheduledStart: 1 });
 
   const requestedStart =
@@ -3903,6 +4269,22 @@ export async function placeWorkOrder(opts: {
       throw Object.assign(new Error("No open start in that window"), { status: 409 });
     }
     const end = addMinutes(start, duration);
+    const noteStart = desiredStartOnDate(job.desiredStartTime, opts.date);
+    const preferred =
+      String(job._id) === droppedId ? requestedStart : noteStart;
+    const previousStart =
+      job.scheduledStart instanceof Date ? job.scheduledStart.getTime() : null;
+    const actuallyMoved =
+      previousStart == null || start.getTime() > previousStart + 1000;
+    if (
+      preferred &&
+      actuallyMoved &&
+      start.getTime() > preferred.getTime() + 1000
+    ) {
+      warn(
+        `${placeJobLabel(job)} moved from ${formatRouteClock(preferred)} to ${formatRouteClock(start)} (overlap)`,
+      );
+    }
     job.scheduledStart = start;
     job.scheduledEnd = end;
     job.estimatedMinutes = duration;
@@ -4262,12 +4644,12 @@ export async function previewOptimalPlacement(
   const dayStart = localDateToUtc(opts.date, "00:00");
   const dayEnd = localDateToUtc(opts.date, "23:59");
   const existing = await WorkOrder.find({
-    ...assigneeInFilter([user._id]),
-    scheduledStart: { $gte: dayStart, $lte: dayEnd },
-    completed: { $ne: true },
-    $or: [
-      { appointmentCanceledAt: null },
-      { appointmentCanceledAt: { $exists: false } },
+    $and: [
+      assigneeInFilter([user._id]),
+      {
+        scheduledStart: { $gte: dayStart, $lte: dayEnd },
+      },
+      notCanceledAppointmentFilter(),
     ],
   }).sort({ scheduledStart: 1 });
 
@@ -4354,25 +4736,16 @@ export async function previewOptimalPlacement(
   const lockedOffsetMinutes: Array<number | null> = [
     null,
     ...existing.map((job) => {
-      const locked =
-        job.desiredStartTime && isHhMm(job.desiredStartTime.trim())
-          ? localDateToUtc(opts.date, job.desiredStartTime.trim())
-          : crewIdStrings(job).length > 1 && job.scheduledStart
-            ? job.scheduledStart
-            : null;
+      const fixed =
+        Boolean(job.completed) ||
+        Boolean(job.routeLocked) ||
+        crewIdStrings(job).length > 1;
+      const locked = fixed && job.scheduledStart ? job.scheduledStart : null;
       if (!locked || !workRange) return null;
       return Math.round((locked.getTime() - workRange.start.getTime()) / 60000);
     }),
+    null,
   ];
-
-  if (hasDesiredStart && workRange) {
-    const candLocked = localDateToUtc(opts.date, desiredStartHhMm);
-    lockedOffsetMinutes.push(
-      Math.round((candLocked.getTime() - workRange.start.getTime()) / 60000),
-    );
-  } else {
-    lockedOffsetMinutes.push(null);
-  }
 
   const order = optimizeAroundLocks({
     cost,
@@ -4410,8 +4783,45 @@ export async function previewOptimalPlacement(
     }
   }
 
-  const finalStart = candidateStart ?? windowStart;
+  let finalStart = candidateStart ?? windowStart;
+  const desiredUtc = hasDesiredStart
+    ? localDateToUtc(opts.date, desiredStartHhMm)
+    : null;
+  if (desiredUtc && desiredUtc.getTime() > finalStart.getTime()) {
+    finalStart = desiredUtc;
+  }
+  const busy = existing.flatMap((job) => {
+    if (!job.scheduledStart) return [];
+    const start = job.scheduledStart;
+    const end =
+      job.scheduledEnd ??
+      addMinutes(start, estimatedMinutesForWorkOrder(job));
+    return [
+      {
+        start,
+        end,
+        point: null as LatLng | null,
+        label: placeJobLabel(job),
+      },
+    ];
+  });
+  finalStart = await firstOpenStart({
+    desired: finalStart,
+    duration,
+    windowStart: finalStart,
+    previous: null,
+    blocks: busy,
+    dest: site.coords,
+    destLabel: "This stop",
+    driveBetween: async () => 0,
+  });
   const finalEnd = addMinutes(finalStart, duration);
+  const warnings: string[] = [];
+  if (desiredUtc && finalStart.getTime() > desiredUtc.getTime() + 1000) {
+    warnings.push(
+      `Moved from ${formatRouteClock(desiredUtc)} to ${formatRouteClock(finalStart)} (overlap)`,
+    );
+  }
 
   return {
     insertIndex,
@@ -4419,7 +4829,7 @@ export async function previewOptimalPlacement(
     startTime: formatLocalTime(finalStart),
     endTime: formatLocalTime(finalEnd),
     estimatedMinutes: duration,
-    warnings: [],
+    warnings,
   };
 }
 
@@ -4486,20 +4896,7 @@ export async function assignAndOptimizeTechnician(
     ],
   });
 
-  const lockedStops: Array<{ workOrderId: string; arrival: string }> = [];
-  for (const row of targetJobs) {
-    if (row.desiredStartTime && isHhMm(row.desiredStartTime.trim())) {
-      lockedStops.push({
-        workOrderId: String(row._id),
-        arrival: localDateToUtc(opts.date, row.desiredStartTime.trim()).toISOString(),
-      });
-    } else if (crewIdStrings(row).length > 1 && row.scheduledStart) {
-      lockedStops.push({
-        workOrderId: String(row._id),
-        arrival: row.scheduledStart.toISOString(),
-      });
-    }
-  }
+  const lockedStops = hardLockStops(targetJobs);
 
   let warnings: string[] = [];
   if (targetJobs.length > 1) {
@@ -4549,20 +4946,7 @@ export async function assignAndOptimizeTechnician(
     }).sort({ scheduledStart: 1 });
 
     if (remainingPrevJobs.length > 1) {
-      const prevLocks: Array<{ workOrderId: string; arrival: string }> = [];
-      for (const rj of remainingPrevJobs) {
-        if (rj.desiredStartTime && isHhMm(rj.desiredStartTime.trim())) {
-          prevLocks.push({
-            workOrderId: String(rj._id),
-            arrival: localDateToUtc(targetDateForPrev, rj.desiredStartTime.trim()).toISOString(),
-          });
-        } else if (crewIdStrings(rj).length > 1 && rj.scheduledStart) {
-          prevLocks.push({
-            workOrderId: String(rj._id),
-            arrival: rj.scheduledStart.toISOString(),
-          });
-        }
-      }
+      const prevLocks = hardLockStops(remainingPrevJobs);
       try {
         const prevPlan = await planRouteForUser({
           userId: prevTechId,

@@ -97,6 +97,12 @@ function TargetReport({
             {formatCount(audit.wosMissing.length)}
           </dd>
         </div>
+        <div>
+          <dt className="text-neutral-500">Skipped, already that day</dt>
+          <dd className="font-medium text-brand-dark">
+            {formatCount(audit.wosSkippedSameDay ?? 0)}
+          </dd>
+        </div>
       </dl>
       <div className="space-y-2">
         <AuditSection title="Customers missing" count={audit.customersMissing.length}>

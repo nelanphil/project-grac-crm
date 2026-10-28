@@ -106,6 +106,17 @@ function orderCustomerName(order: WorkOrderListItem): string {
   return properCaseCity(order.customerName?.trim() || "") || "Job";
 }
 
+export function DuplicateBadge() {
+  return (
+    <span
+      title="Same customer already has another work order this day"
+      className="rounded-full bg-amber-100 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-amber-800"
+    >
+      Possible duplicate
+    </span>
+  );
+}
+
 /** Cities for one technician-day, most appointments first. Ties use the city name. */
 function citiesByAppointmentCount(
   jobs: WorkOrderListItem[],
@@ -312,6 +323,7 @@ function UnscheduledCardShell({
   onView,
   onMoveDate,
   onNoteAdded,
+  duplicate = false,
   isDragging,
   setNodeRef,
   style,
@@ -329,6 +341,7 @@ function UnscheduledCardShell({
   onView?: (order: WorkOrderListItem) => void;
   onMoveDate?: (date: string) => void;
   onNoteAdded?: () => void;
+  duplicate?: boolean;
   isDragging?: boolean;
   setNodeRef?: (node: HTMLElement | null) => void;
   style?: CSSProperties;
@@ -493,6 +506,7 @@ function UnscheduledCardShell({
             >
               {order.scheduledStart ? "Scheduled" : "Unscheduled"}
             </span>
+            {duplicate ? <DuplicateBadge /> : null}
             {order.scheduledStart && !narrow && onUnschedule ? (
               <button
                 type="button"
@@ -623,6 +637,7 @@ function DraggableUnscheduledCard({
   onView,
   onMoveDate,
   onNoteAdded,
+  duplicate = false,
   lift = false,
   technicianColors,
 }: {
@@ -637,6 +652,7 @@ function DraggableUnscheduledCard({
   onView?: (order: WorkOrderListItem) => void;
   onMoveDate?: (date: string) => void;
   onNoteAdded?: () => void;
+  duplicate?: boolean;
   lift?: boolean;
   technicianColors?: Record<string, string>;
 }) {
@@ -660,6 +676,7 @@ function DraggableUnscheduledCard({
       onView={onView}
       onMoveDate={onMoveDate}
       onNoteAdded={onNoteAdded}
+      duplicate={duplicate}
       isDragging={isDragging}
       setNodeRef={setNodeRef}
       style={style}
@@ -683,6 +700,7 @@ export function UnscheduledCard({
   onView,
   onMoveDate,
   onNoteAdded,
+  duplicate = false,
   technicianColors,
 }: {
   order: WorkOrderListItem;
@@ -698,6 +716,7 @@ export function UnscheduledCard({
   onView?: (order: WorkOrderListItem) => void;
   onMoveDate?: (date: string) => void;
   onNoteAdded?: () => void;
+  duplicate?: boolean;
   technicianColors?: Record<string, string>;
 }) {
   const narrow = useNarrowSchedule();
@@ -715,6 +734,7 @@ export function UnscheduledCard({
         onView={onView}
         onMoveDate={onMoveDate}
         onNoteAdded={onNoteAdded}
+        duplicate={duplicate}
         technicianColors={technicianColors}
       />
     );
@@ -732,6 +752,7 @@ export function UnscheduledCard({
       onView={onView}
       onMoveDate={onMoveDate}
       onNoteAdded={onNoteAdded}
+      duplicate={duplicate}
       lift={lift}
       technicianColors={technicianColors}
     />
@@ -820,6 +841,7 @@ function JobBlock({
   dispatcher,
   lane,
   laneCount,
+  duplicate = false,
   liftDrag = false,
 }: {
   order: WorkOrderListItem;
@@ -827,12 +849,14 @@ function JobBlock({
   dispatcher: boolean;
   lane: number;
   laneCount: number;
+  duplicate?: boolean;
   liftDrag?: boolean;
 }) {
+  const canDrag = dispatcher && !order.completed;
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: `job:${order._id}`,
-      disabled: !dispatcher,
+      disabled: !canDrag,
     });
 
   if (!order.scheduledStart) return null;
@@ -877,13 +901,20 @@ function JobBlock({
       type="button"
       ref={setNodeRef}
       style={style}
-      {...(dispatcher ? listeners : {})}
-      {...(dispatcher ? attributes : {})}
+      {...(canDrag ? listeners : {})}
+      {...(canDrag ? attributes : {})}
       onClick={onClick}
-      title={[customerName, timeLabel, detail].filter(Boolean).join(" · ")}
+      title={[
+        customerName,
+        timeLabel,
+        detail,
+        duplicate ? "Possible duplicate" : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")}
       className={`absolute overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight text-brand-dark transition-shadow hover:shadow-md ${
-        isDragging ? "z-20 opacity-30 pointer-events-none" : ""
-      }`}
+        duplicate ? "ring-2 ring-inset ring-amber-500" : ""
+      } ${isDragging ? "z-20 opacity-30 pointer-events-none" : ""}`}
     >
       <div className="truncate font-semibold">{customerName}</div>
       <div className="truncate text-neutral-500">{timeLabel}</div>
@@ -1377,6 +1408,7 @@ function StaffColumn({
   onTaskDone,
   onTaskEdit,
   onTaskRemove,
+  duplicateIds,
 }: {
   staff: ScheduleStaffMember;
   jobs: WorkOrderListItem[];
@@ -1391,6 +1423,7 @@ function StaffColumn({
   onTaskDone: (task: TaskItem) => void;
   onTaskEdit: (task: TaskItem) => void;
   onTaskRemove: (task: TaskItem) => void;
+  duplicateIds?: Set<string>;
 }) {
   const { active } = useDndContext();
   const isDraggingAnyJob = Boolean(
@@ -1634,6 +1667,7 @@ function StaffColumn({
               dispatcher={dispatcher}
               lane={layout.lane}
               laneCount={layout.laneCount}
+              duplicate={duplicateIds?.has(job._id) ?? false}
               liftDrag={true}
               onClick={() => onJobClick(job)}
             />
@@ -1674,6 +1708,7 @@ export default function WeekBoard({
   onTaskDone,
   onTaskEdit,
   onTaskRemove,
+  duplicateIds,
 }: {
   staff: ScheduleStaffMember[];
   jobs: WorkOrderListItem[];
@@ -1687,6 +1722,7 @@ export default function WeekBoard({
   onTaskDone?: (task: TaskItem) => void;
   onTaskEdit?: (task: TaskItem) => void;
   onTaskRemove?: (task: TaskItem) => void;
+  duplicateIds?: Set<string>;
 }) {
   const token = useAuthStore((s) => s.token);
   const jobsByUser = new Map<string, WorkOrderListItem[]>();
@@ -1814,6 +1850,7 @@ export default function WeekBoard({
               selectedDate={selectedDate}
               dispatcher={dispatcher}
               draggingJob={draggingJob}
+              duplicateIds={duplicateIds}
               onJobClick={onJobClick}
               onMap={() => onMap(person._id)}
             />

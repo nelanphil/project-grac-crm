@@ -54,6 +54,7 @@ import {
   taxCentsFromDollars,
 } from "./taxSettings";
 import { mintCheckoutKey } from "../utils/checkoutKey";
+import { formatLocalDate, storedTicketDateKey } from "../utils/scheduleTime";
 import {
   customerHasEquipmentData,
   customerHasSiteData,
@@ -99,6 +100,11 @@ export type OrphanWoRow = {
   customerId: number;
 };
 
+/** A site row that matched more than one CRM job for the same customer and day. */
+export type AmbiguousWoRow = MissingWoRow & {
+  candidateIds: string[];
+};
+
 export type AuditReport = {
   customersPresent: number;
   customersIdentityLinked: IdentityLinkedRow[];
@@ -106,8 +112,11 @@ export type AuditReport = {
   customersCollisions: CollisionAuditRow[];
   wosPresent: number;
   wosFuzzy: number;
+  wosLinked: number;
+  wosSkippedSameDay: number;
   wosMissing: MissingWoRow[];
   wosOrphan: OrphanWoRow[];
+  wosAmbiguous: AmbiguousWoRow[];
 };
 
 export type ImportSummary = {
@@ -128,6 +137,9 @@ export type ImportSummary = {
   workOrdersSkippedDuplicateLegacy: number;
   workOrdersSkippedUserMismatch: number;
   workOrdersSkippedNonOwner: number;
+  workOrdersLinked: number;
+  workOrdersAmbiguous: number;
+  workOrdersSkippedSameDay: number;
   ascCustomers: number;
   contractsCreated: number;
   contractsUpdated: number;
@@ -594,6 +606,144 @@ export function matchLegacyWorkOrder(
   return { action: "update" };
 }
 
+function asDate(value: Date | string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * Calendar day of a site dump date. UTC-midnight legacy dates keep that UTC day.
+ * CRM dates stored at New York midnight use the New York calendar day.
+ */
+export function legacyRowCalendarDay(
+  date: Date | string | null | undefined,
+): string {
+  return storedTicketDateKey(asDate(date)) ?? "";
+}
+
+/**
+ * Day a stored work order shares with a site row: its ticket date, or the
+ * New York day of its scheduled start when it has no ticket date.
+ */
+export function storedWorkOrderCalendarDay(job: {
+  date?: Date | string | null;
+  scheduledStart?: Date | string | null;
+}): string {
+  const fromDate = legacyRowCalendarDay(job.date);
+  if (fromDate) return fromDate;
+  const scheduled = asDate(job.scheduledStart);
+  if (!scheduled) return "";
+  return formatLocalDate(scheduled);
+}
+
+export type CrmLinkCandidate = {
+  _id: string;
+  customerRef?: string | null;
+  legacyId?: number | null;
+  date?: Date | string | null;
+  scheduledStart?: Date | string | null;
+  deletedAt?: Date | string | null;
+  appointmentCanceledAt?: Date | string | null;
+};
+
+export type CrmLinkMatch<T> =
+  | { action: "skip"; matches: T[] }
+  | { action: "none" };
+
+/**
+ * Ignore a site dump row when this customer already has a work order on that
+ * calendar day. Canceled and deleted jobs do not count. The existing job is
+ * left unchanged.
+ */
+export function matchCrmWorkOrderForLegacyRow<T extends CrmLinkCandidate>(
+  row: { date: Date | string | null },
+  customerRef: string,
+  candidates: T[],
+): CrmLinkMatch<T> {
+  const day = legacyRowCalendarDay(row.date);
+  const customerId = customerRef.trim();
+  if (!day || !customerId) return { action: "none" };
+  const matches = candidates.filter((candidate) => {
+    if (candidate.deletedAt) return false;
+    if (candidate.appointmentCanceledAt) return false;
+    if ((candidate.customerRef ?? "").trim() !== customerId) return false;
+    return storedWorkOrderCalendarDay(candidate) === day;
+  });
+  if (matches.length === 0) return { action: "none" };
+  return { action: "skip", matches };
+}
+
+/**
+ * Site notes to store on a CRM job. Blank CRM text is replaced. Different
+ * text is appended. Returns null when nothing should change.
+ */
+export function mergeLegacyDescPerform(
+  existing: string | null | undefined,
+  incoming: string | null | undefined,
+): string | null {
+  const next = (incoming ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!next) return null;
+  const current = (existing ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!current) return next;
+  const norm = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+  const currentNorm = norm(current);
+  const nextNorm = norm(next);
+  if (currentNorm === nextNorm || currentNorm.includes(nextNorm)) return null;
+  return `${current}\n${next}`;
+}
+
+export type DuplicateScoreInput = {
+  legacyId?: number | null;
+  scheduledStart?: Date | string | null;
+  total?: number | null;
+  parts?: Array<{
+    lineType?: string | null;
+    amount?: number | null;
+    unitPrice?: number | null;
+  }> | null;
+  hasInvoice?: boolean;
+};
+
+/** Higher means the copy has more of the schedule, products, money, or invoice. */
+export function duplicateWorkOrderScore(workOrder: DuplicateScoreInput): number {
+  let score = 0;
+  if (workOrder.scheduledStart) score += 1;
+  const priced = (workOrder.parts ?? []).some(
+    (part) =>
+      part.lineType !== "note" &&
+      ((part.amount ?? 0) > 0 || (part.unitPrice ?? 0) > 0),
+  );
+  if (priced) score += 1;
+  if ((workOrder.total ?? 0) > 0) score += 1;
+  if (workOrder.hasInvoice) score += 1;
+  return score;
+}
+
+/** Keep the higher score. On a tie, keep the work order that was created in the CRM. */
+export function chooseKeptDuplicate<T extends { legacyId?: number | null }>(
+  left: T,
+  right: T,
+  scoreOf: (workOrder: T) => number,
+): { kept: T; dropped: T; reason: string } {
+  const leftScore = scoreOf(left);
+  const rightScore = scoreOf(right);
+  if (leftScore !== rightScore) {
+    const kept = leftScore > rightScore ? left : right;
+    const dropped = kept === left ? right : left;
+    const reason = `score ${Math.max(leftScore, rightScore)} over ${Math.min(leftScore, rightScore)}`;
+    return { kept, dropped, reason };
+  }
+  const leftCrm = left.legacyId == null;
+  const rightCrm = right.legacyId == null;
+  if (leftCrm !== rightCrm) {
+    return leftCrm
+      ? { kept: left, dropped: right, reason: "tie, keep CRM copy" }
+      : { kept: right, dropped: left, reason: "tie, keep CRM copy" };
+  }
+  return { kept: left, dropped: right, reason: "tie" };
+}
+
 export type LegacyStatusSnapshot = {
   paid?: boolean;
   completed?: boolean;
@@ -958,8 +1108,12 @@ async function loadSiteRefs(
 type ExistingWorkOrder = {
   _id: Types.ObjectId;
   legacyId?: number;
+  legacyLinkedAt?: Date | null;
   customerId: number;
   customerRef?: Types.ObjectId | null;
+  scheduledStart?: Date | null;
+  deletedAt?: Date | null;
+  appointmentCanceledAt?: Date | null;
   customerName?: string;
   customerAddress?: string;
   customerCity?: string;
@@ -2071,8 +2225,11 @@ export async function runLegacyDumpSync(options: {
       customersCollisions: [],
       wosPresent: 0,
       wosFuzzy: 0,
+      wosLinked: 0,
+      wosSkippedSameDay: 0,
       wosMissing: [],
       wosOrphan: [],
+      wosAmbiguous: [],
     };
 
     for (let i = 0; i < customerRows.length; i += 1) {
@@ -2215,12 +2372,22 @@ export async function runLegacyDumpSync(options: {
     log("Loading existing work orders…");
     const existingWos = await models.WorkOrder.find()
       .select(
-        "_id legacyId userId number customerId customerRef customerName customerAddress customerCity customerZip customerPhone customerEmail date descPerform paid completed parts subtotal shipping total",
+        "_id legacyId legacyLinkedAt userId number customerId customerRef customerName customerAddress customerCity customerZip customerPhone customerEmail date scheduledStart descPerform paid completed parts subtotal shipping total deletedAt appointmentCanceledAt",
       )
       .lean();
     const existingWoLegacyIds = new Set<number>();
     const wosByLegacyId = new Map<number, ExistingWorkOrder[]>();
     const fuzzyWoKeys = new Set<string>();
+    const workOrdersByCustomerDay = new Map<string, ExistingWorkOrder[]>();
+    const rememberCustomerDay = (wo: ExistingWorkOrder) => {
+      if (!wo.customerRef || wo.deletedAt || wo.appointmentCanceledAt) return;
+      const day = storedWorkOrderCalendarDay(wo);
+      if (!day) return;
+      const key = `${String(wo.customerRef)}|${day}`;
+      const list = workOrdersByCustomerDay.get(key) ?? [];
+      list.push(wo);
+      workOrdersByCustomerDay.set(key, list);
+    };
     for (const wo of existingWos) {
       if (wo.legacyId != null) {
         existingWoLegacyIds.add(wo.legacyId);
@@ -2228,6 +2395,7 @@ export async function runLegacyDumpSync(options: {
         list.push(wo);
         wosByLegacyId.set(wo.legacyId, list);
       }
+      rememberCustomerDay(wo);
       fuzzyWoKeys.add(woFuzzyKey(wo.customerId, wo.date, wo.descPerform ?? ""));
     }
 
@@ -2261,6 +2429,7 @@ export async function runLegacyDumpSync(options: {
     let statusUpdated = 0;
     let skippedDuplicateLegacy = 0;
     let skippedUserMismatch = 0;
+    let skippedSameDay = 0;
     const duplicateLegacyIds: number[] = [];
     const userMismatchIds: number[] = [];
     const productCatalog = await loadProductCatalog(models);
@@ -2301,6 +2470,7 @@ export async function runLegacyDumpSync(options: {
           log,
         );
         if (backfilled) backfilledWoRefs += 1;
+        if (existing.legacyLinkedAt) continue;
         const mappedItems = await backfillExistingWorkOrderLineItems(
           models,
           existing,
@@ -2363,6 +2533,31 @@ export async function runLegacyDumpSync(options: {
         continue;
       }
 
+      const crmDay = legacyRowCalendarDay(row.date);
+      const crmKey = crmDay ? `${String(customer._id)}|${crmDay}` : "";
+      const crmBucket = crmKey ? (workOrdersByCustomerDay.get(crmKey) ?? []) : [];
+      const crmDecision = matchCrmWorkOrderForLegacyRow(
+        row,
+        String(customer._id),
+        crmBucket.map((wo) => ({
+          _id: String(wo._id),
+          customerRef: wo.customerRef ? String(wo.customerRef) : null,
+          legacyId: wo.legacyId ?? null,
+          date: wo.date ?? null,
+          scheduledStart: wo.scheduledStart ?? null,
+          deletedAt: wo.deletedAt ?? null,
+          appointmentCanceledAt: wo.appointmentCanceledAt ?? null,
+        })),
+      );
+      if (crmDecision.action === "skip") {
+        skippedSameDay += 1;
+        audit.wosSkippedSameDay += 1;
+        log(
+          `${dryRun ? "Would skip" : "Skipped"} site work order ${row.legacyId}: ${displayName(customer)} already has a work order on ${crmDay}.`,
+        );
+        continue;
+      }
+
       audit.wosMissing.push({
         woId: row.legacyId,
         customerId: row.customerId,
@@ -2373,6 +2568,13 @@ export async function runLegacyDumpSync(options: {
       if (dryRun) {
         existingWoLegacyIds.add(row.legacyId);
         fuzzyWoKeys.add(fuzzy);
+        rememberCustomerDay({
+          _id: new Types.ObjectId(),
+          legacyId: row.legacyId,
+          customerId: customer.legacyId,
+          customerRef: customer._id,
+          date: row.date,
+        });
         insertedWos += 1;
         continue;
       }
@@ -2434,6 +2636,13 @@ export async function runLegacyDumpSync(options: {
 
       existingWoLegacyIds.add(row.legacyId);
       fuzzyWoKeys.add(fuzzy);
+      rememberCustomerDay({
+        _id: createdWo._id,
+        legacyId: row.legacyId,
+        customerId: customer.legacyId,
+        customerRef: customer._id,
+        date: row.date,
+      });
       insertedWos += 1;
       } finally {
         heartbeat(i + 1, workOrderRows.length, "work orders");
@@ -2441,7 +2650,7 @@ export async function runLegacyDumpSync(options: {
     }
 
     log(
-      `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()} ref-backfills=${backfilledWoRefs.toLocaleString()} line-item-backfills=${backfilledWoLineItems.toLocaleString()} status-updates=${statusUpdated.toLocaleString()} duplicate-legacy=${skippedDuplicateLegacy.toLocaleString()} user-mismatch=${skippedUserMismatch.toLocaleString()} skipped-non-owner=${workOrdersSkippedNonOwner.toLocaleString()}.`,
+      `Work orders: present=${audit.wosPresent.toLocaleString()} skipped-same-day=${audit.wosSkippedSameDay.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()} ref-backfills=${backfilledWoRefs.toLocaleString()} line-item-backfills=${backfilledWoLineItems.toLocaleString()} status-updates=${statusUpdated.toLocaleString()} duplicate-legacy=${skippedDuplicateLegacy.toLocaleString()} user-mismatch=${skippedUserMismatch.toLocaleString()} skipped-non-owner=${workOrdersSkippedNonOwner.toLocaleString()}.`,
     );
     if (duplicateLegacyIds.length > 0) {
       log(
@@ -2524,6 +2733,9 @@ export async function runLegacyDumpSync(options: {
       workOrdersSkippedDuplicateLegacy: skippedDuplicateLegacy,
       workOrdersSkippedUserMismatch: skippedUserMismatch,
       workOrdersSkippedNonOwner,
+      workOrdersLinked: 0,
+      workOrdersAmbiguous: audit.wosAmbiguous.length,
+      workOrdersSkippedSameDay: skippedSameDay,
       ascCustomers: ascSync.customersWithAsc,
       contractsCreated: dryRun ? 0 : ascSync.contractsCreated,
       contractsUpdated: dryRun ? 0 : ascSync.contractsUpdated,

@@ -16,6 +16,7 @@ import {
   DragOverlay,
   PointerSensor,
   pointerWithin,
+  useDroppable,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -80,6 +81,11 @@ import WeekBoard, {
   RailTaskCard,
   UnscheduledCard,
 } from "@/components/schedule/WeekBoard";
+import {
+  compareWithinDay,
+  duplicatesFor,
+  findDuplicateIds,
+} from "@/lib/scheduleDuplicates";
 import TaskDialog from "@/components/tasks/TaskDialog";
 import MonthCalendar from "@/components/schedule/MonthCalendar";
 import MonthTable from "@/components/schedule/MonthTable";
@@ -111,6 +117,8 @@ function dropColumnId(overId: string): string {
 
 const calendarCollisionDetection: CollisionDetection = (args) => {
   const collisions = pointerWithin(args);
+  const railCollision = collisions.find((c) => String(c.id) === "rail");
+  if (railCollision) return [railCollision];
   const slotCollision = collisions.find((c) => String(c.id).startsWith("slot:"));
   if (slotCollision) return [slotCollision];
   return collisions;
@@ -381,11 +389,27 @@ function recommendedTechnician(
   return list?.find((tech) => tech.available) ?? null;
 }
 
-function compareWithinDay(a: WorkOrderListItem, b: WorkOrderListItem): number {
-  const aScheduled = a.scheduledStart ? 1 : 0;
-  const bScheduled = b.scheduledStart ? 1 : 0;
-  if (aScheduled !== bScheduled) return aScheduled - bScheduled;
-  return (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? "");
+function assigneeLabel(job: WorkOrderListItem): string {
+  const named = [job.assignee?.first_name, job.assignee?.last_name]
+    .filter(Boolean)
+    .join(" ");
+  if (named) return named;
+  return (job.assignees ?? [])
+    .map((person) =>
+      [person.first_name, person.last_name].filter(Boolean).join(" "),
+    )
+    .filter(Boolean)
+    .join(", ");
+}
+
+function duplicateJobLabel(job: WorkOrderListItem): string {
+  const when = job.scheduledStart
+    ? formatLocalClock(new Date(job.scheduledStart))
+    : "Unscheduled";
+  const number = job.number?.trim();
+  return [number ? `#${number}` : null, when, assigneeLabel(job) || "Unassigned"]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 type MapRailPane = "appointments" | "technicians";
@@ -414,6 +438,8 @@ function ScheduleRail({
   technicianColors,
   tasks = [],
   onCreateTask,
+  duplicateIds,
+  draggingScheduled = false,
 }: {
   dayLabel: string;
   dayJobs: WorkOrderListItem[];
@@ -438,12 +464,23 @@ function ScheduleRail({
   technicianColors: Record<string, string>;
   tasks?: TaskItem[];
   onCreateTask?: () => void;
+  duplicateIds?: Set<string>;
+  draggingScheduled?: boolean;
 }) {
+  const { setNodeRef, isOver } = useDroppable({ id: "rail" });
+  const showUnscheduleDrop = isOver && draggingScheduled;
   const empty = dayJobs.length === 0 && undatedJobs.length === 0 && tasks.length === 0;
   const showTechnicians = pane === "technicians" && technicianPane;
 
   return (
-    <aside className="flex h-full max-h-[44rem] min-h-0 flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm lg:max-h-none">
+    <aside
+      ref={setNodeRef}
+      className={`flex h-full max-h-[44rem] min-h-0 flex-col gap-3 rounded-2xl border bg-white p-3 shadow-sm lg:max-h-none ${
+        showUnscheduleDrop
+          ? "border-dashed border-amber-500 bg-amber-50/60"
+          : "border-neutral-200"
+      }`}
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           {onCreateTask ? (
@@ -481,6 +518,11 @@ function ScheduleRail({
             { id: "technicians", label: "Technicians" },
           ]}
         />
+      ) : null}
+      {showUnscheduleDrop ? (
+        <p className="rounded-lg border border-dashed border-amber-500 bg-amber-50 px-2 py-1.5 text-center text-xs font-medium text-amber-800">
+          Drop to unschedule
+        </p>
       ) : null}
       {showTechnicians ? (
         technicianPane
@@ -521,6 +563,7 @@ function ScheduleRail({
                       : undefined
                   }
                   onNoteAdded={onNoteAdded}
+                  duplicate={duplicateIds?.has(order._id) ?? false}
                 />
               ))}
             </section>
@@ -559,6 +602,7 @@ function ScheduleRail({
                       : undefined
                   }
                   onNoteAdded={onNoteAdded}
+                  duplicate={duplicateIds?.has(order._id) ?? false}
                 />
               ))}
             </section>
@@ -1060,6 +1104,12 @@ export default function CalendarTab({
     place: string;
     resolve: (proceed: boolean) => void;
   } | null>(null);
+  const [duplicatePrompt, setDuplicatePrompt] = useState<{
+    customerName: string;
+    dateLabel: string;
+    others: Array<{ id: string; label: string }>;
+    resolve: (proceed: boolean) => void;
+  } | null>(null);
   const territoryCities = useMemo(() => {
     if (!effectiveTechId) return [] as ServiceCity[];
     return (
@@ -1109,7 +1159,8 @@ export default function CalendarTab({
       canWrite &&
       editingId &&
       editingStart &&
-      editingJob?.assignedUserRef,
+      editingJob?.assignedUserRef &&
+      !editingJob?.completed,
   );
 
   useEffect(() => {
@@ -1200,7 +1251,10 @@ export default function CalendarTab({
     const incoming = uniqueJobs(railScheduled, railJobs).filter(
       (job) => workOrderLocalDate(job) === selectedDate,
     );
-    const undated = railJobs.filter((job) => !workOrderLocalDate(job));
+    const undated = railJobs
+      .filter((job) => !workOrderLocalDate(job))
+      .slice()
+      .sort(compareWithinDay);
     const dated = incoming.slice().sort(compareWithinDay);
     return { dated, undated };
   }, [railJobs, railScheduled, selectedDate]);
@@ -1268,6 +1322,11 @@ export default function CalendarTab({
   const draggingJob = draggingJobId
     ? (jobById.get(draggingJobId) ?? null)
     : null;
+  const scheduleJobs = useMemo(() => [...jobById.values()], [jobById]);
+  const duplicateIds = useMemo(
+    () => findDuplicateIds(scheduleJobs),
+    [scheduleJobs],
+  );
   const taskById = useMemo(() => {
     const byId = new Map<string, TaskItem>();
     for (const task of [...tasks, ...railTasks]) byId.set(task.id, task);
@@ -1276,6 +1335,9 @@ export default function CalendarTab({
   const draggingTask = draggingTaskId
     ? (taskById.get(draggingTaskId) ?? null)
     : null;
+  const draggingScheduled = Boolean(
+    draggingJob?.scheduledStart || draggingTask?.scheduledStart,
+  );
   const dayAppointments = useMemo(() => {
     return jobs
       .filter(
@@ -1632,6 +1694,26 @@ export default function CalendarTab({
     });
   }
 
+  function confirmDuplicate(job: WorkOrderListItem, date: string): Promise<boolean> {
+    const others = duplicatesFor(job, date, scheduleJobs);
+    if (others.length === 0) return Promise.resolve(true);
+    const customerName = job.customerName?.trim() || "This customer";
+    return new Promise((resolve) => {
+      setDuplicatePrompt((current) => {
+        current?.resolve(false);
+        return {
+          customerName,
+          dateLabel: formatWeekdayDate(date),
+          others: others.map((other) => ({
+            id: other._id,
+            label: duplicateJobLabel(other),
+          })),
+          resolve,
+        };
+      });
+    });
+  }
+
   async function assignRailTechnician(
     job: WorkOrderListItem,
     userId: string,
@@ -1648,6 +1730,7 @@ export default function CalendarTab({
       workOrderLocalDate(job) === selectedDate;
     if (alreadyScheduled) return false;
     if (!isDragDropManaged && !(await confirmTerritory(job, userId))) return false;
+    if (!isDragDropManaged && !(await confirmDuplicate(job, selectedDate))) return false;
     if (!isDragDropManaged) {
       const targetStaff = staff.find((s) => s._id === userId);
       const techName = targetStaff
@@ -1881,6 +1964,20 @@ export default function CalendarTab({
       setStaffOrder(next);
       return;
     }
+    if (overId === "rail") {
+      if (activeId.startsWith("job:")) {
+        const id = activeId.slice(4);
+        const job = jobById.get(id);
+        if (job?.scheduledStart) await unscheduleWorkOrder(id);
+        return;
+      }
+      if (activeId.startsWith("task:")) {
+        const task = taskById.get(activeId.slice(5));
+        if (task) await removeTaskFromSchedule(task);
+        return;
+      }
+      return;
+    }
     if (activeId.startsWith("task:")) {
       const taskId = activeId.slice(5);
       if (
@@ -1906,6 +2003,8 @@ export default function CalendarTab({
       return;
     }
     if (!activeId.startsWith("job:")) return;
+    const draggedJob = jobById.get(activeId.slice(4));
+    if (draggedJob?.completed) return;
     if (
       overId.startsWith("tech:") ||
       overId === "schedule-map" ||
@@ -1922,6 +2021,7 @@ export default function CalendarTab({
       const workOrderId = activeId.slice(4);
       const dropped = jobById.get(workOrderId);
       if (dropped && !(await confirmTerritory(dropped, userId))) return;
+      if (dropped && !(await confirmDuplicate(dropped, selectedDate))) return;
       if (dropped) {
         const targetStaff = staff.find((s) => s._id === userId);
         const techName = targetStaff
@@ -1960,6 +2060,7 @@ export default function CalendarTab({
     if (dropped && !(await confirmTerritory(dropped, userId))) return;
     const minutes = dayColumnMinutes(userId, event);
     if (minutes == null) return;
+    if (dropped && !(await confirmDuplicate(dropped, selectedDate))) return;
     const hhmm = minutesToHhMm(minutes);
     const iso = localDateTimeToIso(selectedDate, hhmm);
     if (!token) return;
@@ -2612,6 +2713,7 @@ export default function CalendarTab({
   async function moveWorkOrderDate(job: WorkOrderListItem, date: string) {
     if (!token || !canWrite || !date) return;
     if ((job.date?.slice(0, 10) ?? "") === date) return;
+    if (!(await confirmDuplicate(job, date))) return;
     setSaving(true);
     setError(null);
     try {
@@ -2777,6 +2879,8 @@ export default function CalendarTab({
       onCreateTask={
         canManageTasks ? () => setCreatingTask(true) : undefined
       }
+      duplicateIds={duplicateIds}
+      draggingScheduled={draggingScheduled}
     />
   ) : null;
 
@@ -2899,6 +3003,7 @@ export default function CalendarTab({
                       ? recommendedTechnician(recommendations[draggingJob._id])
                       : undefined
                   }
+                  duplicate={duplicateIds.has(draggingJob._id)}
                 />
               </div>
             ) : draggingTask ? (
@@ -2957,6 +3062,7 @@ export default function CalendarTab({
                   onTaskDone={(task) => void finishTask(task)}
                   onTaskEdit={setEditingTask}
                   onTaskRemove={(task) => void removeTaskFromSchedule(task)}
+                  duplicateIds={duplicateIds}
                   onJobClick={(job) => {
                     setEditingJob(job);
                     setDurationDraft(
@@ -3026,6 +3132,7 @@ export default function CalendarTab({
                       );
                     }}
                     onViewJob={openWorkOrder}
+                    duplicateIds={duplicateIds}
                   />
                 </div>
               ) : (
@@ -3057,6 +3164,7 @@ export default function CalendarTab({
                       ? recommendedTechnician(recommendations[draggingJob._id])
                       : undefined
                   }
+                  duplicate={duplicateIds.has(draggingJob._id)}
                 />
               </div>
             ) : draggingTask ? (
@@ -3123,6 +3231,65 @@ export default function CalendarTab({
         </div>
       ) : null}
 
+      {duplicatePrompt ? (
+        <div
+          className="fixed inset-0 z-[95] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+          onClick={() => {
+            duplicatePrompt.resolve(false);
+            setDuplicatePrompt(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="duplicate-warning-title"
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
+          >
+            <h3
+              id="duplicate-warning-title"
+              className="text-lg font-semibold text-brand-dark"
+            >
+              Possible duplicate
+            </h3>
+            <p className="mt-2 text-sm text-neutral-600">
+              {duplicatePrompt.customerName} already has{" "}
+              {duplicatePrompt.others.length === 1
+                ? "a work order"
+                : `${duplicatePrompt.others.length} work orders`}{" "}
+              on {duplicatePrompt.dateLabel}.
+            </p>
+            <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto text-sm text-neutral-700">
+              {duplicatePrompt.others.map((other) => (
+                <li key={other.id}>{other.label}</li>
+              ))}
+            </ul>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  duplicatePrompt.resolve(false);
+                  setDuplicatePrompt(null);
+                }}
+                className="rounded-md border border-neutral-200 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  duplicatePrompt.resolve(true);
+                  setDuplicatePrompt(null);
+                }}
+                className="rounded-md bg-brand-orange px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+              >
+                Schedule anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {dropLoading && (
         <GeneracScheduleLoadingOverlay
           workOrder={dropLoading.workOrder}
@@ -3163,6 +3330,19 @@ export default function CalendarTab({
             >
               View
             </button>
+            {editingJob.completed ? (
+              <p className="mt-3 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+                Completed
+              </p>
+            ) : null}
+            {editingJob.completed && editingJob.scheduledStart ? (
+              <div className="mt-4">
+                <p className="text-sm font-medium text-brand-dark">Start time</p>
+                <p className="mt-1 text-sm text-neutral-600">
+                  {formatLocalTime(new Date(editingJob.scheduledStart))}
+                </p>
+              </div>
+            ) : null}
             {canEditStart && (
               <div className="mt-4">
                 <label className="block text-sm font-medium text-brand-dark">
@@ -3208,11 +3388,13 @@ export default function CalendarTab({
               min={15}
               step={15}
               value={durationDraft}
+              readOnly={Boolean(editingJob.completed)}
+              disabled={Boolean(editingJob.completed)}
               onChange={(e) => setDurationDraft(Number(e.target.value))}
-              className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-2 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"
             />
             <div className="mt-4 flex flex-wrap justify-end gap-2">
-              {dispatcher && canWrite && editingJob.scheduledStart && (
+              {dispatcher && canWrite && editingJob.scheduledStart && !editingJob.completed && (
                 <button
                   type="button"
                   disabled={saving}
@@ -3229,7 +3411,7 @@ export default function CalendarTab({
               >
                 Close
               </button>
-              {canWrite && (
+              {canWrite && !editingJob.completed && (
                 <button
                   type="button"
                   disabled={

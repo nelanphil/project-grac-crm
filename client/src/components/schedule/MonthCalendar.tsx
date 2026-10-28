@@ -19,6 +19,8 @@ import {
   X,
 } from "lucide-react";
 import type { ScheduleRecommendation, TaskItem, WorkOrderListItem } from "@/lib/api";
+import { DuplicateBadge } from "@/components/schedule/WeekBoard";
+import { compareWithinDay } from "@/lib/scheduleDuplicates";
 import {
   addDays,
   blendColors,
@@ -286,6 +288,7 @@ export default function MonthCalendar({
   onAssignTechnician,
   onJobClick,
   onViewJob,
+  duplicateIds,
 }: {
   monthDate: string;
   jobs: WorkOrderListItem[];
@@ -311,6 +314,7 @@ export default function MonthCalendar({
   ) => Promise<boolean | void> | void;
   onJobClick?: (job: WorkOrderListItem) => void;
   onViewJob?: (job: WorkOrderListItem) => void;
+  duplicateIds?: Set<string>;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const isDrawerOpen = isExpanded && drawerOpen;
@@ -606,15 +610,7 @@ export default function MonthCalendar({
   const selectedDayJobs = useMemo(() => {
     if (!selectedDate) return [];
     const list = byDate.get(selectedDate) ?? [];
-    return [...list].sort((a, b) => {
-      // Unscheduled appointments first, then chronological
-      const aSched = a.scheduledStart ? 1 : 0;
-      const bSched = b.scheduledStart ? 1 : 0;
-      if (aSched !== bSched) return aSched - bSched;
-      const aTime = a.scheduledStart || a.startTime || "";
-      const bTime = b.scheduledStart || b.startTime || "";
-      return aTime.localeCompare(bTime);
-    });
+    return [...list].sort(compareWithinDay);
   }, [byDate, selectedDate]);
 
   // Technicians available for assignment
@@ -667,10 +663,7 @@ export default function MonthCalendar({
       techMap.set(techId, list);
     }
 
-    // Sort unscheduled by customer name
-    unscheduled.sort((a, b) =>
-      (a.customerName || "").localeCompare(b.customerName || "")
-    );
+    unscheduled.sort(compareWithinDay);
 
     // Build sorted technician groups
     const technicianGroups: Array<{
@@ -1398,6 +1391,7 @@ export default function MonthCalendar({
                                   <span className="rounded-full bg-[#c2410c] px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-white shadow-2xs">
                                     Unscheduled
                                   </span>
+                                  {duplicateIds?.has(job._id) ? <DuplicateBadge /> : null}
                                   {recInitials && (
                                     <span
                                       className="mt-0.5 text-xs font-bold"
@@ -1528,8 +1522,11 @@ export default function MonthCalendar({
                                       </span>
                                     </div>
 
-                                    <span className="shrink-0 rounded-full bg-blue-500/15 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-blue-700">
-                                      {time}
+                                    <span className="flex shrink-0 flex-col items-end gap-1">
+                                      <span className="rounded-full bg-blue-500/15 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-blue-700">
+                                        {time}
+                                      </span>
+                                      {duplicateIds?.has(job._id) ? <DuplicateBadge /> : null}
                                     </span>
                                   </div>
 

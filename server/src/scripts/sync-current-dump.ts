@@ -88,6 +88,7 @@ function printAuditReport(report: AuditReport, customersParsed: number, workOrde
   log(`  Customer legacyId collisions:             ${report.customersCollisions.length}`);
   log(`  Work orders parsed:                       ${workOrdersParsed}`);
   log(`  Work orders present (same legacy id):     ${report.wosPresent}`);
+  log(`  Work orders skipped (customer already that day): ${report.wosSkippedSameDay}`);
   log(`  Work orders missing:                      ${report.wosMissing.length}`);
   log(`  Work orders skipped (same job):           ${report.wosFuzzy}`);
   log(`  Work order orphans:                       ${report.wosOrphan.length}`);
@@ -210,6 +211,7 @@ async function main(): Promise<void> {
     log(`  Work orders skipped (duplicate legacy id): ${result.summary.workOrdersSkippedDuplicateLegacy}`);
     log(`  Work orders skipped (user mismatch): ${result.summary.workOrdersSkippedUserMismatch}`);
     log(`  Work orders skipped (non-owner): ${result.summary.workOrdersSkippedNonOwner}`);
+  log(`  Work orders skipped (same day): ${result.summary.workOrdersSkippedSameDay}`);
     log(`  Customers with ASC product:    ${result.summary.ascCustomers}`);
     log(`  ASC contracts created:         ${result.summary.contractsCreated}`);
     log(`  ASC contracts updated:         ${result.summary.contractsUpdated}`);
