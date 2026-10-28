@@ -66,6 +66,16 @@ app.use(
   express.json({ limit: "60mb" }),
 );
 app.use("/crash-reports", express.json({ limit: "1mb" }));
+app.use(
+  "/payment-journeys/snapshots",
+  express.text({ type: "text/plain", limit: "512kb" }),
+  express.json({ limit: "512kb" }),
+);
+app.use(
+  "/payment-journeys",
+  express.text({ type: "text/plain", limit: "128kb" }),
+  express.json({ limit: "128kb" }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

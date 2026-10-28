@@ -28,6 +28,10 @@ import {
   WorkOrderNotReadyError,
 } from "./invoice.service";
 import { settleInvoicePayment } from "./invoiceSettlement.service";
+import {
+  paymentSourceEventId,
+  recordInvoiceEventAsync,
+} from "./invoiceEvent.service";
 import { pickAvailableInvoicesForCustomers } from "./paymentLinkCart";
 import { buildCheckoutCompleteUrl } from "../utils/checkoutKey";
 import {
@@ -657,6 +661,25 @@ export async function confirmCustomerCheckout(input: {
   }
 
   for (const invoice of invoices) {
+    recordInvoiceEventAsync({
+      invoiceRef: invoice._id as Types.ObjectId,
+      customerRef: invoice.customerRef ?? null,
+      kind: "payment_failed",
+      method: "card",
+      provider: invoice.paymentProvider ?? null,
+      amountCents: retrieved.amountCents ?? invoice.amountCents,
+      reason: "Square reported the payment failed or was canceled when the customer returned",
+      providerPaymentId: retrieved.providerPaymentId ?? null,
+      providerOrderId: retrieved.providerOrderId ?? null,
+      actorKind: "customer",
+      source: "portal",
+      sourceEventId: paymentSourceEventId(
+        invoice._id as Types.ObjectId,
+        invoice.paymentProvider,
+        retrieved.providerPaymentId ?? retrieved.providerOrderId,
+        "failed",
+      ),
+    });
     if (invoice.status !== "paid") {
       invoice.status = "failed";
       await invoice.save();
@@ -743,7 +766,11 @@ export async function startCustomerCheckout(input: {
         await invoice.save();
       }
     }
-    await settleInvoicePayment({ invoices: unpaid, paidByCustomer: true });
+    await settleInvoicePayment({
+      invoices: unpaid,
+      paidByCustomer: true,
+      method: "zero_total",
+    });
     return { url: redirectUrl };
   }
 

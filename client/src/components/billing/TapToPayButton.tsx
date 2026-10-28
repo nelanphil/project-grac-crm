@@ -16,13 +16,12 @@ type Props = {
   onError: (message: string | null) => void;
 };
 
-export default function TapToPayButton({
+/** Opens Square Point of Sale for the invoice. `supported` is false off iOS and Android. */
+export function useTapToPay({
   token,
   invoiceId,
-  disabled,
-  className,
   onError,
-}: Props) {
+}: Pick<Props, "token" | "invoiceId" | "onError">) {
   const [platform, setPlatform] = useState<SquarePosPlatform>("unsupported");
   const [busy, setBusy] = useState(false);
 
@@ -31,10 +30,9 @@ export default function TapToPayButton({
     setPlatform(detectPlatform());
   }, []);
 
-  if (platform === "unsupported") return null;
-  const target = platform;
-
   async function start() {
+    if (platform === "unsupported") return;
+    const target = platform;
     setBusy(true);
     onError(null);
     try {
@@ -48,14 +46,27 @@ export default function TapToPayButton({
     }
   }
 
+  return { supported: platform !== "unsupported", busy, start };
+}
+
+export default function TapToPayButton({
+  token,
+  invoiceId,
+  disabled,
+  className,
+  onError,
+}: Props) {
+  const tap = useTapToPay({ token, invoiceId, onError });
+  if (!tap.supported) return null;
+
   return (
     <button
       type="button"
-      disabled={disabled || busy}
-      onClick={() => void start()}
+      disabled={disabled || tap.busy}
+      onClick={() => void tap.start()}
       className={className}
     >
-      {busy ? "Opening Square…" : "Tap to Pay"}
+      {tap.busy ? "Opening Square…" : "Tap to Pay"}
     </button>
   );
 }

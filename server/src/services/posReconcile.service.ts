@@ -11,6 +11,10 @@ import {
   type PaymentAccountWithSecrets,
 } from "./paymentProvider.service";
 import { settleInvoicePayment } from "./invoiceSettlement.service";
+import {
+  paymentSourceEventId,
+  recordInvoiceEventAsync,
+} from "./invoiceEvent.service";
 
 /** How long after Tap to Pay starts a matching Square payment is still accepted. */
 export const POS_MATCH_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -257,6 +261,19 @@ export async function flagPosChargeForReview(
   invoice.markModified("posCharge");
   await invoice.save();
   if (alreadyFlagged) return;
+  recordInvoiceEventAsync({
+    invoiceRef: invoice._id as Types.ObjectId,
+    customerRef: invoice.customerRef ?? null,
+    kind: "payment_needs_review",
+    method: "tap_to_pay",
+    provider: "square",
+    amountCents: invoice.posCharge.amountCents ?? invoice.amountCents,
+    reason,
+    providerPaymentId: invoice.posCharge.transactionId ?? null,
+    actorKind: "system",
+    actorName: "Square sync",
+    source: "job",
+  });
   logNotificationAsync({
     entityType: "invoice",
     action: "updated",
@@ -301,6 +318,7 @@ export async function reconcilePosCharge(
       providerPaymentId: payment.providerPaymentId,
       providerOrderId: payment.providerOrderId,
       actor: options.actor ?? { actorType: "system", actorName: "Square sync" },
+      method: "tap_to_pay",
       apiBase: options.apiBase,
     });
     return { status: "paid", payment, invoice: paid ?? invoice };
@@ -326,6 +344,26 @@ export async function reconcilePosCharge(
         invoice.posCharge.lastCheckedAt = now;
         invoice.markModified("posCharge");
         await invoice.save();
+        recordInvoiceEventAsync({
+          invoiceRef: invoice._id as Types.ObjectId,
+          customerRef: invoice.customerRef ?? null,
+          kind: "payment_failed",
+          method: "tap_to_pay",
+          provider: "square",
+          amountCents: invoice.posCharge.amountCents ?? invoice.amountCents,
+          reason: "Square reported the Tap to Pay charge failed or was canceled",
+          providerPaymentId: transactionId,
+          actorKind: options.actor?.actorUserId ? "staff" : "system",
+          actorUserId: options.actor?.actorUserId ?? null,
+          actorName: options.actor?.actorName ?? (options.actor?.actorUserId ? null : "Square sync"),
+          source: options.actor?.actorUserId ? "crm" : "job",
+          sourceEventId: paymentSourceEventId(
+            invoice._id as Types.ObjectId,
+            "square",
+            transactionId,
+            "failed",
+          ),
+        });
       }
       return { status: "failed" };
     }

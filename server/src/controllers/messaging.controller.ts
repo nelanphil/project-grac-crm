@@ -380,6 +380,7 @@ export async function dispatchMessagingBatch(
         const toE164Number = toE164(toPhone);
         let paymentUrl: string | null = null;
         let paymentLabel = "";
+        let linkedInvoiceId = data.invoiceId;
         if (wantsPayLink && paymentLinkForCustomer) {
           paymentUrl = await resolveSmsPaymentUrl({
             contactId,
@@ -387,6 +388,9 @@ export async function dispatchMessagingBatch(
             offerContractTemplateId: data.invoiceId ? null : offerContractTemplateId,
             offerContractOverrides: data.invoiceId ? [] : data.offerContractOverrides,
             paymentLinkForCustomer: async (customerId, explicitInvoiceId) => {
+              if (!linkedInvoiceId && explicitInvoiceId) {
+                linkedInvoiceId = explicitInvoiceId;
+              }
               const link = await paymentLinkForCustomer(customerId, explicitInvoiceId);
               if (link && !data.invoiceId) {
                 paymentLabel = paymentAmountLabel(
@@ -419,6 +423,10 @@ export async function dispatchMessagingBatch(
         const customerRef = built.customer
           ? new Types.ObjectId(built.customer._id)
           : null;
+        const invoiceRef =
+          linkedInvoiceId && Types.ObjectId.isValid(linkedInvoiceId)
+            ? new Types.ObjectId(linkedInvoiceId)
+            : null;
 
         let thread;
         try {
@@ -470,6 +478,7 @@ export async function dispatchMessagingBatch(
             contactRef,
             threadRef: thread._id,
             templateRef,
+            invoiceRef,
             status: "failed",
             errorMessage: phoneOverride
               ? "Phone number is invalid"
@@ -520,6 +529,7 @@ export async function dispatchMessagingBatch(
             contactRef,
             threadRef: thread._id,
             templateRef,
+            invoiceRef,
             status: "sent",
             twilioSid: sid,
             createdByUserRef: userId ?? null,
@@ -582,6 +592,7 @@ export async function dispatchMessagingBatch(
             contactRef,
             threadRef: thread._id,
             templateRef,
+            invoiceRef,
             status: "failed",
             errorMessage,
             createdByUserRef: userId ?? null,

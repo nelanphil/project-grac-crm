@@ -100,6 +100,10 @@ function AdminContent() {
       if (target) params.set("target", target);
       if (collection) params.set("collection", collection);
     }
+    if (id === "automated-messages") {
+      const message = searchParams.get("message");
+      if (message) params.set("message", message);
+    }
     router.replace(`/dashboard/admin?${params.toString()}`, { scroll: false });
   }
 

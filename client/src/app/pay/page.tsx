@@ -8,6 +8,14 @@ import {
   InvoiceItem,
   startCheckoutByPayToken,
 } from "@/lib/api";
+import {
+  captureJourneySnapshot,
+  journeyStep,
+  PAY_SNAPSHOT_WAIT_MS,
+  settleWithin,
+  snapshotAfterPaint,
+  startPaymentJourney,
+} from "@/lib/paymentJourney";
 
 function formatMoney(cents: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -60,36 +68,57 @@ function PayLinkContent() {
 
   useEffect(() => {
     if (!token) return;
+    return startPaymentJourney({ entry: "pay", link: { payToken: token } });
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     getInvoiceByPayToken(token)
       .then((res) => {
         const list = res.invoices?.length ? res.invoices : [res.invoice];
-        setInvoices(list);
-        setTotalCents(
+        const total =
           typeof res.totalCents === "number"
             ? res.totalCents
             : list
                 .filter(isUnpaid)
-                .reduce((sum, invoice) => sum + (invoice.amountCents || 0), 0),
+                .reduce((sum, invoice) => sum + (invoice.amountCents || 0), 0);
+        const unpaidCount = list.filter(isUnpaid).length;
+        journeyStep(
+          unpaidCount === 0 ? "already_paid_shown" : "cart_loaded",
+          `${list.length} invoice${list.length === 1 ? "" : "s"}, ${formatMoney(total)}`,
         );
+        setInvoices(list);
+        setTotalCents(total);
       })
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : "Pay link not found."),
-      )
+      .catch((err) => {
+        const message =
+          err instanceof ApiError ? err.message : "Pay link not found.";
+        journeyStep("link_invalid", message);
+        snapshotAfterPaint("link_invalid");
+        setError(message);
+      })
       .finally(() => setLoading(false));
   }, [token]);
 
   async function handlePay() {
+    journeyStep("pay_clicked", formatMoney(totalCents));
+    const clickedAt = Date.now();
+    const snapshot = captureJourneySnapshot("pay_clicked");
     setPaying(true);
     setError(null);
     try {
       const { url } = await startCheckoutByPayToken(token);
+      journeyStep("redirect_to_square");
+      await settleWithin(snapshot, PAY_SNAPSHOT_WAIT_MS - (Date.now() - clickedAt));
       window.location.href = url;
     } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : "Failed to start checkout.",
-      );
+      const message =
+        err instanceof ApiError ? err.message : "Failed to start checkout.";
+      journeyStep("checkout_start_failed", message);
+      snapshotAfterPaint("checkout_start_failed");
+      setError(message);
       setPaying(false);
     }
   }

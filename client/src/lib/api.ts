@@ -3751,6 +3751,162 @@ export async function getInvoice(
   });
 }
 
+export type InvoiceContactKind =
+  | "email"
+  | "sms"
+  | "mms"
+  | "viewed"
+  | "pay_link_opened"
+  | "checkout_started";
+
+export interface InvoiceContactEntry {
+  id: string;
+  kind: InvoiceContactKind;
+  to: string | null;
+  subject: string | null;
+  preview: string | null;
+  status: string | null;
+  error: string | null;
+  actorName: string;
+  createdAt: string;
+  inferred: boolean;
+}
+
+export type InvoicePaymentKind =
+  | "payment_succeeded"
+  | "payment_failed"
+  | "payment_canceled"
+  | "payment_needs_review";
+
+export interface InvoicePaymentDetail {
+  channel: "in_person" | "online" | null;
+  label: string;
+  entryMethod: string | null;
+  cardBrand: string | null;
+  last4: string | null;
+  wallet: string | null;
+  squareProduct: string | null;
+  receiptUrl: string | null;
+}
+
+export interface InvoicePaymentEntry {
+  id: string;
+  kind: InvoicePaymentKind;
+  method: string | null;
+  provider: string | null;
+  amountCents: number | null;
+  reason: string | null;
+  providerPaymentId: string | null;
+  /** How the payment provider says the payment was taken. */
+  detail: InvoicePaymentDetail | null;
+  /** Who most likely paid (technician in person, customer through the link). */
+  payer: string | null;
+  actorName: string;
+  createdAt: string;
+  inferred: boolean;
+}
+
+export type JourneyEntry = "checkout" | "pay" | "invoice_view" | "complete";
+
+export type JourneyVisitOutcome =
+  | "redirected_to_square"
+  | "paid"
+  | "failed"
+  | "error"
+  | "abandoned"
+  | "active";
+
+export interface JourneyVisitSummary {
+  sessionId: string;
+  entry: JourneyEntry;
+  pages: JourneyEntry[];
+  device: string;
+  startedAt: string;
+  lastEventAt: string;
+  durationMs: number;
+  outcome: JourneyVisitOutcome;
+  lastError: string | null;
+  eventCount: number;
+}
+
+export type JourneyEventType =
+  | "step"
+  | "route"
+  | "click"
+  | "api"
+  | "console"
+  | "error"
+  | "lifecycle";
+
+export interface JourneyVisitEvent {
+  t: string;
+  type: JourneyEventType;
+  detail: string;
+  meta: { status?: number; durationMs?: number; message?: string } | null;
+}
+
+export interface JourneyVisitDetail extends JourneyVisitSummary {
+  userAgent: string;
+  events: JourneyVisitEvent[];
+}
+
+export interface InvoiceActivity {
+  contacts: InvoiceContactEntry[];
+  payments: InvoicePaymentEntry[];
+  visits: JourneyVisitSummary[];
+}
+
+export async function getInvoiceActivity(
+  token: string,
+  id: string,
+): Promise<InvoiceActivity> {
+  return authRequest<InvoiceActivity>(`/invoices/${id}/activity`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getInvoiceVisit(
+  token: string,
+  id: string,
+  sessionId: string,
+): Promise<JourneyVisitDetail> {
+  const data = await authRequest<{ visit: JourneyVisitDetail }>(
+    `/invoices/${id}/visits/${encodeURIComponent(sessionId)}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  return data.visit;
+}
+
+/** A picture of the payment page taken during a visit, as a JPEG blob. */
+export async function getInvoiceVisitSnapshot(
+  token: string,
+  id: string,
+  sessionId: string,
+  snapshotId: string,
+): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `${API_URL}/invoices/${id}/visits/${encodeURIComponent(sessionId)}/snapshots/${encodeURIComponent(snapshotId)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+  } catch {
+    throw new ApiError("Could not reach the server.", 0);
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ApiError(
+      typeof body.message === "string" ? body.message : "Could not load the picture.",
+      res.status,
+    );
+  }
+  return res.blob();
+}
+
 export interface InvoiceTemplateItem {
   _id: string;
   name: string;
@@ -6355,6 +6511,24 @@ export async function saveAutomatedMessageSettings(
     method: "PUT",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
+  });
+}
+
+export async function sendAutomatedMessageTest(
+  token: string,
+  input: {
+    channel: Exclude<keyof AutomatedMessageSettings, "saved">;
+    mode: AutomatedMessageMode;
+    templateId: string | null;
+    subject: string;
+    body: string;
+    to: string;
+  },
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>("/automated-message-settings/test", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
   });
 }
 

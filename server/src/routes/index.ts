@@ -66,6 +66,7 @@ import reminderRoutes from "./reminder.routes";
 import crashReportRoutes from "./crashReport.routes";
 import nameReportRoutes from "./nameReport.routes";
 import dashboardLiveRoutes from "./dashboardLive.routes";
+import paymentJourneyRoutes from "./paymentJourney.routes";
 
 const router = Router();
 
@@ -139,5 +140,6 @@ router.use("/crash-reports", crashReportRoutes);
 router.use("/name-reports", nameReportRoutes);
 router.use("/dashboard", dashboardLiveRoutes);
 router.use("/customer-activity", customerActivityRoutes);
+router.use("/payment-journeys", paymentJourneyRoutes);
 
 export default router;

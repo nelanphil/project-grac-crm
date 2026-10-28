@@ -17,6 +17,10 @@ import {
   findCustomerByCheckoutKey,
 } from "../utils/checkoutKey";
 import { recordCustomerActivityAsync } from "../services/customerActivity.service";
+import {
+  INVOICE_OPEN_THROTTLE_MS,
+  recordInvoiceEventAsync,
+} from "../services/invoiceEvent.service";
 import { Customer } from "../models/mongo/Customer";
 import {
   assertScopedSelection,
@@ -24,6 +28,29 @@ import {
   isScopedCheckoutKey,
   loadScopedCheckout,
 } from "../services/checkoutLink.service";
+
+function invoiceIdsFromItems(
+  items: ReadonlyArray<{ kind: string; id: string }>,
+): string[] {
+  return items.filter((item) => item.kind === "invoice").map((item) => String(item.id));
+}
+
+function recordCustomerInvoiceEvents(
+  kind: "pay_link_opened" | "checkout_started",
+  invoiceIds: string[],
+  customerRef: string | Types.ObjectId,
+): void {
+  for (const invoiceId of new Set(invoiceIds)) {
+    recordInvoiceEventAsync({
+      invoiceRef: invoiceId,
+      customerRef,
+      kind,
+      actorKind: "customer",
+      source: "portal",
+      throttleMs: kind === "checkout_started" ? 2 * 60 * 1000 : INVOICE_OPEN_THROTTLE_MS,
+    });
+  }
+}
 
 function sessionBody(req: AuthRequest): {
   invoiceIds?: string[];
@@ -96,7 +123,13 @@ export async function getCheckoutByKey(
   try {
     const key = String(req.params.key ?? "").trim();
     if (isScopedCheckoutKey(key)) {
-      res.json((await loadScopedCheckout(key)).cart);
+      const scoped = await loadScopedCheckout(key);
+      recordCustomerInvoiceEvents(
+        "pay_link_opened",
+        invoiceIdsFromItems(scoped.items),
+        scoped.customerId,
+      );
+      res.json(scoped.cart);
       return;
     }
     const customer = await findCustomerByCheckoutKey(key);
@@ -117,6 +150,11 @@ export async function getCheckoutByKey(
       throttleMs: 15 * 60 * 1000,
     });
     const cart = await listPaymentLinkCart([String(customer._id)]);
+    recordCustomerInvoiceEvents(
+      "pay_link_opened",
+      invoiceIdsFromItems(cart.items),
+      customer._id,
+    );
     res.json(cart);
   } catch (err) {
     sendCheckoutError(res, err, "Failed to load checkout");
@@ -145,6 +183,11 @@ export async function startCheckoutByKey(
       });
       const selection = sessionBody(req);
       assertScopedSelection(scoped.items, selection.invoiceIds, selection.workOrderIds);
+      recordCustomerInvoiceEvents(
+        "checkout_started",
+        selection.invoiceIds ?? invoiceIdsFromItems(scoped.items),
+        scoped.customerId,
+      );
       res.json(await startCustomerCheckout({
         ...selection,
         customerIds: [scoped.customerId],
@@ -172,6 +215,7 @@ export async function startCheckoutByKey(
     const { invoiceIds, workOrderIds, discountCode } = sessionBody(req);
     const customerId = String(customer._id);
     await assertStablePaymentLinkSelection(customerId, invoiceIds, workOrderIds);
+    recordCustomerInvoiceEvents("checkout_started", invoiceIds ?? [], customer._id);
     const result = await startCustomerCheckout({
       customerIds: [customerId],
       invoiceIds,

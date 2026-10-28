@@ -1,16 +1,19 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Mail } from "lucide-react";
 import {
   ApiError,
   getAutomatedMessageSettings,
   getMessageTemplates,
   saveAutomatedMessageSettings,
+  sendAutomatedMessageTest,
   type AutomatedMessageChannel,
   type AutomatedMessageSettings,
   type MessageTemplateItem,
 } from "@/lib/api";
+import MobileTabBar from "@/components/ui/MobileTabBar";
 
 const EMAIL_SUBJECT_MAX = 200;
 const EMAIL_BODY_MAX = 25_000;
@@ -104,35 +107,52 @@ const CHANNELS: Record<
   },
 };
 
+type MessageTabId =
+  | "work-orders"
+  | "payment-received"
+  | "paid-invoice-receipt"
+  | "mailbox-reply";
+
 const SECTIONS: {
+  id: MessageTabId;
   title: string;
   description: string;
   keys: ChannelKey[];
 }[] = [
   {
-    title: "Work order completed",
+    id: "work-orders",
+    title: "Work orders",
     description:
-      "Sent when a work order is marked complete and the invoice is emailed or texted, and when that invoice is resent.",
+      "Sent when a work order is marked complete and the invoice is emailed or texted, and again when that invoice is resent. This is the bill they still need to pay. The email can include the invoice and a pay button. The text gets a payment link at the end if {{payment_link}} is not already in the message.",
     keys: ["workOrderCompleteEmail", "workOrderCompleteSms"],
   },
   {
+    id: "payment-received",
     title: "Payment received",
-    description: "Emailed after a card or checkout payment is recorded.",
+    description:
+      "Email only, sent once after an online card or checkout payment. Not used for check or cash, and it does not send a text. Custom mode changes the subject; the body stays the paid invoice layout from Billing. Choose a template to write the full email, and include {{invoice}} if that template should show the invoice.",
     keys: ["paymentReceivedEmail"],
   },
   {
+    id: "paid-invoice-receipt",
     title: "Paid invoice receipt",
     description:
-      "Sent when a work order is completed as paid by check or cash, and when staff send that receipt again.",
+      "Email and text for check or cash collected at completion, and for sending that receipt again. Separate from Payment received. The email uses the same subject-or-template rule. The text is a thank-you with a link to view the invoice and does not include a payment link.",
     keys: ["paidInvoiceReceiptEmail", "paidInvoiceReceiptSms"],
   },
   {
+    id: "mailbox-reply",
     title: "Mailbox reply",
     description:
-      "Sent when an email account is set to acknowledge new mail. The on/off switch stays on that email account.",
+      "Wording used when an email account acknowledges new mail. The switch stays on that account. The subject is always Re: plus the customer’s subject, and this wording sits inside the usual reply above a quote of their message.",
     keys: ["mailboxReply"],
   },
 ];
+
+function parseMessageTab(value: string | null): MessageTabId {
+  const match = SECTIONS.find((section) => section.id === value);
+  return match?.id ?? "work-orders";
+}
 
 function editableSnapshot(settings: AutomatedMessageSettings): string {
   const channels = Object.fromEntries(
@@ -238,11 +258,15 @@ function ChannelEditor({
   channel,
   templates,
   onChange,
+  onTest,
+  testProblem,
 }: {
   channelKey: ChannelKey;
   channel: AutomatedMessageChannel;
   templates: MessageTemplateItem[];
   onChange: (next: AutomatedMessageChannel) => void;
+  onTest: () => void;
+  testProblem: string | null;
 }) {
   const spec = CHANNELS[channelKey];
   const [subjectEl, setSubjectEl] = useState<HTMLInputElement | null>(null);
@@ -263,7 +287,18 @@ function ChannelEditor({
   return (
     <div className="rounded-lg border border-neutral-200 px-4 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-brand-dark">{spec.label}</h3>
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-semibold text-brand-dark">{spec.label}</h3>
+          <button
+            type="button"
+            onClick={onTest}
+            disabled={Boolean(testProblem)}
+            title={testProblem ?? undefined}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-1 text-xs font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Send test
+          </button>
+        </div>
         <div className="inline-flex rounded-md border border-neutral-200 p-0.5">
           {(["template", "custom"] as const).map((mode) => (
             <button
@@ -388,12 +423,135 @@ function ChannelEditor({
   );
 }
 
+function TestSendDialog({
+  token,
+  channelKey,
+  channel,
+  onClose,
+}: {
+  token: string;
+  channelKey: ChannelKey;
+  channel: AutomatedMessageChannel;
+  onClose: () => void;
+}) {
+  const spec = CHANNELS[channelKey];
+  const sms = spec.kind === "sms";
+  const workOrder =
+    channelKey === "workOrderCompleteEmail" ||
+    channelKey === "workOrderCompleteSms";
+  const [to, setTo] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    setSending(true);
+    setSendError(null);
+    setSuccess(null);
+    try {
+      const result = await sendAutomatedMessageTest(token, {
+        channel: channelKey,
+        mode: channel.mode,
+        templateId: channel.templateId,
+        subject: channel.subject,
+        body: channel.body,
+        to,
+      });
+      setSuccess(result.message);
+    } catch (err) {
+      setSendError(
+        err instanceof ApiError ? err.message : "Failed to send the test.",
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="automated-test-title"
+        className="w-full max-w-md rounded-xl border border-neutral-200 bg-white p-5 shadow-lg"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3
+          id="automated-test-title"
+          className="text-base font-semibold text-brand-dark"
+        >
+          {sms ? "Send test text" : "Send test email"}
+        </h3>
+        <p className="mt-1 text-sm text-neutral-500">
+          Sends the wording on this screen, filled with sample invoice INV-1042.
+          It does not go to a customer and does not mark any invoice sent.
+          {workOrder ? " The payment link is a sample and cannot be paid." : ""}
+        </p>
+        <form onSubmit={onSubmit} className="mt-4 space-y-3">
+          <label className="block">
+            <span className="text-xs font-medium text-neutral-600">
+              {sms ? "Phone number" : "Email"}
+            </span>
+            <input
+              autoFocus
+              type={sms ? "tel" : "email"}
+              inputMode={sms ? "tel" : "email"}
+              value={to}
+              onChange={(event) => {
+                setTo(event.target.value);
+                setSuccess(null);
+                setSendError(null);
+              }}
+              placeholder={sms ? "(813) 555-0100" : "you@example.com"}
+              className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none focus:ring-1 focus:ring-brand-dark"
+            />
+          </label>
+          {sendError && <p className="text-sm text-red-600">{sendError}</p>}
+          {success && <p className="text-sm text-emerald-700">{success}</p>}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:text-brand-dark"
+            >
+              Close
+            </button>
+            <button
+              type="submit"
+              disabled={sending || !to.trim()}
+              className="rounded-md bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark/90 disabled:opacity-50"
+            >
+              {sending ? "Sending…" : sms ? "Send text" : "Send email"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function AutomatedMessagesCard({
   token,
 }: {
   token: string | null;
 }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const messageTab = parseMessageTab(searchParams.get("message"));
   const [settings, setSettings] = useState<AutomatedMessageSettings | null>(null);
+  const [testing, setTesting] = useState<ChannelKey | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState("");
   const [templates, setTemplates] = useState<MessageTemplateItem[]>([]);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
@@ -443,6 +601,13 @@ export default function AutomatedMessagesCard({
     setSettings((current) => (current ? { ...current, [key]: next } : current));
     setSaveSuccess(false);
     setSaveError(null);
+  }
+
+  function setMessageTab(id: MessageTabId) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "automated-messages");
+    params.set("message", id);
+    router.replace(`/dashboard/admin?${params.toString()}`, { scroll: false });
   }
 
   const problems = settings
@@ -499,6 +664,7 @@ export default function AutomatedMessagesCard({
   }
 
   return (
+    <>
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
       <div className="flex items-start gap-3 border-b border-neutral-100 px-6 py-4">
         <div className="rounded-lg bg-orange-100 p-2 text-brand-orange">
@@ -539,8 +705,25 @@ export default function AutomatedMessagesCard({
           </p>
         )}
 
-        {SECTIONS.map((section) => (
-          <section key={section.title} className="space-y-3">
+        <MobileTabBar className="-mx-1 border-b border-neutral-200">
+          {SECTIONS.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              onClick={() => setMessageTab(section.id)}
+              className={`shrink-0 border-b-2 px-2 pb-3 text-sm font-medium transition-colors md:px-1 ${
+                messageTab === section.id
+                  ? "border-brand-orange text-brand-dark"
+                  : "border-transparent text-neutral-500 hover:text-brand-dark"
+              }`}
+            >
+              {section.title}
+            </button>
+          ))}
+        </MobileTabBar>
+
+        {SECTIONS.filter((section) => section.id === messageTab).map((section) => (
+          <section key={section.id} className="space-y-3">
             <div>
               <h3 className="text-base font-semibold text-brand-dark">
                 {section.title}
@@ -555,6 +738,13 @@ export default function AutomatedMessagesCard({
                 channelKey={key}
                 channel={settings[key]}
                 templates={templates}
+                testProblem={channelError(
+                  key,
+                  settings[key],
+                  templates,
+                  templatesLoaded,
+                )}
+                onTest={() => setTesting(key)}
                 onChange={(next) => updateChannel(key, next)}
               />
             ))}
@@ -580,5 +770,14 @@ export default function AutomatedMessagesCard({
         </div>
       </form>
     </div>
+      {testing && token && settings && (
+        <TestSendDialog
+          token={token}
+          channelKey={testing}
+          channel={settings[testing]}
+          onClose={() => setTesting(null)}
+        />
+      )}
+    </>
   );
 }

@@ -4,7 +4,11 @@ import {
   EMAIL_SUBJECT_MAX,
   SMS_BODY_MAX,
 } from "./messageTemplate.schema";
-import type { AutomatedMessageKind } from "../utils/automatedMessageCopy";
+import {
+  AUTOMATED_MESSAGE_CHANNELS,
+  AUTOMATED_MESSAGE_KIND,
+  type AutomatedMessageKind,
+} from "../utils/automatedMessageCopy";
 
 const templateIdSchema = z
   .union([
@@ -73,4 +77,68 @@ export const saveAutomatedMessageSettingsSchema = z.object({
 
 export type SaveAutomatedMessageSettingsInput = z.infer<
   typeof saveAutomatedMessageSettingsSchema
+>;
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export const testAutomatedMessageSchema = z
+  .object({
+    channel: z.enum(AUTOMATED_MESSAGE_CHANNELS),
+    to: z
+      .string()
+      .trim()
+      .min(1, "Enter an email or phone number")
+      .max(320),
+    mode: z.enum(["template", "custom"]),
+    templateId: templateIdSchema,
+    subject: z
+      .string()
+      .trim()
+      .max(EMAIL_SUBJECT_MAX, "Subject must be 200 characters or fewer"),
+    body: z
+      .string()
+      .trim()
+      .max(
+        EMAIL_BODY_MAX,
+        `Message must be ${EMAIL_BODY_MAX.toLocaleString()} characters or fewer`,
+      ),
+  })
+  .superRefine((data, ctx) => {
+    const parsed = channelSchema(AUTOMATED_MESSAGE_KIND[data.channel]).safeParse({
+      mode: data.mode,
+      templateId: data.templateId,
+      subject: data.subject,
+      body: data.body,
+    });
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        ctx.addIssue({
+          code: "custom",
+          path: issue.path,
+          message: issue.message,
+        });
+      }
+    }
+    const sms = AUTOMATED_MESSAGE_KIND[data.channel] === "sms";
+    if (sms) {
+      if (data.to.replace(/\D/g, "").length !== 10) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["to"],
+          message: "Enter a 10-digit phone number",
+        });
+      }
+      return;
+    }
+    if (!EMAIL_RE.test(data.to.trim().toLowerCase())) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["to"],
+        message: "Enter a valid email address",
+      });
+    }
+  });
+
+export type TestAutomatedMessageInput = z.infer<
+  typeof testAutomatedMessageSchema
 >;

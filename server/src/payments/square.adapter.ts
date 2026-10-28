@@ -6,6 +6,7 @@ import {
   CreateCheckoutInput,
   CreateCheckoutResult,
   PaymentProviderAdapter,
+  ProviderPaymentDetail,
   RetrievedProviderPayment,
   VerifiedWebhookPayment,
 } from "./types";
@@ -41,6 +42,42 @@ function mapSquarePaymentStatus(
   if (normalized === "COMPLETED") return "paid";
   if (normalized === "FAILED" || normalized === "CANCELED") return "failed";
   return "pending";
+}
+
+type SquareCardError = { code?: unknown; detail?: unknown; category?: unknown };
+
+function squarePaymentFailureReason(payment: unknown): string | undefined {
+  if (!payment || typeof payment !== "object") return undefined;
+  const record = payment as Record<string, unknown>;
+  const card = (record.card_details ?? record.cardDetails) as
+    | { errors?: SquareCardError[] }
+    | undefined;
+  const errors = Array.isArray(card?.errors) ? card.errors : [];
+  const parts = errors
+    .map((error) =>
+      [error.code, error.detail]
+        .filter((part): part is string => typeof part === "string" && part.trim() !== "")
+        .join(": "),
+    )
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join("; ").slice(0, 500) : undefined;
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+export function squarePaymentDetail(payment: Square.Payment): ProviderPaymentDetail {
+  const card = payment.cardDetails;
+  return {
+    squareProduct: text(payment.applicationDetails?.squareProduct),
+    sourceType: text(payment.sourceType),
+    entryMethod: text(card?.entryMethod),
+    cardBrand: text(card?.card?.cardBrand),
+    last4: text(card?.card?.last4),
+    wallet: text(card?.walletType) ?? text(payment.walletDetails?.brand),
+    receiptUrl: text(payment.receiptUrl),
+  };
 }
 
 function mapSquareOrderState(
@@ -287,12 +324,16 @@ export const squareAdapter: PaymentProviderAdapter = {
         };
       }
       if (status === "FAILED" || status === "CANCELED") {
+        const amount = payment?.amount_money?.amount ?? payment?.amountMoney?.amount;
         return {
           status: "failed",
+          providerStatus: status,
+          failureReason: squarePaymentFailureReason(payment),
           providerPaymentId: payment?.id,
           providerOrderId: payment?.order_id ?? payment?.orderId,
           invoiceId: invoiceIds[0],
           invoiceIds,
+          amountCents: typeof amount === "number" ? amount : undefined,
           raw: rawBody,
         };
       }
@@ -334,6 +375,7 @@ export const squareAdapter: PaymentProviderAdapter = {
       note,
       amountCents: centsFromMoney(payment.amountMoney),
       locationId: payment.locationId || undefined,
+      detail: squarePaymentDetail(payment),
     };
   },
 
@@ -396,6 +438,7 @@ export const squareAdapter: PaymentProviderAdapter = {
           amountCents: centsFromMoney(payment.amountMoney) ?? amountCents,
           locationId: payment.locationId || locationId,
           taxCents,
+          detail: squarePaymentDetail(payment),
         };
         if (retrieved.status === "paid") return retrieved;
         if (retrieved.status === "failed") return retrieved;
@@ -440,6 +483,7 @@ export const squareAdapter: PaymentProviderAdapter = {
         amountCents: centsFromMoney(payment.amountMoney),
         locationId: payment.locationId || undefined,
         createdAt: payment.createdAt || undefined,
+        detail: squarePaymentDetail(payment),
       });
       if (payments.length >= 500) break;
     }

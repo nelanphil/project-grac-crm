@@ -33,6 +33,8 @@ export interface IEmailCommunication extends Document {
   customerRef?: Types.ObjectId | null;
   contactRef?: Types.ObjectId | null;
   templateRef?: Types.ObjectId | null;
+  /** Set when the email was sent about a specific invoice. */
+  invoiceRef?: Types.ObjectId | null;
   createdByUserRef?: Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
@@ -99,6 +101,12 @@ const emailCommunicationSchema = new Schema<IEmailCommunication>(
       type: Schema.Types.ObjectId,
       ref: "MessageTemplate",
       default: null,
+    },
+    invoiceRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Invoice",
+      default: null,
+      index: true,
     },
     createdByUserRef: {
       type: Schema.Types.ObjectId,

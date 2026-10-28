@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import InvoiceLayout from "@/components/billing/InvoiceLayout";
 import { ApiError, getPublicInvoiceView, type InvoiceItem } from "@/lib/api";
 import { normalizeBlocks, type InvoiceBlock } from "@/lib/invoice-template";
+import { journeyStep, startPaymentJourney } from "@/lib/paymentJourney";
 
 export default function PublicInvoicePage() {
   return (
@@ -25,18 +26,25 @@ function PublicInvoiceContent() {
 
   useEffect(() => {
     if (!token) return;
+    return startPaymentJourney({ entry: "invoice_view", link: { viewToken: token } });
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
     let cancelled = false;
     getPublicInvoiceView(token)
       .then((res) => {
         if (cancelled) return;
+        journeyStep("invoice_loaded", `${res.invoice.number} · ${res.invoice.status}`);
         setInvoice(res.invoice);
         setBlocks(normalizeBlocks(res.blocks));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(
-          err instanceof ApiError ? err.message : "This invoice link is not valid.",
-        );
+        const message =
+          err instanceof ApiError ? err.message : "This invoice link is not valid.";
+        journeyStep("link_invalid", message);
+        setError(message);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -48,6 +56,7 @@ function PublicInvoiceContent() {
 
   async function downloadPdf() {
     if (!sheetRef.current || !invoice) return;
+    journeyStep("pdf_download_clicked");
     setDownloading(true);
     setError(null);
     try {
@@ -62,7 +71,9 @@ function PublicInvoiceContent() {
         })
         .from(sheetRef.current)
         .save();
-    } catch {
+      journeyStep("pdf_downloaded");
+    } catch (err) {
+      journeyStep("pdf_failed", err instanceof Error ? err.message : "unknown error");
       setError("The PDF could not be created. Try again.");
     } finally {
       setDownloading(false);

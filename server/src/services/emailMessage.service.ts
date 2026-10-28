@@ -200,6 +200,12 @@ export async function loadActiveEmailAccount(
   return account;
 }
 
+function toInvoiceRef(invoiceId: string | undefined): Types.ObjectId | null {
+  return invoiceId && Types.ObjectId.isValid(invoiceId)
+    ? new Types.ObjectId(invoiceId)
+    : null;
+}
+
 export async function dispatchStaffEmailBatch(
   input: DispatchStaffEmailBatchInput,
 ): Promise<DispatchStaffEmailBatchResult> {
@@ -316,13 +322,13 @@ export async function dispatchStaffEmailBatch(
       let context = built.context;
       let paymentUrl: string | undefined;
       let paymentLabel = "";
+      let offerInvoiceId: string | undefined;
       if (wantsPayLink && paymentLinkForCustomer) {
         const offerTemplateId = resolveOfferContractTemplateId(
           contactId,
           input.offerContractTemplateId,
           input.offerContractOverrides,
         );
-        let offerInvoiceId: string | undefined;
         if (!input.invoiceId && offerTemplateId && built.contact.customerRef) {
           const offerKey = `${built.contact.customerRef}:${offerTemplateId}`;
           let pending = offerInflight.get(offerKey);
@@ -378,6 +384,7 @@ export async function dispatchStaffEmailBatch(
       const customerRef = built.customer
         ? new Types.ObjectId(built.customer._id)
         : null;
+      const invoiceRef = toInvoiceRef(input.invoiceId ?? offerInvoiceId);
 
       try {
         const sent = await sendWithEmailAccount(account, {
@@ -410,6 +417,7 @@ export async function dispatchStaffEmailBatch(
           customerRef,
           contactRef,
           templateRef,
+          invoiceRef,
           createdByUserRef: userId,
         });
         await touchFromEmail(row, {
@@ -457,6 +465,7 @@ export async function dispatchStaffEmailBatch(
           customerRef,
           contactRef,
           templateRef,
+          invoiceRef,
           createdByUserRef: userId,
         });
         await touchFromEmail(row, {

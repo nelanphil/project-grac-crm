@@ -11,6 +11,15 @@ import {
   previewCheckoutDiscountByKey,
   startCheckoutByKey,
 } from "@/lib/api";
+import {
+  captureJourneySnapshot,
+  journeyStep,
+  PAY_SNAPSHOT_WAIT_MS,
+  settleWithin,
+  snapshotAfterPaint,
+  startPaymentJourney,
+  updatePaymentJourneyLink,
+} from "@/lib/paymentJourney";
 
 export default function PublicCheckoutPage() {
   return (
@@ -18,6 +27,10 @@ export default function PublicCheckoutPage() {
       <PublicCheckoutContent />
     </Suspense>
   );
+}
+
+function formatMoney(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
 function PublicCheckoutContent() {
@@ -61,19 +74,30 @@ function PublicCheckoutContent() {
       : (resolveError ?? cartError));
 
   useEffect(() => {
+    if (!queryKey && !payCode) return;
+    return startPaymentJourney({
+      entry: "checkout",
+      link: { checkoutKey: queryKey, payCode },
+    });
+  }, [queryKey, payCode]);
+
+  useEffect(() => {
     if (queryKey || !payCode) return;
     let cancelled = false;
     getCheckoutKeyByPayCode(payCode)
       .then((checkoutKey) => {
-        if (!cancelled) setResolved({ code: payCode, key: checkoutKey });
+        if (cancelled) return;
+        updatePaymentJourneyLink({ checkoutKey });
+        journeyStep("link_resolved");
+        setResolved({ code: payCode, key: checkoutKey });
       })
       .catch((err) => {
         if (cancelled) return;
-        setFailedCode({
-          code: payCode,
-          message:
-            err instanceof ApiError ? err.message : "Checkout link not found.",
-        });
+        const message =
+          err instanceof ApiError ? err.message : "Checkout link not found.";
+        journeyStep("link_invalid", message);
+        snapshotAfterPaint("link_invalid");
+        setFailedCode({ code: payCode, message });
       });
     return () => {
       cancelled = true;
@@ -85,15 +109,20 @@ function PublicCheckoutContent() {
     let cancelled = false;
     getCheckoutByKey(key)
       .then((next) => {
-        if (!cancelled) setLoaded({ key, cart: next });
+        if (cancelled) return;
+        journeyStep(
+          "cart_loaded",
+          `${next.items.length} item${next.items.length === 1 ? "" : "s"}, ${formatMoney(next.totalCents)}`,
+        );
+        setLoaded({ key, cart: next });
       })
       .catch((err) => {
         if (cancelled) return;
-        setFailedCart({
-          key,
-          message:
-            err instanceof ApiError ? err.message : "Checkout link not found.",
-        });
+        const message =
+          err instanceof ApiError ? err.message : "Checkout link not found.";
+        journeyStep("link_invalid", message);
+        snapshotAfterPaint("link_invalid");
+        setFailedCart({ key, message });
       });
     return () => {
       cancelled = true;
@@ -105,6 +134,12 @@ function PublicCheckoutContent() {
     workOrderIds: string[],
     discountCode?: string,
   ) {
+    journeyStep(
+      "pay_clicked",
+      `${invoiceIds.length + workOrderIds.length} selected${discountCode ? ", discount applied" : ""}`,
+    );
+    const clickedAt = Date.now();
+    const snapshot = captureJourneySnapshot("pay_clicked");
     setPaying(true);
     setPayError(null);
     try {
@@ -113,11 +148,15 @@ function PublicCheckoutContent() {
         workOrderIds,
         discountCode,
       });
+      journeyStep("redirect_to_square");
+      await settleWithin(snapshot, PAY_SNAPSHOT_WAIT_MS - (Date.now() - clickedAt));
       window.location.href = url;
     } catch (err) {
-      setPayError(
-        err instanceof ApiError ? err.message : "Failed to start checkout.",
-      );
+      const message =
+        err instanceof ApiError ? err.message : "Failed to start checkout.";
+      journeyStep("checkout_start_failed", message);
+      snapshotAfterPaint("checkout_start_failed");
+      setPayError(message);
       setPaying(false);
     }
   }
@@ -130,8 +169,21 @@ function PublicCheckoutContent() {
         error={error}
         paying={paying}
         onPay={handlePay}
+        onStep={journeyStep}
         previewDiscount={({ code, invoiceIds, workOrderIds }) =>
-          previewCheckoutDiscountByKey(key, { code, invoiceIds, workOrderIds })
+          previewCheckoutDiscountByKey(key, { code, invoiceIds, workOrderIds }).then(
+            (quote) => {
+              journeyStep("discount_applied", formatMoney(quote.discountCents));
+              return quote;
+            },
+            (err: unknown) => {
+              journeyStep(
+                "discount_rejected",
+                err instanceof ApiError ? err.message : "Could not apply discount code.",
+              );
+              throw err;
+            },
+          )
         }
       />
     </div>

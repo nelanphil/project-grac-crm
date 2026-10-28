@@ -22,16 +22,21 @@ type Props = {
   className?: string;
 };
 
-export default function PosChargeCheck({ token, invoice, onUpdated, className }: Props) {
+export function usePosChargeCheck({
+  token,
+  invoice,
+  onUpdated,
+}: {
+  token: string;
+  invoice: InvoiceItem | null;
+  onUpdated: (invoice: InvoiceItem) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
-  if (!canCheckSquarePayment(invoice)) return null;
-  const charge = invoice.posCharge;
-  const review = charge?.status === "needs_review";
-
   async function check() {
+    if (!invoice) return;
     setBusy(true);
     setMessage(null);
     setFailed(false);
@@ -48,6 +53,39 @@ export default function PosChargeCheck({ token, invoice, onUpdated, className }:
     }
   }
 
+  return {
+    available: invoice ? canCheckSquarePayment(invoice) : false,
+    busy,
+    message,
+    failed,
+    check,
+  };
+}
+
+export type PosChargeCheckController = ReturnType<typeof usePosChargeCheck>;
+
+/**
+ * Status card for a Tap to Pay charge or a Square check result. Without `showButton`
+ * the page offers the check elsewhere (for example in an actions menu).
+ */
+export function PosChargeNotice({
+  invoice,
+  check,
+  showButton = true,
+  className,
+}: {
+  invoice: InvoiceItem;
+  check: PosChargeCheckController;
+  showButton?: boolean;
+  className?: string;
+}) {
+  const charge = invoice.posCharge;
+  const pendingCharge =
+    check.available &&
+    (charge?.status === "pending" || charge?.status === "needs_review");
+  if (!check.message && !(showButton ? check.available : pendingCharge)) return null;
+  const review = charge?.status === "needs_review";
+
   return (
     <div
       className={`rounded-md border px-4 py-3 text-sm print:hidden ${
@@ -56,36 +94,51 @@ export default function PosChargeCheck({ token, invoice, onUpdated, className }:
           : "border-neutral-200 bg-white text-neutral-700"
       } ${className ?? ""}`}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-medium">
-            {charge
-              ? review
-                ? "Tap to Pay needs review"
-                : "Waiting for Square to confirm Tap to Pay"
-              : "Paid in Square but still open here?"}
-          </p>
-          <p className="mt-0.5 text-xs opacity-80">
-            {charge
-              ? `Started ${new Date(charge.startedAt).toLocaleString()}`
-              : "Check Square for a payment matching this invoice."}
-            {review && charge?.reviewReason ? ` · ${charge.reviewReason}` : ""}
-          </p>
+      {check.available ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="font-medium">
+              {charge
+                ? review
+                  ? "Tap to Pay needs review"
+                  : "Waiting for Square to confirm Tap to Pay"
+                : "Paid in Square but still open here?"}
+            </p>
+            <p className="mt-0.5 text-xs opacity-80">
+              {charge
+                ? `Started ${new Date(charge.startedAt).toLocaleString()}`
+                : "Check Square for a payment matching this invoice."}
+              {review && charge?.reviewReason ? ` · ${charge.reviewReason}` : ""}
+              {!showButton && charge ? " · Use Actions to check Square." : ""}
+            </p>
+          </div>
+          {showButton ? (
+            <button
+              type="button"
+              disabled={check.busy}
+              onClick={() => void check.check()}
+              className="inline-flex min-h-10 items-center justify-center rounded-md border border-brand-dark px-3 py-1.5 text-sm font-medium text-brand-dark hover:bg-neutral-50 disabled:opacity-60"
+            >
+              {check.busy ? "Checking Square…" : "Check Square for payment"}
+            </button>
+          ) : null}
         </div>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void check()}
-          className="inline-flex min-h-10 items-center justify-center rounded-md border border-brand-dark px-3 py-1.5 text-sm font-medium text-brand-dark hover:bg-neutral-50 disabled:opacity-60"
+      ) : null}
+      {check.message ? (
+        <p
+          className={`${check.available ? "mt-2 " : ""}text-xs ${
+            check.failed ? "text-red-700" : "text-emerald-700"
+          }`}
         >
-          {busy ? "Checking Square…" : "Check Square for payment"}
-        </button>
-      </div>
-      {message ? (
-        <p className={`mt-2 text-xs ${failed ? "text-red-700" : "text-emerald-700"}`}>
-          {message}
+          {check.message}
         </p>
       ) : null}
     </div>
   );
+}
+
+export default function PosChargeCheck({ token, invoice, onUpdated, className }: Props) {
+  const check = usePosChargeCheck({ token, invoice, onUpdated });
+  if (!check.available) return null;
+  return <PosChargeNotice invoice={invoice} check={check} className={className} />;
 }

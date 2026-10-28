@@ -286,6 +286,44 @@ async function viewUrlFor(
   return buildInvoiceViewUrl(await ensureInvoiceViewToken(source.record));
 }
 
+export async function resolveDraftAutomatedMessage(
+  key: AutomatedMessageChannelKey,
+  channel: {
+    mode: AutomatedMessageMode;
+    templateId: string | null;
+    subject: string;
+    body: string;
+  },
+): Promise<ResolvedAutomatedMessage> {
+  const kind = AUTOMATED_MESSAGE_KIND[key];
+  let selected: LiveTemplate | null = null;
+  if (channel.mode === "template") {
+    selected = await loadLiveTemplate(channel.templateId);
+    const expected = TEMPLATE_KIND[kind];
+    if (!selected || selected.templateType !== expected) {
+      throw new AutomatedMessageError("That template is no longer available.");
+    }
+    const needsSubject = kind === "email" || kind === "receipt-email";
+    if (needsSubject && !selected.subject.trim()) {
+      throw new AutomatedMessageError("That template needs a subject.");
+    }
+    if (!selected.body.trim()) {
+      throw new AutomatedMessageError("That template needs a message.");
+    }
+  }
+  return resolveChannelCopy({
+    kind,
+    saved: {
+      mode: channel.mode,
+      subject: channel.subject,
+      body: channel.body,
+    },
+    selectedTemplate: selected,
+    legacyTemplate: null,
+    fallback: AUTOMATED_MESSAGE_FALLBACK[key],
+  });
+}
+
 export async function resolveAutomatedMessage(
   key: AutomatedMessageChannelKey,
   source?: InvoiceMessageSource,

@@ -13,6 +13,12 @@ import { promoteTemporaryContract } from "../utils/temporaryContractOffer";
 import { SCHEDULE_TIMEZONE } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
 import { recordCustomerActivityAsync } from "./customerActivity.service";
+import {
+  inferPaymentMethod,
+  paymentSourceEventId,
+  recordInvoiceEventAsync,
+} from "./invoiceEvent.service";
+import type { InvoicePaymentMethod } from "../models/mongo/InvoiceEvent";
 import { PaymentProviderName } from "../models/mongo/PaymentProviderAccount";
 import {
   companyTaxForUnpaidWorkOrder,
@@ -136,6 +142,7 @@ export async function markInvoicePaid(params: {
   actor?: InvoiceActor;
   /** Set when the payer is the customer and no staff user is on the request. */
   paidByCustomer?: boolean;
+  method?: InvoicePaymentMethod;
 }): Promise<IInvoice> {
   const { invoice, providerPaymentId, providerOrderId, actor, paidByCustomer } =
     params;
@@ -149,6 +156,35 @@ export async function markInvoicePaid(params: {
   if (providerPaymentId) invoice.providerPaymentId = providerPaymentId;
   if (providerOrderId) invoice.providerOrderId = providerOrderId;
   await invoice.save();
+
+  const method =
+    params.method ??
+    inferPaymentMethod(invoice, { providerPaymentId, providerOrderId, paidByCustomer });
+  const offline = method === "check" || method === "cash";
+  recordInvoiceEventAsync({
+    invoiceRef: invoice._id as Types.ObjectId,
+    customerRef: invoice.customerRef ?? null,
+    kind: "payment_succeeded",
+    method,
+    provider: offline || method === "manual" ? null : invoice.paymentProvider ?? null,
+    amountCents: invoice.amountCents,
+    reason:
+      method === "check" && invoice.offlinePayment?.checkNumber
+        ? `Check #${invoice.offlinePayment.checkNumber}`
+        : null,
+    providerPaymentId: providerPaymentId ?? null,
+    providerOrderId: providerOrderId ?? null,
+    actorKind: paidByCustomer ? "customer" : actor?.actorUserId ? "staff" : "system",
+    actorUserId: paidByCustomer ? null : actor?.actorUserId ?? null,
+    actorName: paidByCustomer ? null : actor?.actorName ?? null,
+    source: paidByCustomer ? "webhook" : actor?.actorUserId ? "crm" : "job",
+    sourceEventId: paymentSourceEventId(
+      invoice._id as Types.ObjectId,
+      invoice.paymentProvider,
+      providerPaymentId ?? providerOrderId,
+      "paid",
+    ),
+  });
 
   logNotificationAsync({
     entityType: "invoice",

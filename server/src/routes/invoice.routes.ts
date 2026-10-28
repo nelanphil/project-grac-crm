@@ -8,7 +8,10 @@ import {
   bulkUpdateInvoiceStatus,
   createInvoice,
   createInvoicePayLink,
+  getInvoiceActivity,
   getInvoiceById,
+  getInvoiceVisit,
+  getInvoiceVisitSnapshot,
   getInvoices,
   getPendingPayments,
   markInvoicePaidByStaff,
@@ -26,6 +29,9 @@ router.use(authenticate);
 
 router.get("/", getInvoices);
 router.get("/pending-payments", getPendingPayments);
+router.get("/:id/activity", getInvoiceActivity);
+router.get("/:id/visits/:sessionId", getInvoiceVisit);
+router.get("/:id/visits/:sessionId/snapshots/:snapshotId", getInvoiceVisitSnapshot);
 router.get("/:id", getInvoiceById);
 
 router.post("/", requirePermission("contracts:write"), createInvoice);

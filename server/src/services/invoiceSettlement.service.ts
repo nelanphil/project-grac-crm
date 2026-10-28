@@ -1,5 +1,6 @@
 import { CustomerContact, activeContactFilter } from "../models/mongo/CustomerContact";
 import { Invoice, type IInvoice } from "../models/mongo/Invoice";
+import type { InvoicePaymentMethod } from "../models/mongo/InvoiceEvent";
 import { resolvePublicApiBase } from "../utils/publicUrl";
 import { finalizeRedemptionsForInvoices } from "./discount.service";
 import { markInvoicePaid } from "./invoice.service";
@@ -98,6 +99,7 @@ export async function settleInvoicePayment(params: {
   providerOrderId?: string | null;
   actor?: SettleActor;
   paidByCustomer?: boolean;
+  method?: InvoicePaymentMethod;
   apiBase?: string;
 }): Promise<IInvoice[]> {
   const settled: IInvoice[] = [];
@@ -119,6 +121,7 @@ export async function settleInvoicePayment(params: {
         providerOrderId: params.providerOrderId,
         actor: params.actor,
         paidByCustomer: params.paidByCustomer,
+        method: params.method,
       }),
     );
   }

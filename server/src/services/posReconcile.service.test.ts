@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { Types } from "mongoose";
 import { Invoice } from "../models/mongo/Invoice";
+import { InvoiceEvent } from "../models/mongo/InvoiceEvent";
 import { NotificationEvent } from "../models/mongo/NotificationEvent";
 import { User } from "../models/mongo/User";
 import type { RetrievedProviderPayment } from "../payments/types";
@@ -165,6 +166,7 @@ describe("settleInvoicePayment", () => {
       _id: new Types.ObjectId(),
       createdAt: new Date(),
     }));
+    stub(InvoiceEvent, "create", async () => ({ _id: new Types.ObjectId() }));
     stub(settlementEffects, "finalizeRedemptions", async () => {});
     stub(settlementEffects, "sendReceipts", async (invoice: InstanceType<typeof Invoice>) => {
       receipts += 1;

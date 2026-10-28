@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Mail, MessageSquare, Send } from "lucide-react";
+import { AlertTriangle, Send } from "lucide-react";
 import EmailPreview from "@/components/messaging/EmailPreview";
 import EmailBodyEditor from "@/components/messaging/EmailBodyEditor";
 import PhonePreview from "@/components/messaging/PhonePreview";
@@ -54,10 +54,6 @@ const EMPTY_DEFAULTS: InvoiceMessageDefaults = {
   smsTemplateId: null,
 };
 
-const outlineButton =
-  "inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto";
-const primaryButton =
-  "inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto";
 const fieldClass =
   "mt-1 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-800 outline-none focus:border-brand-orange";
 
@@ -121,6 +117,7 @@ function smsDraft(invoice: InvoiceItem, template: MessageTemplateItem | null) {
 export function useInvoiceCustomerSend(
   invoice: InvoiceItem | null,
   enabled: boolean,
+  options: { onSendFinished?: () => void } = {},
 ) {
   const token = useAuthStore((s) => s.token);
   const [contacts, setContacts] = useState<CustomerContact[]>([]);
@@ -483,12 +480,14 @@ export function useInvoiceCustomerSend(
     if (!contact) return;
     setSending(true);
     setSendError(null);
+    let reachedServer = false;
     try {
       if (channel === "email") {
         if (!emailAccount) {
           setSendError("No sending email account is configured.");
           return;
         }
+        reachedServer = true;
         const result = await sendEmailMessages(token, {
           contactIds: [contact._id],
           subject: emailSubject,
@@ -511,6 +510,7 @@ export function useInvoiceCustomerSend(
           setSendError("No texting number is configured.");
           return;
         }
+        reachedServer = true;
         const result = await sendMessagingMessages(token, {
           contactIds: [contact._id],
           body: smsBody,
@@ -534,6 +534,7 @@ export function useInvoiceCustomerSend(
       );
     } finally {
       setSending(false);
+      if (reachedServer) options.onSendFinished?.();
     }
   }
 
@@ -671,38 +672,6 @@ export function useInvoiceCustomerSend(
 }
 
 export type InvoiceSendController = ReturnType<typeof useInvoiceCustomerSend>;
-
-export function InvoiceSendButtons({ send }: { send: InvoiceSendController }) {
-  if (!send.enabled) return null;
-  const emailActive = send.channel === "email";
-  const textActive = send.channel === "text";
-  return (
-    <>
-      <button
-        type="button"
-        disabled={Boolean(send.emailDisabledReason)}
-        title={send.emailDisabledReason ?? "Email this invoice"}
-        aria-pressed={emailActive}
-        onClick={() => send.openChannel("email")}
-        className={`${primaryButton} ${emailActive ? "ring-2 ring-brand-orange" : ""}`}
-      >
-        <Mail className="h-4 w-4" />
-        Email
-      </button>
-      <button
-        type="button"
-        disabled={Boolean(send.textDisabledReason)}
-        title={send.textDisabledReason ?? "Text this invoice"}
-        aria-pressed={textActive}
-        onClick={() => send.openChannel("text")}
-        className={`${outlineButton} ${textActive ? "ring-2 ring-brand-orange" : ""}`}
-      >
-        <MessageSquare className="h-4 w-4" />
-        Text
-      </button>
-    </>
-  );
-}
 
 export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
   const [confirmingChannel, setConfirmingChannel] = useState<Channel | null>(

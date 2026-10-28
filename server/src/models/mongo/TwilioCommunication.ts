@@ -50,6 +50,8 @@ export interface ITwilioCommunication extends Document {
   contactRef?: Types.ObjectId | null;
   threadRef?: Types.ObjectId | null;
   templateRef?: Types.ObjectId | null;
+  /** Set when the text was sent about a specific invoice. */
+  invoiceRef?: Types.ObjectId | null;
   createdByUserRef?: Types.ObjectId | null;
   errorMessage?: string | null;
   rawStatus?: string | null;
@@ -167,6 +169,12 @@ const twilioCommunicationSchema = new Schema<ITwilioCommunication>(
       type: Schema.Types.ObjectId,
       ref: "MessageTemplate",
       default: null,
+    },
+    invoiceRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Invoice",
+      default: null,
+      index: true,
     },
     createdByUserRef: {
       type: Schema.Types.ObjectId,

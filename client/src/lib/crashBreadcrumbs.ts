@@ -25,6 +25,17 @@ export interface CrashBreadcrumb {
 
 const breadcrumbs: CrashBreadcrumb[] = [];
 
+type BreadcrumbListener = (item: CrashBreadcrumb) => void;
+const breadcrumbListeners = new Set<BreadcrumbListener>();
+
+/** Hears each breadcrumb as it is recorded. Returns an unsubscribe function. */
+export function onBreadcrumb(listener: BreadcrumbListener): () => void {
+  breadcrumbListeners.add(listener);
+  return () => {
+    breadcrumbListeners.delete(listener);
+  };
+}
+
 const SENSITIVE_PARAM =
   /^(token|access_token|refresh_token|id_token|code|password|pass|secret|key|api_key|apikey|signature|sig|auth)$/i;
 
@@ -78,6 +89,13 @@ export function pushBreadcrumb(
   breadcrumbs.push(item);
   if (breadcrumbs.length > MAX_BREADCRUMBS) {
     breadcrumbs.splice(0, breadcrumbs.length - MAX_BREADCRUMBS);
+  }
+  for (const listener of breadcrumbListeners) {
+    try {
+      listener(item);
+    } catch {
+      // A listener must never break breadcrumb capture.
+    }
   }
 }
 

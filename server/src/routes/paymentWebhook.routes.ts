@@ -1,4 +1,9 @@
 import { Router, Request, Response } from "express";
+import { Types } from "mongoose";
+import {
+  paymentSourceEventId,
+  recordInvoiceEventAsync,
+} from "../services/invoiceEvent.service";
 import {
   PAYMENT_PROVIDERS,
   PaymentProviderName,
@@ -87,7 +92,29 @@ router.post("/:provider", async (req: Request, res: Response) => {
         apiBase: resolvePublicApiBase(req),
       });
     } else if (verified.status === "failed") {
+      const canceled = verified.providerStatus === "CANCELED";
       for (const invoice of invoices) {
+        recordInvoiceEventAsync({
+          invoiceRef: invoice._id as Types.ObjectId,
+          customerRef: invoice.customerRef ?? null,
+          kind: canceled ? "payment_canceled" : "payment_failed",
+          method: invoice.posCharge?.status === "pending" ? "tap_to_pay" : "card",
+          provider,
+          amountCents: verified.amountCents ?? invoice.amountCents,
+          reason:
+            verified.failureReason ??
+            (verified.providerStatus ? `Square reported ${verified.providerStatus}` : null),
+          providerPaymentId: verified.providerPaymentId ?? null,
+          providerOrderId: verified.providerOrderId ?? null,
+          actorKind: "customer",
+          source: "webhook",
+          sourceEventId: paymentSourceEventId(
+            invoice._id as Types.ObjectId,
+            provider,
+            verified.providerPaymentId ?? verified.providerOrderId,
+            canceled ? "canceled" : "failed",
+          ),
+        });
         if (invoice.status !== "paid") {
           invoice.status = "failed";
           await invoice.save();

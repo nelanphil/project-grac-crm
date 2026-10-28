@@ -38,11 +38,27 @@ export type VerifiedWebhookPayment = {
   amountCents?: number;
   locationId?: string;
   status: "paid" | "failed" | "ignored";
+  /** Provider status before mapping, e.g. Square FAILED vs CANCELED. */
+  providerStatus?: string;
+  /** Decline or error detail from the provider, when it sent one. */
+  failureReason?: string;
   raw?: unknown;
+};
+
+/** How the provider says the payment was taken (product, card entry, wallet). */
+export type ProviderPaymentDetail = {
+  squareProduct?: string;
+  sourceType?: string;
+  entryMethod?: string;
+  cardBrand?: string;
+  last4?: string;
+  wallet?: string;
+  receiptUrl?: string;
 };
 
 export type RetrievedProviderPayment = {
   status: "paid" | "failed" | "pending";
+  detail?: ProviderPaymentDetail;
   providerPaymentId?: string;
   providerOrderId?: string;
   invoiceIds: string[];

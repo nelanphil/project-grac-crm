@@ -38,6 +38,8 @@ type Props = {
     invoiceIds: string[];
     workOrderIds: string[];
   }) => Promise<CheckoutDiscountPreview>;
+  /** Hears cart steps (selection changes, all paid) for the payment journey log. */
+  onStep?: (name: string, detail?: string) => void;
 };
 
 export default function CheckoutCartView({
@@ -49,6 +51,7 @@ export default function CheckoutCartView({
   preselectWorkOrderId,
   onPay,
   previewDiscount,
+  onStep,
 }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [codeInput, setCodeInput] = useState("");
@@ -131,6 +134,10 @@ export default function CheckoutCartView({
 
   function toggle(item: CheckoutItem) {
     const key = itemKey(item);
+    onStep?.(
+      "items_changed",
+      `${selected.has(key) ? "unchecked" : "checked"} ${item.number || kindLabel(item)}`,
+    );
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -158,6 +165,11 @@ export default function CheckoutCartView({
 
   const items = cart?.items ?? [];
   const allPaid = Boolean(cart && items.length === 0 && !loading && !error);
+
+  useEffect(() => {
+    if (allPaid) onStep?.("already_paid_shown");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allPaid]);
   const discountCents = quote?.discountCents ?? 0;
   const totalDue = Math.max(selectedTotal - discountCents, 0);
   const itemCount = selectedItems.length || items.length;

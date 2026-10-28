@@ -40,6 +40,16 @@ import {
   actorFromRequest,
   logNotificationAsync,
 } from "../services/notification.service";
+import {
+  INVOICE_OPEN_THROTTLE_MS,
+  paymentSourceEventId,
+  recordInvoiceEventAsync,
+} from "../services/invoiceEvent.service";
+import { loadInvoiceActivity } from "../services/invoiceActivity.service";
+import {
+  getJourneySnapshotForInvoice,
+  getJourneyVisitForInvoice,
+} from "../services/paymentJourney.service";
 import { resolveCheckoutProviderForInvoice } from "../payments/registry";
 import { resolveCheckoutBuyer } from "../payments/checkoutBuyer";
 import { hashPayToken } from "../utils/payToken";
@@ -565,6 +575,98 @@ export async function getInvoiceById(
   }
 }
 
+export async function getInvoiceActivity(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    const id = String(req.params.id ?? "");
+    if (!Types.ObjectId.isValid(id)) {
+      res.status(400).json({ message: "Invalid invoice id" });
+      return;
+    }
+    const invoice = await Invoice.findById(id)
+      .select(
+        "number status paidAt amountCents paymentProvider paymentProviderAccountRef providerPaymentId providerOrderId offlinePayment posCharge customerRef issuedAt createdAt",
+      )
+      .lean();
+    if (!invoice) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+    res.json(await loadInvoiceActivity(invoice));
+  } catch (err) {
+    console.error("[invoices] activity failed", err);
+    res.status(500).json({ message: "Failed to load invoice activity" });
+  }
+}
+
+export async function getInvoiceVisit(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    const id = String(req.params.id ?? "");
+    const sessionId = String(req.params.sessionId ?? "");
+    if (!Types.ObjectId.isValid(id) || !/^[A-Za-z0-9_-]{16,64}$/.test(sessionId)) {
+      res.status(400).json({ message: "Invalid visit" });
+      return;
+    }
+    const visit = await getJourneyVisitForInvoice(id, sessionId);
+    if (!visit) {
+      res.status(404).json({ message: "Visit not found" });
+      return;
+    }
+    res.json({ visit });
+  } catch (err) {
+    console.error("[invoices] visit failed", err);
+    res.status(500).json({ message: "Failed to load visit" });
+  }
+}
+
+export async function getInvoiceVisitSnapshot(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    const id = String(req.params.id ?? "");
+    const sessionId = String(req.params.sessionId ?? "");
+    const snapshotId = String(req.params.snapshotId ?? "");
+    if (
+      !Types.ObjectId.isValid(id) ||
+      !Types.ObjectId.isValid(snapshotId) ||
+      !/^[A-Za-z0-9_-]{16,64}$/.test(sessionId)
+    ) {
+      res.status(400).json({ message: "Invalid snapshot" });
+      return;
+    }
+    const snapshot = await getJourneySnapshotForInvoice(id, sessionId, snapshotId);
+    if (!snapshot) {
+      res.status(404).json({ message: "Snapshot not found" });
+      return;
+    }
+    res.setHeader("Content-Type", snapshot.mime);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.send(snapshot.data);
+  } catch (err) {
+    console.error("[invoices] visit snapshot failed", err);
+    res.status(500).json({ message: "Failed to load snapshot" });
+  }
+}
+
 export async function getInvoiceByViewToken(
   req: AuthRequest,
   res: Response,
@@ -580,6 +682,14 @@ export async function getInvoiceByViewToken(
       res.status(404).json({ message: "This invoice link is not valid." });
       return;
     }
+    recordInvoiceEventAsync({
+      invoiceRef: invoice._id,
+      customerRef: invoice.customerRef ?? null,
+      kind: "viewed",
+      actorKind: "customer",
+      source: "portal",
+      throttleMs: INVOICE_OPEN_THROTTLE_MS,
+    });
     const enrichment = await enrichInvoiceDetail(invoice);
     const template = await ensureDefaultInvoiceTemplate();
     const parsed = invoiceBlocksSchema.safeParse(template.blocks);
@@ -1058,6 +1168,16 @@ export async function startInvoiceCheckout(
     );
     const redirectUrl = buildCheckoutCompleteUrl(String(invoice._id));
     const buyer = await resolveCheckoutBuyer(invoice.customerRef);
+    const staffStarted = isStaff(req.user);
+    recordInvoiceEventAsync({
+      invoiceRef: invoice._id,
+      customerRef: invoice.customerRef ?? null,
+      kind: "checkout_started",
+      actorKind: staffStarted ? "staff" : "customer",
+      actorUserId: staffStarted ? req.user?.id ?? null : null,
+      source: staffStarted ? "crm" : "portal",
+      throttleMs: 2 * 60 * 1000,
+    });
 
     const result = await adapter.createCheckout({
       invoice,
@@ -1207,6 +1327,24 @@ export async function confirmInvoicePosCharge(
     const state = String(body.state ?? "").trim();
     const squareError = String(body.error ?? "").trim();
     if (squareError) {
+      if (invoice.status !== "paid" && isValidPosState(state, invoice)) {
+        const canceled = squareError === "payment_canceled";
+        recordInvoiceEventAsync({
+          invoiceRef: invoice._id as Types.ObjectId,
+          customerRef: invoice.customerRef ?? null,
+          kind: canceled ? "payment_canceled" : "payment_failed",
+          method: "tap_to_pay",
+          provider: "square",
+          amountCents: invoice.posCharge?.amountCents ?? invoice.amountCents,
+          reason: canceled
+            ? "Canceled in Square Point of Sale. No charge was made."
+            : `Square Point of Sale returned ${squareError.slice(0, 200)}`,
+          actorKind: "staff",
+          actorUserId: req.user?.id ?? null,
+          source: "crm",
+          throttleMs: 10 * 1000,
+        });
+      }
       if (
         squareError === "payment_canceled" &&
         invoice.posCharge?.status === "pending" &&
@@ -1292,6 +1430,20 @@ export async function confirmInvoicePosCharge(
       return;
     }
     if (check.status === "failed") {
+      recordInvoiceEventAsync({
+        invoiceRef: invoice._id as Types.ObjectId,
+        customerRef: invoice.customerRef ?? null,
+        kind: "payment_failed",
+        method: "tap_to_pay",
+        provider: "square",
+        amountCents: invoice.posCharge?.amountCents ?? invoice.amountCents,
+        reason: "Square reported the Tap to Pay charge failed or was canceled",
+        providerPaymentId: transactionId,
+        actorKind: "staff",
+        actorUserId: req.user?.id ?? null,
+        source: "crm",
+        sourceEventId: paymentSourceEventId(invoice._id as Types.ObjectId, "square", transactionId, "failed"),
+      });
       res.json({ status: "failed", invoice: toPublicInvoice(invoice) });
       return;
     }
@@ -1306,6 +1458,7 @@ export async function confirmInvoicePosCharge(
       providerPaymentId: check.payment.providerPaymentId,
       providerOrderId: check.payment.providerOrderId,
       actor: actorFromRequest(req.user),
+      method: "tap_to_pay",
       apiBase: resolvePublicApiBase(req),
     });
     res.json({ status: "paid", invoice: toPublicInvoice(updated ?? invoice) });
@@ -1464,6 +1617,17 @@ export async function getInvoiceByPayToken(
       return;
     }
 
+    for (const invoice of invoices) {
+      recordInvoiceEventAsync({
+        invoiceRef: invoice._id,
+        customerRef: invoice.customerRef ?? null,
+        kind: "pay_link_opened",
+        actorKind: "customer",
+        source: "portal",
+        throttleMs: INVOICE_OPEN_THROTTLE_MS,
+      });
+    }
+
     const publicInvoices = await Promise.all(
       invoices.map(async (invoice) => {
         const workOrderNotes = invoice.workOrderRef
@@ -1528,6 +1692,17 @@ export async function startCheckoutByPayToken(
           : "Invoice is already paid",
       });
       return;
+    }
+
+    for (const invoice of unpaid) {
+      recordInvoiceEventAsync({
+        invoiceRef: invoice._id,
+        customerRef: invoice.customerRef ?? null,
+        kind: "checkout_started",
+        actorKind: "customer",
+        source: "portal",
+        throttleMs: 2 * 60 * 1000,
+      });
     }
 
     const primary = unpaid[0];

@@ -13,6 +13,11 @@ import {
   getCheckoutByKey,
   getMyCheckout,
 } from "@/lib/api";
+import {
+  journeyStep,
+  snapshotAfterPaint,
+  startPaymentJourney,
+} from "@/lib/paymentJourney";
 
 function formatMoney(cents: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -42,11 +47,24 @@ function CompleteContent() {
   const [remaining, setRemaining] = useState<CheckoutCart | null>(null);
 
   useEffect(() => {
+    if (!invoiceId && !checkoutKey) return;
+    return startPaymentJourney({
+      entry: "complete",
+      link: { invoiceId, checkoutKey },
+    });
+  }, [invoiceId, checkoutKey]);
+
+  useEffect(() => {
     if (!invoiceId && !transactionId && !orderId) {
+      journeyStep("returned_from_square", "no payment reference");
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setMessage("Payment submitted. You can close this page.");
       return;
     }
+    journeyStep(
+      "returned_from_square",
+      transactionId || orderId ? "with payment reference" : "invoice only",
+    );
 
     let cancelled = false;
     let attempts = 0;
@@ -62,10 +80,20 @@ function CompleteContent() {
         if (cancelled) return;
         setInvoices(result.invoices);
         if (result.status === "pending" && attempts < 8) {
+          if (attempts === 1) journeyStep("confirm_pending");
           setStatus("pending");
           setMessage("Confirming payment…");
           setTimeout(confirm, 1500);
           return;
+        }
+        if (result.status === "paid") {
+          journeyStep("payment_confirmed", `after ${attempts} check${attempts === 1 ? "" : "s"}`);
+        } else if (result.status === "failed") {
+          journeyStep("payment_failed_shown");
+          snapshotAfterPaint("payment_failed_shown");
+        } else {
+          journeyStep("confirm_gave_up", `still pending after ${attempts} checks`);
+          snapshotAfterPaint("confirm_gave_up");
         }
         setStatus(result.status);
         setMessage(statusCopy(result.status));
@@ -78,11 +106,13 @@ function CompleteContent() {
           setTimeout(confirm, 1500);
           return;
         }
-        setMessage(
+        const message =
           err instanceof ApiError
             ? err.message
-            : "Payment submitted. Check your invoices shortly.",
-        );
+            : "Payment submitted. Check your invoices shortly.";
+        journeyStep("confirm_error", message);
+        snapshotAfterPaint("confirm_error");
+        setMessage(message);
       }
     }
 
