@@ -72,8 +72,28 @@ import {
   squarePosApplicationId,
   verifyPosChargeState,
 } from "../services/squarePos.service";
+import {
+  checkPosTransaction,
+  flagPosChargeForReview,
+  reconcilePosCharge,
+  resolvePosSquareAccount,
+} from "../services/posReconcile.service";
+import { settleInvoicePayment } from "../services/invoiceSettlement.service";
+import { resolvePublicApiBase } from "../utils/publicUrl";
 
 export { resolveCustomerRefsForAuthUser };
+
+function toPublicPosCharge(value: IInvoice["posCharge"]) {
+  if (!value?.startedAt) return null;
+  return {
+    status: value.status,
+    startedAt: value.startedAt,
+    amountCents: value.amountCents,
+    hasTransaction: Boolean(value.transactionId),
+    lastCheckedAt: value.lastCheckedAt ?? null,
+    reviewReason: value.reviewReason ?? null,
+  };
+}
 
 function toPublicInvoice(doc: IInvoice | Record<string, unknown>) {
   const d =
@@ -113,6 +133,7 @@ function toPublicInvoice(doc: IInvoice | Record<string, unknown>) {
     ),
     hasPayLink: Boolean(d.payTokenHash),
     payTokenExpiresAt: d.payTokenExpiresAt,
+    posCharge: toPublicPosCharge(d.posCharge as IInvoice["posCharge"]),
     metadata: d.metadata ?? {},
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
@@ -1127,6 +1148,17 @@ export async function startInvoicePosCharge(
     invoice.paymentProvider = "square";
     invoice.paymentProviderAccountRef = account.account._id as Types.ObjectId;
     invoice.status = "open";
+    invoice.posCharge = {
+      startedAt: new Date(),
+      accountRef: account.account._id as Types.ObjectId,
+      locationId: account.account.locationId,
+      amountCents: invoice.amountCents,
+      transactionId: null,
+      status: "pending",
+      lastCheckedAt: null,
+      reviewReason: null,
+    };
+    invoice.markModified("posCharge");
     await invoice.save();
 
     res.json({
@@ -1175,6 +1207,17 @@ export async function confirmInvoicePosCharge(
     const state = String(body.state ?? "").trim();
     const squareError = String(body.error ?? "").trim();
     if (squareError) {
+      if (
+        squareError === "payment_canceled" &&
+        invoice.posCharge?.status === "pending" &&
+        !invoice.posCharge.transactionId &&
+        isValidPosState(state, invoice)
+      ) {
+        invoice.posCharge.status = "failed";
+        invoice.posCharge.lastCheckedAt = new Date();
+        invoice.markModified("posCharge");
+        await invoice.save();
+      }
       res.status(400).json({
         message:
           squareError === "payment_canceled"
@@ -1188,6 +1231,7 @@ export async function confirmInvoicePosCharge(
       verifyPosChargeState(state, {
         invoiceId: String(invoice._id),
         amountCents: invoice.amountCents,
+        allowExpired: true,
       });
     } catch (err) {
       if (err instanceof PosChargeError) {
@@ -1221,54 +1265,113 @@ export async function confirmInvoicePosCharge(
       return;
     }
 
-    const { adapter, account } = await resolveCheckoutProviderForInvoice(
-      invoice.customerRef,
-    );
-    if (adapter.name !== "square" || !adapter.retrieveOrder) {
+    if (invoice.posCharge && invoice.posCharge.transactionId !== transactionId) {
+      invoice.posCharge.transactionId = transactionId;
+      invoice.markModified("posCharge");
+      await invoice.save();
+    }
+
+    const square = await resolvePosSquareAccount(invoice);
+    if (!square) {
       res.status(400).json({ message: "Tap to Pay requires Square" });
       return;
     }
 
-    const retrieved = await adapter.retrieveOrder(account, transactionId);
-    if (!retrieved) {
-      res.status(502).json({ message: "Could not retrieve payment from Square" });
+    const check = await checkPosTransaction({
+      invoice,
+      adapter: square.adapter,
+      account: square.account,
+      transactionId,
+    });
+    if (check.status === "unavailable") {
+      res.status(502).json({ message: check.message });
       return;
     }
-    if (retrieved.status === "pending") {
+    if (check.status === "pending") {
       res.json({ status: "pending", invoice: toPublicInvoice(invoice) });
       return;
     }
-    if (retrieved.status !== "paid") {
+    if (check.status === "failed") {
       res.json({ status: "failed", invoice: toPublicInvoice(invoice) });
       return;
     }
-    if (retrieved.amountCents !== invoice.amountCents) {
-      res.status(400).json({
-        message: "Square charge amount does not match this invoice.",
-      });
-      return;
-    }
-    const locationId = account.account.locationId;
-    if (!locationId || retrieved.locationId !== locationId) {
-      res.status(400).json({
-        message: "Square charge location does not match this account.",
-      });
+    if (check.status === "mismatch") {
+      await flagPosChargeForReview(invoice, check.message);
+      res.status(400).json({ message: check.message });
       return;
     }
 
-    const providerOrderId = retrieved.providerOrderId || transactionId;
-    const updated = await markInvoicePaid({
-      invoice,
-      providerPaymentId: retrieved.providerPaymentId,
-      providerOrderId,
+    const [updated] = await settleInvoicePayment({
+      invoices: [invoice],
+      providerPaymentId: check.payment.providerPaymentId,
+      providerOrderId: check.payment.providerOrderId,
       actor: actorFromRequest(req.user),
+      apiBase: resolvePublicApiBase(req),
     });
-    res.json({ status: "paid", invoice: toPublicInvoice(updated) });
+    res.json({ status: "paid", invoice: toPublicInvoice(updated ?? invoice) });
   } catch (err) {
     console.error("[invoices] pos confirm failed", err);
     res.status(500).json({
       message:
         err instanceof Error ? err.message : "Failed to confirm Tap to Pay",
+    });
+  }
+}
+
+function isValidPosState(state: string, invoice: IInvoice): boolean {
+  try {
+    verifyPosChargeState(state, {
+      invoiceId: String(invoice._id),
+      amountCents: invoice.amountCents,
+      allowExpired: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const POS_RECONCILE_MESSAGES: Record<string, string> = {
+  paid: "Square payment found. The invoice is marked paid.",
+  pending: "Square is still processing this payment. Check again in a moment.",
+  failed: "Square shows this Tap to Pay charge did not complete.",
+  not_found: "No matching Square payment was found yet.",
+};
+
+export async function reconcileInvoicePosCharge(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+    if (invoice.status !== "paid" && invoice.posCharge?.status === "needs_review") {
+      invoice.posCharge.status = "pending";
+      invoice.markModified("posCharge");
+    }
+    const outcome = await reconcilePosCharge(invoice, {
+      actor: actorFromRequest(req.user),
+      apiBase: resolvePublicApiBase(req),
+    });
+    const fresh = (await Invoice.findById(invoice._id)) ?? invoice;
+    const message =
+      outcome.status === "needs_review"
+        ? outcome.reason
+        : outcome.status === "skipped"
+          ? outcome.reason
+          : POS_RECONCILE_MESSAGES[outcome.status] ?? "Checked Square.";
+    res.json({ status: outcome.status, message, invoice: toPublicInvoice(fresh) });
+  } catch (err) {
+    console.error("[invoices] pos reconcile failed", err);
+    res.status(500).json({
+      message: err instanceof Error ? err.message : "Failed to check Square",
     });
   }
 }

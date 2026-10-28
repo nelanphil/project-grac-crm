@@ -18,6 +18,7 @@ import {
   InvoiceStatusChangeWarning,
 } from "@/components/billing/InvoiceStatusActions";
 import TapToPayButton from "@/components/billing/TapToPayButton";
+import PosChargeCheck from "@/components/billing/PosChargeCheck";
 import { useAuthStore } from "@/store/useAuthStore";
 import { isCustomerRole } from "@/lib/dashboard-role";
 import {
@@ -264,6 +265,16 @@ function InvoiceDetailContent() {
           ) : null}
         </div>
       </div>
+
+      {!isCustomer && canWrite && token ? (
+        <PosChargeCheck
+          token={token}
+          invoice={invoice}
+          onUpdated={(next) =>
+            setInvoice((current) => (current ? { ...current, ...next } : next))
+          }
+        />
+      ) : null}
 
       {confirmingStatus && canToggle ? (
         <div className="print:hidden">

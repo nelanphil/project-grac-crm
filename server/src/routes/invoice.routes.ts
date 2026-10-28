@@ -14,6 +14,7 @@ import {
   markInvoicePaidByStaff,
   reopenInvoiceByStaff,
   confirmInvoicePosCharge,
+  reconcileInvoicePosCharge,
   startInvoiceCheckout,
   startInvoicePosCharge,
   updateInvoiceTax,
@@ -48,6 +49,11 @@ router.post(
   "/:id/pos-confirm",
   requireAnyPermission("contracts:write", "jobs:write"),
   confirmInvoicePosCharge,
+);
+router.post(
+  "/:id/pos-reconcile",
+  requireAnyPermission("contracts:write", "jobs:write"),
+  reconcileInvoicePosCharge,
 );
 router.post(
   "/:id/pay-link",

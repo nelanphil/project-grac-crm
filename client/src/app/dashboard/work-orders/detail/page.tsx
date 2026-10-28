@@ -13,6 +13,7 @@ import ServiceTicketDocument from "@/components/billing/ServiceTicketDocument";
 import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
 import InvoiceWorkOrderButton from "@/components/billing/InvoiceWorkOrderButton";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
+import PosChargeCheck from "@/components/billing/PosChargeCheck";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -55,7 +56,8 @@ function WorkOrderDetailContent() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
+  const [relatedInvoice, setRelatedInvoice] = useState<InvoiceItem | null>(null);
+  const viewInvoiceId = relatedInvoice?._id ?? null;
   const [invoiceListVersion, setInvoiceListVersion] = useState(0);
 
   useEffect(() => {
@@ -86,10 +88,10 @@ function WorkOrderDetailContent() {
     let cancelled = false;
     getInvoices(token, { workOrderRef: id })
       .then(({ invoices }) => {
-        if (!cancelled) setViewInvoiceId(pickRelatedWorkOrderInvoice(invoices));
+        if (!cancelled) setRelatedInvoice(pickRelatedWorkOrderInvoice(invoices));
       })
       .catch(() => {
-        if (!cancelled) setViewInvoiceId(null);
+        if (!cancelled) setRelatedInvoice(null);
       });
     return () => {
       cancelled = true;
@@ -255,6 +257,21 @@ function WorkOrderDetailContent() {
         </div>
       ) : null}
 
+      {relatedInvoice && token && canWrite ? (
+        <PosChargeCheck
+          token={token}
+          invoice={relatedInvoice}
+          onUpdated={(next) => {
+            setRelatedInvoice(next);
+            if (next.status === "paid") {
+              void getWorkOrder(token, order._id)
+                .then(setOrder)
+                .catch(() => {});
+            }
+          }}
+        />
+      ) : null}
+
       {order.offlinePayment ? (
         <div className="rounded-lg border border-neutral-200 bg-white px-4 py-4 text-sm">
           <p className="font-semibold text-brand-dark">Payment received</p>
@@ -400,8 +417,8 @@ function WorkOrderDetailContent() {
   );
 }
 
-function pickRelatedWorkOrderInvoice(invoices: InvoiceItem[]): string | null {
+function pickRelatedWorkOrderInvoice(invoices: InvoiceItem[]): InvoiceItem | null {
   const viewable = invoices.filter((invoice) => invoice.status !== "void");
   const open = viewable.find((invoice) => invoice.status === "open");
-  return (open ?? viewable[0])?._id ?? null;
+  return open ?? viewable[0] ?? null;
 }

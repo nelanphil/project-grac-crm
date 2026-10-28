@@ -12,6 +12,8 @@ import { PaymentProviderAccount } from "../models/mongo/PaymentProviderAccount";
 import { User } from "../models/mongo/User";
 import { squareAdapter } from "../payments/square.adapter";
 import { signPosChargeState } from "./squarePos.service";
+import { posLookups } from "./posReconcile.service";
+import { settlementEffects } from "./invoiceSettlement.service";
 import { buildPosCallbackUrl } from "../utils/posCallbackUrl";
 import type { AuthRequest } from "../middleware/auth.middleware";
 
@@ -22,6 +24,9 @@ function staffRequest(
   return {
     params: { id: invoiceId },
     body,
+    headers: { host: "api.example.com" },
+    protocol: "https",
+    get: (name: string) => (name.toLowerCase() === "host" ? "api.example.com" : undefined),
     user: {
       id: new Types.ObjectId().toString(),
       sub: "staff",
@@ -58,7 +63,12 @@ async function post(invoiceId: string, body: Record<string, unknown>) {
 describe("confirm Tap to Pay", () => {
   let invoice: InstanceType<typeof Invoice>;
   let chargedCents = 5000;
+  let chargedLocation = "LOC1";
+  let chargedTax = 0;
+  let namedInvoiceIds: string[] = [];
   let retrieveCalls = 0;
+  let receipts = 0;
+  let linked = new Set<string>();
   const restorers: Array<() => void> = [];
 
   function stub(object: object, method: string, implementation: unknown) {
@@ -108,10 +118,21 @@ describe("confirm Tap to Pay", () => {
         status: "paid" as const,
         providerOrderId: "order-1",
         providerPaymentId: "pay-1",
-        invoiceIds: [],
+        invoiceIds: namedInvoiceIds,
         amountCents: chargedCents,
-        locationId: "LOC1",
+        taxCents: chargedTax,
+        locationId: chargedLocation,
       };
+    });
+    chargedTax = 0;
+    namedInvoiceIds = [];
+    receipts = 0;
+    linked = new Set();
+    chargedLocation = "LOC1";
+    stub(posLookups, "linkedElsewhere", async () => linked);
+    stub(settlementEffects, "finalizeRedemptions", async () => {});
+    stub(settlementEffects, "sendReceipts", async () => {
+      receipts += 1;
     });
   });
 
@@ -169,6 +190,73 @@ describe("confirm Tap to Pay", () => {
     assert.equal(second.statusCode, 200);
     assert.equal(second.payload?.status, "paid");
     assert.equal(retrieveCalls, 1);
+    assert.equal(receipts, 1);
+  });
+
+  it("sends the customer receipt once the charge is confirmed", async () => {
+    await post(String(invoice._id), { transactionId: "order-1", state: state() });
+    assert.equal(receipts, 1);
+  });
+
+  it("accepts an expired session when Square proves the charge", async () => {
+    const expired = signPosChargeState({
+      invoiceId: String(invoice._id),
+      amountCents: invoice.amountCents,
+      now: Date.now() - 2 * 60 * 60 * 1000,
+    });
+    const result = await post(String(invoice._id), {
+      transactionId: "order-1",
+      state: expired,
+    });
+    assert.equal(result.statusCode, 200);
+    assert.equal(invoice.status, "paid");
+  });
+
+  it("accepts a charge where Square added its own tax to the invoice it names", async () => {
+    chargedCents = 5180;
+    chargedTax = 180;
+    namedInvoiceIds = [String(invoice._id)];
+    const result = await post(String(invoice._id), {
+      transactionId: "order-1",
+      state: state(),
+    });
+    assert.equal(result.statusCode, 200);
+    assert.equal(invoice.status, "paid");
+  });
+
+  it("rejects a charge taken at a different location", async () => {
+    chargedLocation = "LOC2";
+    const result = await post(String(invoice._id), {
+      transactionId: "order-1",
+      state: state(),
+    });
+    assert.equal(result.statusCode, 400);
+    assert.match(result.payload?.message ?? "", /location/i);
+    assert.equal(invoice.status, "open");
+  });
+
+  it("rejects a Square payment already recorded on another invoice", async () => {
+    linked = new Set(["pay-1"]);
+    const result = await post(String(invoice._id), {
+      transactionId: "order-1",
+      state: state(),
+    });
+    assert.equal(result.statusCode, 400);
+    assert.match(result.payload?.message ?? "", /another invoice/i);
+    assert.equal(invoice.status, "open");
+  });
+
+  it("saves the transaction ID on the pending charge before checking Square", async () => {
+    invoice.posCharge = {
+      startedAt: new Date(),
+      locationId: "LOC1",
+      amountCents: 5000,
+      status: "pending",
+    };
+    chargedCents = 100;
+    await post(String(invoice._id), { transactionId: "order-1", state: state() });
+    assert.equal(invoice.posCharge?.transactionId, "order-1");
+    assert.equal(invoice.posCharge?.status, "needs_review");
   });
 });
 

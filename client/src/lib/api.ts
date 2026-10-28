@@ -3610,6 +3610,15 @@ export interface InvoiceServiceAddress {
   zip: string;
 }
 
+export interface InvoicePosCharge {
+  status: "pending" | "confirmed" | "failed" | "needs_review";
+  startedAt: string;
+  amountCents: number;
+  hasTransaction: boolean;
+  lastCheckedAt: string | null;
+  reviewReason: string | null;
+}
+
 export interface InvoiceItem {
   _id: string;
   number: string;
@@ -3639,6 +3648,8 @@ export interface InvoiceItem {
   providerPaymentId: string | null;
   hasPayLink: boolean;
   payTokenExpiresAt: string | null;
+  /** Latest Square Tap to Pay charge started from the CRM. */
+  posCharge?: InvoicePosCharge | null;
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -3867,6 +3878,8 @@ export async function confirmInvoicePosCharge(
     transactionId: string;
     clientTransactionId?: string;
     state: string;
+    /** Square's error code when the charge did not complete. */
+    error?: string;
   },
 ): Promise<{ status: "paid" | "pending" | "failed"; invoice: InvoiceItem }> {
   return authRequest<{
@@ -3876,6 +3889,26 @@ export async function confirmInvoicePosCharge(
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
+  });
+}
+
+export type PosReconcileStatus =
+  | "paid"
+  | "would_pay"
+  | "pending"
+  | "failed"
+  | "needs_review"
+  | "not_found"
+  | "skipped";
+
+export async function reconcileInvoicePosCharge(
+  token: string,
+  id: string,
+): Promise<{ status: PosReconcileStatus; message: string; invoice: InvoiceItem }> {
+  return authRequest(`/invoices/${id}/pos-reconcile`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({}),
   });
 }
 

@@ -49,6 +49,7 @@ describe("buildSquarePosUrl", () => {
     assert.equal(data.state, "payload.sig");
     assert.deepEqual(data.options.supported_tender_types, ["CARD_FROM_READER"]);
     assert.equal(data.options.auto_return, true);
+    assert.equal(data.options.clear_default_fees, true);
   });
 
   it("builds an Android intent that charges a card and falls back when the app is missing", () => {
@@ -61,6 +62,7 @@ describe("buildSquarePosUrl", () => {
     assert.match(url, /S\.com\.squareup\.pos\.CURRENCY_CODE=USD/);
     assert.match(url, /S\.com\.squareup\.pos\.TENDER_TYPES=com\.squareup\.pos\.TENDER_CARD/);
     assert.match(url, /S\.com\.squareup\.pos\.API_VERSION=v2\.0/);
+    assert.match(url, /B\.com\.squareup\.pos\.CLEAR_DEFAULT_FEES=true/);
     assert.match(url, /S\.com\.squareup\.pos\.CLIENT_ID=sq0idp-test/);
     assert.match(
       url,

@@ -21,19 +21,24 @@ export default function AuthGuard({ children }: AuthGuardProps) {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const user = useAuthStore((s) => s.user);
+  const setRedirectAfterAuth = useAuthStore((s) => s.setRedirectAfterAuth);
   const needsLegalConsent = userNeedsLegalConsent(user);
   const hydrated = useHasHydrated();
 
   useEffect(() => {
     if (!hydrated) return;
     if (!isAuthenticated) {
+      const here = `${window.location.pathname}${window.location.search}`;
+      if (here.startsWith("/") && !here.startsWith("//")) {
+        setRedirectAfterAuth(here);
+      }
       router.replace("/auth/login");
       return;
     }
     if (needsLegalConsent) {
       router.replace("/auth/legal-consent");
     }
-  }, [hydrated, isAuthenticated, needsLegalConsent, router]);
+  }, [hydrated, isAuthenticated, needsLegalConsent, router, setRedirectAfterAuth]);
 
   if (!hydrated || !isAuthenticated || needsLegalConsent) return null;
 

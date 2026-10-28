@@ -18,7 +18,6 @@ import {
   createPendingRedemption,
   DiscountError,
   DiscountQuote,
-  finalizeRedemptionsForInvoices,
   quoteDiscount,
 } from "./discount.service";
 import {
@@ -26,11 +25,10 @@ import {
   ensureOpenInvoiceForWorkOrder,
   findInvoicesForWebhook,
   InvoiceAmountError,
-  markInvoicePaid,
   WorkOrderNotReadyError,
 } from "./invoice.service";
+import { settleInvoicePayment } from "./invoiceSettlement.service";
 import { pickAvailableInvoicesForCustomers } from "./paymentLinkCart";
-import { sendPaymentReceipt } from "./paymentReceipt.service";
 import { buildCheckoutCompleteUrl } from "../utils/checkoutKey";
 import {
   findUnbilledWorkOrdersForCustomers,
@@ -649,23 +647,12 @@ export async function confirmCustomerCheckout(input: {
   }
 
   if (retrieved.status === "paid") {
-    const newlyPaid: IInvoice[] = [];
-    for (const invoice of invoices) {
-      if (invoice.status === "paid") continue;
-      await markInvoicePaid({
-        invoice,
-        providerPaymentId: retrieved.providerPaymentId,
-        providerOrderId: retrieved.providerOrderId,
-        paidByCustomer: true,
-      });
-      newlyPaid.push(invoice);
-    }
-    await finalizeRedemptionsForInvoices(
-      invoices.map((invoice) => String(invoice._id)),
-    );
-    for (const invoice of newlyPaid) {
-      await sendPaymentReceipt(invoice);
-    }
+    await settleInvoicePayment({
+      invoices,
+      providerPaymentId: retrieved.providerPaymentId,
+      providerOrderId: retrieved.providerOrderId,
+      paidByCustomer: true,
+    });
     return { status: "paid", invoices: invoices.map(toReceiptInvoice) };
   }
 
@@ -755,12 +742,8 @@ export async function startCustomerCheckout(input: {
         invoice.status = "open";
         await invoice.save();
       }
-      await markInvoicePaid({ invoice, paidByCustomer: true });
     }
-    await finalizeRedemptionsForInvoices(paidInvoiceIds);
-    for (const invoice of unpaid) {
-      await sendPaymentReceipt(invoice);
-    }
+    await settleInvoicePayment({ invoices: unpaid, paidByCustomer: true });
     return { url: redirectUrl };
   }
 

@@ -5,6 +5,7 @@ import { runTaskReminderJob } from "./taskReminders";
 import { runScheduledEmailJob } from "./scheduledEmails";
 import { runScheduledMessageJob } from "./scheduledMessages";
 import { refreshExpiringSquareOAuthTokens } from "../services/squareOAuth.service";
+import { runPosReconcileJob } from "../services/posReconcile.service";
 
 let started = false;
 
@@ -44,6 +45,15 @@ export function startRenewalInvoiceScheduler(): void {
   });
 
   cron.schedule("*/2 * * * *", () => {
+    void runPosReconcileJob()
+      .then((result) => {
+        if (result.paid > 0 || result.review > 0) {
+          console.log("[pos-reconcile]", result);
+        }
+      })
+      .catch((err) => {
+        console.error("[pos-reconcile] job failed", err);
+      });
     void runMailboxAutoReplyJob()
       .then((result) => {
         if (result.sent > 0) {
@@ -82,4 +92,5 @@ export function startRenewalInvoiceScheduler(): void {
   console.log("[scheduled-emails] scheduler started (every minute)");
   console.log("[scheduled-messages] scheduler started (every minute)");
   console.log("[mailbox-auto-reply] scheduler started (every 2 minutes)");
+  console.log("[pos-reconcile] scheduler started (every 2 minutes)");
 }

@@ -9,6 +9,7 @@ import {
   ApiError,
   confirmInvoicePosCharge,
   InvoiceItem,
+  reconcileInvoicePosCharge,
 } from "@/lib/api";
 import {
   invoiceIdFromPosState,
@@ -27,6 +28,8 @@ function PosCallbackContent() {
   const [message, setMessage] = useState("Confirming payment…");
   const [invoice, setInvoice] = useState<InvoiceItem | null>(null);
   const [linkedInvoiceId, setLinkedInvoiceId] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [canceled, setCanceled] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -45,6 +48,14 @@ function PosCallbackContent() {
     if (!callback.ok) {
       setStatus("failed");
       setMessage(posCallbackMessage(callback.errorCode));
+      setCanceled(callback.errorCode === "payment_canceled");
+      if (invoiceId && callback.state) {
+        void confirmInvoicePosCharge(token, invoiceId, {
+          transactionId: "",
+          state: callback.state,
+          error: callback.errorCode,
+        }).catch(() => {});
+      }
       return;
     }
     if (!invoiceId) {
@@ -108,7 +119,30 @@ function PosCallbackContent() {
     };
   }, [token, query]);
 
+  async function checkSquare() {
+    if (!token || !linkedInvoiceId) return;
+    setChecking(true);
+    try {
+      const result = await reconcileInvoicePosCharge(token, linkedInvoiceId);
+      setInvoice(result.invoice);
+      setStatus(
+        result.status === "paid"
+          ? "paid"
+          : result.status === "pending"
+            ? "pending"
+            : "failed",
+      );
+      setMessage(result.message);
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : "Could not check Square.");
+    } finally {
+      setChecking(false);
+    }
+  }
+
   const invoiceId = invoice?._id || linkedInvoiceId;
+  const canRetry =
+    status !== "paid" && status !== null && Boolean(linkedInvoiceId) && !canceled;
   const backHref = invoice?.workOrderRef
     ? `/dashboard/work-orders/detail?id=${invoice.workOrderRef}`
     : invoiceId
@@ -138,6 +172,16 @@ function PosCallbackContent() {
               ? "Payment not completed"
               : "Confirming payment"}
         </div>
+        {canRetry ? (
+          <button
+            type="button"
+            disabled={checking}
+            onClick={() => void checkSquare()}
+            className="inline-flex w-full items-center justify-center rounded-lg border border-brand-dark px-4 py-2.5 text-sm font-medium text-brand-dark hover:bg-neutral-100 disabled:opacity-60"
+          >
+            {checking ? "Checking Square…" : "Check Square again"}
+          </button>
+        ) : null}
         <Link
           href={backHref}
           className="inline-flex w-full items-center justify-center rounded-lg bg-brand-dark px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"

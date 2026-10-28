@@ -59,6 +59,8 @@ export function buildSquarePosUrl(
       options: {
         supported_tender_types: ["CARD_FROM_READER"],
         auto_return: true,
+        // The CRM total already includes tax; Square must not add the location's default tax.
+        clear_default_fees: true,
       },
     };
     return `square-commerce-v1://payment/create?data=${encodeURIComponent(JSON.stringify(data))}`;
@@ -78,6 +80,7 @@ export function buildSquarePosUrl(
     `i.com.squareup.pos.TOTAL_AMOUNT=${charge.amountCents}`,
     `S.com.squareup.pos.CURRENCY_CODE=${charge.currency || "USD"}`,
     "S.com.squareup.pos.TENDER_TYPES=com.squareup.pos.TENDER_CARD",
+    "B.com.squareup.pos.CLEAR_DEFAULT_FEES=true",
     `S.com.squareup.pos.NOTE=${charge.note}`,
     `S.com.squareup.pos.REQUEST_METADATA=${charge.state}`,
     "end",

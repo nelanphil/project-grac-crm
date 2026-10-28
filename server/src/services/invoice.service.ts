@@ -318,6 +318,16 @@ export async function findInvoicesForWebhook(params: {
     });
     for (const invoice of byOrder) found.set(String(invoice._id), invoice);
   }
+  // Square Point of Sale returns the order ID as the transaction ID.
+  const posIds = [params.providerOrderId, params.providerPaymentId].filter(
+    (id): id is string => Boolean(id),
+  );
+  if (found.size === 0 && posIds.length > 0) {
+    const byPosCharge = await Invoice.find({
+      "posCharge.transactionId": { $in: posIds },
+    });
+    for (const invoice of byPosCharge) found.set(String(invoice._id), invoice);
+  }
 
   if (found.size === 0 && ids.length === 1) {
     const one = await Invoice.findById(ids[0]);

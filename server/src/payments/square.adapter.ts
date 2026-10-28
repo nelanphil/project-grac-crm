@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { createHmac } from "crypto";
-import { SquareClient, SquareEnvironment, WebhooksHelper } from "square";
+import { Square, SquareClient, SquareEnvironment, WebhooksHelper } from "square";
 import { Request } from "express";
 import {
   CreateCheckoutInput,
@@ -114,6 +114,25 @@ function centsFromMoney(
   if (amount == null) return undefined;
   const cents = typeof amount === "bigint" ? Number(amount) : amount;
   return Number.isSafeInteger(cents) ? cents : undefined;
+}
+
+/** Amount before tip; Tap to Pay customers can add a tip on the reader. */
+function centsBeforeTip(
+  total: { amount?: bigint | number | null } | null | undefined,
+  tip: { amount?: bigint | number | null } | null | undefined,
+): number | undefined {
+  const totalCents = centsFromMoney(total);
+  if (totalCents === undefined) return undefined;
+  return totalCents - (centsFromMoney(tip) ?? 0);
+}
+
+/** Notes that can carry our `invoice:<id>` marker, depending on how the order was made. */
+function orderNotes(order: Square.Order): string[] {
+  return [
+    order.metadata?.paymentNote,
+    ...(order.tenders ?? []).map((tender) => tender.note),
+    ...(order.lineItems ?? []).map((item) => item.note),
+  ].filter((value): value is string => Boolean(value));
 }
 
 function squareErrorCodes(err: unknown): string[] {
@@ -255,12 +274,15 @@ export const squareAdapter: PaymentProviderAdapter = {
       const invoiceIds = parseInvoiceIdsFromPaymentNote(note);
 
       if (status === "COMPLETED") {
+        const amount = payment?.amount_money?.amount ?? payment?.amountMoney?.amount;
         return {
           status: "paid",
           providerPaymentId: payment?.id,
-          providerOrderId: payment?.orderId,
+          providerOrderId: payment?.order_id ?? payment?.orderId,
           invoiceId: invoiceIds[0],
           invoiceIds,
+          amountCents: typeof amount === "number" ? amount : undefined,
+          locationId: payment?.location_id ?? payment?.locationId,
           raw: rawBody,
         };
       }
@@ -268,7 +290,7 @@ export const squareAdapter: PaymentProviderAdapter = {
         return {
           status: "failed",
           providerPaymentId: payment?.id,
-          providerOrderId: payment?.orderId,
+          providerOrderId: payment?.order_id ?? payment?.orderId,
           invoiceId: invoiceIds[0],
           invoiceIds,
           raw: rawBody,
@@ -324,15 +346,13 @@ export const squareAdapter: PaymentProviderAdapter = {
     const order = response.order;
     if (!order?.id) return null;
 
-    const notes = [
-      order.metadata?.paymentNote,
-      ...(order.tenders ?? []).map((tender) => tender.note),
-    ].filter((value): value is string => Boolean(value));
+    const notes = orderNotes(order);
     const invoiceIds = [
       ...new Set(notes.flatMap((note) => parseInvoiceIdsFromPaymentNote(note))),
     ];
     const note = notes[0] || "";
-    const amountCents = centsFromMoney(order.totalMoney);
+    const amountCents = centsBeforeTip(order.totalMoney, order.totalTipMoney);
+    const taxCents = centsFromMoney(order.totalTaxMoney);
     const locationId = order.locationId || undefined;
     const tenderPaymentId =
       (order.tenders ?? []).find((tender) => tender.paymentId)?.paymentId ||
@@ -348,6 +368,7 @@ export const squareAdapter: PaymentProviderAdapter = {
         note,
         amountCents,
         locationId,
+        taxCents,
       };
     }
 
@@ -374,6 +395,7 @@ export const squareAdapter: PaymentProviderAdapter = {
           note: paymentNote,
           amountCents: centsFromMoney(payment.amountMoney) ?? amountCents,
           locationId: payment.locationId || locationId,
+          taxCents,
         };
         if (retrieved.status === "paid") return retrieved;
         if (retrieved.status === "failed") return retrieved;
@@ -391,7 +413,59 @@ export const squareAdapter: PaymentProviderAdapter = {
         note,
         amountCents,
         locationId,
+        taxCents,
       }
     );
+  },
+
+  async listPayments(account, window) {
+    const client = squareClientForToken(account);
+    const page = await client.payments.list({
+      beginTime: window.beginTime.toISOString(),
+      endTime: window.endTime.toISOString(),
+      locationId: window.locationId,
+      sortOrder: "ASC",
+      limit: 100,
+    });
+    const payments: RetrievedProviderPayment[] = [];
+    for await (const payment of page) {
+      if (!payment.id) continue;
+      const note = String(payment.note || "");
+      payments.push({
+        status: mapSquarePaymentStatus(String(payment.status || "")),
+        providerPaymentId: payment.id,
+        providerOrderId: payment.orderId || undefined,
+        invoiceIds: parseInvoiceIdsFromPaymentNote(note),
+        note,
+        amountCents: centsFromMoney(payment.amountMoney),
+        locationId: payment.locationId || undefined,
+        createdAt: payment.createdAt || undefined,
+      });
+      if (payments.length >= 500) break;
+    }
+
+    // Point of Sale keeps our note on the order's line item, not on the payment.
+    const orderIds = [
+      ...new Set(
+        payments
+          .filter((p) => p.status === "paid" && p.invoiceIds.length === 0 && p.providerOrderId)
+          .map((p) => p.providerOrderId as string),
+      ),
+    ];
+    for (let i = 0; i < orderIds.length; i += 100) {
+      const response = await client.orders.batchGet({
+        locationId: window.locationId,
+        orderIds: orderIds.slice(i, i + 100),
+      });
+      for (const order of response.orders ?? []) {
+        const ids = orderNotes(order).flatMap((note) => parseInvoiceIdsFromPaymentNote(note));
+        for (const payment of payments) {
+          if (payment.providerOrderId !== order.id) continue;
+          payment.invoiceIds = [...new Set([...payment.invoiceIds, ...ids])];
+          payment.taxCents = centsFromMoney(order.totalTaxMoney);
+        }
+      }
+    }
+    return payments;
   },
 };

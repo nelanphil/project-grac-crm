@@ -5,15 +5,30 @@ import {
 } from "../models/mongo/PaymentProviderAccount";
 import type { IInvoice } from "../models/mongo/Invoice";
 import { getAdapter } from "../payments/registry";
+import type { VerifiedWebhookPayment } from "../payments/types";
 import { getPaymentProviderAccountsForWebhook } from "../services/paymentProvider.service";
-import { finalizeRedemptionsForInvoices } from "../services/discount.service";
-import {
-  findInvoicesForWebhook,
-  markInvoicePaid,
-} from "../services/invoice.service";
-import { sendPaymentReceipt } from "../services/paymentReceipt.service";
+import { findInvoicesForWebhook } from "../services/invoice.service";
+import { settleInvoicePayment } from "../services/invoiceSettlement.service";
+import { reconcileOpenPosCharges } from "../services/posReconcile.service";
+import { resolvePublicApiBase } from "../utils/publicUrl";
 
 const router = Router();
+
+/**
+ * A Tap to Pay invoice matched only by order or payment ID must agree on the amount;
+ * invoices named in the payment note were already chosen by our checkout.
+ */
+function paymentMatchesInvoice(
+  invoice: IInvoice,
+  verified: VerifiedWebhookPayment,
+): boolean {
+  if (!invoice.posCharge) return true;
+  const named = (verified.invoiceIds ?? []).includes(String(invoice._id)) ||
+    verified.invoiceId === String(invoice._id);
+  if (named || verified.amountCents == null) return true;
+  if (verified.amountCents !== invoice.amountCents) return false;
+  return !verified.locationId || verified.locationId === invoice.posCharge.locationId;
+}
 
 router.post("/:provider", async (req: Request, res: Response) => {
   try {
@@ -49,28 +64,28 @@ router.post("/:provider", async (req: Request, res: Response) => {
     });
 
     if (invoices.length === 0) {
+      if (verified.status === "paid" && verified.amountCents != null) {
+        await reconcileOpenPosCharges({
+          amountCents: verified.amountCents,
+          locationId: verified.locationId,
+          apiBase: resolvePublicApiBase(req),
+        }).catch((err) => console.error("[payments webhook] pos reconcile", err));
+      }
       res.status(200).json({ ok: true, unmatched: true });
       return;
     }
 
     if (verified.status === "paid") {
-      const newlyPaid: IInvoice[] = [];
-      for (const invoice of invoices) {
-        if (invoice.status === "paid") continue;
-        await markInvoicePaid({
-          invoice,
-          providerPaymentId: verified.providerPaymentId,
-          providerOrderId: verified.providerOrderId,
-          paidByCustomer: true,
-        });
-        newlyPaid.push(invoice);
-      }
-      await finalizeRedemptionsForInvoices(
-        invoices.map((invoice) => String(invoice._id)),
+      const payable = invoices.filter((invoice) =>
+        paymentMatchesInvoice(invoice, verified),
       );
-      for (const invoice of newlyPaid) {
-        await sendPaymentReceipt(invoice);
-      }
+      await settleInvoicePayment({
+        invoices: payable,
+        providerPaymentId: verified.providerPaymentId,
+        providerOrderId: verified.providerOrderId,
+        paidByCustomer: true,
+        apiBase: resolvePublicApiBase(req),
+      });
     } else if (verified.status === "failed") {
       for (const invoice of invoices) {
         if (invoice.status !== "paid") {

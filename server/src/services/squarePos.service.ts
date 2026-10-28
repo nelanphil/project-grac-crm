@@ -42,7 +42,13 @@ export function signPosChargeState(input: {
 
 export function verifyPosChargeState(
   state: string,
-  expected: { invoiceId: string; amountCents: number; now?: number },
+  expected: {
+    invoiceId: string;
+    amountCents: number;
+    now?: number;
+    /** The caller still proves the charge with Square, so an old session is fine. */
+    allowExpired?: boolean;
+  },
 ): void {
   const dot = state.lastIndexOf(".");
   if (dot <= 0) throw new PosChargeError("Invalid payment session");
@@ -68,7 +74,7 @@ export function verifyPosChargeState(
   ) {
     throw new PosChargeError("Invalid payment session");
   }
-  if (parsed.exp < (expected.now ?? Date.now())) {
+  if (!expected.allowExpired && parsed.exp < (expected.now ?? Date.now())) {
     throw new PosChargeError("Payment session expired. Start Tap to Pay again.");
   }
   if (parsed.invoiceId !== expected.invoiceId) {

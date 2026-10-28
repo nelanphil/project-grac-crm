@@ -66,6 +66,26 @@ export function toPublicOfflinePayment(
   };
 }
 
+export const POS_CHARGE_STATUSES = [
+  "pending",
+  "confirmed",
+  "failed",
+  "needs_review",
+] as const;
+export type PosChargeStatus = (typeof POS_CHARGE_STATUSES)[number];
+
+/** A Square Tap to Pay charge started from the CRM, kept until Square confirms it. */
+export interface IPosCharge {
+  startedAt: Date;
+  accountRef?: Types.ObjectId | null;
+  locationId: string;
+  amountCents: number;
+  transactionId?: string | null;
+  status: PosChargeStatus;
+  lastCheckedAt?: Date | null;
+  reviewReason?: string | null;
+}
+
 export interface IInvoiceLineItem {
   description: string;
   amountCents: number;
@@ -94,6 +114,9 @@ export interface IInvoice extends Document {
   paidAt: Date | null;
   /** Set while a customer payment receipt email is claimed or sent. */
   paymentReceiptSentAt: Date | null;
+  /** Set while the customer payment receipt text is claimed or sent. */
+  paymentReceiptTextSentAt: Date | null;
+  posCharge?: IPosCharge | null;
   paymentProvider: PaymentProviderName | null;
   paymentProviderAccountRef?: Types.ObjectId | null;
   providerCheckoutId?: string | null;
@@ -168,6 +191,31 @@ const invoiceSchema = new Schema<IInvoice>(
     issuedAt: { type: Date, default: Date.now },
     paidAt: { type: Date, default: null },
     paymentReceiptSentAt: { type: Date, default: null },
+    paymentReceiptTextSentAt: { type: Date, default: null },
+    posCharge: {
+      type: new Schema<IPosCharge>(
+        {
+          startedAt: { type: Date, required: true },
+          accountRef: {
+            type: Schema.Types.ObjectId,
+            ref: "PaymentProviderAccount",
+            default: null,
+          },
+          locationId: { type: String, default: "" },
+          amountCents: { type: Number, required: true, min: 0 },
+          transactionId: { type: String, default: null },
+          status: {
+            type: String,
+            enum: POS_CHARGE_STATUSES,
+            default: "pending",
+          },
+          lastCheckedAt: { type: Date, default: null },
+          reviewReason: { type: String, default: null },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
     paymentProvider: {
       type: String,
       enum: PAYMENT_PROVIDERS,
@@ -213,5 +261,10 @@ const invoiceSchema = new Schema<IInvoice>(
 
 invoiceSchema.index({ customerRef: 1, status: 1, createdAt: -1 });
 invoiceSchema.index({ contractRef: 1, sourceType: 1, status: 1 });
+invoiceSchema.index(
+  { "posCharge.status": 1, "posCharge.startedAt": -1 },
+  { partialFilterExpression: { "posCharge.status": { $exists: true } } },
+);
+invoiceSchema.index({ "posCharge.transactionId": 1 }, { sparse: true });
 
 export const Invoice = mongoose.model<IInvoice>("Invoice", invoiceSchema);
