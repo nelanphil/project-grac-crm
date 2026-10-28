@@ -228,13 +228,21 @@ function SquareSection({
               need the Square Point of Sale app, signed in to the same merchant,
               with Tap to Pay turned on.
             </p>
+            {square.posApplicationId ? (
+              <p>
+                Application ID:{" "}
+                <code className="break-all font-mono text-[11px]">
+                  {square.posApplicationId}
+                </code>
+              </p>
+            ) : null}
             {square.posCallbackUrl ? (
               <code className="block break-all rounded bg-white/80 px-2 py-1.5 font-mono text-[11px] text-neutral-800 border border-amber-100">
                 {square.posCallbackUrl}
               </code>
             ) : (
               <code className="block break-all rounded bg-white/80 px-2 py-1.5 font-mono text-[11px] text-neutral-800 border border-amber-100">
-                https://YOUR_CRM_SITE/checkout/pos-callback
+                https://YOUR_CRM_SITE/checkout/pos-callback/
               </code>
             )}
           </div>

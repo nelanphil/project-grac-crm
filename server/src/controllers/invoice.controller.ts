@@ -1104,10 +1104,17 @@ export async function startInvoicePosCharge(
       res.status(400).json({ message: "Square location ID is not configured" });
       return;
     }
+    if (account.account.environment !== "production") {
+      res.status(400).json({
+        message:
+          "Tap to Pay needs a production Square account; Square does not support sandbox for Point of Sale.",
+      });
+      return;
+    }
 
-    const environment =
-      account.account.environment === "production" ? "production" : "sandbox";
-    const applicationId = await squarePosApplicationId(environment);
+    const applicationId =
+      account.account.applicationId?.trim() ||
+      (await squarePosApplicationId("production"));
     if (!applicationId) {
       res.status(400).json({
         message:

@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { formatUsPhoneInput, isValidUsPhone } from "@/lib/formatPhone";
 import { hasValidContactEmail } from "@/lib/invoiceEmailHtml";
+import TapToPayButton from "@/components/billing/TapToPayButton";
 import SwipeToConfirm from "@/components/ui/SwipeToConfirm";
 
 const badge =
@@ -564,6 +565,13 @@ export default function WorkOrderCompleteFlow({
         ) : null}
         {result.payUrl ? (
           <div className="mt-3 flex flex-wrap gap-2">
+            <TapToPayButton
+              token={token}
+              invoiceId={result.invoice._id}
+              disabled={busy}
+              onError={setError}
+              className={`${primaryButton} inline-flex`}
+            />
             <a
               href={result.payUrl}
               target="_blank"
@@ -583,6 +591,7 @@ export default function WorkOrderCompleteFlow({
             )}
           </div>
         ) : null}
+        {error ? <p className="complete-notice-error mt-2">{error}</p> : null}
         {result.delivery ? (
           <ul className="mt-2 space-y-1">
             <li>{deliveryLine("Text", result.delivery.sms)}</li>

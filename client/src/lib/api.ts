@@ -5633,6 +5633,7 @@ export interface SquareOAuthStatus {
   forEnvironment: boolean;
   callbackUrl: string;
   posCallbackUrl?: string;
+  posApplicationId?: string;
   sandboxSource?: "env" | "control-panel" | "none";
   productionSource?: "env" | "control-panel" | "none";
   app?: SquareOAuthAppConfig;

@@ -13,7 +13,7 @@ const charge: SquarePosCharge = {
   amountCents: 2599,
   currency: "USD",
   applicationId: "sq0idp-test",
-  callbackUrl: "https://crm.example.com/checkout/pos-callback",
+  callbackUrl: "https://crm.example.com/checkout/pos-callback/",
   state: "payload.sig",
   note: "invoice:abc123",
 };
@@ -64,11 +64,11 @@ describe("buildSquarePosUrl", () => {
     assert.match(url, /S\.com\.squareup\.pos\.CLIENT_ID=sq0idp-test/);
     assert.match(
       url,
-      /S\.com\.squareup\.pos\.WEB_CALLBACK_URI=https:\/\/crm\.example\.com\/checkout\/pos-callback/,
+      /S\.com\.squareup\.pos\.WEB_CALLBACK_URI=https:\/\/crm\.example\.com\/checkout\/pos-callback\//,
     );
     assert.match(url, /S\.com\.squareup\.pos\.NOTE=invoice:abc123/);
     assert.match(url, /S\.com\.squareup\.pos\.REQUEST_METADATA=payload\.sig/);
-    assert.match(url, /S\.browser_fallback_url=https:\/\/crm\.example\.com\/checkout\/pos-callback\?error=app_not_installed/);
+    assert.match(url, /S\.browser_fallback_url=https:\/\/crm\.example\.com\/checkout\/pos-callback\/\?error=app_not_installed/);
   });
 });
 

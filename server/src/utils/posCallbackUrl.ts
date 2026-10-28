@@ -6,5 +6,5 @@ import { env } from "../config/env";
  * `state` value instead of a query parameter.
  */
 export function buildPosCallbackUrl(): string {
-  return `${env.clientUrl.replace(/\/$/, "")}/checkout/pos-callback`;
+  return `${env.clientUrl.replace(/\/$/, "")}/checkout/pos-callback/`;
 }

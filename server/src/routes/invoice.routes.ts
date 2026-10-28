@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   authenticate,
+  requireAnyPermission,
   requirePermission,
 } from "../middleware/auth.middleware";
 import {
@@ -40,12 +41,12 @@ router.post(
 router.post("/:id/checkout", startInvoiceCheckout);
 router.post(
   "/:id/pos-charge",
-  requirePermission("contracts:write"),
+  requireAnyPermission("contracts:write", "jobs:write"),
   startInvoicePosCharge,
 );
 router.post(
   "/:id/pos-confirm",
-  requirePermission("contracts:write"),
+  requireAnyPermission("contracts:write", "jobs:write"),
   confirmInvoicePosCharge,
 );
 router.post(

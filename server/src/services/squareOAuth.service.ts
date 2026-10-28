@@ -235,6 +235,10 @@ export async function squareOAuthAppPublicPayload(req?: Request) {
     ...status,
     callbackUrl: squareOAuthCallbackUrl(req),
     posCallbackUrl: buildPosCallbackUrl(),
+    posApplicationId:
+      (await getSquareAppCredentials("production")).applicationId ||
+      stored?.productionApplicationId?.trim() ||
+      env.square.applicationId.trim(),
     app: {
       productionApplicationId: stored?.productionApplicationId ?? "",
       sandboxApplicationId: stored?.sandboxApplicationId ?? "",

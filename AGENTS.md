@@ -40,7 +40,7 @@ only cover non-obvious caveats for running things in this environment.
 - Square **Tap to Pay** (staff phones) opens the Square Point of Sale app from
   the invoice screen. In the Square Developer Dashboard, open the same
   application → Point of Sale API and set the Web Callback URL to exactly
-  `{CLIENT_URL}/checkout/pos-callback` (no query string; the Admin Panel →
+  `{CLIENT_URL}/checkout/pos-callback/` (trailing slash, no query string; the Admin Panel →
   Payment platforms card shows the value). Staff phones need that app installed,
   signed in to the same merchant account, with Tap to Pay turned on. The CRM
   only marks the invoice paid after Square's order amount and location match.
