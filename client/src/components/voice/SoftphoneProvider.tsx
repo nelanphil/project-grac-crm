@@ -69,12 +69,23 @@ type LiveDevice = {
 
 const SoftphoneContext = createContext<SoftphoneContextValue | null>(null);
 
-export function useSoftphone(): SoftphoneContextValue {
-  const value = useContext(SoftphoneContext);
-  if (!value) {
+const unavailableSoftphone: SoftphoneContextValue = {
+  phase: "idle",
+  muted: false,
+  error: null,
+  displayName: "",
+  startedAt: null,
+  conversationId: null,
+  async startCall() {
     throw new Error("Softphone is not available on this page.");
-  }
-  return value;
+  },
+  hangup() {},
+  mute() {},
+  sendDigits() {},
+};
+
+export function useSoftphone(): SoftphoneContextValue {
+  return useContext(SoftphoneContext) ?? unavailableSoftphone;
 }
 
 function errorText(err: unknown, fallback: string): string {

@@ -9,6 +9,7 @@ import {
   recordRoute,
   reloadApp,
   reportCrash,
+  sendAndReload,
   submitCrashReport,
   subscribeCrashes,
   type CrashSnapshot,
@@ -40,10 +41,6 @@ export function CrashModal({ crash }: { crash: CrashSnapshot }) {
     if (submitting) return;
     const doing = whatWereYouDoing.trim();
     const happened = whatHappened.trim();
-    if (!doing || !happened) {
-      setError("Tell us what you were doing and what happened.");
-      return;
-    }
     setSubmitting(true);
     setError("");
     try {
@@ -84,8 +81,9 @@ export function CrashModal({ crash }: { crash: CrashSnapshot }) {
                 Something went wrong
               </h2>
               <p className="mt-1 text-sm text-neutral-600">
-                The page hit an error. Tell us what you were doing, then send
-                the report and reload the app.
+                The page hit an error. The technical details are sent either
+                way; a quick note on what you were doing helps us fix it
+                faster.
               </p>
             </div>
 
@@ -98,7 +96,6 @@ export function CrashModal({ crash }: { crash: CrashSnapshot }) {
             <label className="block text-sm font-medium text-brand-dark">
               What were you doing?
               <textarea
-                required
                 value={whatWereYouDoing}
                 onChange={(event) => setWhatWereYouDoing(event.target.value)}
                 maxLength={4000}
@@ -110,7 +107,6 @@ export function CrashModal({ crash }: { crash: CrashSnapshot }) {
             <label className="block text-sm font-medium text-brand-dark">
               What happened?
               <textarea
-                required
                 value={whatHappened}
                 onChange={(event) => setWhatHappened(event.target.value)}
                 maxLength={4000}
@@ -146,11 +142,18 @@ export function CrashModal({ crash }: { crash: CrashSnapshot }) {
           <div className="flex flex-col-reverse gap-2 border-t border-neutral-200 px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
             <button
               type="button"
-              onClick={() => reloadApp()}
+              onClick={() => {
+                if (error) {
+                  reloadApp();
+                  return;
+                }
+                setSubmitting(true);
+                void sendAndReload(crash, token);
+              }}
               disabled={submitting}
               className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-4 py-2.5 text-sm font-medium text-brand-dark hover:bg-neutral-50 disabled:opacity-60"
             >
-              Reload without sending
+              Reload
             </button>
             <button
               type="submit"
@@ -199,9 +202,8 @@ export default class CrashBoundary extends Component<
   componentDidCatch(error: Error, info: { componentStack?: string | null }) {
     reportCrash({
       source: "render",
-      name: error.name,
-      message: error.message || "The application crashed.",
-      stack: error.stack,
+      error,
+      message: "The application crashed.",
       componentStack: info.componentStack ?? undefined,
     });
   }

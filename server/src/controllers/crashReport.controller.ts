@@ -1,14 +1,21 @@
+import { gzipSync } from "node:zlib";
 import { Response } from "express";
 import mongoose from "mongoose";
 import { getMongoStatus } from "../config/mongodb";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { CrashReport, ICrashReport } from "../models/mongo/CrashReport";
+import { SourceMap } from "../models/mongo/SourceMap";
 import {
   createCrashReportSchema,
   updateCrashReportSchema,
+  uploadSourceMapsSchema,
 } from "../schemas/crashReport.schema";
+import { decodeStack, forgetSourceMap } from "../services/stackSymbolicator.service";
 
 const PAGE_SIZES = [25, 50];
+const MAX_RELATED = 10;
+// Stay under MongoDB's 16MB document limit.
+const MAX_STORED_MAP_BYTES = 15 * 1024 * 1024;
 
 function parseOccurredAt(value: string | undefined): Date {
   if (!value) return new Date();
@@ -31,6 +38,7 @@ function mapSummary(report: ICrashReport) {
   return {
     id: report._id.toString(),
     status: report.status,
+    origin: report.origin ?? "client",
     source: report.source,
     name: report.name,
     message: report.message,
@@ -41,28 +49,113 @@ function mapSummary(report: ICrashReport) {
     occurredAt: report.occurredAt.toISOString(),
     createdAt: report.createdAt.toISOString(),
     resolvedAt: report.resolvedAt ? report.resolvedAt.toISOString() : null,
+    occurrences: report.occurrences ?? 1,
+    lastSeenAt: report.lastSeenAt ? report.lastSeenAt.toISOString() : null,
+    httpStatus: report.http?.status ?? null,
   };
 }
 
 function mapDetail(report: ICrashReport) {
   return {
     ...mapSummary(report),
+    clientReportId: report.clientReportId ?? null,
+    release: report.release ?? "",
     stack: report.stack,
     componentStack: report.componentStack,
+    causes: (report.causes ?? []).map((item) => ({
+      name: item.name,
+      message: item.message,
+      stack: item.stack,
+    })),
+    context: report.context ?? {},
+    additionalErrors: (report.additionalErrors ?? []).map((item) => ({
+      source: item.source,
+      name: item.name,
+      message: item.message,
+      stack: item.stack,
+      at: item.at,
+    })),
     url: report.url,
     userAgent: report.userAgent,
     viewport: report.viewport,
     online: report.online,
+    environment: report.environment ?? {},
     whatWereYouDoing: report.whatWereYouDoing,
     whatHappened: report.whatHappened,
     breadcrumbs: report.breadcrumbs.map((item) => ({
       t: item.t,
       type: item.type,
       detail: item.detail,
+      ...(item.meta ? { meta: { ...item.meta } } : {}),
     })),
+    requestId: report.requestId ?? "",
+    requestIds: report.requestIds ?? [],
+    http: report.http
+      ? {
+          method: report.http.method,
+          route: report.http.route,
+          path: report.http.path,
+          status: report.http.status,
+          bodyKeys: report.http.bodyKeys ?? [],
+        }
+      : null,
+    fingerprint: report.fingerprint ?? "",
     resolutionNote: report.resolutionNote,
     resolvedByName: personName(report.resolvedBy),
     ip: report.ip,
+  };
+}
+
+function breadcrumbRequestIds(report: ICrashReport): string[] {
+  const ids = new Set<string>();
+  for (const item of report.breadcrumbs) {
+    if (item.meta?.requestId) ids.add(item.meta.requestId);
+  }
+  const contextId = report.context?.requestId;
+  if (typeof contextId === "string" && contextId) ids.add(contextId);
+  return [...ids].slice(0, 100);
+}
+
+async function buildDetail(report: ICrashReport) {
+  const detail = mapDetail(report);
+  const decoded =
+    report.origin === "server" || !report.stack
+      ? null
+      : await decodeStack(report.stack).catch(() => null);
+
+  let relatedServerErrors: ReturnType<typeof mapDetail>[] = [];
+  let relatedClientReports: ReturnType<typeof mapSummary>[] = [];
+  if (report.origin === "server") {
+    const ids = report.requestIds ?? [];
+    if (ids.length > 0) {
+      const clients = await CrashReport.find({
+        origin: { $ne: "server" },
+        "breadcrumbs.meta.requestId": { $in: ids },
+      })
+        .sort({ createdAt: -1 })
+        .limit(MAX_RELATED);
+      relatedClientReports = clients.map(mapSummary);
+    }
+  } else {
+    const ids = breadcrumbRequestIds(report);
+    if (ids.length > 0) {
+      const servers = await CrashReport.find({
+        origin: "server",
+        requestIds: { $in: ids },
+      })
+        .sort({ createdAt: -1 })
+        .limit(MAX_RELATED);
+      relatedServerErrors = servers.map(mapDetail);
+    }
+  }
+
+  return {
+    ...detail,
+    decodedStack: decoded?.text ?? "",
+    decodedFrames: decoded?.frames ?? [],
+    sourceMapsFound: decoded?.mapped ?? 0,
+    relatedServerErrors,
+    relatedClientReports,
   };
 }
 
@@ -90,23 +183,57 @@ export async function createCrashReport(
   const authed = req.user;
 
   try {
+    if (data.clientReportId) {
+      const existing = await CrashReport.findOne({
+        clientReportId: data.clientReportId,
+      });
+      if (existing) {
+        const narrative: Record<string, string> = {};
+        if (data.whatWereYouDoing && !existing.whatWereYouDoing) {
+          narrative.whatWereYouDoing = data.whatWereYouDoing;
+        }
+        if (data.whatHappened && !existing.whatHappened) {
+          narrative.whatHappened = data.whatHappened;
+        }
+        if (!authed && data.reporterEmail && !existing.reporterEmail) {
+          narrative.reporterEmail = data.reporterEmail;
+        }
+        if (Object.keys(narrative).length > 0) {
+          await CrashReport.updateOne({ _id: existing._id }, { $set: narrative });
+        }
+        res.status(200).json({
+          id: existing._id.toString(),
+          message: "Crash report submitted",
+        });
+        return;
+      }
+    }
+
     const report = await CrashReport.create({
       status: "open",
+      origin: "client",
       source: data.source,
+      clientReportId: data.clientReportId ?? null,
+      release: data.release ?? "",
       name: data.name || "Error",
       message: data.message,
       stack: data.stack ?? "",
       componentStack: data.componentStack ?? "",
+      causes: data.causes ?? [],
+      context: data.context ?? {},
+      additionalErrors: data.additionalErrors ?? [],
       url: data.url ?? "",
       pathname: data.pathname ?? "",
       userAgent: data.userAgent ?? "",
       viewport: data.viewport ?? "",
       online: data.online ?? true,
       occurredAt: parseOccurredAt(data.occurredAt),
-      whatWereYouDoing: data.whatWereYouDoing,
-      whatHappened: data.whatHappened,
+      environment: data.environment ?? {},
+      whatWereYouDoing: data.whatWereYouDoing ?? "",
+      whatHappened: data.whatHappened ?? "",
       reporterEmail: authed ? "" : (data.reporterEmail ?? ""),
       breadcrumbs: data.breadcrumbs ?? [],
+      requestId: typeof data.context?.requestId === "string" ? data.context.requestId : "",
       userId: authed ? authed.id : null,
       userEmail: authed?.email ?? "",
       userRole: authed?.role ?? "",
@@ -117,7 +244,19 @@ export async function createCrashReport(
       id: report._id.toString(),
       message: "Crash report submitted",
     });
-  } catch {
+  } catch (error) {
+    if ((error as { code?: number })?.code === 11000 && data.clientReportId) {
+      const existing = await CrashReport.findOne({
+        clientReportId: data.clientReportId,
+      }).catch(() => null);
+      if (existing) {
+        res.status(200).json({
+          id: existing._id.toString(),
+          message: "Crash report submitted",
+        });
+        return;
+      }
+    }
     res.status(500).json({ message: "Failed to save crash report." });
   }
 }
@@ -135,16 +274,23 @@ export async function listCrashReports(
     const statusRaw = String(req.query.status ?? "");
     const status =
       statusRaw === "open" || statusRaw === "resolved" ? statusRaw : null;
+    const originRaw = String(req.query.origin ?? "");
+    const originFilter =
+      originRaw === "server"
+        ? { origin: "server" }
+        : originRaw === "client"
+          ? { origin: { $ne: "server" } }
+          : {};
 
-    const filter = status ? { status } : {};
+    const filter = { ...originFilter, ...(status ? { status } : {}) };
     const [total, reports, openCount, resolvedCount] = await Promise.all([
       CrashReport.countDocuments(filter),
       CrashReport.find(filter)
         .sort({ createdAt: -1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
-      CrashReport.countDocuments({ status: "open" }),
-      CrashReport.countDocuments({ status: "resolved" }),
+      CrashReport.countDocuments({ ...originFilter, status: "open" }),
+      CrashReport.countDocuments({ ...originFilter, status: "resolved" }),
     ]);
 
     res.json({
@@ -179,7 +325,7 @@ export async function getCrashReport(
       res.status(404).json({ message: "Crash report not found" });
       return;
     }
-    res.json({ report: mapDetail(report) });
+    res.json({ report: await buildDetail(report) });
   } catch {
     res.status(500).json({ message: "Failed to load crash report." });
   }
@@ -224,8 +370,47 @@ export async function updateCrashReport(
       res.status(404).json({ message: "Crash report not found" });
       return;
     }
-    res.json({ report: mapDetail(report) });
+    res.json({ report: await buildDetail(report) });
   } catch {
     res.status(500).json({ message: "Failed to update crash report." });
+  }
+}
+
+export async function uploadSourceMaps(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  const parsed = uploadSourceMapsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      message: "Validation failed",
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  try {
+    const now = new Date();
+    const maps = parsed.data.maps.map((item) => ({
+      file: item.file.replace(/^\/+/, "").replace(/\.map$/, ""),
+      content: gzipSync(item.content),
+    }));
+    if (maps.some((item) => item.content.length > MAX_STORED_MAP_BYTES)) {
+      res.status(413).json({ message: "A source map is too large to store." });
+      return;
+    }
+    await SourceMap.bulkWrite(
+      maps.map((item) => ({
+        updateOne: {
+          filter: { file: item.file },
+          update: { $set: { content: item.content, createdAt: now } },
+          upsert: true,
+        },
+      })),
+    );
+    for (const item of maps) forgetSourceMap(item.file);
+    res.json({ stored: maps.length });
+  } catch {
+    res.status(500).json({ message: "Failed to store source maps." });
   }
 }

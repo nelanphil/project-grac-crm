@@ -46,6 +46,8 @@ export const env = {
     10,
   ),
   mongodbUri: resolveMongoUri(),
+  /** Shared secret the client build uses to upload private source maps. Empty disables uploads. */
+  sourceMapUploadToken: process.env.SOURCEMAP_UPLOAD_TOKEN || "",
   jwt: {
     secret: process.env.JWT_SECRET || "dev-secret-change-in-production",
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",

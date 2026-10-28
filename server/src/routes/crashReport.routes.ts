@@ -5,11 +5,13 @@ import {
   requireRole,
 } from "../middleware/auth.middleware";
 import { crashReportRateLimit } from "../middleware/crashReportRateLimit";
+import { requireSourceMapToken } from "../middleware/sourceMapUpload";
 import {
   createCrashReport,
   getCrashReport,
   listCrashReports,
   updateCrashReport,
+  uploadSourceMaps,
 } from "../controllers/crashReport.controller";
 
 const router = Router();
@@ -20,6 +22,8 @@ router.post(
   authenticateIfPresent,
   createCrashReport,
 );
+
+router.post("/sourcemaps", requireSourceMapToken, uploadSourceMaps);
 
 router.get(
   "/",

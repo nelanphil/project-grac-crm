@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import DashboardNav from "@/components/dashboard/DashboardNav";
 import StaffDashboardShell from "@/components/dashboard/staff/StaffDashboardShell";
@@ -78,15 +78,23 @@ export default function DashboardLayout({
     router.replace("/dashboard");
   }, [hydrated, synced, user, pathAllowed, router]);
 
-  if (!hydrated || !synced) {
-    if (isTerminalPopout) {
-      return (
-        <div className="h-dvh w-full bg-neutral-950" aria-busy="true">
-          {children}
-        </div>
-      );
-    }
+  if (isTerminalPopout) {
     return (
+      <div
+        className="h-dvh w-full overflow-hidden bg-neutral-950"
+        aria-busy={!hydrated || !synced}
+      >
+        {children}
+      </div>
+    );
+  }
+
+  const showNav = !pathname.startsWith("/dashboard/settings");
+  const isWideLayout = !pathname.startsWith("/dashboard/settings");
+
+  let body: ReactNode;
+  if (!hydrated || !synced) {
+    body = (
       <div
         className="min-h-[50vh] bg-[var(--staff-canvas)] px-4 py-6 sm:px-6"
         aria-busy="true"
@@ -95,37 +103,30 @@ export default function DashboardLayout({
         {children}
       </div>
     );
-  }
-
-  if (user && !pathAllowed) {
-    return (
+  } else if (user && !pathAllowed) {
+    body = (
       <div
         className="min-h-[50vh] bg-[var(--staff-canvas)] px-4 py-6 sm:px-6"
         aria-busy="true"
         aria-label="Opening dashboard"
       />
     );
+  } else if (isStaffRole(user)) {
+    body = <StaffDashboardShell>{children}</StaffDashboardShell>;
+  } else {
+    body = (
+      <div
+        className={`mx-auto flex gap-8 py-6 md:py-10 print:block print:max-w-none print:gap-0 print:px-0 print:py-0 uppercase ${
+          isWideLayout
+            ? "w-full max-w-none px-4 sm:px-6 lg:px-10"
+            : "max-w-screen-2xl px-4 sm:px-6"
+        }`}
+      >
+        {showNav && <DashboardNav />}
+        <main className="min-w-0 flex-1 print:w-full">{children}</main>
+      </div>
+    );
   }
 
-  if (isStaffRole(user)) {
-    return <StaffDashboardShell>{children}</StaffDashboardShell>;
-  }
-
-  const showNav = !pathname.startsWith("/dashboard/settings");
-  const isWideLayout = !pathname.startsWith("/dashboard/settings");
-
-  return (
-    <SoftphoneProvider>
-    <div
-      className={`mx-auto flex gap-8 py-6 md:py-10 print:block print:max-w-none print:gap-0 print:px-0 print:py-0 uppercase ${
-        isWideLayout
-          ? "w-full max-w-none px-4 sm:px-6 lg:px-10"
-          : "max-w-screen-2xl px-4 sm:px-6"
-      }`}
-    >
-      {showNav && <DashboardNav />}
-      <main className="min-w-0 flex-1 print:w-full">{children}</main>
-    </div>
-    </SoftphoneProvider>
-  );
+  return <SoftphoneProvider>{body}</SoftphoneProvider>;
 }

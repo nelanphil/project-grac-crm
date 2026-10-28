@@ -31,6 +31,24 @@ import { startRenewalInvoiceScheduler } from "./jobs/scheduler";
 import { startDevTunnelSync, stopDevTunnelSync } from "./services/devTunnel.service";
 import { startMailboxIdle, stopMailboxIdle } from "./services/mailboxIdle";
 import { applyCompanyTaxRateToOpenDocuments } from "./services/taxSettings";
+import { recordProcessError } from "./services/serverErrorCapture.service";
+
+/**
+ * Records the failure, then exits like Node's default handler would, so the
+ * host restarts the process instead of running in an unknown state.
+ */
+function handleFatal(kind: "unhandledRejection" | "uncaughtException") {
+  return (err: unknown) => {
+    console.error(`${kind}:`, err);
+    const exit = () => process.exit(1);
+    const timer = setTimeout(exit, 2000);
+    timer.unref();
+    void recordProcessError(kind, err).finally(exit);
+  };
+}
+
+process.on("unhandledRejection", handleFatal("unhandledRejection"));
+process.on("uncaughtException", handleFatal("uncaughtException"));
 
 async function bootstrap(): Promise<void> {
   await connectMongoDB();

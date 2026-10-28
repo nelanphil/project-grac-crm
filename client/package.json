@@ -6,11 +6,11 @@
     "dev:client": "next dev -p 3009",
     "dev": "npm run dev:client",
     "build": "next build",
-    "postbuild": "node scripts/write-version.mjs",
+    "postbuild": "node scripts/extract-sourcemaps.mjs && node scripts/write-version.mjs",
     "start:client": "next start",
     "start:static": "node scripts/serve-static.mjs",
     "start": "npm run start:client",
-    "test": "node --test scripts/publicImagePath.test.mjs scripts/payLinkPath.test.mjs",
+    "test": "node --test scripts/publicImagePath.test.mjs scripts/payLinkPath.test.mjs scripts/crashReportExport.test.mjs",
     "lint": "eslint"
   },
   "dependencies": {

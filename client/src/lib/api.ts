@@ -12,6 +12,10 @@ import type {
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4009";
 
 export class ApiError extends Error {
+  endpoint?: string;
+  method?: string;
+  requestId?: string;
+
   constructor(
     message: string,
     public status: number,
@@ -24,36 +28,77 @@ export class ApiError extends Error {
   }
 }
 
-export async function submitLead(
-  data: EstimatePayload,
-): Promise<{ id: string; message: string }> {
+function withRequestContext(
+  error: ApiError,
+  method: string,
+  endpoint: string,
+  res?: Response,
+): ApiError {
+  error.method = method.toUpperCase();
+  error.endpoint = endpoint.split("?")[0] || endpoint;
+  error.requestId = res ? requestIdOf(res) : undefined;
+  return error;
+}
+
+function requestIdOf(res: Response): string | undefined {
+  return res.headers.get("x-request-id") ?? undefined;
+}
+
+function elapsed(startedAt: number): number {
+  return Date.now() - startedAt;
+}
+
+async function publicPost<T>(endpoint: string, data: unknown): Promise<T> {
+  const startedAt = Date.now();
   let res: Response;
   try {
-    res = await fetch(`${API_URL}/leads`, {
+    res = await fetch(`${API_URL}${endpoint}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
   } catch {
-    recordApiBreadcrumb("POST", "/leads", 0);
-    throw new ApiError(
-      "Could not reach the server. Check your connection and try again.",
-      0,
+    recordApiBreadcrumb("POST", endpoint, 0, {
+      durationMs: elapsed(startedAt),
+      message: "Network error",
+    });
+    throw withRequestContext(
+      new ApiError(
+        "Could not reach the server. Check your connection and try again.",
+        0,
+      ),
+      "POST",
+      endpoint,
     );
   }
 
-  recordApiBreadcrumb("POST", "/leads", res.status);
   const body = await res.json().catch(() => ({}));
+  recordApiBreadcrumb("POST", endpoint, res.status, {
+    durationMs: elapsed(startedAt),
+    requestId: requestIdOf(res),
+    message: typeof body.message === "string" ? body.message : undefined,
+  });
 
   if (!res.ok) {
-    throw new ApiError(
-      body.message ?? "Something went wrong. Please try again.",
-      res.status,
-      body.errors,
+    throw withRequestContext(
+      new ApiError(
+        body.message ?? "Something went wrong. Please try again.",
+        res.status,
+        body.errors,
+      ),
+      "POST",
+      endpoint,
+      res,
     );
   }
 
-  return body;
+  return body as T;
+}
+
+export async function submitLead(
+  data: EstimatePayload,
+): Promise<{ id: string; message: string }> {
+  return publicPost("/leads", data);
 }
 
 export interface ContactFormPayload {
@@ -69,66 +114,14 @@ export interface ContactFormPayload {
 export async function submitContactForm(
   data: ContactFormPayload,
 ): Promise<{ message: string }> {
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/contact`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
-  } catch {
-    recordApiBreadcrumb("POST", "/contact", 0);
-    throw new ApiError(
-      "Could not reach the server. Check your connection and try again.",
-      0,
-    );
-  }
-
-  recordApiBreadcrumb("POST", "/contact", res.status);
-  const body = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    throw new ApiError(
-      body.message ?? "Something went wrong. Please try again.",
-      res.status,
-      body.errors,
-    );
-  }
-
-  return body;
+  return publicPost("/contact", data);
 }
 
 export async function submitSmsOptIn(data: {
   phone: string;
   smsOptIn: true;
 }): Promise<{ message: string }> {
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/sms-opt-in`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
-  } catch {
-    recordApiBreadcrumb("POST", "/sms-opt-in", 0);
-    throw new ApiError(
-      "Could not reach the server. Check your connection and try again.",
-      0,
-    );
-  }
-
-  recordApiBreadcrumb("POST", "/sms-opt-in", res.status);
-  const body = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    throw new ApiError(
-      body.message ?? "Something went wrong. Please try again.",
-      res.status,
-      body.errors,
-    );
-  }
-
-  return body;
+  return publicPost("/sms-opt-in", data);
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +218,7 @@ async function authRequest<T>(
   const isFormData =
     typeof FormData !== "undefined" && options.body instanceof FormData;
   const method = options.method ?? "GET";
+  const startedAt = Date.now();
 
   let res: Response;
   try {
@@ -238,24 +232,40 @@ async function authRequest<T>(
           },
     });
   } catch {
-    recordApiBreadcrumb(method, endpoint, 0);
-    throw new ApiError(
-      "Could not reach the server. Check your connection and try again.",
-      0,
+    recordApiBreadcrumb(method, endpoint, 0, {
+      durationMs: elapsed(startedAt),
+      message: "Network error",
+    });
+    throw withRequestContext(
+      new ApiError(
+        "Could not reach the server. Check your connection and try again.",
+        0,
+      ),
+      method,
+      endpoint,
     );
   }
 
-  recordApiBreadcrumb(method, endpoint, res.status);
-
   const body = await res.json().catch(() => ({}));
 
+  recordApiBreadcrumb(method, endpoint, res.status, {
+    durationMs: elapsed(startedAt),
+    requestId: requestIdOf(res),
+    message: typeof body.message === "string" ? body.message : undefined,
+  });
+
   if (!res.ok) {
-    throw new ApiError(
-      body.message ?? "Something went wrong. Please try again.",
-      res.status,
-      body.errors,
-      typeof body.code === "string" ? body.code : undefined,
-      body,
+    throw withRequestContext(
+      new ApiError(
+        body.message ?? "Something went wrong. Please try again.",
+        res.status,
+        body.errors,
+        typeof body.code === "string" ? body.code : undefined,
+        body,
+      ),
+      method,
+      endpoint,
+      res,
     );
   }
 
@@ -263,15 +273,18 @@ async function authRequest<T>(
 }
 
 export type CrashReportStatus = "open" | "resolved";
+export type CrashReportOrigin = "client" | "server";
 export type CrashReportSource =
   | "render"
   | "window"
   | "unhandledrejection"
-  | "chunk";
+  | "chunk"
+  | "server";
 
 export interface CrashReportSummary {
   id: string;
   status: CrashReportStatus;
+  origin: CrashReportOrigin;
   source: CrashReportSource;
   name: string;
   message: string;
@@ -282,21 +295,76 @@ export interface CrashReportSummary {
   occurredAt: string;
   createdAt: string;
   resolvedAt: string | null;
+  occurrences: number;
+  lastSeenAt: string | null;
+  httpStatus: number | null;
+}
+
+export interface CrashReportErrorPart {
+  name: string;
+  message: string;
+  stack: string;
+}
+
+export interface CrashReportBreadcrumb {
+  t: number;
+  type: "route" | "click" | "api" | "console" | "error" | "lifecycle";
+  detail: string;
+  meta?: {
+    status?: number;
+    durationMs?: number;
+    requestId?: string;
+    message?: string;
+  };
+}
+
+export interface CrashReportDecodedFrame {
+  raw: string;
+  fn: string;
+  file: string;
+  line: number;
+  column: number;
+  decoded: boolean;
+  snippet?: string;
 }
 
 export interface CrashReportDetail extends CrashReportSummary {
+  clientReportId: string | null;
+  release: string;
   stack: string;
+  decodedStack: string;
+  decodedFrames: CrashReportDecodedFrame[];
+  sourceMapsFound: number;
   componentStack: string;
+  causes: CrashReportErrorPart[];
+  context: Record<string, string | number | boolean>;
+  additionalErrors: (CrashReportErrorPart & { source: string; at: string })[];
   url: string;
   userAgent: string;
   viewport: string;
   online: boolean;
+  environment: Record<string, string | number | boolean>;
   whatWereYouDoing: string;
   whatHappened: string;
-  breadcrumbs: { t: number; type: "route" | "click" | "api"; detail: string }[];
+  breadcrumbs: CrashReportBreadcrumb[];
+  requestId: string;
+  requestIds: string[];
+  http: {
+    method: string;
+    route: string;
+    path: string;
+    status: number;
+    bodyKeys: string[];
+  } | null;
+  fingerprint: string;
   resolutionNote: string;
   resolvedByName: string;
   ip: string;
+  relatedServerErrors: Omit<
+    CrashReportDetail,
+    "relatedServerErrors" | "relatedClientReports" | "decodedStack" | "decodedFrames" | "sourceMapsFound"
+  >[];
+  relatedClientReports: CrashReportSummary[];
 }
 
 export interface CrashReportListResponse {
@@ -310,9 +378,17 @@ export interface CrashReportListResponse {
 
 export async function listCrashReports(
   token: string,
-  options?: { page?: number; pageSize?: number; status?: CrashReportStatus | "all" },
+  options?: {
+    page?: number;
+    pageSize?: number;
+    status?: CrashReportStatus | "all";
+    origin?: CrashReportOrigin | "all";
+  },
 ): Promise<CrashReportListResponse> {
   const params = new URLSearchParams();
+  if (options?.origin && options.origin !== "all") {
+    params.set("origin", options.origin);
+  }
   if (options?.page !== undefined) params.set("page", String(options.page));
   if (options?.pageSize !== undefined) {
     params.set("pageSize", String(options.pageSize));
@@ -480,6 +556,7 @@ async function streamAuthRequest(
     typeof FormData !== "undefined" && options.body instanceof FormData;
 
   const method = options.method ?? "GET";
+  const startedAt = Date.now();
   let res: Response;
   try {
     res = await fetch(`${API_URL}${endpoint}`, {
@@ -491,14 +568,19 @@ async function streamAuthRequest(
       },
     });
   } catch {
-    recordApiBreadcrumb(method, endpoint, 0);
-    throw new ApiError(
-      "Could not reach the server. Check your connection and try again.",
-      0,
+    recordApiBreadcrumb(method, endpoint, 0, {
+      durationMs: elapsed(startedAt),
+      message: "Network error",
+    });
+    throw withRequestContext(
+      new ApiError(
+        "Could not reach the server. Check your connection and try again.",
+        0,
+      ),
+      method,
+      endpoint,
     );
   }
-
-  recordApiBreadcrumb(method, endpoint, res.status);
 
   const contentType = res.headers.get("content-type") ?? "";
   if (!contentType.includes("text/event-stream")) {
@@ -506,17 +588,32 @@ async function streamAuthRequest(
       message?: string;
       errors?: Record<string, string[]>;
     };
+    recordApiBreadcrumb(method, endpoint, res.status, {
+      durationMs: elapsed(startedAt),
+      requestId: requestIdOf(res),
+      message: typeof body.message === "string" ? body.message : undefined,
+    });
     if (!res.ok) {
-      throw new ApiError(
-        body.message ?? "Something went wrong. Please try again.",
-        res.status,
-        body.errors,
+      throw withRequestContext(
+        new ApiError(
+          body.message ?? "Something went wrong. Please try again.",
+          res.status,
+          body.errors,
+        ),
+        method,
+        endpoint,
+        res,
       );
     }
     onEvent("result", body);
     onEvent("done", {});
     return body;
   }
+
+  recordApiBreadcrumb(method, endpoint, res.status, {
+    durationMs: elapsed(startedAt),
+    requestId: requestIdOf(res),
+  });
 
   if (!res.body) {
     throw new ApiError("Empty response from server.", res.status);

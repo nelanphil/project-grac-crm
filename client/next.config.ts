@@ -38,8 +38,17 @@ const devRewrites: NextConfig["rewrites"] = async () => ({
 
 export default function nextConfig(phase: string): NextConfig {
   const isDev = phase === PHASE_DEVELOPMENT_SERVER;
+  const release = (
+    process.env.NEXT_PUBLIC_RELEASE ??
+    process.env.RENDER_GIT_COMMIT ??
+    ""
+  ).slice(0, 40);
 
   return {
+    // Maps are moved out of `out/` by scripts/extract-sourcemaps.mjs and
+    // uploaded privately to the API, so they are never published.
+    productionBrowserSourceMaps: true,
+    env: release ? { NEXT_PUBLIC_RELEASE: release } : {},
     // Pin the workspace root to this `client` directory so Turbopack doesn't
     // infer the monorepo parent (multiple lockfiles) as the root.
     turbopack: {

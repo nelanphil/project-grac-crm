@@ -14,9 +14,9 @@ export default function GlobalError({
     () =>
       captureError({
         source: "render",
-        name: error.name,
-        message: error.message || "The application crashed.",
-        stack: error.stack,
+        error,
+        message: "The application crashed.",
+        digest: error.digest,
       }),
     [error],
   );
