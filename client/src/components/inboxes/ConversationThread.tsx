@@ -63,6 +63,20 @@ function isImage(url: string): boolean {
   return /res\.cloudinary\.com\/[^/]+\/image\/upload\//i.test(url);
 }
 
+/** Keep pages loaded with "Load earlier" when a background refresh returns the newest page. */
+function mergeNewestTimelinePage(
+  current: InboxTimelineMessage[],
+  incoming: InboxTimelineMessage[],
+): InboxTimelineMessage[] {
+  if (incoming.length === 0) return current;
+  const incomingIds = new Set(incoming.map((message) => message.id));
+  const oldestIncoming = incoming[0].at;
+  const older = current.filter(
+    (message) => !incomingIds.has(message.id) && message.at < oldestIncoming,
+  );
+  return [...older, ...incoming];
+}
+
 function plainTextToHtml(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "<p></p>";
@@ -93,7 +107,8 @@ export default function ConversationThread({
   const [hasMore, setHasMore] = useState(false);
   const [nextBefore, setNextBefore] = useState<string | null>(null);
   const [loadedFor, setLoadedFor] = useState("");
-  const loading = loadedFor !== `${conversationId}:${refreshKey}`;
+  const loading = loadedFor !== conversationId;
+  const loadedForRef = useRef("");
   const [error, setError] = useState<string | null>(null);
   const [threadQuery, setThreadQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -125,13 +140,18 @@ export default function ConversationThread({
 
   useEffect(() => {
     let cancelled = false;
+    const refreshing = loadedForRef.current === conversationId;
     getInboxTimeline(token, conversationId)
       .then((result) => {
         if (cancelled) return;
         setConversation(result.conversation);
-        setMessages(result.messages);
-        setHasMore(result.hasMore);
-        setNextBefore(result.nextBefore);
+        if (refreshing) {
+          setMessages((current) => mergeNewestTimelinePage(current, result.messages));
+        } else {
+          setMessages(result.messages);
+          setHasMore(result.hasMore);
+          setNextBefore(result.nextBefore);
+        }
         if (result.conversation) onConversationRef.current(result.conversation);
         setError(null);
       })
@@ -141,7 +161,10 @@ export default function ConversationThread({
         }
       })
       .finally(() => {
-        if (!cancelled) setLoadedFor(`${conversationId}:${refreshKey}`);
+        if (!cancelled) {
+          loadedForRef.current = conversationId;
+          setLoadedFor(conversationId);
+        }
       });
     return () => {
       cancelled = true;

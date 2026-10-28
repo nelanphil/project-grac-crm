@@ -16,6 +16,22 @@ import TaskDialog from "./TaskDialog";
 type TaskScope = "me" | "all";
 type TaskChip = "overdue" | "today" | "upcoming" | "done";
 
+function scheduleBadge(task: TaskItem): string {
+  if (!task.onSchedule) return "";
+  if (task.scheduledTechnicianName && task.scheduledStart) {
+    const when = new Date(task.scheduledStart);
+    if (Number.isNaN(when.getTime())) return `On ${task.scheduledTechnicianName}'s schedule`;
+    const label = when.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    return `On ${task.scheduledTechnicianName}'s schedule, ${label}`;
+  }
+  return "Waiting to be scheduled";
+}
+
 function dueText(iso: string | null): { label: string; overdue: boolean } {
   if (!iso) return { label: "No due date", overdue: false };
   const date = new Date(iso);
@@ -159,6 +175,7 @@ export default function TasksWorkspace() {
         ) : null}
         {tasks.map((task) => {
           const due = dueText(task.dueAt);
+          const scheduled = scheduleBadge(task);
           const who = task.customerName || task.conversationName;
           const href = task.conversationId
             ? `/dashboard/inboxes?c=${task.conversationId}`
@@ -206,6 +223,9 @@ export default function TasksWorkspace() {
                   </span>
                   {scope === "all" && task.assigneeName ? ` · ${task.assigneeName}` : ""}
                 </p>
+                {scheduled ? (
+                  <p className="mt-0.5 text-xs text-violet-700">{scheduled}</p>
+                ) : null}
               </div>
               {canWrite ? (
                 <button

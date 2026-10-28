@@ -42,8 +42,12 @@ import {
   ScheduleStaffMember,
   ScheduleSuggestion,
   suggestScheduleAssignee,
+  completeTask,
+  reopenTask,
+  updateTask,
   updateWorkOrder,
   type ServiceCity,
+  type TaskItem,
   WorkOrderListItem,
 } from "@/lib/api";
 import {
@@ -73,8 +77,10 @@ import {
 } from "@/lib/schedule";
 import { subscribeDashboardLive } from "@/lib/dashboardLive";
 import WeekBoard, {
+  RailTaskCard,
   UnscheduledCard,
 } from "@/components/schedule/WeekBoard";
+import TaskDialog from "@/components/tasks/TaskDialog";
 import MonthCalendar from "@/components/schedule/MonthCalendar";
 import MonthTable from "@/components/schedule/MonthTable";
 import SuggestAssigneeModal from "@/components/schedule/SuggestAssigneeModal";
@@ -205,6 +211,7 @@ function emptyQueue() {
     today: [] as WorkOrderListItem[],
     upcoming: [] as WorkOrderListItem[],
     pastDue: [] as WorkOrderListItem[],
+    unscheduledTasks: [] as TaskItem[],
   };
 }
 
@@ -351,6 +358,7 @@ async function fetchBoardData(
   return {
     staff: board.staff,
     jobs: board.workOrders,
+    tasks: board.tasks ?? [],
     unscheduled: queue.unscheduled,
   };
 }
@@ -363,6 +371,7 @@ async function fetchRailDay(token: string, day: string) {
   return {
     unscheduled: queue.unscheduled,
     scheduled: board.workOrders,
+    unscheduledTasks: queue.unscheduledTasks ?? [],
   };
 }
 
@@ -402,6 +411,7 @@ function ScheduleRail({
   onPane,
   technicianPane,
   technicianColors,
+  tasks = [],
 }: {
   dayLabel: string;
   dayJobs: WorkOrderListItem[];
@@ -423,8 +433,9 @@ function ScheduleRail({
   onPane?: (pane: MapRailPane) => void;
   technicianPane?: ReactNode;
   technicianColors: Record<string, string>;
+  tasks?: TaskItem[];
 }) {
-  const empty = dayJobs.length === 0 && undatedJobs.length === 0;
+  const empty = dayJobs.length === 0 && undatedJobs.length === 0 && tasks.length === 0;
   const showTechnicians = pane === "technicians" && technicianPane;
 
   return (
@@ -530,6 +541,16 @@ function ScheduleRail({
                       : undefined
                   }
                 />
+              ))}
+            </section>
+          ) : null}
+          {tasks.length > 0 ? (
+            <section className="space-y-2">
+              <h3 className="sticky top-0 z-10 bg-white py-1 text-[11px] font-semibold uppercase tracking-wide text-violet-700">
+                Tasks to schedule
+              </h3>
+              {tasks.map((task) => (
+                <RailTaskCard key={task.id} task={task} draggable={draggable} />
               ))}
             </section>
           ) : null}
@@ -855,6 +876,7 @@ export default function CalendarTab({
   const user = useAuthStore((s) => s.user);
   const dispatcher = isDispatcherRole(user);
   const canWrite = useAuthStore((s) => s.hasPermission("jobs:write"));
+  const canManageTasks = useAuthStore((s) => s.hasPermission("tasks:write"));
 
   const today = formatLocalDate(new Date());
   const startDate = initialDate ?? today;
@@ -912,6 +934,9 @@ export default function CalendarTab({
     [staff, staffOrder],
   );
   const [jobs, setJobs] = useState<WorkOrderListItem[]>([]);
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [railTasks, setRailTasks] = useState<TaskItem[]>([]);
+  const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
   const [calendarUnscheduled, setCalendarUnscheduled] = useState<
     WorkOrderListItem[]
   >([]);
@@ -988,6 +1013,7 @@ export default function CalendarTab({
   const [routeOptimizing, setRouteOptimizing] = useState(false);
   const [routeMessage, setRouteMessage] = useState<string | null>(null);
   const [draggingJobId, setDraggingJobId] = useState<string | null>(null);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [viewingWorkOrderId, setViewingWorkOrderId] = useState<string | null>(
     null,
   );
@@ -1222,6 +1248,14 @@ export default function CalendarTab({
   const draggingJob = draggingJobId
     ? (jobById.get(draggingJobId) ?? null)
     : null;
+  const taskById = useMemo(() => {
+    const byId = new Map<string, TaskItem>();
+    for (const task of [...tasks, ...railTasks]) byId.set(task.id, task);
+    return byId;
+  }, [tasks, railTasks]);
+  const draggingTask = draggingTaskId
+    ? (taskById.get(draggingTaskId) ?? null)
+    : null;
   const dayAppointments = useMemo(() => {
     return jobs
       .filter(
@@ -1331,6 +1365,7 @@ export default function CalendarTab({
       ]);
       setStaff(board.staff);
       setJobs(board.jobs);
+      setTasks(board.tasks);
       if (
         orderEpoch.current === epoch &&
         !optimizeLock.current &&
@@ -1342,6 +1377,7 @@ export default function CalendarTab({
       if (rail) {
         setRailJobs(rail.unscheduled);
         setRailScheduled(rail.scheduled);
+        setRailTasks(rail.unscheduledTasks);
       }
       setError(null);
     } catch (err) {
@@ -1369,6 +1405,7 @@ export default function CalendarTab({
         if (cancelled) return;
         setStaff(data.staff);
         setJobs(data.jobs);
+        setTasks(data.tasks);
         setCalendarUnscheduled(data.unscheduled);
         setError(null);
       } catch (err) {
@@ -1391,6 +1428,7 @@ export default function CalendarTab({
       queueMicrotask(() => {
         setRailJobs([]);
         setRailScheduled([]);
+        setRailTasks([]);
         setRailLoading(false);
       });
       return;
@@ -1403,6 +1441,7 @@ export default function CalendarTab({
         if (cancelled) return;
         setRailJobs(data.unscheduled);
         setRailScheduled(data.scheduled);
+        setRailTasks(data.unscheduledTasks);
         setError(null);
       } catch (err) {
         if (cancelled) return;
@@ -1424,7 +1463,8 @@ export default function CalendarTab({
     routePlanning ||
     unscheduling ||
     reorderPending ||
-    Boolean(draggingJobId);
+    Boolean(draggingJobId) ||
+    Boolean(draggingTaskId);
 
   useEffect(
     () => () => {
@@ -1467,7 +1507,8 @@ export default function CalendarTab({
       routePlanning ||
       unscheduling ||
       reorderPending ||
-      draggingJobId
+      draggingJobId ||
+      draggingTaskId
     ) {
       return;
     }
@@ -1481,6 +1522,7 @@ export default function CalendarTab({
     unscheduling,
     reorderPending,
     draggingJobId,
+    draggingTaskId,
     load,
   ]);
 
@@ -1740,6 +1782,61 @@ export default function CalendarTab({
     );
   }
 
+  async function placeTask(taskId: string, userId: string, iso: string) {
+    if (!token || !canManageTasks) return;
+    const task = taskById.get(taskId);
+    const targetStaff = staff.find((person) => person._id === userId);
+    const techName = targetStaff
+      ? `${targetStaff.first_name} ${targetStaff.last_name}`
+      : "Technician";
+    setSaving(true);
+    setWarning(null);
+    setError(null);
+    try {
+      await updateTask(token, taskId, {
+        onSchedule: true,
+        scheduledTechnicianId: userId,
+        scheduledStart: iso,
+        scheduledMinutes: task?.scheduledMinutes || 30,
+      });
+      setWarning(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : `Failed to schedule the task for ${techName}.`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function finishTask(task: TaskItem) {
+    if (!token) return;
+    setSaving(true);
+    setError(null);
+    try {
+      if (task.status === "done") await reopenTask(token, task.id);
+      else await completeTask(token, task.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not update the task");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeTaskFromSchedule(task: TaskItem) {
+    if (!token || !canManageTasks) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateTask(token, task.id, { onSchedule: false });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not remove the task from the schedule");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDragEnd(event: DragEndEvent) {
     if (!dispatcher || !canWrite) return;
     const overId = event.over?.id ? String(event.over.id) : "";
@@ -1762,6 +1859,30 @@ export default function CalendarTab({
       next.splice(target, 0, fromId);
       writeStaffOrder(next);
       setStaffOrder(next);
+      return;
+    }
+    if (activeId.startsWith("task:")) {
+      const taskId = activeId.slice(5);
+      if (
+        overId.startsWith("tech:") ||
+        overId === "schedule-map" ||
+        overId === "route-table"
+      ) {
+        setWarning("Tasks don't have a location, so they stay off the route map.");
+        return;
+      }
+      if (!canManageTasks) {
+        setError("You don't have permission to schedule tasks.");
+        return;
+      }
+      const userId = overId.startsWith("slot:")
+        ? overId.split(":")[1] ?? ""
+        : dropColumnId(overId);
+      if (!userId) return;
+      const minutes = dayColumnMinutes(userId, event);
+      if (minutes == null) return;
+      const iso = localDateTimeToIso(selectedDate, minutesToHhMm(minutes));
+      await placeTask(taskId, userId, iso);
       return;
     }
     if (!activeId.startsWith("job:")) return;
@@ -2491,9 +2612,11 @@ export default function CalendarTab({
       ]);
       setStaff(board.staff);
       setJobs(board.jobs);
+      setTasks(board.tasks);
       setCalendarUnscheduled(board.unscheduled);
       setRailJobs(rail.unscheduled);
       setRailScheduled(rail.scheduled);
+      setRailTasks(rail.unscheduledTasks);
       setAnchorDate(date);
       setSelectedDate(date);
       setRailLoading(false);
@@ -2629,6 +2752,7 @@ export default function CalendarTab({
       onPane={setMapRailPane}
       technicianPane={technicianPane}
       technicianColors={technicianColors}
+      tasks={railTasks}
     />
   ) : null;
 
@@ -2699,10 +2823,15 @@ export default function CalendarTab({
           onDragStart={(event) => {
             const id = String(event.active.id);
             setDraggingJobId(id.startsWith("job:") ? id.slice(4) : null);
+            setDraggingTaskId(id.startsWith("task:") ? id.slice(5) : null);
           }}
-          onDragCancel={() => setDraggingJobId(null)}
+          onDragCancel={() => {
+            setDraggingJobId(null);
+            setDraggingTaskId(null);
+          }}
           onDragEnd={(event) => {
             setDraggingJobId(null);
+            setDraggingTaskId(null);
             void handleDragEnd(event);
           }}
         >
@@ -2748,6 +2877,10 @@ export default function CalendarTab({
                   }
                 />
               </div>
+            ) : draggingTask ? (
+              <div className="w-56">
+                <RailTaskCard task={draggingTask} draggable={false} />
+              </div>
             ) : null}
           </DragOverlay>
         </DndContext>
@@ -2759,10 +2892,15 @@ export default function CalendarTab({
           onDragStart={(event) => {
             const id = String(event.active.id);
             setDraggingJobId(id.startsWith("job:") ? id.slice(4) : null);
+            setDraggingTaskId(id.startsWith("task:") ? id.slice(5) : null);
           }}
-          onDragCancel={() => setDraggingJobId(null)}
+          onDragCancel={() => {
+            setDraggingJobId(null);
+            setDraggingTaskId(null);
+          }}
           onDragEnd={(e) => {
             setDraggingJobId(null);
+            setDraggingTaskId(null);
             void handleDragEnd(e);
           }}
         >
@@ -2787,9 +2925,14 @@ export default function CalendarTab({
                 <WeekBoard
                   staff={orderedStaff}
                   jobs={jobs}
+                  tasks={tasks}
                   selectedDate={selectedDate}
                   dispatcher={dispatcher && canWrite}
+                  canManageTasks={canManageTasks}
                   draggingJob={draggingJob}
+                  onTaskDone={(task) => void finishTask(task)}
+                  onTaskEdit={setEditingTask}
+                  onTaskRemove={(task) => void removeTaskFromSchedule(task)}
                   onJobClick={(job) => {
                     setEditingJob(job);
                     setDurationDraft(
@@ -2821,6 +2964,7 @@ export default function CalendarTab({
                   <MonthCalendar
                     monthDate={anchorDate}
                     jobs={rangeJobs}
+                    tasks={tasks}
                     selectedDate={selectedDate}
                     technicianColors={technicianColors}
                     recommendedByJobId={recommendedByJobId}
@@ -2890,6 +3034,10 @@ export default function CalendarTab({
                       : undefined
                   }
                 />
+              </div>
+            ) : draggingTask ? (
+              <div className="w-56">
+                <RailTaskCard task={draggingTask} draggable={false} />
               </div>
             ) : null}
           </DragOverlay>
@@ -3079,6 +3227,18 @@ export default function CalendarTab({
           </div>
         </div>
       )}
+
+      {editingTask && token ? (
+        <TaskDialog
+          token={token}
+          task={editingTask}
+          onClose={() => setEditingTask(null)}
+          onSaved={() => {
+            setEditingTask(null);
+            void load();
+          }}
+        />
+      ) : null}
 
       {viewingWorkOrderId && (
         <WorkOrderModal

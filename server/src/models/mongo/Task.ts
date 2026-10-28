@@ -19,6 +19,11 @@ export interface ITask extends Document {
   inboxConversationRef: Types.ObjectId | null;
   sourceCommunicationRef: Types.ObjectId | null;
   source: TaskSource;
+  /** When true, this task belongs on a technician schedule (no address). */
+  onSchedule: boolean;
+  scheduledTechnicianRef: Types.ObjectId | null;
+  scheduledStart: Date | null;
+  scheduledMinutes: number;
   lastRemindedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -71,6 +76,14 @@ const taskSchema = new Schema<ITask>(
       enum: TASK_SOURCES,
       default: "manual",
     },
+    onSchedule: { type: Boolean, default: false },
+    scheduledTechnicianRef: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    scheduledStart: { type: Date, default: null },
+    scheduledMinutes: { type: Number, default: 30, min: 15, max: 480 },
     lastRemindedAt: { type: Date, default: null },
   },
   { timestamps: true },
@@ -79,5 +92,6 @@ const taskSchema = new Schema<ITask>(
 taskSchema.index({ assignedUserRef: 1, status: 1, dueAt: 1 });
 taskSchema.index({ customerRef: 1, status: 1 });
 taskSchema.index({ inboxConversationRef: 1 });
+taskSchema.index({ scheduledTechnicianRef: 1, scheduledStart: 1 });
 
 export const Task = mongoose.model<ITask>("Task", taskSchema);

@@ -27,6 +27,10 @@ import {
 } from "../services/schedule.service";
 import { publishDashboardChanged } from "../services/dashboardLive";
 import { WorkOrder } from "../models/mongo/WorkOrder";
+import {
+  listScheduledTasks,
+  listUnscheduledScheduleTasks,
+} from "./tasks.controller";
 import { assigneeInFilter } from "../utils/workOrderCrew";
 import { User, activeUserFilter } from "../models/mongo/User";
 import {
@@ -246,14 +250,16 @@ export async function getScheduleQueue(
 
     const includeUndated =
       req.query.includeUndated === "1" || req.query.includeUndated === "true";
+    const dispatcher = isDispatcherRole(req.user);
     const queue = await listScheduleQueue({
-      dispatcher: isDispatcherRole(req.user),
+      dispatcher,
       userId: req.user.id,
       ...(from && to
         ? { from, to, ...(includeUndated ? { includeUndated: true } : {}) }
         : {}),
     });
-    res.json(queue);
+    const unscheduledTasks = dispatcher ? await listUnscheduledScheduleTasks() : [];
+    res.json({ ...queue, unscheduledTasks });
   } catch (err) {
     console.error("GET /schedule/queue error:", err);
     res.status(500).json({ message: "Failed to load schedule queue" });
@@ -387,10 +393,12 @@ export async function getScheduleStaff(
             .lean();
 
     const enriched = await enrichScheduleWorkOrders(jobs);
+    const tasks = await listScheduledTasks(userIds, start, end);
 
     res.json({
       staff: staff.map(toPublicStaff),
       workOrders: enriched,
+      tasks,
     });
   } catch (err) {
     console.error("GET /schedule/staff error:", err);

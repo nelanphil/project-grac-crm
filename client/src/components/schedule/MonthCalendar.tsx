@@ -18,7 +18,7 @@ import {
   Timer,
   X,
 } from "lucide-react";
-import type { ScheduleRecommendation, WorkOrderListItem } from "@/lib/api";
+import type { ScheduleRecommendation, TaskItem, WorkOrderListItem } from "@/lib/api";
 import {
   addDays,
   blendColors,
@@ -269,6 +269,7 @@ function citiesForDay(
 export default function MonthCalendar({
   monthDate,
   jobs,
+  tasks = [],
   selectedDate,
   technicianColors,
   recommendedByJobId = {},
@@ -288,6 +289,7 @@ export default function MonthCalendar({
 }: {
   monthDate: string;
   jobs: WorkOrderListItem[];
+  tasks?: TaskItem[];
   selectedDate: string;
   technicianColors: Record<string, string>;
   recommendedByJobId?: Record<string, string>;
@@ -585,6 +587,21 @@ export default function MonthCalendar({
     }
     return map;
   }, [jobs]);
+
+  const tasksByDate = useMemo(() => {
+    const map = new Map<string, TaskItem[]>();
+    for (const task of tasks) {
+      if (!task.scheduledStart) continue;
+      const key = formatLocalDate(new Date(task.scheduledStart));
+      const list = map.get(key) ?? [];
+      list.push(task);
+      map.set(key, list);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => (a.scheduledStart ?? "").localeCompare(b.scheduledStart ?? ""));
+    }
+    return map;
+  }, [tasks]);
 
   const selectedDayJobs = useMemo(() => {
     if (!selectedDate) return [];
@@ -985,6 +1002,20 @@ export default function MonthCalendar({
               } ${inMonth ? "" : "opacity-40"}`}
             >
               <div className="min-h-0 min-w-0 flex-1 space-y-1 overflow-hidden">
+                {(tasksByDate.get(date) ?? []).slice(0, 2).map((task) => (
+                  <div
+                    key={task.id}
+                    title={task.title}
+                    className={`truncate rounded border-l-[3px] border-violet-500 bg-violet-50 px-1.5 text-violet-900 ${
+                      isExpanded ? "py-0.5 text-xs" : "text-[11px]"
+                    } ${task.status === "done" ? "opacity-60 line-through" : ""}`}
+                  >
+                    {task.scheduledStart
+                      ? `${formatLocalClock(new Date(task.scheduledStart))} `
+                      : ""}
+                    {task.title}
+                  </div>
+                ))}
                 {shown.map((chip) => (
                   <div
                     key={chip.city}
@@ -1548,6 +1579,39 @@ export default function MonthCalendar({
                       </div>
                     );
                   })}
+
+                  {(tasksByDate.get(selectedDate) ?? []).length > 0 ? (
+                    <div className="space-y-2.5">
+                      <div className="rounded-lg border border-violet-200 bg-violet-50 px-3.5 py-2.5 text-sm font-bold text-violet-900">
+                        Tasks
+                      </div>
+                      {(tasksByDate.get(selectedDate) ?? []).map((task) => (
+                        <div
+                          key={task.id}
+                          className={`rounded-xl border border-violet-200 bg-white p-3.5 text-xs ${
+                            task.status === "done" ? "opacity-60" : ""
+                          }`}
+                          style={{ borderLeftWidth: "4px", borderLeftColor: "#7c3aed" }}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="truncate text-sm font-bold text-brand-dark">
+                              {task.title}
+                            </span>
+                            <span className="shrink-0 rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-800">
+                              {task.scheduledStart
+                                ? formatLocalClock(new Date(task.scheduledStart))
+                                : "Task"}
+                            </span>
+                          </div>
+                          {task.scheduledTechnicianName ? (
+                            <p className="mt-1 text-xs text-neutral-500">
+                              {task.scheduledTechnicianName}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </>
               )}
             </div>

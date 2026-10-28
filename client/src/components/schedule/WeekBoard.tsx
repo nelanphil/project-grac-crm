@@ -11,7 +11,13 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { useDndContext, useDraggable, useDroppable } from "@dnd-kit/core";
+import {
+  useDndContext,
+  useDraggable,
+  useDroppable,
+  type DraggableAttributes,
+  type DraggableSyntheticListeners,
+} from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { Check, GripVertical, MapPin } from "lucide-react";
 import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
@@ -21,6 +27,7 @@ import {
   type ScheduleRouteLeg,
   type ScheduleRouteStop,
   type ScheduleStaffMember,
+  type TaskItem,
   type WorkOrderListItem,
 } from "@/lib/api";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -695,15 +702,16 @@ export function UnscheduledCard({
 
 type JobLane = { lane: number; laneCount: number };
 
-/** Side-by-side columns for appointments that share the same clock time. */
-function assignJobLanes(jobs: WorkOrderListItem[]): Map<string, JobLane> {
-  const placed = jobs
-    .map((job) => ({ job, window: jobWindowMinutes(job) }))
+/** Side-by-side columns for blocks that share the same clock time. */
+function assignTimeLanes(
+  items: Array<{ id: string; window: { startMin: number; endMin: number } | null }>,
+): Map<string, JobLane> {
+  const placed = items
     .filter(
       (
         row,
       ): row is {
-        job: WorkOrderListItem;
+        id: string;
         window: { startMin: number; endMin: number };
       } => row.window != null,
     )
@@ -723,7 +731,7 @@ function assignJobLanes(jobs: WorkOrderListItem[]): Map<string, JobLane> {
     } else {
       laneEnds[lane] = row.window.endMin;
     }
-    laneOf.set(row.job._id, lane);
+    laneOf.set(row.id, lane);
   }
 
   const parent = new Map<string, string>();
@@ -739,30 +747,30 @@ function assignJobLanes(jobs: WorkOrderListItem[]): Map<string, JobLane> {
     const right = find(b);
     if (left !== right) parent.set(left, right);
   };
-  for (const row of placed) parent.set(row.job._id, row.job._id);
+  for (const row of placed) parent.set(row.id, row.id);
   for (let i = 0; i < placed.length; i += 1) {
     for (let j = i + 1; j < placed.length; j += 1) {
       const earlier = placed[i]!;
       const later = placed[j]!;
       if (later.window.startMin >= earlier.window.endMin) continue;
       if (earlier.window.startMin < later.window.endMin) {
-        unite(earlier.job._id, later.job._id);
+        unite(earlier.id, later.id);
       }
     }
   }
 
   const laneCountOf = new Map<string, number>();
   for (const row of placed) {
-    const root = find(row.job._id);
-    const lanes = (laneOf.get(row.job._id) ?? 0) + 1;
+    const root = find(row.id);
+    const lanes = (laneOf.get(row.id) ?? 0) + 1;
     laneCountOf.set(root, Math.max(laneCountOf.get(root) ?? 1, lanes));
   }
 
   const layout = new Map<string, JobLane>();
   for (const row of placed) {
-    layout.set(row.job._id, {
-      lane: laneOf.get(row.job._id) ?? 0,
-      laneCount: laneCountOf.get(find(row.job._id)) ?? 1,
+    layout.set(row.id, {
+      lane: laneOf.get(row.id) ?? 0,
+      laneCount: laneCountOf.get(find(row.id)) ?? 1,
     });
   }
   return layout;
@@ -846,6 +854,185 @@ function JobBlock({
       ) : null}
     </button>
   );
+}
+
+function taskWindowMinutes(task: TaskItem): {
+  startMin: number;
+  endMin: number;
+} | null {
+  if (!task.scheduledStart) return null;
+  const start = new Date(task.scheduledStart);
+  const parts = nyDateParts(start);
+  const startMin = parts.hour * 60 + parts.minute;
+  return { startMin, endMin: startMin + (task.scheduledMinutes || 30) };
+}
+
+function TaskBlock({
+  task,
+  dispatcher,
+  canManage,
+  lane,
+  laneCount,
+  liftDrag = false,
+  onDone,
+  onEdit,
+  onRemove,
+}: {
+  task: TaskItem;
+  dispatcher: boolean;
+  canManage: boolean;
+  lane: number;
+  laneCount: number;
+  liftDrag?: boolean;
+  onDone: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  const [menu, setMenu] = useState(false);
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({
+      id: `task:${task.id}`,
+      disabled: !dispatcher,
+    });
+
+  if (!task.scheduledStart) return null;
+  const start = new Date(task.scheduledStart);
+  const duration = task.scheduledMinutes || 30;
+  const end = new Date(start.getTime() + duration * 60_000);
+  const parts = nyDateParts(start);
+  const startMin = parts.hour * 60 + parts.minute;
+  const boardStart = BOARD_HOUR_START * 60;
+  const boardEnd = BOARD_HOUR_END * 60;
+  const span = boardEnd - boardStart;
+  const topPct = ((Math.max(startMin, boardStart) - boardStart) / span) * 100;
+  const heightPct = Math.max(3, (duration / span) * 100);
+  const timeLabel = `${formatLocalClock(start)} – ${formatLocalClock(end)}`;
+  const done = task.status === "done";
+  const columns = Math.max(1, laneCount);
+  const style: CSSProperties = {
+    top: `${topPct}%`,
+    height: `${heightPct}%`,
+    left: `calc(${(lane / columns) * 100}% + 3px)`,
+    width: `calc(${100 / columns}% - 5px)`,
+    transform: transform && !liftDrag ? CSS.Translate.toString(transform) : undefined,
+    zIndex: menu ? 30 : 10 + lane,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="absolute">
+      <button
+        type="button"
+        {...(dispatcher ? listeners : {})}
+        {...(dispatcher ? attributes : {})}
+        onClick={() => setMenu((open) => !open)}
+        title={[task.title, timeLabel, "Task"].join(" · ")}
+        className={`h-full w-full overflow-hidden rounded-md border-l-[3px] border-violet-500 bg-violet-50 px-1.5 py-1 text-left text-[11px] leading-tight text-brand-dark transition-shadow hover:shadow-md ${
+          done ? "opacity-60" : ""
+        } ${isDragging ? "opacity-30 pointer-events-none" : ""}`}
+      >
+        <div className="flex items-center gap-1 truncate font-semibold">
+          {done ? <Check className="h-3 w-3 shrink-0 text-emerald-600" aria-hidden /> : null}
+          {task.title}
+        </div>
+        <div className="truncate text-neutral-500">{timeLabel}</div>
+        <div className="mt-0.5 truncate text-violet-700">Task</div>
+      </button>
+      {menu ? (
+        <div className="absolute left-0 top-full z-40 mt-1 w-40 rounded-md border border-neutral-200 bg-white py-1 text-xs shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              setMenu(false);
+              onDone();
+            }}
+            className="block w-full px-2 py-1.5 text-left hover:bg-neutral-50"
+          >
+            {done ? "Reopen" : "Mark done"}
+          </button>
+          {canManage ? (
+            <button
+              type="button"
+              onClick={() => {
+                setMenu(false);
+                onEdit();
+              }}
+              className="block w-full px-2 py-1.5 text-left hover:bg-neutral-50"
+            >
+              Edit
+            </button>
+          ) : null}
+          {canManage ? (
+            <button
+              type="button"
+              onClick={() => {
+                setMenu(false);
+                onRemove();
+              }}
+              className="block w-full px-2 py-1.5 text-left text-red-600 hover:bg-neutral-50"
+            >
+              Remove from schedule
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TaskCardFace({
+  task,
+  setNodeRef,
+  listeners,
+  attributes,
+  isDragging,
+}: {
+  task: TaskItem;
+  setNodeRef?: (node: HTMLElement | null) => void;
+  listeners?: DraggableSyntheticListeners;
+  attributes?: DraggableAttributes;
+  isDragging?: boolean;
+}) {
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={`rounded-lg border border-violet-200 bg-violet-50 px-2 py-1.5 text-left text-xs ${
+        listeners ? "cursor-grab active:cursor-grabbing" : ""
+      } ${isDragging ? "opacity-40" : ""}`}
+    >
+      <div className="truncate font-semibold text-brand-dark">{task.title}</div>
+      <div className="truncate text-neutral-500">
+        {task.scheduledTechnicianName || "No technician yet"}
+      </div>
+    </div>
+  );
+}
+
+function DraggableRailTaskCard({ task }: { task: TaskItem }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `task:${task.id}`,
+  });
+  return (
+    <TaskCardFace
+      task={task}
+      setNodeRef={setNodeRef}
+      listeners={listeners}
+      attributes={attributes}
+      isDragging={isDragging}
+    />
+  );
+}
+
+export function RailTaskCard({
+  task,
+  draggable,
+}: {
+  task: TaskItem;
+  draggable: boolean;
+}) {
+  if (!draggable) return <TaskCardFace task={task} />;
+  return <DraggableRailTaskCard task={task} />;
 }
 
 type DriveGap = {
@@ -1141,21 +1328,31 @@ function EmptyColumnDropSlot({
 function StaffColumn({
   staff,
   jobs,
+  tasks,
   gaps,
   selectedDate,
   onJobClick,
   onMap,
   dispatcher,
   draggingJob,
+  canManageTasks,
+  onTaskDone,
+  onTaskEdit,
+  onTaskRemove,
 }: {
   staff: ScheduleStaffMember;
   jobs: WorkOrderListItem[];
+  tasks: TaskItem[];
   gaps: DriveGap[];
   selectedDate: string;
   onJobClick: (job: WorkOrderListItem) => void;
   onMap: () => void;
   dispatcher: boolean;
   draggingJob?: WorkOrderListItem | null;
+  canManageTasks: boolean;
+  onTaskDone: (task: TaskItem) => void;
+  onTaskEdit: (task: TaskItem) => void;
+  onTaskRemove: (task: TaskItem) => void;
 }) {
   const { active } = useDndContext();
   const isDraggingAnyJob = Boolean(
@@ -1290,7 +1487,10 @@ function StaffColumn({
     "?";
   const boardHeight = HOURS.length * HOUR_PX;
   const cities = citiesByAppointmentCount(jobs);
-  const lanes = assignJobLanes(jobs);
+  const lanes = assignTimeLanes([
+    ...jobs.map((job) => ({ id: `job:${job._id}`, window: jobWindowMinutes(job) })),
+    ...tasks.map((task) => ({ id: `task:${task.id}`, window: taskWindowMinutes(task) })),
+  ]);
 
   return (
     <div className="flex min-w-[11rem] flex-1 flex-col">
@@ -1388,7 +1588,7 @@ function StaffColumn({
         ))}
         {dropSlots}
         {jobs.map((job) => {
-          const layout = lanes.get(job._id) ?? { lane: 0, laneCount: 1 };
+          const layout = lanes.get(`job:${job._id}`) ?? { lane: 0, laneCount: 1 };
           return (
             <JobBlock
               key={job._id}
@@ -1401,6 +1601,23 @@ function StaffColumn({
             />
           );
         })}
+        {tasks.map((task) => {
+          const layout = lanes.get(`task:${task.id}`) ?? { lane: 0, laneCount: 1 };
+          return (
+            <TaskBlock
+              key={task.id}
+              task={task}
+              dispatcher={dispatcher}
+              canManage={canManageTasks}
+              lane={layout.lane}
+              laneCount={layout.laneCount}
+              liftDrag={true}
+              onDone={() => onTaskDone(task)}
+              onEdit={() => onTaskEdit(task)}
+              onRemove={() => onTaskRemove(task)}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -1409,19 +1626,29 @@ function StaffColumn({
 export default function WeekBoard({
   staff,
   jobs,
+  tasks = [],
   selectedDate,
   dispatcher,
   draggingJob,
   onJobClick,
   onMap,
+  canManageTasks = false,
+  onTaskDone,
+  onTaskEdit,
+  onTaskRemove,
 }: {
   staff: ScheduleStaffMember[];
   jobs: WorkOrderListItem[];
+  tasks?: TaskItem[];
   selectedDate: string;
   dispatcher: boolean;
   draggingJob?: WorkOrderListItem | null;
   onJobClick: (job: WorkOrderListItem) => void;
   onMap: (userId: string) => void;
+  canManageTasks?: boolean;
+  onTaskDone?: (task: TaskItem) => void;
+  onTaskEdit?: (task: TaskItem) => void;
+  onTaskRemove?: (task: TaskItem) => void;
 }) {
   const token = useAuthStore((s) => s.token);
   const jobsByUser = new Map<string, WorkOrderListItem[]>();
@@ -1432,6 +1659,13 @@ export default function WeekBoard({
       list.push(job);
       jobsByUser.set(uid, list);
     }
+  }
+  const tasksByUser = new Map<string, TaskItem[]>();
+  for (const task of tasks) {
+    if (!task.scheduledTechnicianId || !isScheduledOnDate(task, selectedDate)) continue;
+    const list = tasksByUser.get(task.scheduledTechnicianId) ?? [];
+    list.push(task);
+    tasksByUser.set(task.scheduledTechnicianId, list);
   }
 
   const routeKey = [
@@ -1525,6 +1759,11 @@ export default function WeekBoard({
               key={person._id}
               staff={person}
               jobs={jobsByUser.get(person._id) ?? []}
+              tasks={tasksByUser.get(person._id) ?? []}
+              canManageTasks={canManageTasks}
+              onTaskDone={onTaskDone ?? (() => {})}
+              onTaskEdit={onTaskEdit ?? (() => {})}
+              onTaskRemove={onTaskRemove ?? (() => {})}
               gaps={
                 routesReady
                   ? buildDriveGaps(

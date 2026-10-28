@@ -2824,6 +2824,7 @@ export interface ScheduleQueue {
   today: WorkOrderListItem[];
   upcoming: WorkOrderListItem[];
   pastDue: WorkOrderListItem[];
+  unscheduledTasks?: TaskItem[];
 }
 
 export async function geocodeMissingScheduleAddresses(
@@ -3011,12 +3012,17 @@ export async function getScheduleStaff(
   from: string,
   to: string,
   userId?: string,
-): Promise<{ staff: ScheduleStaffMember[]; workOrders: WorkOrderListItem[] }> {
+): Promise<{
+  staff: ScheduleStaffMember[];
+  workOrders: WorkOrderListItem[];
+  tasks: TaskItem[];
+}> {
   const params = new URLSearchParams({ from, to });
   if (userId) params.set("userId", userId);
   return authRequest<{
     staff: ScheduleStaffMember[];
     workOrders: WorkOrderListItem[];
+    tasks: TaskItem[];
   }>(`/schedule/staff?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
@@ -8498,6 +8504,11 @@ export interface TaskItem {
   conversationId: string | null;
   conversationName: string;
   source: "inbox" | "manual";
+  onSchedule: boolean;
+  scheduledTechnicianId: string | null;
+  scheduledTechnicianName: string;
+  scheduledStart: string | null;
+  scheduledMinutes: number;
 }
 
 export interface TaskAssignee {
@@ -8547,6 +8558,10 @@ export async function createTask(
     customerId?: string;
     communicationId?: string;
     source?: "inbox" | "manual";
+    onSchedule?: boolean;
+    scheduledTechnicianId?: string | null;
+    scheduledStart?: string | null;
+    scheduledMinutes?: number;
   },
 ): Promise<{ task: TaskItem }> {
   return authRequest("/tasks", {
@@ -8565,12 +8580,36 @@ export async function updateTask(
     dueAt?: string | null;
     assigneeId?: string | null;
     status?: "open" | "done";
+    onSchedule?: boolean;
+    scheduledTechnicianId?: string | null;
+    scheduledStart?: string | null;
+    scheduledMinutes?: number;
   },
 ): Promise<{ task: TaskItem }> {
   return authRequest(`/tasks/${id}`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
+  });
+}
+
+export async function completeTask(
+  token: string,
+  id: string,
+): Promise<{ task: TaskItem }> {
+  return authRequest(`/tasks/${id}/complete`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function reopenTask(
+  token: string,
+  id: string,
+): Promise<{ task: TaskItem }> {
+  return authRequest(`/tasks/${id}/reopen`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
   });
 }
 

@@ -5,8 +5,12 @@ import {
   ApiError,
   TaskAssignee,
   TaskItem,
+  TechnicianListItem,
+  completeTask,
   createTask,
   getTaskAssignees,
+  getTechnicians,
+  reopenTask,
   updateTask,
 } from "@/lib/api";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -40,6 +44,8 @@ function fromLocalInput(value: string): string | null {
   return date.toISOString();
 }
 
+const DURATIONS = [15, 30, 45, 60, 90, 120];
+
 function quickDue(dayOffset: number, hour: number): string {
   const date = new Date();
   date.setDate(date.getDate() + dayOffset);
@@ -66,6 +72,13 @@ export default function TaskDialog({
   );
   const [assigneeId, setAssigneeId] = useState(task?.assigneeId || me?.id || "");
   const [assignees, setAssignees] = useState<TaskAssignee[]>([]);
+  const [onSchedule, setOnSchedule] = useState(Boolean(task?.onSchedule));
+  const [technicianId, setTechnicianId] = useState(task?.scheduledTechnicianId || "");
+  const [technicians, setTechnicians] = useState<TechnicianListItem[]>([]);
+  const [scheduledAt, setScheduledAt] = useState(
+    task?.scheduledStart ? localInput(new Date(task.scheduledStart)) : "",
+  );
+  const [minutes, setMinutes] = useState(task?.scheduledMinutes || 30);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,6 +86,9 @@ export default function TaskDialog({
     getTaskAssignees(token)
       .then((result) => setAssignees(result.assignees))
       .catch(() => setAssignees([]));
+    getTechnicians(token, { all: true })
+      .then((result) => setTechnicians(result.technicians))
+      .catch(() => setTechnicians([]));
   }, [token]);
 
   async function onSubmit(event: FormEvent) {
@@ -81,6 +97,18 @@ export default function TaskDialog({
     setSaving(true);
     setError(null);
     const dueAt = fromLocalInput(due);
+    const schedule = onSchedule
+      ? {
+          onSchedule: true,
+          scheduledTechnicianId: technicianId || null,
+          scheduledStart: fromLocalInput(scheduledAt),
+          scheduledMinutes: minutes,
+        }
+      : {
+          onSchedule: false,
+          scheduledTechnicianId: null,
+          scheduledStart: null,
+        };
     try {
       const result = task
         ? await updateTask(token, task.id, {
@@ -88,6 +116,7 @@ export default function TaskDialog({
             description: description.trim(),
             dueAt,
             assigneeId: assigneeId || null,
+            ...schedule,
           })
         : await createTask(token, {
             title: title.trim(),
@@ -98,6 +127,7 @@ export default function TaskDialog({
             customerId: draft?.customerId,
             communicationId: draft?.communicationId,
             source: draft?.conversationId ? "inbox" : "manual",
+            ...schedule,
           });
       onSaved(result.task);
     } catch (err) {
@@ -181,8 +211,84 @@ export default function TaskDialog({
               ))}
           </select>
         </label>
+        <label className="mt-3 flex items-center gap-2 text-xs font-medium text-[var(--staff-muted)]">
+          <input
+            type="checkbox"
+            checked={onSchedule}
+            onChange={(event) => setOnSchedule(event.target.checked)}
+          />
+          Add to a technician&apos;s schedule
+        </label>
+        {onSchedule ? (
+          <div className="mt-2 space-y-3 rounded-md border border-[var(--staff-border)] p-2">
+            <label className="block text-xs font-medium text-[var(--staff-muted)]">
+              Technician
+              <select
+                value={technicianId}
+                onChange={(event) => setTechnicianId(event.target.value)}
+                className="mt-1 w-full rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2 py-1.5 text-sm text-[var(--staff-ink)] outline-none"
+              >
+                <option value="">Choose later</option>
+                {technicians.map((person) => (
+                  <option key={person._id} value={person._id}>
+                    {`${person.first_name} ${person.last_name}`.trim()}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs font-medium text-[var(--staff-muted)]">
+              Date and time
+              <input
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={(event) => setScheduledAt(event.target.value)}
+                className="mt-1 w-full rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2 py-1.5 text-sm text-[var(--staff-ink)] outline-none"
+              />
+            </label>
+            <p className="text-[11px] text-[var(--staff-muted)]">
+              Leave the time empty to drop it onto the schedule later.
+            </p>
+            <label className="block text-xs font-medium text-[var(--staff-muted)]">
+              Duration
+              <select
+                value={minutes}
+                onChange={(event) => setMinutes(Number(event.target.value))}
+                className="mt-1 w-full rounded-md border border-[var(--staff-border)] bg-[var(--staff-surface)] px-2 py-1.5 text-sm text-[var(--staff-ink)] outline-none"
+              >
+                {!DURATIONS.includes(minutes) ? (
+                  <option value={minutes}>{minutes} min</option>
+                ) : null}
+                {DURATIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value} min
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
         {error ? <p className="mt-2 text-xs text-red-500">{error}</p> : null}
         <div className="mt-4 flex justify-end gap-2">
+          {task ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => {
+                setSaving(true);
+                setError(null);
+                const action = task.status === "done" ? reopenTask : completeTask;
+                void action(token, task.id)
+                  .then((result) => onSaved(result.task))
+                  .catch((err: unknown) => {
+                    setError(err instanceof ApiError ? err.message : "Could not update the task");
+                    setSaving(false);
+                  });
+              }}
+              className="mr-auto rounded-md px-3 py-1.5 text-xs font-medium text-[var(--staff-muted)] hover:bg-[var(--staff-cream)]"
+            >
+              {task.status === "done" ? "Reopen" : "Mark done"}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={onClose}

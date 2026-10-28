@@ -1,14 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Phone } from "lucide-react";
+import Link from "next/link";
+import { Check, ChevronLeft, ChevronRight, Phone } from "lucide-react";
 import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 import {
   ApiError,
+  completeTask,
   geocodeMissingScheduleAddresses,
   getScheduleRoute,
   getTechnicians,
   getWorkOrder,
+  reopenTask,
+  type TaskItem,
   type TechnicianListItem,
   type WorkOrderListItem,
 } from "@/lib/api";
@@ -36,6 +40,7 @@ import {
 
 const TECH_STORAGE_KEY = "grac.todoTechnicianId";
 const EMPTY_JOBS: WorkOrderListItem[] = [];
+const EMPTY_TASKS: TaskItem[] = [];
 
 function technicianName(tech: {
   first_name: string;
@@ -279,6 +284,7 @@ export default function TechnicianHomeDashboard() {
   const [techsLoading, setTechsLoading] = useState(canSwitchTechnicians);
   const [techsError, setTechsError] = useState<string | null>(null);
   const jobs = useDashboardStore((s) => s.jobs) ?? EMPTY_JOBS;
+  const scheduleTasks = useDashboardStore((s) => s.tasks) ?? EMPTY_TASKS;
   const loading = useDashboardStore((s) => s.scheduleLoading);
   const error = useDashboardStore((s) => s.scheduleError);
   const loadSchedule = useDashboardStore((s) => s.loadSchedule);
@@ -295,6 +301,8 @@ export default function TechnicianHomeDashboard() {
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [focusDate, setFocusDate] = useState(today);
+  const [taskError, setTaskError] = useState<string | null>(null);
+  const [taskBusyId, setTaskBusyId] = useState<string | null>(null);
   const weekStart = startOfWeekSunday(focusDate);
   const weekEnd = addDays(weekStart, 6);
   const routeStops = useDashboardStore((s) => s.routeStops);
@@ -442,6 +450,30 @@ export default function TechnicianHomeDashboard() {
   }, [token, selectedId]);
 
   const dayJobs = jobs.filter((job) => isScheduledOnDate(job, focusDate));
+  const dayTasks = scheduleTasks.filter((task) => isScheduledOnDate(task, focusDate));
+
+  async function markTask(task: TaskItem) {
+    if (!token || taskBusyId) return;
+    setTaskBusyId(task.id);
+    setTaskError(null);
+    try {
+      if (task.status === "done") await reopenTask(token, task.id);
+      else await completeTask(token, task.id);
+      if (subjectId) {
+        loadSchedule(token, {
+          subjectId,
+          weekStart,
+          weekEnd,
+          focusDate,
+          whose: scheduleWhose,
+        });
+      }
+    } catch (err: unknown) {
+      setTaskError(err instanceof ApiError ? err.message : "Could not update the task");
+    } finally {
+      setTaskBusyId(null);
+    }
+  }
   const mapCoordKey = dayJobs
     .map(
       (job) =>
@@ -704,7 +736,7 @@ export default function TechnicianHomeDashboard() {
         <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
           No technicians to show.
         </p>
-      ) : dayJobs.length === 0 ? (
+      ) : dayJobs.length === 0 && dayTasks.length === 0 ? (
         <p className="rounded-xl border border-dashed border-[var(--staff-border)] px-4 py-10 text-center text-sm text-[var(--staff-muted)]">
           {emptyToday}
         </p>
@@ -713,6 +745,74 @@ export default function TechnicianHomeDashboard() {
           {dayJobs.map((job) => (
             <AppointmentCard key={job._id} {...cardProps(job)} />
           ))}
+          {taskError ? (
+            <p className="text-sm text-red-600">{taskError}</p>
+          ) : null}
+          {dayTasks.length > 0 ? (
+            <section className="space-y-3">
+              <h3 className="text-sm font-semibold text-[var(--staff-ink)]">Tasks</h3>
+              {dayTasks.map((task) => {
+                const href = task.conversationId
+                  ? `/dashboard/inboxes?c=${task.conversationId}`
+                  : task.customerId
+                    ? `/dashboard/customers/detail?id=${task.customerId}`
+                    : "";
+                const who = task.customerName || task.conversationName;
+                const when = task.scheduledStart
+                  ? formatLocalClock(new Date(task.scheduledStart))
+                  : "";
+                return (
+                  <article
+                    key={task.id}
+                    className={`rounded-xl border border-violet-200 bg-[var(--staff-surface)] p-4 ${
+                      task.status === "done" ? "opacity-60" : ""
+                    }`}
+                  >
+                    <p className="text-sm font-semibold text-violet-700">{when}</p>
+                    <h3 className="mt-1 flex items-center gap-1.5 text-base font-semibold text-[var(--staff-ink)]">
+                      {task.status === "done" ? (
+                        <Check className="h-4 w-4 text-emerald-600" aria-hidden />
+                      ) : null}
+                      {task.title}
+                    </h3>
+                    {task.description ? (
+                      <p className="mt-1 text-sm text-[var(--staff-muted)]">{task.description}</p>
+                    ) : null}
+                    {who ? (
+                      <p className="mt-1 text-sm">
+                        {href ? (
+                          <Link href={href} className="text-brand-orange hover:underline">
+                            {who}
+                          </Link>
+                        ) : (
+                          who
+                        )}
+                      </p>
+                    ) : null}
+                    {task.status === "done" ? (
+                      <button
+                        type="button"
+                        disabled={taskBusyId === task.id}
+                        onClick={() => void markTask(task)}
+                        className="mt-3 text-xs font-medium text-[var(--staff-muted)] hover:underline disabled:opacity-50"
+                      >
+                        Reopen
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={taskBusyId === task.id}
+                        onClick={() => void markTask(task)}
+                        className={`${SWATCH} mt-3 bg-violet-50 text-violet-800 ring-violet-200 hover:bg-violet-100 disabled:opacity-50`}
+                      >
+                        Mark done
+                      </button>
+                    )}
+                  </article>
+                );
+              })}
+            </section>
+          ) : null}
         </div>
       )}
       {showMap && layout === "mobile" ? (

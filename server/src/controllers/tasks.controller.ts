@@ -56,6 +56,7 @@ function populated<T>(value: unknown): T | null {
 function publicTask(row: ITask | (ITask & { _id: Types.ObjectId })) {
   const assignee = populated<PopulatedUser>(row.assignedUserRef);
   const creator = populated<PopulatedUser>(row.createdByUserRef);
+  const technician = populated<PopulatedUser>(row.scheduledTechnicianRef);
   const customer = populated<PopulatedCustomer>(row.customerRef);
   const conversation = populated<PopulatedConversation>(row.inboxConversationRef);
   return {
@@ -75,6 +76,13 @@ function publicTask(row: ITask | (ITask & { _id: Types.ObjectId })) {
       : asId(row.inboxConversationRef)?.toString() ?? null,
     conversationName: conversation?.displayName || "",
     source: row.source,
+    onSchedule: Boolean(row.onSchedule),
+    scheduledTechnicianId: technician
+      ? String(technician._id)
+      : asId(row.scheduledTechnicianRef)?.toString() ?? null,
+    scheduledTechnicianName: personName(technician),
+    scheduledStart: row.scheduledStart ? new Date(row.scheduledStart).toISOString() : null,
+    scheduledMinutes: row.scheduledMinutes || 30,
   };
 }
 
@@ -87,6 +95,7 @@ async function present(id: Types.ObjectId, res: Response): Promise<void> {
   const row = await Task.findById(id)
     .populate("assignedUserRef", "first_name last_name")
     .populate("createdByUserRef", "first_name last_name")
+    .populate("scheduledTechnicianRef", "first_name last_name")
     .populate("customerRef", "accountName first last")
     .populate("inboxConversationRef", "displayName");
   if (!row) {
@@ -158,6 +167,7 @@ export async function listTasks(req: AuthRequest, res: Response): Promise<void> 
       .limit(LIST_LIMIT)
       .populate("assignedUserRef", "first_name last_name")
       .populate("createdByUserRef", "first_name last_name")
+      .populate("scheduledTechnicianRef", "first_name last_name")
       .populate("customerRef", "accountName first last")
       .populate("inboxConversationRef", "displayName");
     rows.sort((left, right) => {
@@ -203,6 +213,148 @@ function parseDue(value: unknown): Date | null | undefined {
   return date;
 }
 
+const SCHEDULE_MINUTES_MIN = 15;
+const SCHEDULE_MINUTES_MAX = 480;
+
+type ScheduleFields = {
+  onSchedule: boolean;
+  scheduledTechnicianRef: Types.ObjectId | null;
+  scheduledStart: Date | null;
+  scheduledMinutes: number;
+};
+
+function scheduleSnapshot(task: {
+  onSchedule?: boolean;
+  scheduledTechnicianRef?: Types.ObjectId | null;
+  scheduledStart?: Date | null;
+  scheduledMinutes?: number;
+}): ScheduleFields {
+  return {
+    onSchedule: Boolean(task.onSchedule),
+    scheduledTechnicianRef: asId(task.scheduledTechnicianRef),
+    scheduledStart: task.scheduledStart ? new Date(task.scheduledStart) : null,
+    scheduledMinutes: task.scheduledMinutes || 30,
+  };
+}
+
+/** Returns null when the body does not mention a schedule field. */
+async function readScheduleFields(
+  body: Record<string, unknown>,
+  current: ScheduleFields,
+): Promise<{ error: string } | { value: ScheduleFields | null }> {
+  const touches =
+    "onSchedule" in body ||
+    "scheduledTechnicianId" in body ||
+    "scheduledStart" in body ||
+    "scheduledMinutes" in body;
+  if (!touches) return { value: null };
+
+  const next: ScheduleFields = { ...current };
+
+  if (body.onSchedule === false) {
+    return {
+      value: {
+        onSchedule: false,
+        scheduledTechnicianRef: null,
+        scheduledStart: null,
+        scheduledMinutes: current.scheduledMinutes,
+      },
+    };
+  }
+  if (body.onSchedule === true) next.onSchedule = true;
+
+  if ("scheduledMinutes" in body) {
+    const minutes = Number(body.scheduledMinutes);
+    if (
+      !Number.isInteger(minutes) ||
+      minutes < SCHEDULE_MINUTES_MIN ||
+      minutes > SCHEDULE_MINUTES_MAX
+    ) {
+      return { error: "Duration must be between 15 and 480 minutes." };
+    }
+    next.scheduledMinutes = minutes;
+    next.onSchedule = true;
+  }
+
+  if ("scheduledTechnicianId" in body) {
+    if (!body.scheduledTechnicianId) {
+      next.scheduledTechnicianRef = null;
+    } else {
+      const technicianId = asId(body.scheduledTechnicianId);
+      if (!technicianId) return { error: "Choose a technician." };
+      const technician = await User.findOne({
+        _id: technicianId,
+        ...activeUserFilter,
+        schedulable: true,
+      })
+        .select("_id")
+        .lean();
+      if (!technician) return { error: "Choose a technician who can be scheduled." };
+      next.scheduledTechnicianRef = technicianId;
+      next.onSchedule = true;
+    }
+  }
+
+  if ("scheduledStart" in body) {
+    const start = parseDue(body.scheduledStart);
+    if (start === undefined) return { error: "That schedule time is not valid." };
+    next.scheduledStart = start;
+    if (start) next.onSchedule = true;
+  }
+
+  if (!next.onSchedule) {
+    next.scheduledTechnicianRef = null;
+    next.scheduledStart = null;
+  }
+  return { value: next };
+}
+
+function notifyScheduled(
+  task: ITask,
+  actorUserId: string | null,
+): void {
+  if (!task.onSchedule || !task.scheduledTechnicianRef || !task.scheduledStart) return;
+  if (actorUserId && String(task.scheduledTechnicianRef) === actorUserId) return;
+  logNotificationAsync({
+    entityType: "task",
+    action: "assigned",
+    entityId: String(task._id),
+    summary: `Task scheduled: ${task.title}`,
+    customerRef: task.customerRef,
+    actorUserId,
+    recipientUserIds: [task.scheduledTechnicianRef],
+    direct: true,
+    metadata: {
+      conversationId: task.inboxConversationRef ? String(task.inboxConversationRef) : "",
+    },
+  });
+}
+
+function scheduleChanged(before: ScheduleFields, after: ScheduleFields): boolean {
+  const beforeTech = before.scheduledTechnicianRef ? String(before.scheduledTechnicianRef) : "";
+  const afterTech = after.scheduledTechnicianRef ? String(after.scheduledTechnicianRef) : "";
+  const beforeStart = before.scheduledStart ? before.scheduledStart.getTime() : 0;
+  const afterStart = after.scheduledStart ? after.scheduledStart.getTime() : 0;
+  return beforeTech !== afterTech || beforeStart !== afterStart;
+}
+
+function canCloseTask(req: AuthRequest, task: ITask): boolean {
+  const userId = req.user?.id;
+  if (!userId) return false;
+  if (req.user?.permissions.includes("tasks:write")) return true;
+  if (task.assignedUserRef && String(task.assignedUserRef) === userId) return true;
+  if (task.scheduledTechnicianRef && String(task.scheduledTechnicianRef) === userId) return true;
+  return false;
+}
+
+const TASK_PRESENT_POPULATE = [
+  { path: "assignedUserRef", select: "first_name last_name" },
+  { path: "createdByUserRef", select: "first_name last_name" },
+  { path: "scheduledTechnicianRef", select: "first_name last_name" },
+  { path: "customerRef", select: "accountName first last" },
+  { path: "inboxConversationRef", select: "displayName" },
+] as const;
+
 export async function createTask(req: AuthRequest, res: Response): Promise<void> {
   try {
     if (!req.user?.id) {
@@ -243,6 +395,17 @@ export async function createTask(req: AuthRequest, res: Response): Promise<void>
     }
 
     const communicationRef = asId(req.body?.communicationId);
+    const schedule = await readScheduleFields(req.body || {}, {
+      onSchedule: false,
+      scheduledTechnicianRef: null,
+      scheduledStart: null,
+      scheduledMinutes: 30,
+    });
+    if ("error" in schedule) {
+      res.status(400).json({ message: schedule.error });
+      return;
+    }
+    const placed = schedule.value;
     const task = await Task.create({
       title: title.slice(0, 200),
       description: String(req.body?.description || "").trim().slice(0, 4000),
@@ -254,6 +417,10 @@ export async function createTask(req: AuthRequest, res: Response): Promise<void>
       inboxConversationRef: conversationRef,
       sourceCommunicationRef: communicationRef,
       source,
+      onSchedule: placed?.onSchedule ?? false,
+      scheduledTechnicianRef: placed?.scheduledTechnicianRef ?? null,
+      scheduledStart: placed?.scheduledStart ?? null,
+      scheduledMinutes: placed?.scheduledMinutes ?? 30,
     });
     if (communicationRef) {
       await TwilioCommunication.updateOne(
@@ -262,6 +429,9 @@ export async function createTask(req: AuthRequest, res: Response): Promise<void>
       );
     }
     notifyAssignee(task, req.user.id, `Task assigned: ${task.title}`);
+    if (placed && scheduleChanged(scheduleSnapshot({}), placed)) {
+      notifyScheduled(task, req.user.id);
+    }
     publishDashboardChanged();
     await present(task._id, res);
   } catch (err) {
@@ -278,6 +448,7 @@ export async function updateTask(req: AuthRequest, res: Response): Promise<void>
       return;
     }
     const previousAssignee = task.assignedUserRef ? String(task.assignedUserRef) : "";
+    const previousSchedule = scheduleSnapshot(task);
     if (typeof req.body?.title === "string") {
       const title = req.body.title.trim();
       if (!title) {
@@ -313,6 +484,17 @@ export async function updateTask(req: AuthRequest, res: Response): Promise<void>
       }
       task.assignedUserRef = assigneeId;
     }
+    const schedule = await readScheduleFields(req.body || {}, previousSchedule);
+    if ("error" in schedule) {
+      res.status(400).json({ message: schedule.error });
+      return;
+    }
+    if (schedule.value) {
+      task.onSchedule = schedule.value.onSchedule;
+      task.scheduledTechnicianRef = schedule.value.scheduledTechnicianRef;
+      task.scheduledStart = schedule.value.scheduledStart;
+      task.scheduledMinutes = schedule.value.scheduledMinutes;
+    }
     const status = String(req.body?.status || "") as TaskStatus;
     if (status === "done" || status === "open") {
       task.status = status;
@@ -328,12 +510,88 @@ export async function updateTask(req: AuthRequest, res: Response): Promise<void>
     if (task.assignedUserRef && String(task.assignedUserRef) !== previousAssignee) {
       notifyAssignee(task, req.user?.id ?? null, `Task assigned: ${task.title}`);
     }
+    if (schedule.value && scheduleChanged(previousSchedule, schedule.value)) {
+      notifyScheduled(task, req.user?.id ?? null);
+    }
     publishDashboardChanged();
     await present(task._id, res);
   } catch (err) {
     console.error("PATCH /tasks/:id error:", err);
     res.status(500).json({ message: "Failed to update the task" });
   }
+}
+
+async function setTaskStatus(
+  req: AuthRequest,
+  res: Response,
+  status: TaskStatus,
+): Promise<void> {
+  const task = await loadTask(String(req.params.id));
+  if (!task) {
+    res.status(404).json({ message: "Task not found" });
+    return;
+  }
+  if (!canCloseTask(req, task)) {
+    res.status(403).json({ message: "You can't update this task." });
+    return;
+  }
+  task.status = status;
+  if (status === "done") {
+    task.completedAt = new Date();
+    task.completedByUserRef = req.user?.id ? asId(req.user.id) : null;
+  } else {
+    task.completedAt = null;
+    task.completedByUserRef = null;
+  }
+  await task.save();
+  publishDashboardChanged();
+  await present(task._id, res);
+}
+
+export async function completeTask(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    await setTaskStatus(req, res, "done");
+  } catch (err) {
+    console.error("POST /tasks/:id/complete error:", err);
+    res.status(500).json({ message: "Failed to complete the task" });
+  }
+}
+
+export async function reopenTask(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    await setTaskStatus(req, res, "open");
+  } catch (err) {
+    console.error("POST /tasks/:id/reopen error:", err);
+    res.status(500).json({ message: "Failed to reopen the task" });
+  }
+}
+
+async function presentMany(rows: ITask[]) {
+  await Task.populate(rows, [...TASK_PRESENT_POPULATE]);
+  return rows.map((row) => publicTask(row));
+}
+
+export async function listScheduledTasks(
+  userIds: Types.ObjectId[],
+  start: Date,
+  end: Date,
+) {
+  if (userIds.length === 0) return [];
+  const rows = await Task.find({
+    onSchedule: true,
+    scheduledTechnicianRef: { $in: userIds },
+    scheduledStart: { $gte: start, $lte: end },
+  }).sort({ scheduledStart: 1 });
+  return presentMany(rows);
+}
+
+export async function listUnscheduledScheduleTasks() {
+  const rows = await Task.find({
+    onSchedule: true,
+    status: "open",
+    $or: [{ scheduledTechnicianRef: null }, { scheduledStart: null }],
+  }).sort({ createdAt: 1 });
+  return presentMany(rows);
 }
 
 export async function deleteTask(req: AuthRequest, res: Response): Promise<void> {

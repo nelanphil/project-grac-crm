@@ -8,6 +8,7 @@ import {
   type RecentWorkOrderNote,
   type ReminderListItem,
   type ScheduleRouteStop,
+  type TaskItem,
   type WorkOrderListItem,
 } from "@/lib/api";
 import { subscribeDashboardLive } from "@/lib/dashboardLive";
@@ -18,6 +19,7 @@ import {
 } from "@/lib/dashboardInbox";
 import {
   dashboardJobs,
+  dashboardTasks,
   preserveAddressCoords,
 } from "@/lib/dashboardSchedule";
 
@@ -73,6 +75,7 @@ interface DashboardStore {
   inbox: InboxPreview[] | null;
   inboxError: string | null;
   jobs: WorkOrderListItem[] | null;
+  tasks: TaskItem[] | null;
   scheduleLoading: boolean;
   scheduleError: string | null;
   routeStops: ScheduleRouteStop[];
@@ -108,6 +111,7 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
   inbox: null,
   inboxError: null,
   jobs: null,
+  tasks: null,
   scheduleLoading: true,
   scheduleError: null,
   routeStops: [],
@@ -227,7 +231,7 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
       scheduleError: null,
     });
     getScheduleStaff(token, scope.weekStart, scope.weekEnd, scope.subjectId)
-      .then(({ workOrders }) => {
+      .then(({ workOrders, tasks }) => {
         if (!sliceCurrent("schedule", seq)) return;
         if (!get().scope || scopeKey(get().scope!) !== scopeKey(scope)) return;
         set({
@@ -235,6 +239,7 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
             get().jobs ?? [],
             dashboardJobs(workOrders, scope.subjectId),
           ),
+          tasks: dashboardTasks(tasks ?? [], scope.subjectId),
           scheduleLoading: false,
           scheduleError: null,
         });
@@ -262,6 +267,7 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
     beginSlice("schedule");
     set({
       jobs: [],
+      tasks: [],
       scheduleLoading: false,
       scheduleError: null,
       routeStops: [],
@@ -335,9 +341,10 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
                 capturedScope.weekEnd,
                 capturedScope.subjectId,
               )
-                .then(({ workOrders }) =>
-                  dashboardJobs(workOrders, capturedScope.subjectId),
-                )
+                .then(({ workOrders, tasks }) => ({
+                  jobs: dashboardJobs(workOrders, capturedScope.subjectId),
+                  tasks: dashboardTasks(tasks ?? [], capturedScope.subjectId),
+                }))
                 .catch(() => null)
             : Promise.resolve(null),
           includeSchedule && capturedScope
@@ -377,7 +384,8 @@ export const useDashboardStore = create<DashboardStore>((set, get) => ({
       const queuedBeforeApply = refreshQueued;
       if (scopeStill && !get().scheduleBusy) {
         if (jobsResult) {
-          patch.jobs = preserveAddressCoords(get().jobs ?? [], jobsResult);
+          patch.jobs = preserveAddressCoords(get().jobs ?? [], jobsResult.jobs);
+          patch.tasks = jobsResult.tasks;
         }
         if (routeResult) {
           patch.routeStops = routeResult.routeStops;

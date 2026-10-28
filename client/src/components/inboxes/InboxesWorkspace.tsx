@@ -129,7 +129,18 @@ export default function InboxesWorkspace() {
 
   useEffect(() => {
     if (!token) return;
-    return subscribeDashboardLive(token, () => setRefreshKey((value) => value + 1));
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = subscribeDashboardLive(token, () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        setRefreshKey((value) => value + 1);
+      }, 750);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+    };
   }, [token]);
 
   useEffect(() => {

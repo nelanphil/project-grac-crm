@@ -1,4 +1,4 @@
-import type { WorkOrderListItem } from "@/lib/api";
+import type { TaskItem, WorkOrderListItem } from "@/lib/api";
 
 export function assignedToUser(job: WorkOrderListItem, userId: string): boolean {
   if (job.assignee?._id === userId) return true;
@@ -25,6 +25,17 @@ export function dashboardJobs(
       (job) => assignedToUser(job, subjectId) && isScheduledAppointment(job),
     )
     .sort((left, right) => startMillis(left) - startMillis(right));
+}
+
+export function dashboardTasks(tasks: TaskItem[], subjectId: string): TaskItem[] {
+  return tasks
+    .filter(
+      (task) =>
+        task.scheduledTechnicianId === subjectId && Boolean(task.scheduledStart),
+    )
+    .sort((left, right) =>
+      (left.scheduledStart ?? "").localeCompare(right.scheduledStart ?? ""),
+    );
 }
 
 function coord(value: unknown): number | null {
