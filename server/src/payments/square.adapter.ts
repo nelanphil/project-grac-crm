@@ -107,6 +107,15 @@ function buildPrefill(buyer?: CreateCheckoutInput["buyer"]): SquarePrefill {
   return prePopulatedData;
 }
 
+function centsFromMoney(
+  money: { amount?: bigint | number | null } | null | undefined,
+): number | undefined {
+  const amount = money?.amount;
+  if (amount == null) return undefined;
+  const cents = typeof amount === "bigint" ? Number(amount) : amount;
+  return Number.isSafeInteger(cents) ? cents : undefined;
+}
+
 function squareErrorCodes(err: unknown): string[] {
   const errors = (err as { errors?: Array<{ code?: string }> })?.errors;
   if (!Array.isArray(errors)) return [];
@@ -301,6 +310,8 @@ export const squareAdapter: PaymentProviderAdapter = {
       providerOrderId: payment.orderId,
       invoiceIds: parseInvoiceIdsFromPaymentNote(note),
       note,
+      amountCents: centsFromMoney(payment.amountMoney),
+      locationId: payment.locationId || undefined,
     };
   },
 
@@ -321,14 +332,22 @@ export const squareAdapter: PaymentProviderAdapter = {
       ...new Set(notes.flatMap((note) => parseInvoiceIdsFromPaymentNote(note))),
     ];
     const note = notes[0] || "";
+    const amountCents = centsFromMoney(order.totalMoney);
+    const locationId = order.locationId || undefined;
+    const tenderPaymentId =
+      (order.tenders ?? []).find((tender) => tender.paymentId)?.paymentId ||
+      undefined;
 
     const stateStatus = mapSquareOrderState(String(order.state || ""));
     if (stateStatus !== "pending") {
       return {
         status: stateStatus,
+        providerPaymentId: tenderPaymentId,
         providerOrderId: order.id,
         invoiceIds,
         note,
+        amountCents,
+        locationId,
       };
     }
 
@@ -353,6 +372,8 @@ export const squareAdapter: PaymentProviderAdapter = {
             ]),
           ],
           note: paymentNote,
+          amountCents: centsFromMoney(payment.amountMoney) ?? amountCents,
+          locationId: payment.locationId || locationId,
         };
         if (retrieved.status === "paid") return retrieved;
         if (retrieved.status === "failed") return retrieved;
@@ -368,6 +389,8 @@ export const squareAdapter: PaymentProviderAdapter = {
         providerOrderId: order.id,
         invoiceIds,
         note,
+        amountCents,
+        locationId,
       }
     );
   },

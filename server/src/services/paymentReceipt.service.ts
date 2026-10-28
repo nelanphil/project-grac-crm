@@ -3,7 +3,10 @@ import { listVisibleWorkOrderNotes } from "../controllers/workOrderNote.controll
 import { Contract } from "../models/mongo/Contract";
 import { Customer } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
-import { CustomerContact } from "../models/mongo/CustomerContact";
+import {
+  CustomerContact,
+  activeContactFilter,
+} from "../models/mongo/CustomerContact";
 import { Invoice, type IInvoice } from "../models/mongo/Invoice";
 import { ensureDefaultInvoiceTemplate } from "../models/mongo/InvoiceTemplate";
 import {
@@ -15,7 +18,20 @@ import {
   sanitizeInvoiceBlocks,
 } from "../schemas/invoiceTemplate.schema";
 import { sendRoleEmail } from "./email.service";
+import { resolveAutomatedMessage } from "./automatedMessage.service";
+import { resolveInvoiceWidget } from "./invoiceWidget.service";
 import { isEmailChannelEnabled } from "../utils/emailPreferences";
+import { buildStaffOutboundEmail } from "../utils/emailTemplates";
+import {
+  mergeEmailChrome,
+  renderEmailChrome,
+  type EmailChrome,
+} from "../utils/emailChrome";
+import {
+  renderMessageTemplate,
+  templateUsesInvoice,
+} from "../utils/messageTemplate";
+import { buildTemplateContextForContact } from "../utils/messagingContext";
 import {
   renderInvoiceTemplateEmail,
   type InvoiceTemplateEmailDocument,
@@ -146,19 +162,57 @@ export async function loadInvoiceEmailContext(invoice: IInvoice): Promise<{
   };
 }
 
+export async function renderAutomatedBillingEmail(input: {
+  subject: string;
+  body: string;
+  emailChrome?: EmailChrome | null;
+  invoiceId: string;
+  customerRef?: Types.ObjectId | string | null;
+  recipient: string;
+}): Promise<{ subject: string; text: string; html: string }> {
+  let context: Record<string, string> = { first_name: "" };
+  const customerRef = input.customerRef ? String(input.customerRef) : "";
+  if (customerRef && Types.ObjectId.isValid(customerRef)) {
+    const contact = await CustomerContact.findOne({
+      customerRef,
+      ...activeContactFilter,
+    })
+      .sort({ isPrimary: -1, createdAt: 1 })
+      .select("_id");
+    if (contact) {
+      const built = await buildTemplateContextForContact(String(contact._id));
+      if (built) context = built.context;
+    }
+  }
+
+  const render = (value: string) => renderMessageTemplate(value, context);
+  const subject = render(input.subject);
+  const body = render(input.body);
+  const chrome = renderEmailChrome(mergeEmailChrome(input.emailChrome), render);
+  const invoiceWidget = templateUsesInvoice(
+    input.subject,
+    input.body,
+    chrome.headerHtml,
+    chrome.footerHtml,
+  )
+    ? await resolveInvoiceWidget({
+        invoiceId: input.invoiceId,
+        sampleFallback: false,
+      })
+    : null;
+
+  return buildStaffOutboundEmail({
+    subject,
+    bodyText: body,
+    chrome,
+    unsubscribeUrl: buildUnsubscribeUrl(input.recipient, "billing"),
+    invoiceWidget,
+  });
+}
+
 async function deliverPaymentReceipt(invoice: IInvoice): Promise<void> {
   const fresh = await Invoice.findById(invoice._id);
   if (!fresh || fresh.status !== "paid") return;
-
-  const template = await ensureDefaultInvoiceTemplate();
-  const parsed = invoiceBlocksSchema.safeParse(template.blocks);
-  if (!parsed.success) {
-    console.error(
-      "[payment-receipt] Default invoice template is invalid",
-      parsed.error.flatten(),
-    );
-    return;
-  }
 
   const { document, recipient } = await loadInvoiceEmailContext(fresh);
   if (!recipient) {
@@ -172,6 +226,41 @@ async function deliverPaymentReceipt(invoice: IInvoice): Promise<void> {
     return;
   }
 
+  const copy = await resolveAutomatedMessage("paymentReceivedEmail", {
+    number: fresh.number,
+    amountCents: fresh.amountCents,
+    dueDate: fresh.dueDate,
+    record: fresh,
+  });
+
+  let rendered: { subject: string; text: string; html: string };
+  if (copy.useInvoiceDocument) {
+    const template = await ensureDefaultInvoiceTemplate();
+    const parsed = invoiceBlocksSchema.safeParse(template.blocks);
+    if (!parsed.success) {
+      console.error(
+        "[payment-receipt] Default invoice template is invalid",
+        parsed.error.flatten(),
+      );
+      return;
+    }
+    const documentEmail = renderInvoiceTemplateEmail({
+      blocks: sanitizeInvoiceBlocks(parsed.data),
+      invoice: document,
+      unsubscribeUrl: buildUnsubscribeUrl(recipient, "billing"),
+    });
+    rendered = { ...documentEmail, subject: copy.subject };
+  } else {
+    rendered = await renderAutomatedBillingEmail({
+      subject: copy.subject,
+      body: copy.body,
+      emailChrome: copy.emailChrome,
+      invoiceId: String(fresh._id),
+      customerRef: fresh.customerRef,
+      recipient,
+    });
+  }
+
   const claimed = await Invoice.findOneAndUpdate(
     { _id: fresh._id, paymentReceiptSentAt: null },
     { $set: { paymentReceiptSentAt: new Date() } },
@@ -179,14 +268,9 @@ async function deliverPaymentReceipt(invoice: IInvoice): Promise<void> {
   if (!claimed) return;
 
   try {
-    const rendered = renderInvoiceTemplateEmail({
-      blocks: sanitizeInvoiceBlocks(parsed.data),
-      invoice: document,
-      unsubscribeUrl: buildUnsubscribeUrl(recipient, "billing"),
-    });
     await sendRoleEmail("billing_notifications", {
       to: recipient,
-      subject: `Payment received for invoice ${fresh.number}`,
+      subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
       headers: listUnsubscribeHeaders(recipient, "billing"),

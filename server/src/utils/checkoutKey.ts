@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 import { Types } from "mongoose";
 import { env } from "../config/env";
+import { buildPosCallbackUrl } from "./posCallbackUrl";
 import { Customer, ICustomer } from "../models/mongo/Customer";
 import { Invoice, type IInvoice } from "../models/mongo/Invoice";
 
@@ -41,6 +42,8 @@ export function buildCheckoutUrl(
   if (opts?.workOrderId) params.set("workOrderId", opts.workOrderId);
   return `${env.clientUrl.replace(/\/$/, "")}/checkout/?${params.toString()}`;
 }
+
+export { buildPosCallbackUrl };
 
 export function buildCheckoutCompleteUrl(
   invoiceId: string,

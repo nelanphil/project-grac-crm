@@ -357,6 +357,7 @@ export default function ConversationThread({
         bcc: draft.bcc,
         useBrandTemplate: draft.useBrandTemplate,
         includeQuoted: draft.includeQuoted,
+        attachments: draft.attachments,
         emailAccountId: emailAccountId || undefined,
         contactId: contactId || undefined,
       });

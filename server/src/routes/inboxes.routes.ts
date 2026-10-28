@@ -28,6 +28,7 @@ import {
   searchInboxCustomers,
   sendInboxEmail,
   sendInboxSms,
+  uploadInboxEmailAttachmentsMiddleware,
   rateCallTranscript,
   dismissCallTaskPrompt,
 } from "../controllers/inboxes.controller";
@@ -124,6 +125,7 @@ router.post(
 router.post(
   "/conversations/:id/email",
   requirePermission("messages:write"),
+  uploadInboxEmailAttachmentsMiddleware,
   sendInboxEmail,
 );
 router.post(

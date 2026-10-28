@@ -12,7 +12,9 @@ import {
   getPendingPayments,
   markInvoicePaidByStaff,
   reopenInvoiceByStaff,
+  confirmInvoicePosCharge,
   startInvoiceCheckout,
+  startInvoicePosCharge,
   updateInvoiceTax,
 } from "../controllers/invoice.controller";
 
@@ -36,6 +38,16 @@ router.post(
   bulkUpdateInvoiceStatus,
 );
 router.post("/:id/checkout", startInvoiceCheckout);
+router.post(
+  "/:id/pos-charge",
+  requirePermission("contracts:write"),
+  startInvoicePosCharge,
+);
+router.post(
+  "/:id/pos-confirm",
+  requirePermission("contracts:write"),
+  confirmInvoicePosCharge,
+);
 router.post(
   "/:id/pay-link",
   requirePermission("contracts:write"),

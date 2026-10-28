@@ -10,7 +10,7 @@
     "start:client": "next start",
     "start:static": "node scripts/serve-static.mjs",
     "start": "npm run start:client",
-    "test": "node --test scripts/publicImagePath.test.mjs scripts/payLinkPath.test.mjs scripts/crashReportExport.test.mjs",
+    "test": "node --test scripts/publicImagePath.test.mjs scripts/payLinkPath.test.mjs scripts/crashReportExport.test.mjs && node --experimental-strip-types --test src/lib/squarePos.test.ts",
     "lint": "eslint"
   },
   "dependencies": {

@@ -10,6 +10,7 @@ import {
   InvoiceSourceType,
   startInvoiceCheckout,
 } from "@/lib/api";
+import TapToPayButton from "@/components/billing/TapToPayButton";
 
 const WORK_ORDER_ALREADY_PAID = "Work order is already paid";
 
@@ -261,6 +262,13 @@ export default function InvoiceBillingPanel({
                   >
                     Copy pay link
                   </button>
+                  <TapToPayButton
+                    token={token}
+                    invoiceId={inv._id}
+                    disabled={busy}
+                    onError={setError}
+                    className="rounded-md border border-brand-dark px-2.5 py-1.5 text-xs font-medium text-brand-dark hover:bg-neutral-50 disabled:opacity-60"
+                  />
                   <button
                     type="button"
                     disabled={busy}

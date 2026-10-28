@@ -17,6 +17,7 @@ import {
   canToggleInvoiceStatus,
   InvoiceStatusChangeWarning,
 } from "@/components/billing/InvoiceStatusActions";
+import TapToPayButton from "@/components/billing/TapToPayButton";
 import { useAuthStore } from "@/store/useAuthStore";
 import { isCustomerRole } from "@/lib/dashboard-role";
 import {
@@ -232,6 +233,15 @@ function InvoiceDetailContent() {
             >
               {invoice.status === "paid" ? "Mark as unpaid" : "Mark as paid"}
             </button>
+          ) : null}
+          {!isCustomer && canPay && canWrite && token ? (
+            <TapToPayButton
+              token={token}
+              invoiceId={invoice._id}
+              disabled={paying || statusBusy}
+              onError={setError}
+              className="w-full rounded-md border border-brand-dark px-4 py-2 text-sm font-medium text-brand-dark hover:bg-neutral-50 disabled:opacity-60 sm:w-auto"
+            />
           ) : null}
           {isCustomer && canPay ? (
             <Link

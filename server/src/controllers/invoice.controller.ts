@@ -46,6 +46,7 @@ import { hashPayToken } from "../utils/payToken";
 import { paymentNoteForInvoiceIds } from "../utils/paymentLinkForCustomer";
 import {
   buildCheckoutCompleteUrl,
+  buildPosCallbackUrl,
 } from "../utils/checkoutKey";
 import { resolveCustomerRefsForAuthUser } from "../utils/resolveCustomerLogin";
 import { listVisibleWorkOrderNotes } from "./workOrderNote.controller";
@@ -65,6 +66,12 @@ import { isStaffRole } from "../utils/roles";
 import { buildTokenSearchFilter } from "../utils/textSearch";
 import { createScopedPaymentLink } from "../services/checkoutLink.service";
 import { CheckoutError } from "../services/checkout.service";
+import {
+  PosChargeError,
+  signPosChargeState,
+  squarePosApplicationId,
+  verifyPosChargeState,
+} from "../services/squarePos.service";
 
 export { resolveCustomerRefsForAuthUser };
 
@@ -1054,6 +1061,207 @@ export async function startInvoiceCheckout(
     res.status(500).json({
       message:
         err instanceof Error ? err.message : "Failed to start checkout",
+    });
+  }
+}
+
+export async function startInvoicePosCharge(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+    if (invoice.status === "paid") {
+      res.status(400).json({ message: "Invoice is already paid" });
+      return;
+    }
+    if (invoice.status === "void") {
+      res.status(400).json({ message: "Invoice is void" });
+      return;
+    }
+    if (!invoice.amountCents || invoice.amountCents <= 0) {
+      res.status(400).json({ message: "Amount must be greater than zero" });
+      return;
+    }
+
+    const { adapter, account } = await resolveCheckoutProviderForInvoice(
+      invoice.customerRef,
+    );
+    if (adapter.name !== "square") {
+      res.status(400).json({ message: "Tap to Pay requires Square" });
+      return;
+    }
+    if (!account.account.locationId) {
+      res.status(400).json({ message: "Square location ID is not configured" });
+      return;
+    }
+
+    const environment =
+      account.account.environment === "production" ? "production" : "sandbox";
+    const applicationId = await squarePosApplicationId(environment);
+    if (!applicationId) {
+      res.status(400).json({
+        message:
+          "Square application ID is not configured. Add it in Admin Panel → Payment platforms.",
+      });
+      return;
+    }
+
+    const note = paymentNoteForInvoiceIds([String(invoice._id)]);
+    invoice.paymentProvider = "square";
+    invoice.paymentProviderAccountRef = account.account._id as Types.ObjectId;
+    invoice.status = "open";
+    await invoice.save();
+
+    res.json({
+      amountCents: invoice.amountCents,
+      currency: invoice.currency || "USD",
+      applicationId,
+      locationId: account.account.locationId,
+      callbackUrl: buildPosCallbackUrl(),
+      state: signPosChargeState({
+        invoiceId: String(invoice._id),
+        amountCents: invoice.amountCents,
+      }),
+      note,
+    });
+  } catch (err) {
+    console.error("[invoices] pos charge failed", err);
+    res.status(500).json({
+      message:
+        err instanceof Error ? err.message : "Failed to start Tap to Pay",
+    });
+  }
+}
+
+export async function confirmInvoicePosCharge(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+
+    const body = (req.body ?? {}) as {
+      transactionId?: unknown;
+      state?: unknown;
+      error?: unknown;
+    };
+    const transactionId = String(body.transactionId ?? "").trim();
+    const state = String(body.state ?? "").trim();
+    const squareError = String(body.error ?? "").trim();
+    if (squareError) {
+      res.status(400).json({
+        message:
+          squareError === "payment_canceled"
+            ? "Payment canceled. No charge was made."
+            : "Tap to Pay could not be completed.",
+      });
+      return;
+    }
+
+    try {
+      verifyPosChargeState(state, {
+        invoiceId: String(invoice._id),
+        amountCents: invoice.amountCents,
+      });
+    } catch (err) {
+      if (err instanceof PosChargeError) {
+        res.status(err.statusCode).json({ message: err.message });
+        return;
+      }
+      throw err;
+    }
+
+    if (invoice.status === "paid") {
+      const sameCharge =
+        Boolean(transactionId) &&
+        (invoice.providerOrderId === transactionId ||
+          invoice.providerPaymentId === transactionId);
+      if (sameCharge) {
+        res.json({ status: "paid", invoice: toPublicInvoice(invoice) });
+        return;
+      }
+      res.status(409).json({
+        message: "Invoice is already paid",
+        invoice: toPublicInvoice(invoice),
+      });
+      return;
+    }
+    if (invoice.status === "void") {
+      res.status(400).json({ message: "Invoice is void" });
+      return;
+    }
+    if (!transactionId) {
+      res.status(400).json({ message: "Missing Square transaction" });
+      return;
+    }
+
+    const { adapter, account } = await resolveCheckoutProviderForInvoice(
+      invoice.customerRef,
+    );
+    if (adapter.name !== "square" || !adapter.retrieveOrder) {
+      res.status(400).json({ message: "Tap to Pay requires Square" });
+      return;
+    }
+
+    const retrieved = await adapter.retrieveOrder(account, transactionId);
+    if (!retrieved) {
+      res.status(502).json({ message: "Could not retrieve payment from Square" });
+      return;
+    }
+    if (retrieved.status === "pending") {
+      res.json({ status: "pending", invoice: toPublicInvoice(invoice) });
+      return;
+    }
+    if (retrieved.status !== "paid") {
+      res.json({ status: "failed", invoice: toPublicInvoice(invoice) });
+      return;
+    }
+    if (retrieved.amountCents !== invoice.amountCents) {
+      res.status(400).json({
+        message: "Square charge amount does not match this invoice.",
+      });
+      return;
+    }
+    const locationId = account.account.locationId;
+    if (!locationId || retrieved.locationId !== locationId) {
+      res.status(400).json({
+        message: "Square charge location does not match this account.",
+      });
+      return;
+    }
+
+    const providerOrderId = retrieved.providerOrderId || transactionId;
+    const updated = await markInvoicePaid({
+      invoice,
+      providerPaymentId: retrieved.providerPaymentId,
+      providerOrderId,
+      actor: actorFromRequest(req.user),
+    });
+    res.json({ status: "paid", invoice: toPublicInvoice(updated) });
+  } catch (err) {
+    console.error("[invoices] pos confirm failed", err);
+    res.status(500).json({
+      message:
+        err instanceof Error ? err.message : "Failed to confirm Tap to Pay",
     });
   }
 }

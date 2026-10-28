@@ -44,6 +44,10 @@ export type RetrievedProviderPayment = {
   providerOrderId?: string;
   invoiceIds: string[];
   note?: string;
+  /** Charged amount in the smallest currency unit, when Square returned one. */
+  amountCents?: number;
+  /** Square location that took the payment, when Square returned one. */
+  locationId?: string;
 };
 
 export interface PaymentProviderAdapter {

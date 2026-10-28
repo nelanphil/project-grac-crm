@@ -17,12 +17,8 @@ import {
 } from "../utils/checkoutKey";
 import { CustomerContact, activeContactFilter } from "../models/mongo/CustomerContact";
 import { EmailAccount } from "../models/mongo/EmailAccount";
-import {
-  INVOICE_MESSAGE_SETTINGS_SLUG,
-  InvoiceMessageSettings,
-} from "../models/mongo/InvoiceMessageSettings";
-import { MessageTemplate } from "../models/mongo/MessageTemplate";
 import type { IWorkOrder } from "../models/mongo/WorkOrder";
+import { resolveAutomatedMessage } from "./automatedMessage.service";
 import { CheckoutError } from "./checkout.service";
 import { createScopedPaymentLink } from "./checkoutLink.service";
 import { dispatchStaffEmailBatch } from "./emailMessage.service";
@@ -377,77 +373,27 @@ export async function checkWorkOrderCompletion(
   };
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function formatUsd(cents: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(cents / 100);
-}
-
-function dueSentence(due: Date | null | undefined): string {
-  if (!(due instanceof Date) || Number.isNaN(due.getTime())) return "";
-  const label = due.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-  return ` Due ${label}.`;
-}
-
-async function invoiceMessageCopy(invoice: {
-  number?: string;
-  amountCents: number;
-  dueDate?: Date | null;
-}): Promise<{
+async function invoiceMessageCopy(invoice: IInvoice): Promise<{
   smsBody: string;
   emailSubject: string;
   emailBody: string;
   emailChrome?: EmailChrome | null;
 }> {
-  const number = invoice.number?.trim() || "invoice";
-  const settings = await InvoiceMessageSettings.findOne({
-    slug: INVOICE_MESSAGE_SETTINGS_SLUG,
-  }).lean();
-  const [smsTemplate, emailTemplate] = await Promise.all([
-    settings?.smsTemplateRef
-      ? MessageTemplate.findOne({
-          _id: settings.smsTemplateRef,
-          templateType: "sms",
-          deletedAt: null,
-        }).lean()
-      : null,
-    settings?.emailTemplateRef
-      ? MessageTemplate.findOne({
-          _id: settings.emailTemplateRef,
-          templateType: "email",
-          deletedAt: null,
-        }).lean()
-      : null,
+  const source = {
+    number: invoice.number,
+    amountCents: invoice.amountCents,
+    dueDate: invoice.dueDate,
+    record: invoice,
+  };
+  const [email, sms] = await Promise.all([
+    resolveAutomatedMessage("workOrderCompleteEmail", source),
+    resolveAutomatedMessage("workOrderCompleteSms", source),
   ]);
-  const smsBody =
-    smsTemplate?.body?.trim() ||
-    `Hi {{first_name}}, invoice ${number} is ready. Total due: ${formatUsd(invoice.amountCents)}.${dueSentence(invoice.dueDate)}`;
-  const emailSubject = emailTemplate?.subject?.trim() || `Invoice ${number}`;
-  const emailBody =
-    emailTemplate?.body?.trim() ||
-    [
-      "<p>Hi {{first_name}},</p>",
-      `<p>Please find invoice <strong>${escapeHtml(number)}</strong> below.</p>`,
-      "<p>{{invoice}}</p>",
-    ].join("");
   return {
-    smsBody,
-    emailSubject,
-    emailBody,
-    emailChrome: emailTemplate?.emailChrome ?? undefined,
+    smsBody: sms.body,
+    emailSubject: email.subject,
+    emailBody: email.body,
+    emailChrome: email.emailChrome,
   };
 }
 

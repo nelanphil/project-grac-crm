@@ -73,16 +73,31 @@ export function stripInvoiceToken(value: string): string {
   return value.replace(/\{\{\s*invoice\s*\}\}/g, "");
 }
 
+/**
+ * A blank first name turns "Hi {{first_name}}," into "Hi ,". Drop that greeting
+ * so one template works whether or not we know the person's name.
+ */
+export function stripEmptyGreeting(value: string): string {
+  const paragraph = value.match(/^<p(\s[^>]*)?>\s*Hi\s*,\s*<\/p>\s*/i);
+  if (paragraph) return value.slice(paragraph[0].length);
+  const inlineHtml = value.match(/^<p(\s[^>]*)?>\s*Hi\s*,\s*/i);
+  if (inlineHtml) {
+    return `<p${inlineHtml[1] ?? ""}>${value.slice(inlineHtml[0].length)}`;
+  }
+  return value.replace(/^Hi\s*,\s*/i, "");
+}
+
 /** Replace {{key}} tokens. Unknown keys become empty strings. {{invoice}} is left in place. */
 export function renderMessageTemplate(
   body: string,
   context: MessageTemplateContext,
 ): string {
-  return body.replace(TOKEN_RE, (match, key: string) => {
+  const rendered = body.replace(TOKEN_RE, (match, key: string) => {
     if (PRESERVED_TOKEN_KEYS.has(key)) return match;
     const value = context[key];
     return value == null ? "" : value;
   });
+  return stripEmptyGreeting(rendered);
 }
 
 export function formatDateForTemplate(date: Date | null | undefined): string {

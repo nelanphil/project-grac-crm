@@ -17,6 +17,7 @@ export interface SendMailOptions {
   replyTo?: string;
   fromName?: string;
   headers?: Record<string, string>;
+  attachments?: { filename: string; content: Buffer; contentType?: string }[];
 }
 
 export interface SendMailResult {
@@ -161,6 +162,7 @@ async function sendWithConfig(
     text: options.text,
     html: options.html,
     headers: options.headers,
+    attachments: options.attachments,
   });
 
   return {

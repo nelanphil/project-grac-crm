@@ -10,7 +10,12 @@ import {
 } from "../schemas/invoiceTemplate.schema";
 import { dispatchMessagingBatch } from "../controllers/messaging.controller";
 import { sendRoleEmail } from "./email.service";
-import { loadInvoiceEmailContext } from "./paymentReceipt.service";
+import {
+  loadInvoiceEmailContext,
+  renderAutomatedBillingEmail,
+} from "./paymentReceipt.service";
+import { resolveAutomatedMessage } from "./automatedMessage.service";
+import { renderMessageTemplate } from "../utils/messageTemplate";
 import {
   getTwilioAccountForSend,
   sendSms,
@@ -100,21 +105,41 @@ export async function emailInvoiceReceipt(input: {
   }
 
   try {
-    const template = await ensureDefaultInvoiceTemplate();
-    const parsed = invoiceBlocksSchema.safeParse(template.blocks);
-    if (!parsed.success) {
-      return { status: "failed", error: "The invoice template could not be rendered." };
-    }
-    const { document } = await loadInvoiceEmailContext(input.invoice);
-    const rendered = renderInvoiceTemplateEmail({
-      blocks: sanitizeInvoiceBlocks(parsed.data),
-      invoice: document,
-      unsubscribeUrl: buildUnsubscribeUrl(classified.to, "billing"),
+    const copy = await resolveAutomatedMessage("paidInvoiceReceiptEmail", {
+      number: input.invoice.number,
+      amountCents: input.invoice.amountCents,
+      dueDate: input.invoice.dueDate,
       viewUrl,
+      record: input.invoice,
     });
+    let rendered: { subject: string; text: string; html: string };
+    if (copy.useInvoiceDocument) {
+      const template = await ensureDefaultInvoiceTemplate();
+      const parsed = invoiceBlocksSchema.safeParse(template.blocks);
+      if (!parsed.success) {
+        return { status: "failed", error: "The invoice template could not be rendered." };
+      }
+      const { document } = await loadInvoiceEmailContext(input.invoice);
+      const documentEmail = renderInvoiceTemplateEmail({
+        blocks: sanitizeInvoiceBlocks(parsed.data),
+        invoice: document,
+        unsubscribeUrl: buildUnsubscribeUrl(classified.to, "billing"),
+        viewUrl,
+      });
+      rendered = { ...documentEmail, subject: copy.subject };
+    } else {
+      rendered = await renderAutomatedBillingEmail({
+        subject: copy.subject,
+        body: copy.body,
+        emailChrome: copy.emailChrome,
+        invoiceId: String(input.invoice._id),
+        customerRef: input.invoice.customerRef,
+        recipient: classified.to,
+      });
+    }
     await sendRoleEmail("billing_notifications", {
       to: classified.to,
-      subject: `Invoice ${input.invoice.number}`,
+      subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
       headers: listUnsubscribeHeaders(classified.to, "billing"),
@@ -143,7 +168,13 @@ export async function textInvoiceReceipt(input: {
   if (phone.status !== "ok") return { status: "invalid" };
 
   const viewUrl = buildInvoiceViewUrl(await ensureInvoiceViewToken(input.invoice));
-  const number = input.invoice.number?.trim() || "invoice";
+  const copy = await resolveAutomatedMessage("paidInvoiceReceiptSms", {
+    number: input.invoice.number,
+    amountCents: input.invoice.amountCents,
+    dueDate: input.invoice.dueDate,
+    viewUrl,
+    record: input.invoice,
+  });
   const line = await smsFromNumber();
   if (!line.ok) return { status: "failed", error: line.error };
 
@@ -166,7 +197,7 @@ export async function textInvoiceReceipt(input: {
       const result = await dispatchMessagingBatch(
         {
           contactIds: [String(contact._id)],
-          body: `Hi {{first_name}}, thank you for your payment. View or download invoice ${number}: ${viewUrl}`,
+          body: copy.body,
           mediaUrls: [],
           twilioAccountId: String(line.account._id),
           fromNumber: line.from,
@@ -186,7 +217,7 @@ export async function textInvoiceReceipt(input: {
       account: line.account,
       from: line.from,
       to,
-      body: `Thank you for your payment. View or download invoice ${number}: ${viewUrl}`,
+      body: renderMessageTemplate(copy.body, { first_name: "" }),
     });
     return { status: "sent", to: phone.phone };
   } catch (err) {

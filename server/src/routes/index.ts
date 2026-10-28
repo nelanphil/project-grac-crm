@@ -53,6 +53,7 @@ import contactRouter, {
   contactFormSettingsRouter,
 } from "./contactForm.routes";
 import twilioResponseSettingsRouter from "./twilioResponse.routes";
+import automatedMessageSettingsRouter from "./automatedMessage.routes";
 import contactFormSubmissionRoutes from "./contactFormSubmission.routes";
 import smsOptInRoutes from "./smsOptIn.routes";
 import recaptchaCredentialsRoutes from "./recaptchaCredentials.routes";
@@ -130,6 +131,7 @@ router.use("/sms-opt-in", smsOptInRoutes);
 router.use("/email-preferences", emailPreferenceRoutes);
 router.use("/contact-form-settings", contactFormSettingsRouter);
 router.use("/twilio-response-settings", twilioResponseSettingsRouter);
+router.use("/automated-message-settings", automatedMessageSettingsRouter);
 router.use("/contact-submissions", contactFormSubmissionRoutes);
 router.use("/legacy-dumps", legacyDumpRoutes);
 router.use("/databases", databaseInspectRoutes);

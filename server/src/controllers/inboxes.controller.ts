@@ -1,4 +1,5 @@
-import { Response } from "express";
+import { NextFunction, Response } from "express";
+import multer from "multer";
 import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { Customer, activeCustomerFilter } from "../models/mongo/Customer";
@@ -76,6 +77,14 @@ import {
 } from "../utils/messageThreads";
 import { phoneLinesMatch } from "../utils/twilioPhoneLines";
 import { ScheduledAtError } from "../utils/scheduledEmail";
+import {
+  EmailAttachmentError,
+  MAX_EMAIL_ATTACHMENTS,
+  MAX_EMAIL_ATTACHMENT_BYTES,
+  OutgoingEmailAttachment,
+  prepareEmailAttachments,
+  unpackMultipartPayload,
+} from "../utils/emailAttachments";
 import {
   InboxSmsInputError,
   inboxSendPreview,
@@ -1105,8 +1114,55 @@ export async function cancelInboxScheduled(req: AuthRequest, res: Response): Pro
   }
 }
 
+const emailAttachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_EMAIL_ATTACHMENT_BYTES, files: MAX_EMAIL_ATTACHMENTS },
+});
+
+function multerErrorMessage(err: unknown): string {
+  const code =
+    typeof err === "object" && err !== null && "code" in err
+      ? (err as { code?: string }).code
+      : undefined;
+  if (code === "LIMIT_FILE_SIZE") return "Attachments must total 20 MB or less.";
+  if (code === "LIMIT_FILE_COUNT" || code === "LIMIT_UNEXPECTED_FILE") {
+    return `You can attach up to ${MAX_EMAIL_ATTACHMENTS} files.`;
+  }
+  return err instanceof Error ? err.message : "Upload failed.";
+}
+
+export function uploadInboxEmailAttachmentsMiddleware(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (!req.is("multipart/form-data")) {
+    next();
+    return;
+  }
+  emailAttachmentUpload.array("attachments", MAX_EMAIL_ATTACHMENTS)(req, res, (err: unknown) => {
+    if (err) {
+      res.status(400).json({ message: multerErrorMessage(err) });
+      return;
+    }
+    try {
+      req.body = unpackMultipartPayload(req.body);
+    } catch (parseErr) {
+      res.status(400).json({
+        message: parseErr instanceof Error ? parseErr.message : "Invalid form data.",
+      });
+      return;
+    }
+    next();
+  });
+}
+
 export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<void> {
   try {
+    const uploaded = (req as AuthRequest & { files?: Express.Multer.File[] }).files;
+    const attachments: OutgoingEmailAttachment[] = Array.isArray(uploaded)
+      ? prepareEmailAttachments(uploaded)
+      : [];
     const convo = await loadConversation(String(req.params.id));
     if (!convo) {
       res.status(404).json({ message: "Conversation not found" });
@@ -1242,6 +1298,7 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
       text,
       html,
       headers,
+      attachments: attachments.length > 0 ? attachments : undefined,
     });
     const userId =
       req.user?.id && Types.ObjectId.isValid(req.user.id)
@@ -1259,6 +1316,11 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
       customerRef: convo.customerRef,
       contactRef: contact?._id ?? null,
       createdByUserRef: userId,
+      attachments: attachments.map((file) => ({
+        filename: file.filename,
+        size: file.content.length,
+        contentType: file.contentType,
+      })),
     });
     try {
       const raw = buildRfc822Message({
@@ -1270,6 +1332,7 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
         html,
         headers,
         messageId: sent.messageId,
+        attachments,
       });
       await appendToSentFolder(account, raw);
     } catch (err) {
@@ -1278,7 +1341,7 @@ export async function sendInboxEmail(req: AuthRequest, res: Response): Promise<v
     }
     res.json({ sent: true });
   } catch (err) {
-    if (err instanceof StaffEmailBatchError) {
+    if (err instanceof StaffEmailBatchError || err instanceof EmailAttachmentError) {
       res.status(err.status).json({ message: err.message });
       return;
     }

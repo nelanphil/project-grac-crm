@@ -233,6 +233,7 @@ export async function recordSentMailboxEmail(input: {
   customerRef?: Types.ObjectId | null;
   contactRef?: Types.ObjectId | null;
   createdByUserRef?: Types.ObjectId | null;
+  attachments?: { filename: string; size: number; contentType: string }[];
 }): Promise<void> {
   const toEmail = normalizeAccountEmail(input.to[0] || "");
   if (!toEmail) return;
@@ -273,6 +274,7 @@ export async function recordSentMailboxEmail(input: {
     references: input.references ?? [],
     mailboxFolder: "sent",
     receivedAt: new Date(),
+    attachments: (input.attachments ?? []).map((file) => ({ ...file, partId: "" })),
     customerRef,
     contactRef,
     createdByUserRef: input.createdByUserRef ?? null,

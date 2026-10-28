@@ -4,10 +4,10 @@ import { listMailboxMessages } from "../services/mailbox.service";
 import { sendMailboxReply } from "../services/mailboxReply.service";
 import {
   assignmentMessageKey,
-  RECEIPT_REPLY_HTML,
   replySubject,
   shouldSendReceiptReply,
 } from "../utils/mailboxReply";
+import { resolveMailboxReplyHtml } from "../services/automatedMessage.service";
 
 const PER_ACCOUNT_LIMIT = 15;
 
@@ -33,6 +33,7 @@ async function acknowledgeAccount(
   if (!account.autoAcknowledge || !enabledAt) return 0;
 
   const ownAddresses = [account.fromEmail, account.username];
+  const replyHtml = await resolveMailboxReplyHtml();
   const messages = await listMailboxMessages(account, "inbox", PER_ACCOUNT_LIMIT);
   let sent = 0;
 
@@ -93,7 +94,7 @@ async function acknowledgeAccount(
         cc: [],
         bcc: [],
         subject: replySubject(message.subject, "reply"),
-        html: RECEIPT_REPLY_HTML,
+        html: replyHtml,
         automatic: true,
       });
       sent += 1;

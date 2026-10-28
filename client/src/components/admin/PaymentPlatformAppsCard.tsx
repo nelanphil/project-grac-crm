@@ -220,6 +220,24 @@ function SquareSection({
             OAuth Application Secret from Square Developer Dashboard → your app
             → OAuth.
           </p>
+          <div className="mt-2 rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 space-y-1.5">
+            <p className="font-semibold">Tap to Pay callback URL</p>
+            <p>
+              Paste this under Square Developer Dashboard → your app → Point of
+              Sale API → Web Callback URL. It must match exactly. Staff phones
+              need the Square Point of Sale app, signed in to the same merchant,
+              with Tap to Pay turned on.
+            </p>
+            {square.posCallbackUrl ? (
+              <code className="block break-all rounded bg-white/80 px-2 py-1.5 font-mono text-[11px] text-neutral-800 border border-amber-100">
+                {square.posCallbackUrl}
+              </code>
+            ) : (
+              <code className="block break-all rounded bg-white/80 px-2 py-1.5 font-mono text-[11px] text-neutral-800 border border-amber-100">
+                https://YOUR_CRM_SITE/checkout/pos-callback
+              </code>
+            )}
+          </div>
         </div>
         <button
           type="button"

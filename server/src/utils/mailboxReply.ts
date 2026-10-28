@@ -320,8 +320,11 @@ export function buildRfc822Message(input: {
   headers?: Record<string, string>;
   messageId?: string;
   date?: Date;
+  attachments?: { filename: string; content: Buffer; contentType?: string }[];
 }): Buffer {
   const boundary = `grac-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+  const attachments = input.attachments ?? [];
+  const mixedBoundary = `${boundary}-mixed`;
   const headerLines = [`From: ${input.from}`, `To: ${input.to.join(", ")}`];
   if (input.cc.length > 0) headerLines.push(`Cc: ${input.cc.join(", ")}`);
   headerLines.push(`Subject: ${encodeHeader(input.subject)}`);
@@ -331,7 +334,9 @@ export function buildRfc822Message(input: {
   }
   headerLines.push("MIME-Version: 1.0");
   headerLines.push(
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    attachments.length > 0
+      ? `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`
+      : `Content-Type: multipart/alternative; boundary="${boundary}"`,
   );
   for (const [key, value] of Object.entries(input.headers ?? {})) {
     if (!value.trim()) continue;
@@ -339,7 +344,7 @@ export function buildRfc822Message(input: {
   }
   const textPart = wrapBase64(Buffer.from(input.text, "utf8").toString("base64"));
   const htmlPart = wrapBase64(Buffer.from(input.html, "utf8").toString("base64"));
-  const body = [
+  const alternative = [
     `--${boundary}`,
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: base64",
@@ -353,5 +358,26 @@ export function buildRfc822Message(input: {
     `--${boundary}--`,
     "",
   ].join("\r\n");
-  return Buffer.from(`${headerLines.join("\r\n")}\r\n\r\n${body}`, "utf8");
+  if (attachments.length === 0) {
+    return Buffer.from(`${headerLines.join("\r\n")}\r\n\r\n${alternative}`, "utf8");
+  }
+  const parts = [
+    `--${mixedBoundary}`,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    alternative,
+  ];
+  for (const file of attachments) {
+    const name = encodeHeader(file.filename.replace(/["\r\n]/g, ""));
+    parts.push(
+      `--${mixedBoundary}`,
+      `Content-Type: ${file.contentType || "application/octet-stream"}; name="${name}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${name}"`,
+      "",
+      wrapBase64(file.content.toString("base64")),
+    );
+  }
+  parts.push(`--${mixedBoundary}--`, "");
+  return Buffer.from(`${headerLines.join("\r\n")}\r\n\r\n${parts.join("\r\n")}`, "utf8");
 }

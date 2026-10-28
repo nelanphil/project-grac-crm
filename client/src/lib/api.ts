@@ -3840,6 +3840,45 @@ export async function startInvoiceCheckout(
   );
 }
 
+export interface InvoicePosCharge {
+  amountCents: number;
+  currency: string;
+  applicationId: string;
+  locationId: string;
+  callbackUrl: string;
+  state: string;
+  note: string;
+}
+
+export async function startInvoicePosCharge(
+  token: string,
+  id: string,
+): Promise<InvoicePosCharge> {
+  return authRequest<InvoicePosCharge>(`/invoices/${id}/pos-charge`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function confirmInvoicePosCharge(
+  token: string,
+  id: string,
+  data: {
+    transactionId: string;
+    clientTransactionId?: string;
+    state: string;
+  },
+): Promise<{ status: "paid" | "pending" | "failed"; invoice: InvoiceItem }> {
+  return authRequest<{
+    status: "paid" | "pending" | "failed";
+    invoice: InvoiceItem;
+  }>(`/invoices/${id}/pos-confirm`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
 export async function createInvoicePayLink(
   token: string,
   id: string,
@@ -5593,6 +5632,7 @@ export interface SquareOAuthStatus {
   production: boolean;
   forEnvironment: boolean;
   callbackUrl: string;
+  posCallbackUrl?: string;
   sandboxSource?: "env" | "control-panel" | "none";
   productionSource?: "env" | "control-panel" | "none";
   app?: SquareOAuthAppConfig;
@@ -6227,6 +6267,60 @@ export async function saveTwilioResponseSettings(
     method: "PUT",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify({ missedCallText }),
+  });
+}
+
+export type AutomatedMessageMode = "template" | "custom";
+
+export interface AutomatedMessageChannel {
+  mode: AutomatedMessageMode;
+  templateId: string | null;
+  subject: string;
+  body: string;
+  templateMissing: boolean;
+}
+
+export interface AutomatedMessageSettings {
+  saved: boolean;
+  workOrderCompleteEmail: AutomatedMessageChannel;
+  workOrderCompleteSms: AutomatedMessageChannel;
+  paymentReceivedEmail: AutomatedMessageChannel;
+  paidInvoiceReceiptEmail: AutomatedMessageChannel;
+  paidInvoiceReceiptSms: AutomatedMessageChannel;
+  mailboxReply: AutomatedMessageChannel;
+}
+
+export async function getAutomatedMessageSettings(
+  token: string,
+): Promise<AutomatedMessageSettings> {
+  return authRequest<AutomatedMessageSettings>("/automated-message-settings", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function saveAutomatedMessageSettings(
+  token: string,
+  settings: AutomatedMessageSettings,
+): Promise<AutomatedMessageSettings> {
+  const channel = (value: AutomatedMessageChannel) => ({
+    mode: value.mode,
+    templateId: value.templateId,
+    subject: value.subject,
+    body: value.body,
+  });
+  const body = {
+    workOrderCompleteEmail: channel(settings.workOrderCompleteEmail),
+    workOrderCompleteSms: channel(settings.workOrderCompleteSms),
+    paymentReceivedEmail: channel(settings.paymentReceivedEmail),
+    paidInvoiceReceiptEmail: channel(settings.paidInvoiceReceiptEmail),
+    paidInvoiceReceiptSms: channel(settings.paidInvoiceReceiptSms),
+    mailboxReply: channel(settings.mailboxReply),
+  };
+  return authRequest<AutomatedMessageSettings>("/automated-message-settings", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
   });
 }
 
@@ -8438,12 +8532,21 @@ export async function sendInboxEmail(
     templateId?: string;
     useBrandTemplate?: boolean;
     includeQuoted?: boolean;
+    attachments?: File[];
   },
 ): Promise<{ sent: boolean }> {
+  const { attachments, ...fields } = data;
+  let body: string | FormData = JSON.stringify(fields);
+  if (attachments && attachments.length > 0) {
+    const form = new FormData();
+    form.append("payload", body);
+    for (const file of attachments) form.append("attachments", file, file.name);
+    body = form;
+  }
   return authRequest(`/inboxes/conversations/${id}/email`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(data),
+    body,
   });
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronDown,
@@ -11,12 +11,18 @@ import {
   Maximize2,
   Minimize2,
   Minus,
+  Paperclip,
   Send,
   Sparkles,
   X,
 } from "lucide-react";
 import EmailBodyEditor from "@/components/messaging/EmailBodyEditor";
 import type { InboxTimelineMessage, MailboxAddress } from "@/lib/api";
+import {
+  attachmentKey,
+  formatAttachmentSize,
+  mergeAttachments,
+} from "@/lib/emailAttachments";
 import { formatAddressList, parseAddressList } from "@/lib/mailboxReply";
 import {
   CANNED_REPLY_TEMPLATES,
@@ -31,6 +37,7 @@ export type InboxEmailDraft = {
   html: string;
   useBrandTemplate: boolean;
   includeQuoted: boolean;
+  attachments: File[];
 };
 
 type InboxEmailComposerProps = {
@@ -104,7 +111,10 @@ export default function InboxEmailComposer({
   const [tabView, setTabView] = useState<TabView>("compose");
   const [showQuoted, setShowQuoted] = useState(false);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [dragActive, setDragActive] = useState(false);
   const templateMenuRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const submitRef = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -176,7 +186,37 @@ export default function InboxEmailComposer({
       html,
       useBrandTemplate,
       includeQuoted: Boolean(quote),
+      attachments,
     });
+  }
+
+  function addFiles(list: FileList | null) {
+    if (!list || list.length === 0) return;
+    const result = mergeAttachments(attachments, Array.from(list));
+    setAttachments(result.files);
+    setLocalError(result.error);
+  }
+
+  function removeAttachment(key: string) {
+    setAttachments((current) => current.filter((file) => attachmentKey(file) !== key));
+  }
+
+  function handleDragOver(event: DragEvent<HTMLFormElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    setDragActive(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLFormElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setDragActive(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLFormElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    setDragActive(false);
+    addFiles(event.dataTransfer.files);
   }
 
   useEffect(() => {
@@ -219,6 +259,12 @@ export default function InboxEmailComposer({
           <p className="truncate text-xs font-medium text-neutral-200">
             {subject || "New message"}
           </p>
+          {attachments.length > 0 ? (
+            <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-neutral-300">
+              <Paperclip className="h-3 w-3" />
+              {attachments.length}
+            </span>
+          ) : null}
         </div>
         <div className="flex items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
           <button
@@ -356,7 +402,12 @@ export default function InboxEmailComposer({
         ) : (
           <form
             onSubmit={handleSubmit}
-            className="flex min-h-0 flex-1 flex-col space-y-2.5 overflow-y-auto bg-[var(--staff-surface)] px-4 py-3"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={`flex min-h-0 flex-1 flex-col space-y-2.5 overflow-y-auto bg-[var(--staff-surface)] px-4 py-3 ${
+              dragActive ? "outline-2 -outline-offset-4 outline-dashed outline-brand-orange" : ""
+            }`}
           >
             <div className="space-y-1.5 border-b border-[var(--staff-border)] pb-2.5">
               <div className="flex items-center gap-2">
@@ -456,35 +507,55 @@ export default function InboxEmailComposer({
             </div>
 
             <div className="flex items-center justify-between">
-              <div className="relative" ref={templateMenuRef}>
+              <div className="flex items-center gap-2">
+                <div className="relative" ref={templateMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setTemplateMenuOpen((open) => !open)}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-[var(--staff-border)] bg-[var(--staff-cream)] px-2.5 py-1 text-xs font-medium text-[var(--staff-ink)] transition-colors hover:bg-[var(--staff-canvas)]"
+                  >
+                    <Sparkles className="h-3.5 w-3.5 text-brand-orange" />
+                    Insert quick template
+                    <ChevronDown className="h-3 w-3 text-[var(--staff-muted)]" />
+                  </button>
+                  {templateMenuOpen ? (
+                    <div className="absolute top-full left-0 z-30 mt-1 w-72 rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1.5 shadow-lg">
+                      <p className="px-2 py-1 text-[10px] font-semibold tracking-wider text-[var(--staff-muted)] uppercase">
+                        Canned company responses
+                      </p>
+                      <div className="space-y-0.5">
+                        {CANNED_REPLY_TEMPLATES.map((template) => (
+                          <button
+                            key={template.id}
+                            type="button"
+                            onClick={() => handleSelectTemplate(template.body)}
+                            className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-[var(--staff-ink)] transition-colors hover:bg-[var(--staff-cream)]"
+                          >
+                            <div className="font-medium">{template.title}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
                 <button
                   type="button"
-                  onClick={() => setTemplateMenuOpen((open) => !open)}
+                  onClick={() => fileInputRef.current?.click()}
                   className="inline-flex items-center gap-1.5 rounded-md border border-[var(--staff-border)] bg-[var(--staff-cream)] px-2.5 py-1 text-xs font-medium text-[var(--staff-ink)] transition-colors hover:bg-[var(--staff-canvas)]"
                 >
-                  <Sparkles className="h-3.5 w-3.5 text-brand-orange" />
-                  Insert quick template
-                  <ChevronDown className="h-3 w-3 text-[var(--staff-muted)]" />
+                  <Paperclip className="h-3.5 w-3.5 text-brand-orange" />
+                  Attach files
                 </button>
-                {templateMenuOpen ? (
-                  <div className="absolute top-full left-0 z-30 mt-1 w-72 rounded-lg border border-[var(--staff-border)] bg-[var(--staff-surface)] p-1.5 shadow-lg">
-                    <p className="px-2 py-1 text-[10px] font-semibold tracking-wider text-[var(--staff-muted)] uppercase">
-                      Canned company responses
-                    </p>
-                    <div className="space-y-0.5">
-                      {CANNED_REPLY_TEMPLATES.map((template) => (
-                        <button
-                          key={template.id}
-                          type="button"
-                          onClick={() => handleSelectTemplate(template.body)}
-                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-[var(--staff-ink)] transition-colors hover:bg-[var(--staff-cream)]"
-                        >
-                          <div className="font-medium">{template.title}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    addFiles(event.target.files);
+                    event.target.value = "";
+                  }}
+                />
               </div>
               {fromLabel ? (
                 <div className="text-[11px] text-[var(--staff-muted)]">
@@ -500,6 +571,37 @@ export default function InboxEmailComposer({
                 placeholder="Write your reply message here…"
               />
             </div>
+
+            {attachments.length > 0 ? (
+              <ul className="flex shrink-0 flex-wrap gap-1.5">
+                {attachments.map((file) => {
+                  const key = attachmentKey(file);
+                  return (
+                    <li
+                      key={key}
+                      className="inline-flex max-w-[16rem] items-center gap-1.5 rounded-md border border-[var(--staff-border)] bg-[var(--staff-cream)] px-2 py-1 text-[11px] text-[var(--staff-ink)]"
+                    >
+                      <Paperclip className="h-3 w-3 shrink-0 text-[var(--staff-muted)]" />
+                      <span className="truncate font-medium" title={file.name}>
+                        {file.name}
+                      </span>
+                      <span className="shrink-0 text-[var(--staff-muted)]">
+                        {formatAttachmentSize(file.size)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(key)}
+                        disabled={sending}
+                        title={`Remove ${file.name}`}
+                        className="shrink-0 text-[var(--staff-muted)] hover:text-[var(--staff-ink)] disabled:opacity-50"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
 
             {quote ? (
               <div className="shrink-0 overflow-hidden rounded-lg border border-[var(--staff-border)] bg-[var(--staff-cream)]">

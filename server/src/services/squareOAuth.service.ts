@@ -16,6 +16,7 @@ import {
 import { User } from "../models/mongo/User";
 import { encryptCredential, decryptCredential } from "../utils/credentialsCrypto";
 import { resolvePublicApiBase } from "../utils/publicUrl";
+import { buildPosCallbackUrl } from "../utils/posCallbackUrl";
 
 const SQUARE_OAUTH_SCOPES = [
   "MERCHANT_PROFILE_READ",
@@ -233,6 +234,7 @@ export async function squareOAuthAppPublicPayload(req?: Request) {
   return {
     ...status,
     callbackUrl: squareOAuthCallbackUrl(req),
+    posCallbackUrl: buildPosCallbackUrl(),
     app: {
       productionApplicationId: stored?.productionApplicationId ?? "",
       sandboxApplicationId: stored?.sandboxApplicationId ?? "",
