@@ -238,6 +238,7 @@ export default function ServiceTicketForm({
         content: string;
         visibleToCustomer?: boolean;
         isReminder?: boolean;
+        showOnSchedule?: boolean;
         mentionUserIds?: string[];
         templateId?: string;
       }>;
@@ -1258,6 +1259,7 @@ export default function ServiceTicketForm({
               content: n.content,
               visibleToCustomer: n.visibleToCustomer,
               isReminder: n.isReminder,
+              showOnSchedule: n.showOnSchedule,
               mentionUserIds: n.mentionUserIds,
             })),
           }

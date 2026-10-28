@@ -14,6 +14,27 @@ export const LEGACY_LOGIN_OWNERS: readonly LegacyLoginOwner[] = [
   { legacyUserId: 2, firstName: "Dustin", lastName: "Hatton" },
 ];
 
+/** Legacy user ids whose customers are kept. Everyone else from a dump is excluded. */
+export const ALLOWED_LEGACY_OWNER_USER_IDS: readonly number[] =
+  LEGACY_LOGIN_OWNERS.map((owner) => owner.legacyUserId);
+
+export function isAllowedLegacyOwner(
+  userId: number | null | undefined,
+): boolean {
+  return (
+    typeof userId === "number" &&
+    ALLOWED_LEGACY_OWNER_USER_IDS.includes(userId)
+  );
+}
+
+/**
+ * Mongo filter for legacy-imported customers outside the owner allow-list.
+ * userId 0 is a CRM-created record and is not matched.
+ */
+export const nonOwnerLegacyCustomerFilter = {
+  userId: { $gt: 0, $nin: [...ALLOWED_LEGACY_OWNER_USER_IDS] },
+} as const;
+
 export function legacyOwnerForUserId(userId: number): LegacyLoginOwner | null {
   return LEGACY_LOGIN_OWNERS.find((owner) => owner.legacyUserId === userId) ?? null;
 }

@@ -23,7 +23,11 @@ import {
   syncAscContractsFromRecords,
   type AscContractSyncSummary,
 } from "./ascContractSync";
-import { LEGACY_LOGIN_OWNERS } from "./legacyLoginOwners";
+import {
+  ALLOWED_LEGACY_OWNER_USER_IDS,
+  isAllowedLegacyOwner,
+  LEGACY_LOGIN_OWNERS,
+} from "./legacyLoginOwners";
 import { pendingPaymentWorkOrderFilter } from "./completedPaidReport";
 import {
   legacyWorkOrderHasBillableMoney,
@@ -112,6 +116,7 @@ export type ImportSummary = {
   contactsCreated: number;
   customersSkippedLegacy: number;
   customersSkippedIdentity: number;
+  customersSkippedNonOwner: number;
   customerCollisions: number;
   workOrdersParsed: number;
   workOrdersInserted: number;
@@ -122,6 +127,7 @@ export type ImportSummary = {
   workOrdersStatusUpdated: number;
   workOrdersSkippedDuplicateLegacy: number;
   workOrdersSkippedUserMismatch: number;
+  workOrdersSkippedNonOwner: number;
   ascCustomers: number;
   contractsCreated: number;
   contractsUpdated: number;
@@ -1814,6 +1820,44 @@ export async function backfillStoredWorkOrderLineItems(options: {
   }
 }
 
+/**
+ * Keep dump rows that belong to the allowed legacy owners (Christopher and
+ * Dustin). When a customer dump was parsed, work orders are dropped by the
+ * excluded customer ids. When only a work-order dump was uploaded, they are
+ * dropped by the work order's own user id.
+ */
+export function selectOwnerLegacyDumpRows<
+  C extends { legacyId: number; userId: number },
+  W extends { userId: number; customerId: number },
+>(
+  customerRows: readonly C[],
+  workOrderRows: readonly W[],
+  customerDumpProvided: boolean,
+): {
+  customers: C[];
+  workOrders: W[];
+  customersSkippedNonOwner: number;
+  workOrdersSkippedNonOwner: number;
+} {
+  const customers = customerRows.filter((row) => isAllowedLegacyOwner(row.userId));
+  const excludedCustomerIds = new Set(
+    customerRows
+      .filter((row) => !isAllowedLegacyOwner(row.userId))
+      .map((row) => row.legacyId),
+  );
+  const workOrders = workOrderRows.filter((row) =>
+    customerDumpProvided
+      ? !excludedCustomerIds.has(row.customerId)
+      : isAllowedLegacyOwner(row.userId),
+  );
+  return {
+    customers,
+    workOrders,
+    customersSkippedNonOwner: customerRows.length - customers.length,
+    workOrdersSkippedNonOwner: workOrderRows.length - workOrders.length,
+  };
+}
+
 export async function runLegacyDumpSync(options: {
   customerSql?: string;
   workOrderSql?: string;
@@ -1853,14 +1897,28 @@ export async function runLegacyDumpSync(options: {
       ? "Parsing SQL dumps…"
       : "No dump SQL provided.",
   );
-  const customerRows = customerSql ? parseCustomerDump(customerSql) : [];
-  const workOrderRows = workOrderSql ? parseWorkOrderDump(workOrderSql) : [];
-  if (customerRows.length === 0 && workOrderRows.length === 0) {
+  const parsedCustomers = customerSql ? parseCustomerDump(customerSql) : [];
+  const parsedWorkOrders = workOrderSql ? parseWorkOrderDump(workOrderSql) : [];
+  if (parsedCustomers.length === 0 && parsedWorkOrders.length === 0) {
     throw new Error("No customer or work order rows could be parsed from the upload.");
   }
-  log(
-    `Parsed ${customerRows.length.toLocaleString()} customers and ${workOrderRows.length.toLocaleString()} work orders.`,
+  const ownerRows = selectOwnerLegacyDumpRows(
+    parsedCustomers,
+    parsedWorkOrders,
+    parsedCustomers.length > 0,
   );
+  const customerRows = ownerRows.customers;
+  const workOrderRows = ownerRows.workOrders;
+  const customersSkippedNonOwner = ownerRows.customersSkippedNonOwner;
+  const workOrdersSkippedNonOwner = ownerRows.workOrdersSkippedNonOwner;
+  log(
+    `Parsed ${parsedCustomers.length.toLocaleString()} customers and ${parsedWorkOrders.length.toLocaleString()} work orders.`,
+  );
+  if (customersSkippedNonOwner > 0 || workOrdersSkippedNonOwner > 0) {
+    log(
+      `Skipping ${customersSkippedNonOwner.toLocaleString()} customers and ${workOrdersSkippedNonOwner.toLocaleString()} work orders outside legacy owners ${ALLOWED_LEGACY_OWNER_USER_IDS.join(" and ")}.`,
+    );
+  }
 
   const targetLabel = describeMongoTarget(mongoUri);
   let conn: Connection | null = null;
@@ -2151,7 +2209,7 @@ export async function runLegacyDumpSync(options: {
     }
 
     log(
-      `Customers: present=${audit.customersPresent.toLocaleString()} identity-linked=${audit.customersIdentityLinked.length.toLocaleString()} missing=${audit.customersMissing.length.toLocaleString()} collisions=${audit.customersCollisions.length.toLocaleString()} owners-assigned=${ownersAssigned.toLocaleString()}.`,
+      `Customers: present=${audit.customersPresent.toLocaleString()} identity-linked=${audit.customersIdentityLinked.length.toLocaleString()} missing=${audit.customersMissing.length.toLocaleString()} collisions=${audit.customersCollisions.length.toLocaleString()} owners-assigned=${ownersAssigned.toLocaleString()} skipped-non-owner=${customersSkippedNonOwner.toLocaleString()}.`,
     );
 
     log("Loading existing work orders…");
@@ -2383,7 +2441,7 @@ export async function runLegacyDumpSync(options: {
     }
 
     log(
-      `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()} ref-backfills=${backfilledWoRefs.toLocaleString()} line-item-backfills=${backfilledWoLineItems.toLocaleString()} status-updates=${statusUpdated.toLocaleString()} duplicate-legacy=${skippedDuplicateLegacy.toLocaleString()} user-mismatch=${skippedUserMismatch.toLocaleString()}.`,
+      `Work orders: present=${audit.wosPresent.toLocaleString()} missing=${audit.wosMissing.length.toLocaleString()} fuzzy=${audit.wosFuzzy.toLocaleString()} orphans=${audit.wosOrphan.length.toLocaleString()} ref-backfills=${backfilledWoRefs.toLocaleString()} line-item-backfills=${backfilledWoLineItems.toLocaleString()} status-updates=${statusUpdated.toLocaleString()} duplicate-legacy=${skippedDuplicateLegacy.toLocaleString()} user-mismatch=${skippedUserMismatch.toLocaleString()} skipped-non-owner=${workOrdersSkippedNonOwner.toLocaleString()}.`,
     );
     if (duplicateLegacyIds.length > 0) {
       log(
@@ -2449,13 +2507,14 @@ export async function runLegacyDumpSync(options: {
     }
 
     const summary: ImportSummary = {
-      customersParsed: customerRows.length,
+      customersParsed: parsedCustomers.length,
       customersInserted: dryRun ? 0 : insertedCustomers,
       contactsCreated: dryRun ? 0 : contactsCreated,
       customersSkippedLegacy: skippedLegacy,
       customersSkippedIdentity: skippedIdentity,
+      customersSkippedNonOwner,
       customerCollisions: collisions,
-      workOrdersParsed: workOrderRows.length,
+      workOrdersParsed: parsedWorkOrders.length,
       workOrdersInserted: dryRun ? 0 : insertedWos,
       workOrdersSkippedLegacy: skippedWoLegacy,
       workOrdersSkippedFuzzy: skippedWoFuzzy,
@@ -2464,6 +2523,7 @@ export async function runLegacyDumpSync(options: {
       workOrdersStatusUpdated: statusUpdated,
       workOrdersSkippedDuplicateLegacy: skippedDuplicateLegacy,
       workOrdersSkippedUserMismatch: skippedUserMismatch,
+      workOrdersSkippedNonOwner,
       ascCustomers: ascSync.customersWithAsc,
       contractsCreated: dryRun ? 0 : ascSync.contractsCreated,
       contractsUpdated: dryRun ? 0 : ascSync.contractsUpdated,
@@ -2479,8 +2539,8 @@ export async function runLegacyDumpSync(options: {
       target,
       targetLabel,
       mode,
-      customersParsed: customerRows.length,
-      workOrdersParsed: workOrderRows.length,
+      customersParsed: parsedCustomers.length,
+      workOrdersParsed: parsedWorkOrders.length,
       audit,
       summary,
     };

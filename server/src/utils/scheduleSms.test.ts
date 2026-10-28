@@ -75,6 +75,91 @@ describe("formatScheduleSms", () => {
     );
   });
 
+  it("places one schedule note under the customer", () => {
+    const body = formatScheduleSms({
+      date,
+      technicianName,
+      appUrl,
+      jobs: [
+        {
+          scheduledStart: at("08:00"),
+          contactName: "Smith",
+          phone: "(386) 555-0100",
+          street: "123 Main St",
+          city: "Springfield",
+          notes: ["Gate code 1234"],
+        },
+      ],
+    });
+
+    assert.equal(
+      body,
+      [
+        header,
+        "8:00 AM\nSmith\n(386) 555-0100\n123 Main St, Springfield\nNote: Gate code 1234",
+        footer,
+      ].join("\n\n"),
+    );
+  });
+
+  it("places every schedule note under the customer, oldest first", () => {
+    const body = formatScheduleSms({
+      date,
+      technicianName,
+      appUrl,
+      jobs: [
+        {
+          scheduledStart: at("08:00"),
+          contactName: "Smith",
+          phone: "(386) 555-0100",
+          street: "123 Main St",
+          city: "Springfield",
+          notes: ["Gate code 1234", "Dog in the yard"],
+        },
+      ],
+    });
+
+    assert.equal(
+      body,
+      [
+        header,
+        [
+          "8:00 AM",
+          "Smith",
+          "(386) 555-0100",
+          "123 Main St, Springfield",
+          "Note: Gate code 1234",
+          "Note: Dog in the yard",
+        ].join("\n"),
+        footer,
+      ].join("\n\n"),
+    );
+  });
+
+  it("flattens line breaks and caps a long schedule note", () => {
+    const body = formatScheduleSms({
+      date,
+      technicianName,
+      appUrl,
+      jobs: [
+        {
+          scheduledStart: at("08:00"),
+          contactName: "Smith",
+          phone: "",
+          street: "123 Main St",
+          city: "Springfield",
+          notes: [`Bring\nladder ${"A".repeat(200)}`],
+        },
+      ],
+    });
+
+    const noteLine = body.split("\n").find((line) => line.startsWith("Note: "));
+    assert.ok(noteLine);
+    assert.equal(noteLine?.length, "Note: ".length + 160);
+    assert.equal(noteLine?.endsWith("…"), true);
+    assert.match(noteLine ?? "", /^Note: Bring ladder /);
+  });
+
   it("says there are no appointments and still includes the app link", () => {
     assert.equal(
       formatScheduleSms({ date, technicianName, appUrl, jobs: [] }),

@@ -328,7 +328,7 @@ export async function syncAscContractsFromRecords(
     )
     .lean();
 
-  const customers = await models.Customer.find()
+  const customers = await models.Customer.find({ deletedAt: null })
     .select("_id legacyId")
     .lean();
   const customerById = new Map(customers.map((c) => [String(c._id), c]));

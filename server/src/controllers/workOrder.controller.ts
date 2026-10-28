@@ -14,7 +14,11 @@ import {
 } from "../models/mongo/WorkOrder";
 import { WorkOrderNote } from "../models/mongo/WorkOrderNote";
 import { Estimate } from "../models/mongo/Estimate";
-import { Customer } from "../models/mongo/Customer";
+import {
+  Customer,
+  excludeDeletedCustomerRefs,
+  loadDeletedCustomerIds,
+} from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import {
   CustomerContact,
@@ -297,6 +301,14 @@ export async function getWorkOrders(
       ];
     }
 
+    const hideDeleted = excludeDeletedCustomerRefs(await loadDeletedCustomerIds());
+    if (Object.keys(hideDeleted).length > 0) {
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? (filter.$and as object[]) : []),
+        hideDeleted,
+      ];
+    }
+
     if (paginate) {
       const page = Math.max(1, parseInt(pageRaw, 10) || 1);
       const pageSize = Math.min(
@@ -311,8 +323,12 @@ export async function getWorkOrders(
       const [total, workOrders, statsTotal, paidCount] = await Promise.all([
         (deletedOnly ? includingDeletedWorkOrders(countQuery) : countQuery),
         (deletedOnly ? includingDeletedWorkOrders(listQuery) : listQuery).lean(),
-        WorkOrder.countDocuments({}),
-        WorkOrder.countDocuments({ paid: true }),
+        WorkOrder.countDocuments(hideDeleted),
+        WorkOrder.countDocuments(
+          Object.keys(hideDeleted).length > 0
+            ? { $and: [hideDeleted, { paid: true }] }
+            : { paid: true },
+        ),
       ]);
       const enriched = await enrichWithAddress(workOrders);
       res.json({
@@ -533,6 +549,7 @@ export async function createWorkOrder(
           content: text,
           visibleToCustomer: Boolean(initialNote.visibleToCustomer),
           isReminder: Boolean(initialNote.isReminder),
+          showOnSchedule: Boolean(initialNote.showOnSchedule),
           mentionUserIds: initialNote.mentionUserIds ?? [],
           desiredStartTime: tags.desiredStartTime || undefined,
           desiredStartBy: tags.desiredStartBy || undefined,

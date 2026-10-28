@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent, type KeyboardEvent } from "react";
+import { useRef, useState, type PointerEvent, type KeyboardEvent } from "react";
 
 const THUMB = 44;
 
@@ -23,13 +23,7 @@ export default function SwipeToConfirm({
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
   const locked = disabled || busy;
-
-  useEffect(() => {
-    if (!busy) {
-      offsetRef.current = 0;
-      setOffset(0);
-    }
-  }, [busy]);
+  const shown = dragging || busy ? offset : 0;
 
   function trackMax(): number {
     const track = trackRef.current;
@@ -62,6 +56,7 @@ export default function SwipeToConfirm({
 
   function onPointerDown(event: PointerEvent<HTMLButtonElement>) {
     if (locked) return;
+    offsetRef.current = 0;
     event.currentTarget.setPointerCapture(event.pointerId);
     maxRef.current = trackMax();
     setDragging(true);
@@ -111,7 +106,7 @@ export default function SwipeToConfirm({
         className={`complete-notice-primary absolute top-1 left-1 flex h-9 w-11 items-center justify-center rounded-full disabled:opacity-60 ${
           dragging ? "" : "transition-transform duration-200"
         }`}
-        style={{ transform: `translateX(${offset}px)` }}
+        style={{ transform: `translateX(${shown}px)` }}
       >
         <span aria-hidden="true">›</span>
       </button>

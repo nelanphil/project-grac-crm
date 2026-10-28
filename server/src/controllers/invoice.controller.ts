@@ -12,7 +12,11 @@ import {
   WorkOrder,
 } from "../models/mongo/WorkOrder";
 import { ContractTemplate } from "../models/mongo/ContractTemplate";
-import { Customer } from "../models/mongo/Customer";
+import {
+  Customer,
+  excludeDeletedCustomerRefs,
+  loadDeletedCustomerIds,
+} from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import {
@@ -272,7 +276,7 @@ async function customerRefsMatchingSearch(
   if (customerOr.length === 0 || contactOr.length === 0) return [];
 
   const [customers, contacts] = await Promise.all([
-    Customer.find({ $or: customerOr }).select("_id").lean(),
+    Customer.find({ deletedAt: null, $or: customerOr }).select("_id").lean(),
     CustomerContact.find({ $or: contactOr }).select("customerRef").lean(),
   ]);
 
@@ -353,6 +357,13 @@ export async function getInvoices(
     }
 
     if (isStaff(req.user)) {
+      const hideDeleted = excludeDeletedCustomerRefs(await loadDeletedCustomerIds());
+      if (Object.keys(hideDeleted).length > 0) {
+        filter.$and = [
+          ...(Array.isArray(filter.$and) ? (filter.$and as object[]) : []),
+          hideDeleted,
+        ];
+      }
       if (typeof customerRef === "string" && customerRef) {
         filter.customerRef = customerRef;
       }

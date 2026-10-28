@@ -5,6 +5,7 @@ import { Contract } from "../models/mongo/Contract";
 import {
   activeCustomerFilter,
   Customer,
+  loadDeletedCustomerIds,
   notMergedFilter,
 } from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
@@ -29,7 +30,10 @@ import {
   logNotificationAsync,
 } from "../services/notification.service";
 import { inferContractType } from "../utils/contractTypes";
-import { applyContractRenewal } from "../services/invoice.service";
+import {
+  applyContractRenewal,
+  DeletedCustomerRenewalError,
+} from "../services/invoice.service";
 import { normalizePhoneDigits } from "../utils/customerSites";
 import { isOrgAdminRole } from "../utils/roles";
 import {
@@ -487,7 +491,15 @@ export async function getContracts(
       .sort({ renewalDueDate: 1, contractDate: -1 })
       .lean();
 
-    const withCustomer = await enrichWithCustomer(contracts);
+    const deletedIds = new Set(
+      (await loadDeletedCustomerIds()).map((id) => String(id)),
+    );
+    const activeContracts = contracts.filter((contract) => {
+      const ref = contract.customerRef ? String(contract.customerRef) : "";
+      return !ref || !deletedIds.has(ref);
+    });
+
+    const withCustomer = await enrichWithCustomer(activeContracts);
     const withAddress = await enrichWithAddress(withCustomer);
     const withEquipment = await enrichWithEquipment(withAddress);
     const withTemplate = await enrichWithTemplate(withEquipment);
@@ -546,7 +558,10 @@ export async function createContract(
       return;
     }
 
-    const customer = await Customer.findOne({ legacyId: customerId }).lean();
+    const customer = await Customer.findOne({
+      legacyId: customerId,
+      ...activeCustomerFilter,
+    }).lean();
     if (!customer) {
       res.status(404).json({ message: "Customer not found" });
       return;
@@ -864,6 +879,10 @@ export async function renewContract(
 
     res.json({ contract: enriched });
   } catch (err) {
+    if (err instanceof DeletedCustomerRenewalError) {
+      res.status(409).json({ message: err.message });
+      return;
+    }
     const message =
       err instanceof Error ? err.message : "Failed to record renewal";
     const status =

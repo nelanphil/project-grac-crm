@@ -3,13 +3,22 @@ import { SCHEDULE_TIMEZONE, localDateToUtc } from "./scheduleTime";
 
 const COMPANY_NAME = "Generator Maintenance of Florida";
 
+const NOTE_MAX = 160;
+
 export type ScheduleSmsJob = {
   scheduledStart: Date | string;
   contactName?: string | null;
   phone?: string | null;
   street?: string | null;
   city?: string | null;
+  notes?: string[] | null;
 };
+
+export function formatScheduleClock(date: Date | string): string {
+  const value = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(value.getTime())) return "";
+  return formatClock(value);
+}
 
 function formatScheduleDateLabel(localDate: string): string {
   const noon = localDateToUtc(localDate, "12:00");
@@ -42,16 +51,28 @@ function jobInstant(job: ScheduleSmsJob): Date | null {
   return Number.isNaN(value.getTime()) ? null : value;
 }
 
+function smsNoteLine(note: string): string | null {
+  const flat = note.replace(/\s+/g, " ").trim();
+  if (!flat) return null;
+  const body =
+    flat.length > NOTE_MAX ? `${flat.slice(0, NOTE_MAX - 1)}…` : flat;
+  return `Note: ${body}`;
+}
+
 function formatJobBlock(job: ScheduleSmsJob, when: Date): string {
   const place = [job.street, job.city]
     .map((part) => part?.trim() ?? "")
     .filter(Boolean)
     .join(", ");
+  const noteLines = (job.notes ?? [])
+    .map((note) => smsNoteLine(note))
+    .filter((line): line is string => line !== null);
   const lines = [
     formatClock(when),
     job.contactName?.trim() ?? "",
     job.phone?.trim() ?? "",
     place,
+    ...noteLines,
   ].filter(Boolean);
   return lines.join("\n");
 }

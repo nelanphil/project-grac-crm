@@ -46,6 +46,7 @@ export type PublicWorkOrderNote = {
   content: string;
   visibleToCustomer: boolean;
   isReminder?: boolean;
+  showOnSchedule?: boolean;
   mentionUserIds?: string[];
   mentions?: NoteMention[];
   desiredStartTime?: string;
@@ -79,6 +80,7 @@ function formatNote(
     content: string;
     visibleToCustomer: boolean;
     isReminder?: boolean;
+    showOnSchedule?: boolean;
     mentionUserIds?: unknown;
     desiredStartTime?: string;
     desiredStartBy?: string;
@@ -109,6 +111,7 @@ function formatNote(
       ? { first_name: author.first_name, last_name: author.last_name }
       : { first_name: "", last_name: "" };
     publicNote.isReminder = Boolean(note.isReminder);
+    publicNote.showOnSchedule = Boolean(note.showOnSchedule);
     publicNote.mentionUserIds = readMentionIds(note.mentionUserIds);
     publicNote.mentions = readMentions(note.mentionUserIds);
     publicNote.desiredStartTime = note.desiredStartTime ?? "";
@@ -130,6 +133,7 @@ function asFormatted(
       content: String(note.content ?? ""),
       visibleToCustomer: Boolean(note.visibleToCustomer),
       isReminder: Boolean(note.isReminder),
+      showOnSchedule: Boolean(note.showOnSchedule),
       mentionUserIds: note.mentionUserIds,
       desiredStartTime: typeof note.desiredStartTime === "string" ? note.desiredStartTime : "",
       desiredStartBy: typeof note.desiredStartBy === "string" ? note.desiredStartBy : "",
@@ -344,6 +348,7 @@ export async function createWorkOrderNote(
       content,
       visibleToCustomer: parsed.data.visibleToCustomer ?? false,
       isReminder,
+      showOnSchedule: parsed.data.showOnSchedule ?? false,
       mentionUserIds,
       desiredStartTime: tags.desiredStartTime,
       desiredStartBy: tags.desiredStartBy,
@@ -453,6 +458,9 @@ export async function updateWorkOrderNote(
       note.visibleToCustomer = parsed.data.visibleToCustomer;
     }
     if (parsed.data.isReminder !== undefined) note.isReminder = parsed.data.isReminder;
+    if (parsed.data.showOnSchedule !== undefined) {
+      note.showOnSchedule = parsed.data.showOnSchedule;
+    }
     if (parsed.data.mentionUserIds !== undefined) {
       note.mentionUserIds = await sanitizeMentionUserIds(parsed.data.mentionUserIds);
     }

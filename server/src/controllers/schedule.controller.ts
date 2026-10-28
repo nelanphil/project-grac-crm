@@ -48,7 +48,7 @@ import {
 } from "../services/twilio.service";
 import { toE164 } from "../utils/messagingContext";
 import { isPubliclyReachableApiHost } from "../utils/publicUrl";
-import { formatScheduleSms } from "../utils/scheduleSms";
+import { formatScheduleClock, formatScheduleSms } from "../utils/scheduleSms";
 import { formatLocalDate, localDayBounds } from "../utils/scheduleTime";
 import { isUsStateCode } from "../constants/usStates";
 import { getActiveGoogleApiKey } from "../utils/googleAddressValidator";
@@ -1217,34 +1217,47 @@ export async function postScheduleText(
       .map((part) => part.trim())
       .filter(Boolean)
       .join(" ");
+    const scheduleJobs = enriched.map((job) => {
+      const scheduledStart = job.scheduledStart;
+      const contact = contacts.get(textField(job.customerRef));
+      const rawPhone =
+        contact?.phone ||
+        textField(job.customerPhone) ||
+        textField(job.workPhone);
+      const when =
+        scheduledStart instanceof Date || typeof scheduledStart === "string"
+          ? scheduledStart
+          : "";
+      const customerName =
+        (contact?.name || job.customerName || "").trim() || "Customer";
+      return {
+        sms: {
+          scheduledStart: when,
+          contactName: customerName,
+          phone: rawPhone ? formatUsPhone(rawPhone) : "",
+          street: job.address?.address ?? null,
+          city: job.address?.city ?? null,
+          notes: job.scheduleNotes,
+        },
+        summary: {
+          workOrderId: String(job._id ?? ""),
+          customerName,
+          time: when ? formatScheduleClock(when) : "",
+        },
+      };
+    });
     const body = formatScheduleSms({
       date: parsed.data.date,
       technicianName,
       appUrl,
-      jobs: enriched.map((job) => {
-        const scheduledStart = job.scheduledStart;
-        const contact = contacts.get(textField(job.customerRef));
-        const rawPhone =
-          contact?.phone ||
-          textField(job.customerPhone) ||
-          textField(job.workPhone);
-        return {
-          scheduledStart:
-            scheduledStart instanceof Date || typeof scheduledStart === "string"
-              ? scheduledStart
-              : "",
-          contactName: contact?.name || job.customerName,
-          phone: rawPhone ? formatUsPhone(rawPhone) : "",
-          street: job.address?.address ?? null,
-          city: job.address?.city ?? null,
-        };
-      }),
+      jobs: scheduleJobs.map((job) => job.sms),
     });
     const payload = {
       body,
       phoneLast4: last4,
       technicianName,
       jobCount: enriched.length,
+      jobs: scheduleJobs.map((job) => job.summary),
     };
 
     if (!parsed.data.send) {

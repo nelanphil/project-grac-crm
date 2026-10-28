@@ -11,6 +11,8 @@ export interface IWorkOrderNote extends Document {
   content: string;
   visibleToCustomer: boolean;
   isReminder: boolean;
+  /** Shown on the technician schedule card and in the schedule text. */
+  showOnSchedule: boolean;
   mentionUserIds: Types.ObjectId[];
   /** Desired visit start, HH:mm. Empty when this note has no time tag. */
   desiredStartTime: string;
@@ -33,6 +35,7 @@ const workOrderNoteSchema = new Schema<IWorkOrderNote>(
     content: { type: String, required: true, trim: true },
     visibleToCustomer: { type: Boolean, default: false, index: true },
     isReminder: { type: Boolean, default: false, index: true },
+    showOnSchedule: { type: Boolean, default: false },
     mentionUserIds: {
       type: [{ type: Schema.Types.ObjectId, ref: "User" }],
       default: [],

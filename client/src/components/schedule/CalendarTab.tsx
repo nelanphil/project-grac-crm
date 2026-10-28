@@ -403,6 +403,7 @@ function ScheduleRail({
   onUnschedule,
   onView,
   onMoveDate,
+  onNoteAdded,
   suggesting,
   canSuggest,
   draggable,
@@ -426,6 +427,7 @@ function ScheduleRail({
   onUnschedule?: (job: WorkOrderListItem) => void;
   onView?: (job: WorkOrderListItem) => void;
   onMoveDate?: (job: WorkOrderListItem, date: string) => void;
+  onNoteAdded?: () => void;
   suggesting: boolean;
   canSuggest: boolean;
   draggable: boolean;
@@ -518,6 +520,7 @@ function ScheduleRail({
                       ? (date) => onMoveDate(order, date)
                       : undefined
                   }
+                  onNoteAdded={onNoteAdded}
                 />
               ))}
             </section>
@@ -555,6 +558,7 @@ function ScheduleRail({
                       ? (date) => onMoveDate(order, date)
                       : undefined
                   }
+                  onNoteAdded={onNoteAdded}
                 />
               ))}
             </section>
@@ -2753,6 +2757,7 @@ export default function CalendarTab({
       onMoveDate={
         canWrite ? (job, date) => void moveWorkOrderDate(job, date) : undefined
       }
+      onNoteAdded={canWrite ? () => void load() : undefined}
       suggesting={suggesting}
       canSuggest={Boolean(
         selectedRailJob && !selectedRailJob.scheduledStart,

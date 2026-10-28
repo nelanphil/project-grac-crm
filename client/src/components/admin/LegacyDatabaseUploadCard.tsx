@@ -407,7 +407,11 @@ export default function LegacyDatabaseUploadCard({
                 Production inserted{" "}
                 {executeResult.production.summary.customersInserted} customers
                 and {executeResult.production.summary.workOrdersInserted} work
-                orders. ASC contracts created{" "}
+                orders, skipped{" "}
+                {executeResult.production.summary.customersSkippedNonOwner ?? 0}{" "}
+                non-owner customers and{" "}
+                {executeResult.production.summary.workOrdersSkippedNonOwner ?? 0}{" "}
+                work orders. ASC contracts created{" "}
                 {executeResult.production.summary.contractsCreated ?? 0},
                 updated{" "}
                 {executeResult.production.summary.contractsUpdated ?? 0}.
@@ -419,7 +423,11 @@ export default function LegacyDatabaseUploadCard({
                 Development inserted{" "}
                 {executeResult.development.summary.customersInserted} customers
                 and {executeResult.development.summary.workOrdersInserted} work
-                orders. ASC contracts created{" "}
+                orders, skipped{" "}
+                {executeResult.development.summary.customersSkippedNonOwner ?? 0}{" "}
+                non-owner customers and{" "}
+                {executeResult.development.summary.workOrdersSkippedNonOwner ?? 0}{" "}
+                work orders. ASC contracts created{" "}
                 {executeResult.development.summary.contractsCreated ?? 0},
                 updated{" "}
                 {executeResult.development.summary.contractsUpdated ?? 0}.

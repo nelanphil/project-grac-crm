@@ -2,6 +2,7 @@ import { Response } from "express";
 import mongoose, { FilterQuery, Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { Estimate } from "../models/mongo/Estimate";
+import { loadDeletedCustomerIds } from "../models/mongo/Customer";
 import { EstimateNote } from "../models/mongo/EstimateNote";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { WorkOrderNote, IReminderCompletion } from "../models/mongo/WorkOrderNote";
@@ -171,15 +172,33 @@ export async function listReminders(
     const [workOrders, estimates] = await Promise.all([
       workOrderIds.length
         ? WorkOrder.find({ _id: { $in: workOrderIds } })
-            .select("number legacyId customerName")
+            .select("number legacyId customerName customerRef")
             .lean()
         : [],
       estimateIds.length
         ? Estimate.find({ _id: { $in: estimateIds } })
-            .select("number customerName")
+            .select("number customerName customerRef")
             .lean()
         : [],
     ]);
+
+    const deletedCustomerIds = new Set(
+      (await loadDeletedCustomerIds()).map((id) => String(id)),
+    );
+    const belongsToDeletedCustomer = (customerRef: unknown) =>
+      Boolean(customerRef) && deletedCustomerIds.has(String(customerRef));
+    const visibleWorkOrderNotes = workOrderNotes.filter((note) => {
+      const order = workOrders.find(
+        (row) => String(row._id) === String(note.workOrderRef),
+      );
+      return !belongsToDeletedCustomer(order?.customerRef);
+    });
+    const visibleEstimateNotes = estimateNotes.filter((note) => {
+      const estimate = estimates.find(
+        (row) => String(row._id) === String(note.estimateRef),
+      );
+      return !belongsToDeletedCustomer(estimate?.customerRef);
+    });
 
     const workOrderById = new Map(
       workOrders.map((order) => [String(order._id), order]),
@@ -189,7 +208,7 @@ export async function listReminders(
     );
 
     const reminders: ReminderListItem[] = [
-      ...workOrderNotes.map((note) => {
+      ...visibleWorkOrderNotes.map((note) => {
         const order = workOrderById.get(String(note.workOrderRef));
         return {
           id: String(note._id),
@@ -205,7 +224,7 @@ export async function listReminders(
           completed: isCompleted(note.reminderCompletions, req.user!.id),
         };
       }),
-      ...estimateNotes.map((note) => {
+      ...visibleEstimateNotes.map((note) => {
         const estimate = estimateById.get(String(note.estimateRef));
         return {
           id: String(note._id),

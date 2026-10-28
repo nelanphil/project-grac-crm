@@ -20,6 +20,7 @@ import {
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { Check, GripVertical, MapPin } from "lucide-react";
+import { ScheduleNoteComposer } from "@/components/schedule/ScheduleNoteComposer";
 import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 import {
   getScheduleRoute,
@@ -310,6 +311,7 @@ function UnscheduledCardShell({
   onUnschedule,
   onView,
   onMoveDate,
+  onNoteAdded,
   isDragging,
   setNodeRef,
   style,
@@ -326,6 +328,7 @@ function UnscheduledCardShell({
   onUnschedule?: () => void;
   onView?: (order: WorkOrderListItem) => void;
   onMoveDate?: (date: string) => void;
+  onNoteAdded?: () => void;
   isDragging?: boolean;
   setNodeRef?: (node: HTMLElement | null) => void;
   style?: CSSProperties;
@@ -337,6 +340,7 @@ function UnscheduledCardShell({
 }) {
   const windowLabel = formatDesiredStart(order.desiredStartTime, order.desiredStartBy);
   const [movingDate, setMovingDate] = useState(false);
+  const [addingNote, setAddingNote] = useState(false);
   const moveDateRef = useRef<HTMLInputElement>(null);
   const assignedName = personName(order.assignee);
   const recommendedName = recommendation ? personName(recommendation) : "";
@@ -447,7 +451,7 @@ function UnscheduledCardShell({
                 .join(" · ")}
             </div>
             {order.scheduleNote ? (
-              <div className="mt-1 line-clamp-2 text-neutral-600">
+              <div className="mt-1 line-clamp-2 whitespace-pre-line text-neutral-600">
                 {order.scheduleNote}
               </div>
             ) : null}
@@ -548,18 +552,45 @@ function UnscheduledCardShell({
             ) : null}
           </div>
         </div>
-        {onView ? (
-          <button
-            type="button"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              onView(order);
+        {onView || onNoteAdded ? (
+          <div className="mt-1.5 flex items-center gap-3">
+            {onView ? (
+              <button
+                type="button"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onView(order);
+                }}
+                className="text-[11px] font-medium text-brand-orange hover:underline"
+              >
+                View
+              </button>
+            ) : null}
+            {onNoteAdded ? (
+              <button
+                type="button"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setAddingNote((open) => !open);
+                }}
+                className="text-[11px] font-medium text-brand-orange hover:underline"
+              >
+                Add Note
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {addingNote && onNoteAdded ? (
+          <ScheduleNoteComposer
+            workOrderId={order._id}
+            onSaved={() => {
+              setAddingNote(false);
+              onNoteAdded();
             }}
-            className="mt-1.5 inline-block text-[11px] font-medium text-brand-orange hover:underline"
-          >
-            View
-          </button>
+            onCancel={() => setAddingNote(false)}
+          />
         ) : null}
       </div>
       {menu && onAssignTechnician ? (
@@ -591,6 +622,7 @@ function DraggableUnscheduledCard({
   onUnschedule,
   onView,
   onMoveDate,
+  onNoteAdded,
   lift = false,
   technicianColors,
 }: {
@@ -604,6 +636,7 @@ function DraggableUnscheduledCard({
   onUnschedule?: () => void;
   onView?: (order: WorkOrderListItem) => void;
   onMoveDate?: (date: string) => void;
+  onNoteAdded?: () => void;
   lift?: boolean;
   technicianColors?: Record<string, string>;
 }) {
@@ -626,6 +659,7 @@ function DraggableUnscheduledCard({
       onUnschedule={onUnschedule}
       onView={onView}
       onMoveDate={onMoveDate}
+      onNoteAdded={onNoteAdded}
       isDragging={isDragging}
       setNodeRef={setNodeRef}
       style={style}
@@ -648,6 +682,7 @@ export function UnscheduledCard({
   onUnschedule,
   onView,
   onMoveDate,
+  onNoteAdded,
   technicianColors,
 }: {
   order: WorkOrderListItem;
@@ -662,6 +697,7 @@ export function UnscheduledCard({
   onUnschedule?: () => void;
   onView?: (order: WorkOrderListItem) => void;
   onMoveDate?: (date: string) => void;
+  onNoteAdded?: () => void;
   technicianColors?: Record<string, string>;
 }) {
   const narrow = useNarrowSchedule();
@@ -678,6 +714,7 @@ export function UnscheduledCard({
         onUnschedule={onUnschedule}
         onView={onView}
         onMoveDate={onMoveDate}
+        onNoteAdded={onNoteAdded}
         technicianColors={technicianColors}
       />
     );
@@ -694,6 +731,7 @@ export function UnscheduledCard({
       onUnschedule={onUnschedule}
       onView={onView}
       onMoveDate={onMoveDate}
+      onNoteAdded={onNoteAdded}
       lift={lift}
       technicianColors={technicianColors}
     />

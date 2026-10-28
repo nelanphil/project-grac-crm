@@ -4,7 +4,11 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import { Invoice } from "../models/mongo/Invoice";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { Estimate } from "../models/mongo/Estimate";
-import { Customer } from "../models/mongo/Customer";
+import {
+  Customer,
+  excludeDeletedCustomerRefs,
+  loadDeletedCustomerIds,
+} from "../models/mongo/Customer";
 import { JobRole } from "../models/mongo/JobRole";
 import { User, activeUserFilter } from "../models/mongo/User";
 import { dollarsToCents } from "../services/invoice.service";
@@ -124,7 +128,10 @@ async function resolveAppliedOwner(
     .select("_id")
     .lean();
   const customerIds = customers.map((customer) => customer._id as Types.ObjectId);
-  const workOrderFilter = ownerWorkOrderMongoFilter(legacyUserId, customerIds);
+  const workOrderFilter = mergeMongoFilters(
+    ownerWorkOrderMongoFilter(legacyUserId, customerIds),
+    excludeDeletedCustomerRefs(await loadDeletedCustomerIds()),
+  );
   const workOrders = await WorkOrder.find(workOrderFilter).select("_id").lean();
 
   return {
@@ -207,6 +214,7 @@ export async function getFinancialsSummary(
       return;
     }
     const scope = applied.scope;
+    const hideDeleted = excludeDeletedCustomerRefs(await loadDeletedCustomerIds());
 
     const invoiceMatch: Record<string, unknown> = {};
     inRange(invoiceMatch, "issuedAt", from, to);
@@ -235,19 +243,19 @@ export async function getFinancialsSummary(
     );
 
     const [invoices, workOrders, estimates, completedPaidOrders, pendingOrders] = await Promise.all([
-      Invoice.find(invoiceMatch)
+      Invoice.find(mergeMongoFilters(invoiceMatch, hideDeleted))
         .select("status amountCents dueDate issuedAt paidAt workOrderRef sourceType")
         .lean(),
-      WorkOrder.find(woMatch)
+      WorkOrder.find(mergeMongoFilters(woMatch, hideDeleted))
         .select("total paid completed laborHours date createdAt")
         .lean(),
-      Estimate.find(estimateMatch)
+      Estimate.find(mergeMongoFilters(estimateMatch, hideDeleted))
         .select("status total createdAt")
         .lean(),
-      WorkOrder.find(completedPaidMatch)
+      WorkOrder.find(mergeMongoFilters(completedPaidMatch, hideDeleted))
         .select("total")
         .lean(),
-      WorkOrder.find(pendingPaymentMatch)
+      WorkOrder.find(mergeMongoFilters(pendingPaymentMatch, hideDeleted))
         .select("total")
         .lean(),
     ]);
@@ -390,6 +398,7 @@ export async function getFinancialsRecords(
       return;
     }
     const scope = applied.scope;
+    const hideDeleted = excludeDeletedCustomerRefs(await loadDeletedCustomerIds());
     const paidAsTickets = type === "paid" && scope != null;
 
     // Group 1: Invoices
@@ -416,6 +425,7 @@ export async function getFinancialsRecords(
       if (search) {
         const re = new RegExp(escapeRegex(search), "i");
         const matchingCustomers = await Customer.find({
+          deletedAt: null,
           $or: [
             { accountName: re },
             { first: re },
@@ -463,9 +473,10 @@ export async function getFinancialsRecords(
               : { issuedAt: -1, createdAt: -1 };
       }
 
+      const invoiceQuery = mergeMongoFilters(match, hideDeleted);
       const [total, invoices] = await Promise.all([
-        Invoice.countDocuments(match),
-        Invoice.find(match)
+        Invoice.countDocuments(invoiceQuery),
+        Invoice.find(invoiceQuery)
           .sort(sort)
           .skip((page - 1) * pageSize)
           .limit(pageSize)
@@ -483,6 +494,7 @@ export async function getFinancialsRecords(
         customerRefs.length > 0
           ? Customer.find({
               _id: { $in: customerRefs.map((id) => new Types.ObjectId(id)) },
+              deletedAt: null,
             })
               .select("_id accountName first last legacyId")
               .lean()
@@ -616,6 +628,7 @@ export async function getFinancialsRecords(
         baseMatch,
         searchMatch,
         scope?.workOrderFilter,
+        hideDeleted,
       );
 
       let sort: Record<string, 1 | -1>;
@@ -662,6 +675,7 @@ export async function getFinancialsRecords(
         missingCustRef.length > 0
           ? Customer.find({
               _id: { $in: missingCustRef.map((id) => new Types.ObjectId(id)) },
+              deletedAt: null,
             })
               .select("_id accountName first last legacyId")
               .lean()
@@ -763,9 +777,10 @@ export async function getFinancialsRecords(
         sort = { createdAt: -1 };
       }
 
+      const estimateQuery = mergeMongoFilters(match, hideDeleted);
       const [total, estimates] = await Promise.all([
-        Estimate.countDocuments(match),
-        Estimate.find(match)
+        Estimate.countDocuments(estimateQuery),
+        Estimate.find(estimateQuery)
           .sort(sort)
           .skip((page - 1) * pageSize)
           .limit(pageSize)

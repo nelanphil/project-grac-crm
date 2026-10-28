@@ -13,6 +13,7 @@ export const createWorkOrderNoteSchema = z.object({
   visibleToCustomer: z.boolean().optional().default(false),
   templateId: z.string().optional(),
   isReminder: z.boolean().optional().default(false),
+  showOnSchedule: z.boolean().optional().default(false),
   mentionUserIds: mentionUserIdsSchema,
 });
 
@@ -20,6 +21,7 @@ export const updateWorkOrderNoteSchema = z.object({
   content: noteContentSchema.optional(),
   visibleToCustomer: z.boolean().optional(),
   isReminder: z.boolean().optional(),
+  showOnSchedule: z.boolean().optional(),
   mentionUserIds: mentionUserIdsSchema,
 });
 

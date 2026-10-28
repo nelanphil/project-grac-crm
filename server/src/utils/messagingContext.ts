@@ -1,5 +1,5 @@
 import { Types } from "mongoose";
-import { Customer } from "../models/mongo/Customer";
+import { activeCustomerFilter, Customer } from "../models/mongo/Customer";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { Contract } from "../models/mongo/Contract";
 import { ContractTemplate } from "../models/mongo/ContractTemplate";
@@ -37,7 +37,13 @@ export async function customerRefsWithRenewalsInMonth(
   for (const row of rows) {
     if (row.customerRef) ids.add(String(row.customerRef));
   }
-  return [...ids].map((id) => new Types.ObjectId(id));
+  if (ids.size === 0) return [];
+
+  const active = await Customer.find({
+    _id: { $in: [...ids].map((id) => new Types.ObjectId(id)) },
+    ...activeCustomerFilter,
+  }).distinct("_id");
+  return active as Types.ObjectId[];
 }
 
 export async function resolveRenewalForCustomer(
@@ -185,6 +191,7 @@ export async function buildTemplateContextForContact(
         .select("_id first last address city state zip deletedAt mergedIntoRef")
         .lean()
     : null;
+  if (loaded?.deletedAt) return null;
   const customer =
     loaded && !loaded.deletedAt && !loaded.mergedIntoRef ? loaded : null;
 

@@ -66,4 +66,8 @@ export const MIGRATIONS: MigrationEntry[] = [
     id: "2026-10-22-customer-activity",
     file: "backfill-customer-activity",
   },
+  {
+    id: "2026-10-28-soft-delete-non-owner-customers",
+    file: "soft-delete-non-owner-customers",
+  },
 ];

@@ -36,6 +36,13 @@ export type ApplyRenewalInput = {
   actorName?: string;
 };
 
+export class DeletedCustomerRenewalError extends Error {
+  constructor() {
+    super("Cannot renew a contract for a deleted customer");
+    this.name = "DeletedCustomerRenewalError";
+  }
+}
+
 export async function applyContractRenewal(
   input: ApplyRenewalInput,
 ): Promise<IContract> {
@@ -51,6 +58,14 @@ export async function applyContractRenewal(
     userId,
     actorUserId,
   } = input;
+
+  if (contract.customerRef) {
+    const active = await Customer.exists({
+      _id: contract.customerRef,
+      deletedAt: null,
+    });
+    if (!active) throw new DeletedCustomerRenewalError();
+  }
 
   if (!contract.renewalDueDate) {
     throw new Error(
@@ -197,16 +212,20 @@ export async function markInvoicePaid(params: {
         (r) => r.invoiceRef && String(r.invoiceRef) === String(invoice._id),
       );
       if (!already) {
-        await applyContractRenewal({
-          contract,
-          renewedAt: new Date(),
-          durationMonths,
-          notes: `Paid via invoice ${invoice.number}`,
-          invoiceRef: invoice._id as Types.ObjectId,
-          amountCents: invoice.amountCents,
-          paymentProvider: invoice.paymentProvider,
-          providerPaymentId: invoice.providerPaymentId,
-        });
+        try {
+          await applyContractRenewal({
+            contract,
+            renewedAt: new Date(),
+            durationMonths,
+            notes: `Paid via invoice ${invoice.number}`,
+            invoiceRef: invoice._id as Types.ObjectId,
+            amountCents: invoice.amountCents,
+            paymentProvider: invoice.paymentProvider,
+            providerPaymentId: invoice.providerPaymentId,
+          });
+        } catch (err) {
+          if (!(err instanceof DeletedCustomerRenewalError)) throw err;
+        }
       }
     }
   }

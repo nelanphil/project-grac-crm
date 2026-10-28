@@ -3,7 +3,11 @@ import { User, activeUserFilter, IUser } from "../models/mongo/User";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import { WorkOrderNote } from "../models/mongo/WorkOrderNote";
 import { WorkOrderType } from "../models/mongo/WorkOrderType";
-import { Customer } from "../models/mongo/Customer";
+import {
+  Customer,
+  excludeDeletedCustomerRefs,
+  loadDeletedCustomerIds,
+} from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact, activeContactFilter } from "../models/mongo/CustomerContact";
 import { customerDisplayName } from "./notification.service";
@@ -244,6 +248,8 @@ export type EnrichedWorkOrder = Record<string, unknown> & {
   workOrderTypeRef: string | null;
   workOrderType: { _id: string; label: string } | null;
   scheduleNote: string | null;
+  /** Notes flagged to appear on the technician schedule, oldest first. */
+  scheduleNotes: string[];
 };
 
 async function latestScheduleNotes(
@@ -267,6 +273,30 @@ async function latestScheduleNotes(
   for (const row of rows) {
     const content = row.content.trim();
     if (content) notes.set(String(row._id), content);
+  }
+  return notes;
+}
+
+async function scheduleNotesByWorkOrder(
+  workOrderIds: string[],
+): Promise<Map<string, string[]>> {
+  const ids = workOrderIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+  if (ids.length === 0) return new Map();
+  const rows = await WorkOrderNote.find({
+    workOrderRef: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) },
+    showOnSchedule: true,
+  })
+    .select("workOrderRef content")
+    .sort({ createdAt: 1 })
+    .lean();
+  const notes = new Map<string, string[]>();
+  for (const row of rows) {
+    const content = row.content.trim();
+    if (!content) continue;
+    const key = String(row.workOrderRef);
+    const list = notes.get(key) ?? [];
+    list.push(content);
+    notes.set(key, list);
   }
   return notes;
 }
@@ -417,9 +447,13 @@ export async function enrichScheduleWorkOrders(
     ]),
   );
 
-  const noteByWorkOrder = await latestScheduleNotes(
-    workOrders.map((wo) => wo._id?.toString() ?? "").filter(Boolean),
-  );
+  const workOrderIds = workOrders
+    .map((wo) => wo._id?.toString() ?? "")
+    .filter(Boolean);
+  const [noteByWorkOrder, flaggedByWorkOrder] = await Promise.all([
+    latestScheduleNotes(workOrderIds),
+    scheduleNotesByWorkOrder(workOrderIds),
+  ]);
 
   return workOrders.map((wo) => {
     const resolvedRef =
@@ -434,7 +468,9 @@ export async function enrichScheduleWorkOrders(
       typeof wo.customerName === "string" && wo.customerName.trim()
         ? wo.customerName.trim()
         : null;
-    const note = noteByWorkOrder.get(wo._id?.toString() ?? "") ?? "";
+    const workOrderId = wo._id?.toString() ?? "";
+    const note = noteByWorkOrder.get(workOrderId) ?? "";
+    const flagged = flaggedByWorkOrder.get(workOrderId) ?? [];
     const description =
       typeof wo.descPerform === "string" ? wo.descPerform.trim() : "";
     const crew = crewIdStrings({
@@ -459,7 +495,8 @@ export async function enrichScheduleWorkOrders(
         .map((id) => userById.get(id))
         .filter((user): user is AssigneeSummary => Boolean(user)),
       assignee: userById.get(crew[0] ?? "") ?? null,
-      scheduleNote: note || description || null,
+      scheduleNotes: flagged,
+      scheduleNote: flagged.join("\n") || note || description || null,
     };
   });
 }
@@ -3949,7 +3986,10 @@ export async function listScheduleQueue(opts: {
   const today = formatLocalDate(new Date());
   const { start: todayStart, end: todayEnd } = rangeUtc(today, today);
 
-  const base: Record<string, unknown> = { completed: { $ne: true } };
+  const base: Record<string, unknown> = {
+    completed: { $ne: true },
+    ...excludeDeletedCustomerRefs(await loadDeletedCustomerIds()),
+  };
   if (!opts.dispatcher) {
     Object.assign(base, assigneeInFilter([opts.userId]));
   }

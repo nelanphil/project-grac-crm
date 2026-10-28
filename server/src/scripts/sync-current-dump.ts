@@ -198,6 +198,7 @@ async function main(): Promise<void> {
     log(`  Primary contacts created:      ${result.summary.contactsCreated}`);
     log(`  Customers skipped (legacy id): ${result.summary.customersSkippedLegacy}`);
     log(`  Customers skipped (identity):  ${result.summary.customersSkippedIdentity}`);
+    log(`  Customers skipped (non-owner): ${result.summary.customersSkippedNonOwner}`);
     log(`  Customer legacyId collisions:  ${result.summary.customerCollisions}`);
     log(`  Work orders parsed:            ${result.summary.workOrdersParsed}`);
     log(`  Work orders inserted:          ${result.summary.workOrdersInserted}`);
@@ -208,6 +209,7 @@ async function main(): Promise<void> {
     log(`  Work order status updates:     ${result.summary.workOrdersStatusUpdated}`);
     log(`  Work orders skipped (duplicate legacy id): ${result.summary.workOrdersSkippedDuplicateLegacy}`);
     log(`  Work orders skipped (user mismatch): ${result.summary.workOrdersSkippedUserMismatch}`);
+    log(`  Work orders skipped (non-owner): ${result.summary.workOrdersSkippedNonOwner}`);
     log(`  Customers with ASC product:    ${result.summary.ascCustomers}`);
     log(`  ASC contracts created:         ${result.summary.contractsCreated}`);
     log(`  ASC contracts updated:         ${result.summary.contractsUpdated}`);

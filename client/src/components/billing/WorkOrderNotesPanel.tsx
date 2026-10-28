@@ -23,6 +23,37 @@ import {
   winningDesiredWindow,
 } from "@/lib/noteTimeTags";
 
+function AppearInScheduleToggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="inline-flex items-center gap-2 text-sm text-neutral-700"
+    >
+      <span
+        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${
+          checked ? "bg-brand-orange" : "bg-neutral-300"
+        }`}
+      >
+        <span
+          className={`pointer-events-none mt-0.5 inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+            checked ? "translate-x-4" : "translate-x-0.5"
+          }`}
+        />
+      </span>
+      Appear in Schedule
+    </button>
+  );
+}
+
 function formatNoteDate(date: string): string {
   return new Date(date).toLocaleString(undefined, {
     month: "short",
@@ -69,6 +100,7 @@ export default function WorkOrderNotesPanel({
   const [content, setContent] = useState("");
   const [visibleToCustomer, setVisibleToCustomer] = useState(false);
   const [isReminder, setIsReminder] = useState(false);
+  const [showOnSchedule, setShowOnSchedule] = useState(false);
   const [mentionIds, setMentionIds] = useState<string[]>([]);
   const [mentions, setMentions] = useState<NoteMention[]>([]);
   const [adding, setAdding] = useState(false);
@@ -84,6 +116,7 @@ export default function WorkOrderNotesPanel({
   const [editContent, setEditContent] = useState("");
   const [editVisible, setEditVisible] = useState(false);
   const [editReminder, setEditReminder] = useState(false);
+  const [editShowOnSchedule, setEditShowOnSchedule] = useState(false);
   const [editMentionIds, setEditMentionIds] = useState<string[]>([]);
   const [editMentions, setEditMentions] = useState<NoteMention[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -171,6 +204,7 @@ export default function WorkOrderNotesPanel({
         content: text,
         visibleToCustomer,
         isReminder,
+        showOnSchedule: source === "work-order" ? showOnSchedule : false,
         mentionUserIds: mentionIds,
         mentions,
         desiredStartTime: parsedTags.ok ? parsedTags.desiredStartTime : "",
@@ -189,6 +223,7 @@ export default function WorkOrderNotesPanel({
       setTemplateId("");
       setVisibleToCustomer(false);
       setIsReminder(false);
+      setShowOnSchedule(false);
       setMentionIds([]);
       setMentions([]);
       setShowSaveTemplate(false);
@@ -206,6 +241,7 @@ export default function WorkOrderNotesPanel({
           content: text,
           visibleToCustomer,
           isReminder,
+          ...(source === "work-order" ? { showOnSchedule } : {}),
           mentionUserIds: mentionIds,
           ...(templateId ? { templateId } : {}),
         },
@@ -216,6 +252,7 @@ export default function WorkOrderNotesPanel({
       setTemplateId("");
       setVisibleToCustomer(false);
       setIsReminder(false);
+      setShowOnSchedule(false);
       setMentionIds([]);
       setMentions([]);
       setShowSaveTemplate(false);
@@ -275,6 +312,7 @@ export default function WorkOrderNotesPanel({
     setEditContent(note.content);
     setEditVisible(note.visibleToCustomer);
     setEditReminder(Boolean(note.isReminder));
+    setEditShowOnSchedule(Boolean(note.showOnSchedule));
     setEditMentionIds(note.mentionUserIds ?? []);
     setEditMentions(note.mentions ?? []);
   }
@@ -297,6 +335,7 @@ export default function WorkOrderNotesPanel({
               content: text,
               visibleToCustomer: editVisible,
               isReminder: editReminder,
+              showOnSchedule: source === "work-order" ? editShowOnSchedule : false,
               mentionUserIds: editMentionIds,
               mentions: editMentions,
               desiredStartTime: parsedTags.ok ? parsedTags.desiredStartTime : "",
@@ -322,6 +361,7 @@ export default function WorkOrderNotesPanel({
           content: text,
           visibleToCustomer: editVisible,
           isReminder: editReminder,
+          ...(source === "work-order" ? { showOnSchedule: editShowOnSchedule } : {}),
           mentionUserIds: editMentionIds,
         },
         source,
@@ -423,6 +463,11 @@ export default function WorkOrderNotesPanel({
                           Reminder
                         </span>
                       ) : null}
+                      {note.showOnSchedule ? (
+                        <span className="ml-2 rounded-full bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 print:hidden">
+                          Schedule
+                        </span>
+                      ) : null}
                     </p>
                     <p className="text-xs text-neutral-400">
                       {formatNoteDate(note.createdAt)}
@@ -468,22 +513,30 @@ export default function WorkOrderNotesPanel({
                     {noteTimeTagMessage(editContent) ? (
                       <p className="text-xs text-amber-700">{noteTimeTagMessage(editContent)}</p>
                     ) : null}
-                    <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
-                      <input
-                        type="checkbox"
-                        checked={editVisible}
-                        onChange={(e) => setEditVisible(e.target.checked)}
-                      />
-                      {visibilityLabel}
-                    </label>
-                    <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
-                      <input
-                        type="checkbox"
-                        checked={editReminder}
-                        onChange={(e) => setEditReminder(e.target.checked)}
-                      />
-                      Reminder
-                    </label>
+                    <div className="flex flex-wrap gap-4">
+                      <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
+                        <input
+                          type="checkbox"
+                          checked={editVisible}
+                          onChange={(e) => setEditVisible(e.target.checked)}
+                        />
+                        {visibilityLabel}
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
+                        <input
+                          type="checkbox"
+                          checked={editReminder}
+                          onChange={(e) => setEditReminder(e.target.checked)}
+                        />
+                        Reminder
+                      </label>
+                      {source === "work-order" ? (
+                        <AppearInScheduleToggle
+                          checked={editShowOnSchedule}
+                          onChange={setEditShowOnSchedule}
+                        />
+                      ) : null}
+                    </div>
                     <div className="flex gap-2">
                       <button
                         type="button"
@@ -622,6 +675,12 @@ export default function WorkOrderNotesPanel({
               />
               Reminder
             </label>
+            {source === "work-order" ? (
+              <AppearInScheduleToggle
+                checked={showOnSchedule}
+                onChange={setShowOnSchedule}
+              />
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button

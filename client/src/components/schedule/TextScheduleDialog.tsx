@@ -8,6 +8,7 @@ import {
   textTechnicianSchedule,
   type ScheduleTextResult,
 } from "@/lib/api";
+import { ScheduleNoteComposer } from "@/components/schedule/ScheduleNoteComposer";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const MISSING_PHONE =
@@ -80,6 +81,7 @@ function TextScheduleDialog({
   const titleId = useId();
   const [preview, setPreview] = useState<ScheduleTextResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [noteJobId, setNoteJobId] = useState<string | null>(null);
   const [phase, setPhase] = useState<"loading" | "ready" | "sending" | "sent">(
     "loading",
   );
@@ -106,6 +108,21 @@ function TextScheduleDialog({
       cancelled = true;
     };
   }, [token, userId, date]);
+
+  async function refreshPreview() {
+    if (!token) return;
+    setError(null);
+    try {
+      const result = await textTechnicianSchedule(token, { userId, date });
+      setPreview(result);
+    } catch (err: unknown) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to load this schedule.",
+      );
+    }
+  }
 
   async function send() {
     if (!token || phase === "sending") return;
@@ -168,6 +185,41 @@ function TextScheduleDialog({
           <pre className="mt-4 whitespace-pre-wrap rounded-md bg-neutral-50 p-3 font-sans text-sm text-neutral-800">
             {preview.body}
           </pre>
+        ) : null}
+        {preview && preview.jobs.length > 0 && phase !== "sent" ? (
+          <ul className="mt-3 space-y-2">
+            {preview.jobs.map((job) => (
+              <li
+                key={job.workOrderId}
+                className="rounded-md border border-neutral-200 px-3 py-2"
+              >
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="min-w-0 truncate text-neutral-800">
+                    {[job.time, job.customerName].filter(Boolean).join(" · ")}
+                  </span>
+                  {noteJobId === job.workOrderId ? null : (
+                    <button
+                      type="button"
+                      onClick={() => setNoteJobId(job.workOrderId)}
+                      className="shrink-0 text-xs font-medium text-brand-orange hover:underline"
+                    >
+                      Add note
+                    </button>
+                  )}
+                </div>
+                {noteJobId === job.workOrderId ? (
+                  <ScheduleNoteComposer
+                    workOrderId={job.workOrderId}
+                    onSaved={() => {
+                      setNoteJobId(null);
+                      void refreshPreview();
+                    }}
+                    onCancel={() => setNoteJobId(null)}
+                  />
+                ) : null}
+              </li>
+            ))}
+          </ul>
         ) : null}
         <div className="mt-4 flex justify-end gap-2">
           <button

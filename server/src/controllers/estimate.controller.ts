@@ -6,7 +6,11 @@ import {
   includingDeletedWorkOrders,
   WorkOrder,
 } from "../models/mongo/WorkOrder";
-import { Customer } from "../models/mongo/Customer";
+import {
+  Customer,
+  excludeDeletedCustomerRefs,
+  loadDeletedCustomerIds,
+} from "../models/mongo/Customer";
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import {
   createEstimateSchema,
@@ -90,24 +94,37 @@ export async function getEstimates(
       ];
     }
 
+    const hideDeleted = excludeDeletedCustomerRefs(await loadDeletedCustomerIds());
+    const withActiveCustomers = (extra: Record<string, unknown>) => {
+      if (Object.keys(hideDeleted).length === 0) return extra;
+      if (Object.keys(extra).length === 0) return hideDeleted;
+      return { $and: [hideDeleted, extra] };
+    };
+
     const [total, estimates, statsTotal, activeCount, awardedCount, lostCount] =
       await Promise.all([
-        Estimate.countDocuments(filter),
-        Estimate.find(filter)
+        Estimate.countDocuments(withActiveCustomers(filter)),
+        Estimate.find(withActiveCustomers(filter))
           .sort({ date: -1, createdAt: -1 })
           .skip((page - 1) * pageSize)
           .limit(pageSize)
           .lean(),
-        Estimate.countDocuments({}),
-        Estimate.countDocuments({
-          status: { $in: [...ESTIMATE_STATUS_GROUPS.active] },
-        }),
-        Estimate.countDocuments({
-          status: { $in: [...ESTIMATE_STATUS_GROUPS.awarded] },
-        }),
-        Estimate.countDocuments({
-          status: { $in: [...ESTIMATE_STATUS_GROUPS.lost] },
-        }),
+        Estimate.countDocuments(withActiveCustomers({})),
+        Estimate.countDocuments(
+          withActiveCustomers({
+            status: { $in: [...ESTIMATE_STATUS_GROUPS.active] },
+          }),
+        ),
+        Estimate.countDocuments(
+          withActiveCustomers({
+            status: { $in: [...ESTIMATE_STATUS_GROUPS.awarded] },
+          }),
+        ),
+        Estimate.countDocuments(
+          withActiveCustomers({
+            status: { $in: [...ESTIMATE_STATUS_GROUPS.lost] },
+          }),
+        ),
       ]);
 
     res.json({

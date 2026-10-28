@@ -2114,6 +2114,7 @@ export interface WorkOrderNote {
   content: string;
   visibleToCustomer: boolean;
   isReminder?: boolean;
+  showOnSchedule?: boolean;
   mentionUserIds?: string[];
   mentions?: NoteMention[];
   desiredStartTime?: string;
@@ -2127,6 +2128,7 @@ export interface TicketNoteInput {
   visibleToCustomer?: boolean;
   templateId?: string;
   isReminder?: boolean;
+  showOnSchedule?: boolean;
   mentionUserIds?: string[];
 }
 
@@ -2485,6 +2487,8 @@ export interface WorkOrderListItem {
   assignee?: WorkOrderAssignee | null;
   warnings?: string[];
   scheduleNote?: string | null;
+  /** Notes flagged to appear on the technician schedule, oldest first. */
+  scheduleNotes?: string[];
   deletedAt?: string | null;
   offlinePayment?: OfflinePayment | null;
 }
@@ -3029,12 +3033,19 @@ export async function getScheduleStaff(
   });
 }
 
+export interface ScheduleTextJob {
+  workOrderId: string;
+  customerName: string;
+  time: string;
+}
+
 export interface ScheduleTextResult {
   sent: boolean;
   body: string;
   phoneLast4: string | null;
   technicianName: string;
   jobCount: number;
+  jobs: ScheduleTextJob[];
   sid?: string;
 }
 
@@ -7776,6 +7787,7 @@ export type LegacyDumpImportSummary = {
   contactsCreated: number;
   customersSkippedLegacy: number;
   customersSkippedIdentity: number;
+  customersSkippedNonOwner?: number;
   customerCollisions: number;
   workOrdersParsed: number;
   workOrdersInserted: number;
@@ -7786,6 +7798,7 @@ export type LegacyDumpImportSummary = {
   workOrdersStatusUpdated?: number;
   workOrdersSkippedDuplicateLegacy?: number;
   workOrdersSkippedUserMismatch?: number;
+  workOrdersSkippedNonOwner?: number;
   ascCustomers?: number;
   contractsCreated?: number;
   contractsUpdated?: number;

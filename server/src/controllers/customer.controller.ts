@@ -83,6 +83,7 @@ import {
   customerDisplayName,
   logNotificationAsync,
 } from "../services/notification.service";
+import { cascadeCustomerSoftDelete } from "../services/customerSoftDelete";
 import {
   diffFields,
 } from "../services/customerActivity.service";
@@ -1718,6 +1719,7 @@ export async function softDeleteCustomer(
       return;
     }
 
+    await cascadeCustomerSoftDelete([customer._id]);
     customer.deletedAt = new Date();
     await customer.save();
 
@@ -1767,6 +1769,8 @@ export async function restoreCustomer(
       return;
     }
 
+    // Restore only clears deletedAt. Renewal invoices voided and sends
+    // cancelled by the delete cascade stay cancelled.
     customer.deletedAt = null;
     await customer.save();
 

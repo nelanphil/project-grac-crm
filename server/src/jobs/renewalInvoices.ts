@@ -4,6 +4,10 @@ import { Contract } from "../models/mongo/Contract";
 import { ContractTemplate } from "../models/mongo/ContractTemplate";
 import { Invoice } from "../models/mongo/Invoice";
 import {
+  excludeDeletedCustomerRefs,
+  loadDeletedCustomerIds,
+} from "../models/mongo/Customer";
+import {
   dollarsToCents,
   invoiceTaxFromCurrentRate,
   nextInvoiceNumber,
@@ -26,9 +30,14 @@ export async function runRenewalInvoiceJob(): Promise<{
     new Date(today.getTime() + leadDays * 24 * 60 * 60 * 1000),
   );
 
+  const hideDeleted = excludeDeletedCustomerRefs(await loadDeletedCustomerIds());
   const contracts = await Contract.find({
     renewalDueDate: { $ne: null, $lte: windowEnd },
     temporary: { $ne: true },
+    customerRef: {
+      $ne: null,
+      ...(hideDeleted.customerRef as Record<string, unknown> | undefined),
+    },
   }).limit(500);
 
   let created = 0;

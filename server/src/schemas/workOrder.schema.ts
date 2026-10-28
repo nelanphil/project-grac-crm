@@ -70,6 +70,7 @@ export const createWorkOrderSchema = z
           visibleToCustomer: z.boolean().optional().default(false),
           templateId: z.string().optional(),
           isReminder: z.boolean().optional().default(false),
+          showOnSchedule: z.boolean().optional().default(false),
           mentionUserIds: z.array(z.string()).max(20).optional(),
         }),
       )

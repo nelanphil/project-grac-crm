@@ -201,7 +201,7 @@ function AppointmentCard({
         <p className="mt-2 break-words text-sm text-[var(--staff-ink)]">{service}</p>
       ) : null}
       {note ? (
-        <p className="mt-1 break-words text-sm text-[var(--staff-muted)]">{note}</p>
+        <p className="mt-1 whitespace-pre-line break-words text-sm text-[var(--staff-muted)]">{note}</p>
       ) : null}
 
       <div className="mt-4 flex min-w-0 flex-wrap items-center gap-2">

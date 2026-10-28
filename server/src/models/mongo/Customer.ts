@@ -128,6 +128,24 @@ export const Customer = mongoose.model<ICustomer>("Customer", customerSchema);
 /** Active (non–soft-deleted) customers only. */
 export const activeCustomerFilter = { deletedAt: null } as const;
 
+/** Ids of soft-deleted customers, for excluding their records from reports and jobs. */
+export async function loadDeletedCustomerIds(): Promise<Types.ObjectId[]> {
+  const ids = await Customer.find({ deletedAt: { $ne: null } }).distinct("_id");
+  return ids as Types.ObjectId[];
+}
+
+/**
+ * Match documents whose customer reference is not a soft-deleted customer.
+ * Missing or null refs are kept. An empty result means nothing needs excluding.
+ */
+export function excludeDeletedCustomerRefs(
+  deletedIds: readonly Types.ObjectId[],
+  field = "customerRef",
+): Record<string, unknown> {
+  if (deletedIds.length === 0) return {};
+  return { [field]: { $nin: [...deletedIds] } };
+}
+
 /** Active unmerged customers (excludes records that have been merged into another customer). */
 export const notMergedFilter = { mergedIntoRef: null } as const;
 
