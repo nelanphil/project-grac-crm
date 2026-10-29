@@ -1,5 +1,6 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
 import type { EmailChrome } from "../../utils/emailChrome";
+import type { RenewalVariants } from "../../utils/renewalVariants";
 
 export const MESSAGE_TEMPLATE_TYPES = ["sms", "email"] as const;
 export type MessageTemplateType = (typeof MESSAGE_TEMPLATE_TYPES)[number];
@@ -12,6 +13,8 @@ export interface IMessageTemplate extends Document {
   templateType: MessageTemplateType;
   emailChrome?: EmailChrome | null;
   offerContractTemplateId?: Types.ObjectId | null;
+  /** SMS only. Separate wording for expired, due soon, and active renewals. */
+  renewalVariants?: RenewalVariants | null;
   deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -40,6 +43,19 @@ const messageTemplateSchema = new Schema<IMessageTemplate>(
       type: Schema.Types.ObjectId,
       ref: "ContractTemplate",
       default: null,
+    },
+    renewalVariants: {
+      type: new Schema(
+        {
+          enabled: { type: Boolean, default: false },
+          dueSoonDays: { type: Number, default: 30, min: 1, max: 365 },
+          expired: { type: String, default: "" },
+          dueSoon: { type: String, default: "" },
+          active: { type: String, default: "" },
+        },
+        { _id: false },
+      ),
+      default: undefined,
     },
     deletedAt: { type: Date, default: null },
   },

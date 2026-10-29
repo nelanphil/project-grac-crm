@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -96,6 +96,24 @@ function formatWhen(value: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatVisitWhen(visit: JourneyVisitSummary): string {
+  const startDate = new Date(visit.startedAt);
+  const endDate = new Date(visit.lastEventAt || visit.startedAt);
+  const start = formatWhen(visit.startedAt);
+  if (
+    Number.isNaN(startDate.getTime()) ||
+    Number.isNaN(endDate.getTime()) ||
+    Math.abs(endDate.getTime() - startDate.getTime()) < 60_000
+  ) {
+    return start;
+  }
+  const sameDay = startDate.toDateString() === endDate.toDateString();
+  const end = sameDay
+    ? endDate.toLocaleString("en-US", { hour: "numeric", minute: "2-digit" })
+    : formatWhen(visit.lastEventAt);
+  return `${start} – ${end}`;
 }
 
 function statusTone(status: string): string {
@@ -397,18 +415,25 @@ function VisitTimeline({
   showAll: boolean;
 }) {
   const start = new Date(visit.startedAt).getTime();
-  const events = showAll
-    ? visit.events
-    : visit.events.filter((event) => {
-        if (event.type === "step" || event.type === "error" || event.type === "click") return true;
-        return describeEvent(event).bad;
-      });
+  const filtered = (
+    showAll
+      ? visit.events
+      : visit.events.filter((event) => {
+          if (event.type === "step" || event.type === "error" || event.type === "click") return true;
+          return describeEvent(event).bad;
+        })
+  ).map((event, index) => ({ event, index }));
+  const events = filtered.sort((a, b) => {
+    const delta = new Date(b.event.t).getTime() - new Date(a.event.t).getTime();
+    if (delta !== 0) return delta;
+    return b.index - a.index;
+  });
   if (events.length === 0) {
     return <p className="text-xs text-neutral-500">No steps recorded.</p>;
   }
   return (
     <ol className="space-y-1 border-l border-neutral-200 pl-3">
-      {events.map((event, index) => {
+      {events.map(({ event, index }) => {
         const { text, extra, bad } = describeEvent(event);
         const snapshot = snapshotOf(event);
         return (
@@ -505,7 +530,7 @@ function VisitRow({
           <p className="text-xs text-red-700">{visit.lastError}</p>
         ) : null}
         <p className="text-[11px] text-neutral-400">
-          {formatWhen(visit.startedAt)} · Customer
+          {formatVisitWhen(visit)} · Customer
         </p>
         <button
           type="button"
@@ -555,21 +580,27 @@ function VisitRow({
   );
 }
 
-type ContactItem =
+type TimelineItem =
   | { at: string; key: string; contact: InvoiceContactEntry }
-  | { at: string; key: string; visit: JourneyVisitSummary };
+  | { at: string; key: string; visit: JourneyVisitSummary }
+  | { at: string; key: string; payment: InvoicePaymentEntry };
 
-function contactItems(activity: InvoiceActivity): ContactItem[] {
-  const items: ContactItem[] = [
+function timelineItems(activity: InvoiceActivity): TimelineItem[] {
+  const items: TimelineItem[] = [
     ...activity.contacts.map((contact) => ({
       at: contact.createdAt,
       key: contact.id,
       contact,
     })),
     ...(activity.visits ?? []).map((visit) => ({
-      at: visit.startedAt,
+      at: visit.lastEventAt || visit.startedAt,
       key: `visit:${visit.sessionId}`,
       visit,
+    })),
+    ...activity.payments.map((payment) => ({
+      at: payment.createdAt,
+      key: payment.id,
+      payment,
     })),
   ];
   return items.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
@@ -649,29 +680,40 @@ function PaymentRow({ entry }: { entry: InvoicePaymentEntry }) {
   );
 }
 
-function Section({
-  title,
-  count,
-  empty,
-  children,
+export function InvoiceActivityTimeline({
+  token,
+  invoiceId,
+  activity,
 }: {
-  title: string;
-  count: number;
-  empty: string;
-  children: ReactNode;
+  token: string;
+  invoiceId: string;
+  activity: InvoiceActivity;
 }) {
+  const items = timelineItems(activity);
+  if (items.length === 0) {
+    return (
+      <p className="py-3 text-xs text-neutral-500">
+        No emails, texts, visits, or payment attempts recorded for this invoice yet.
+      </p>
+    );
+  }
   return (
-    <section>
-      <h3 className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-neutral-500">
-        {title}
-        <span className="font-normal normal-case text-neutral-400">{count}</span>
-      </h3>
-      {count === 0 ? (
-        <p className="py-3 text-xs text-neutral-500">{empty}</p>
-      ) : (
-        <ul className="divide-y divide-neutral-100">{children}</ul>
+    <ul className="divide-y divide-neutral-100">
+      {items.map((item) =>
+        "visit" in item ? (
+          <VisitRow
+            key={item.key}
+            token={token}
+            invoiceId={invoiceId}
+            visit={item.visit}
+          />
+        ) : "payment" in item ? (
+          <PaymentRow key={item.key} entry={item.payment} />
+        ) : (
+          <ContactRow key={item.key} entry={item.contact} />
+        ),
       )}
-    </section>
+    </ul>
   );
 }
 
@@ -708,7 +750,6 @@ export default function InvoiceActivityPanel({
   const activity = loaded?.activity ?? null;
   const error = failed?.key === requestKey ? failed.message : null;
   const loading = !activity && !error;
-  const contacts = activity ? contactItems(activity) : [];
 
   return (
     <aside
@@ -724,34 +765,12 @@ export default function InvoiceActivityPanel({
       ) : loading ? (
         <p className="mt-3 text-xs text-neutral-500">Loading activity…</p>
       ) : activity ? (
-        <div className="mt-3 space-y-5">
-          <Section
-            title="Contact log"
-            count={contacts.length}
-            empty="No emails, texts, or visits recorded for this invoice yet."
-          >
-            {contacts.map((item) =>
-              "visit" in item ? (
-                <VisitRow
-                  key={item.key}
-                  token={token}
-                  invoiceId={invoiceId}
-                  visit={item.visit}
-                />
-              ) : (
-                <ContactRow key={item.key} entry={item.contact} />
-              ),
-            )}
-          </Section>
-          <Section
-            title="Payment log"
-            count={activity.payments.length}
-            empty="No payment attempts recorded yet."
-          >
-            {activity.payments.map((entry) => (
-              <PaymentRow key={entry.id} entry={entry} />
-            ))}
-          </Section>
+        <div className="mt-3">
+          <InvoiceActivityTimeline
+            token={token}
+            invoiceId={invoiceId}
+            activity={activity}
+          />
         </div>
       ) : null}
     </aside>

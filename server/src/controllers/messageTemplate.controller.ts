@@ -25,6 +25,7 @@ import {
   sanitizeEmailBody,
   sanitizeEmailChrome,
 } from "../utils/emailChrome";
+import { coerceRenewalVariants } from "../utils/renewalVariants";
 
 function resolveTemplateType(
   value: unknown,
@@ -54,6 +55,8 @@ function toPublic(doc: IMessageTemplate | Record<string, unknown>) {
     offerContractTemplateId: d.offerContractTemplateId
       ? String(d.offerContractTemplateId)
       : null,
+    renewalVariants:
+      templateType === "sms" ? coerceRenewalVariants(d.renewalVariants) : null,
     deletedAt: d.deletedAt ?? null,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
@@ -178,6 +181,8 @@ export async function createMessageTemplate(
         existing.offerContractTemplateId = data.offerContractTemplateId
           ? new Types.ObjectId(data.offerContractTemplateId)
           : null;
+        existing.renewalVariants =
+          fields.templateType === "sms" ? (data.renewalVariants ?? null) : null;
         await existing.save();
         res.status(200).json({ template: toPublic(existing) });
         return;
@@ -198,6 +203,8 @@ export async function createMessageTemplate(
       offerContractTemplateId: data.offerContractTemplateId
         ? new Types.ObjectId(data.offerContractTemplateId)
         : null,
+      renewalVariants:
+        fields.templateType === "sms" ? (data.renewalVariants ?? null) : null,
       deletedAt: null,
     });
 
@@ -266,6 +273,13 @@ export async function updateMessageTemplate(
       template.offerContractTemplateId = parsed.data.offerContractTemplateId
         ? new Types.ObjectId(parsed.data.offerContractTemplateId)
         : null;
+    }
+    if (nextType === "sms") {
+      if (parsed.data.renewalVariants !== undefined) {
+        template.renewalVariants = parsed.data.renewalVariants;
+      }
+    } else {
+      template.renewalVariants = null;
     }
 
     await template.save();

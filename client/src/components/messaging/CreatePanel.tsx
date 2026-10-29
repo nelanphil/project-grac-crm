@@ -380,9 +380,19 @@ export default function CreatePanel({
       )
     : "—";
 
+  const selectedTemplate = templates.find((t) => t._id === selectedTemplateId);
+  const variantSettings = selectedTemplate?.renewalVariants;
+  const hasRenewalVariantCopy = Boolean(
+    variantSettings?.enabled &&
+      [variantSettings.expired, variantSettings.dueSoon, variantSettings.active].some(
+        (part) => part.trim(),
+      ),
+  );
+  const hasMessageCopy = Boolean(body.trim()) || hasRenewalVariantCopy;
+
   const nextDisabled =
     (step === "recipients" && selectedIds.size === 0) ||
-    (step === "message" && !body.trim()) ||
+    (step === "message" && !hasMessageCopy) ||
     (step === "account" && (!accountId || !effectiveFromNumber));
 
   function goToStep(i: number) {
@@ -892,6 +902,14 @@ export default function CreatePanel({
             </select>
           </label>
 
+          {selectedTemplate?.renewalVariants?.enabled ? (
+            <p className="mb-3 text-xs text-neutral-500">
+              Each recipient gets the Expired, Due soon, or Active wording
+              based on their renewal date. This box is the fallback, used when
+              there is no renewal date or that status was left blank.
+            </p>
+          ) : null}
+
           <div className="mb-2 flex flex-wrap gap-1.5">
             {mergeFields.map((field) => (
               <button
@@ -1340,7 +1358,7 @@ export default function CreatePanel({
                     selectedIds.size === 0 ||
                     !accountId ||
                     !effectiveFromNumber ||
-                    !body.trim()
+                    !hasMessageCopy
                   }
                   onClick={onOpenConfirm}
                   className="btn-primary inline-flex flex-1 items-center justify-center gap-1.5 disabled:opacity-60"

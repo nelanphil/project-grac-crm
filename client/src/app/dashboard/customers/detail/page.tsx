@@ -163,8 +163,8 @@ function CustomerDetailContent() {
   const [statusSaving, setStatusSaving] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [workOrderListView, setWorkOrderListView] = useState<
-    "active" | "deleted"
-  >("active");
+    "all" | "active" | "deleted"
+  >("all");
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(
     null,
   );
@@ -211,7 +211,10 @@ function CustomerDetailContent() {
     if (!token || customerLegacyId == null) return;
     let cancelled = false;
     const deleted = canViewDeletedWorkOrders && workOrderListView === "deleted";
-    getWorkOrdersForCustomer(token, customerLegacyId, undefined, { deleted })
+    getWorkOrdersForCustomer(token, customerLegacyId, undefined, {
+      deleted,
+      ...(workOrderListView === "active" ? { paid: false } : {}),
+    })
       .then((orders) => {
         if (!cancelled) setWorkOrders(orders);
       })
@@ -267,13 +270,17 @@ function CustomerDetailContent() {
       const updated = await updateWorkOrder(token, order._id, {
         [field]: next,
       });
-      setWorkOrders((prev) =>
-        prev.map((wo) =>
+      setWorkOrders((prev) => {
+        const nextOrders = prev.map((wo) =>
           wo._id === order._id
             ? { ...wo, paid: updated.paid, completed: updated.completed }
             : wo,
-        ),
-      );
+        );
+        if (workOrderListView === "active" && updated.paid) {
+          return nextOrders.filter((wo) => wo._id !== order._id);
+        }
+        return nextOrders;
+      });
     } catch (err) {
       setWorkOrders((prev) =>
         prev.map((wo) =>
@@ -890,44 +897,36 @@ function CustomerDetailContent() {
             <h2 className="text-lg font-semibold text-brand-dark">
               Work Orders ({filteredWorkOrders.length})
             </h2>
-            {canViewDeletedWorkOrders ? (
-              <div className="inline-flex shrink-0 rounded-lg border border-neutral-200 bg-white p-0.5 text-sm">
+            <div className="inline-flex shrink-0 rounded-lg border border-neutral-200 bg-white p-0.5 text-sm">
+              {(
+                [
+                  { id: "all" as const, label: "All" },
+                  { id: "active" as const, label: "Active" },
+                  ...(canViewDeletedWorkOrders
+                    ? [{ id: "deleted" as const, label: "Deleted" }]
+                    : []),
+                ]
+              ).map((view) => (
                 <button
+                  key={view.id}
                   type="button"
                   onClick={() => {
-                    if (workOrderListView === "active") return;
-                    setWorkOrderListView("active");
+                    if (workOrderListView === view.id) return;
+                    setWorkOrderListView(view.id);
                     setWorkOrdersLoading(true);
                     setConfirmingDeleteId(null);
                     setStatusError(null);
                   }}
                   className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
-                    workOrderListView === "active"
+                    workOrderListView === view.id
                       ? "bg-brand-dark text-white"
                       : "text-neutral-600 hover:text-brand-dark"
                   }`}
                 >
-                  Active
+                  {view.label}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (workOrderListView === "deleted") return;
-                    setWorkOrderListView("deleted");
-                    setWorkOrdersLoading(true);
-                    setConfirmingDeleteId(null);
-                    setStatusError(null);
-                  }}
-                  className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
-                    workOrderListView === "deleted"
-                      ? "bg-brand-dark text-white"
-                      : "text-neutral-600 hover:text-brand-dark"
-                  }`}
-                >
-                  Deleted
-                </button>
-              </div>
-            ) : null}
+              ))}
+            </div>
           </div>
           {canWriteJobs && !showingDeletedWorkOrders ? (
             <Link
@@ -954,12 +953,16 @@ function CustomerDetailContent() {
             <p className="text-sm font-medium text-neutral-500">
               {showingDeletedWorkOrders
                 ? "No deleted work orders"
-                : "No work orders yet"}
+                : workOrderListView === "active"
+                  ? "No unpaid work orders"
+                  : "No work orders yet"}
             </p>
             <p className="mt-1 text-xs text-neutral-400">
               {showingDeletedWorkOrders
                 ? "Soft-deleted work orders for this customer will appear here."
-                : "Work orders for this customer will appear here."}
+                : workOrderListView === "active"
+                  ? "Open jobs and completed jobs that are not paid yet will appear here."
+                  : "Work orders for this customer will appear here."}
             </p>
             {canWriteJobs && !showingDeletedWorkOrders ? (
               <Link

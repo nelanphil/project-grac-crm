@@ -12,6 +12,7 @@ import {
   subscribeAllCustomerActivity,
   subscribeCustomerActivity,
 } from "../services/customerActivityLive";
+import { listCustomerPaymentInvoices } from "../services/customerPaymentInvoices.service";
 import { assertOwnerCanAccessCustomer } from "../utils/ownerTerritory";
 import { isCustomerRole } from "../utils/roles";
 
@@ -67,6 +68,21 @@ export async function getCustomerActivity(
   } catch (err) {
     console.error("GET /customers/:id/activity error:", err);
     res.status(500).json({ message: "Failed to load customer history" });
+  }
+}
+
+export async function getCustomerPaymentInvoices(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const customer = await loadAccessibleCustomer(req, res);
+    if (!customer) return;
+    const invoices = await listCustomerPaymentInvoices(String(customer._id));
+    res.json({ invoices });
+  } catch (err) {
+    console.error("GET /customers/:id/payment-invoices error:", err);
+    res.status(500).json({ message: "Failed to load payment activity" });
   }
 }
 

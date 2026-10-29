@@ -232,4 +232,80 @@ describe("composeAutomatedMessageTest", () => {
     );
     assert.match(composed.html, /wrote:/);
   });
+
+  it("drops the test label for a customer-facing email and mailbox reply", async () => {
+    const email = resolveChannelCopy({
+      kind: "email",
+      saved: {
+        mode: "custom",
+        subject: "Invoice {{invoice_number}}",
+        body: "<p>Hi {{first_name}},</p>",
+      },
+      selectedTemplate: null,
+      legacyTemplate: null,
+      fallback,
+    });
+    const composed = await composeAutomatedMessageTest(
+      {
+        channel: "workOrderCompleteEmail",
+        resolved: email,
+        recipient: "ada@example.com",
+        testLabel: false,
+      },
+      renderers(),
+    );
+    assert.equal(composed.subject, "Invoice INV-1042");
+
+    const mailbox = resolveChannelCopy({
+      kind: "mailbox",
+      saved: {
+        mode: "custom",
+        subject: "",
+        body: "<p>Hi {{first_name}}, we received your email.</p>",
+      },
+      selectedTemplate: null,
+      legacyTemplate: null,
+      fallback,
+    });
+    const reply = await composeAutomatedMessageTest({
+      channel: "mailboxReply",
+      resolved: mailbox,
+      recipient: "ada@example.com",
+      testLabel: false,
+    });
+    assert.equal(reply.subject, "Re: Generator service");
+  });
+
+  it("leaves the renewal date spot blank when recommended dates are off", async () => {
+    const resolved = resolveChannelCopy({
+      kind: "email",
+      saved: {
+        mode: "custom",
+        subject: "Let's schedule your {{contract_type}} visit",
+        body: "<p>Hi {{first_name}},</p>{{recommended_dates}}",
+      },
+      selectedTemplate: null,
+      legacyTemplate: null,
+      fallback,
+    });
+    const hidden = await composeAutomatedMessageTest({
+      channel: "renewalScheduleEmail",
+      resolved,
+      recipient: "ada@example.com",
+      testLabel: false,
+      includeRecommendedDates: false,
+    });
+    assert.equal(hidden.subject, "Let's schedule your ASC visit");
+    assert.equal(hidden.html.includes("Choose this day"), false);
+
+    const shown = await composeAutomatedMessageTest({
+      channel: "renewalScheduleEmail",
+      resolved,
+      recipient: "ada@example.com",
+      testLabel: false,
+      includeRecommendedDates: true,
+    });
+    assert.equal(shown.subject, "Let's schedule your ASC visit");
+    assert.match(shown.html, /Choose this day/);
+  });
 });

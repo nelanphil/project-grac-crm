@@ -2218,6 +2218,27 @@ export async function getCustomerActivity(
   );
 }
 
+export interface CustomerPaymentInvoice {
+  id: string;
+  number: string;
+  status: InvoiceStatus;
+  amountCents: number;
+  latestAt: string;
+}
+
+export async function getCustomerPaymentInvoices(
+  token: string,
+  customerId: string,
+): Promise<{ invoices: CustomerPaymentInvoice[] }> {
+  return authRequest<{ invoices: CustomerPaymentInvoice[] }>(
+    `/customers/${customerId}/payment-invoices`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export interface WorkOrderNoteAuthor {
   first_name: string;
   last_name: string;
@@ -2793,11 +2814,13 @@ export async function getWorkOrdersForCustomer(
   token: string,
   legacyId: number,
   addressId?: string,
-  opts?: { deleted?: boolean },
+  opts?: { deleted?: boolean; paid?: boolean },
 ): Promise<WorkOrderListItem[]> {
   const params = new URLSearchParams({ customerId: String(legacyId) });
   if (addressId) params.set("addressId", addressId);
   if (opts?.deleted) params.set("deleted", "1");
+  if (opts?.paid === true) params.set("paid", "1");
+  if (opts?.paid === false) params.set("paid", "0");
   return authRequest<WorkOrderListItem[]>(`/work-orders?${params.toString()}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
@@ -6868,6 +6891,37 @@ export async function saveAutomatedMessageSettings(
   });
 }
 
+export type AutomatedMessagePreview = {
+  kind: "email" | "sms";
+  subject: string;
+  html: string;
+  smsBody: string;
+};
+
+export async function previewAutomatedMessage(
+  token: string,
+  input: {
+    channel: Exclude<
+      keyof AutomatedMessageSettings,
+      "saved" | "renewalSchedule" | "emailDelivery"
+    >;
+    mode: AutomatedMessageMode;
+    templateId: string | null;
+    subject: string;
+    body: string;
+    offerRecommendedDates?: boolean;
+  },
+): Promise<AutomatedMessagePreview> {
+  return authRequest<AutomatedMessagePreview>(
+    "/automated-message-settings/preview",
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export async function sendAutomatedMessageTest(
   token: string,
   input: {
@@ -7019,6 +7073,24 @@ export async function togglePublicAssetStatus(
 export type { EmailChrome };
 export type MessageTemplateType = "sms" | "email";
 
+export interface RenewalVariants {
+  enabled: boolean;
+  dueSoonDays: number;
+  expired: string;
+  dueSoon: string;
+  active: string;
+}
+
+export const DEFAULT_RENEWAL_VARIANTS: RenewalVariants = {
+  enabled: false,
+  dueSoonDays: 30,
+  expired: "",
+  dueSoon: "",
+  active: "",
+};
+
+export type RenewalPreviewStatus = "expired" | "due_soon" | "active" | "fallback";
+
 export interface MessageTemplateItem {
   _id: string;
   name: string;
@@ -7028,6 +7100,7 @@ export interface MessageTemplateItem {
   templateType: MessageTemplateType;
   emailChrome?: EmailChrome;
   offerContractTemplateId?: string | null;
+  renewalVariants?: RenewalVariants | null;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -7040,6 +7113,7 @@ export interface MessageTemplateInput {
   templateType?: MessageTemplateType;
   emailChrome?: EmailChrome;
   offerContractTemplateId?: string | null;
+  renewalVariants?: RenewalVariants | null;
   slug?: string;
 }
 
@@ -7356,6 +7430,8 @@ export async function previewMessagingMessage(
     renewalMonth?: number;
     includePaymentLink?: boolean;
     offerContractTemplateId?: string | null;
+    renewalVariants?: RenewalVariants;
+    previewStatus?: RenewalPreviewStatus;
   },
 ): Promise<MessagingPreviewResult> {
   return authRequest<MessagingPreviewResult>("/messaging/preview", {

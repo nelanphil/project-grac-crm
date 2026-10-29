@@ -4,11 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
+  DEFAULT_RENEWAL_VARIANTS,
   EmailSendAccountItem,
   MergeFieldItem,
   MessageTemplateItem,
   MessageTemplateType,
   MessagingContactItem,
+  RenewalPreviewStatus,
+  RenewalVariants,
   ScheduledEmailItem,
   ScheduledMessageItem,
   TwilioAccountItem,
@@ -82,6 +85,23 @@ type EmailSubTab = "wizard" | "sent-emails" | "scheduled";
 
 function templateTypeOf(template: MessageTemplateItem): MessageTemplateType {
   return template.templateType === "email" ? "email" : "sms";
+}
+
+function renewalVariantsFrom(
+  template: MessageTemplateItem,
+): RenewalVariants {
+  return template.renewalVariants
+    ? { ...DEFAULT_RENEWAL_VARIANTS, ...template.renewalVariants }
+    : DEFAULT_RENEWAL_VARIANTS;
+}
+
+function variantBodyKey(
+  tab: RenewalPreviewStatus,
+): "expired" | "dueSoon" | "active" | null {
+  if (tab === "expired") return "expired";
+  if (tab === "due_soon") return "dueSoon";
+  if (tab === "active") return "active";
+  return null;
 }
 
 const SMS_PAYMENT_LINK_FIELD: MergeFieldItem = {
@@ -281,6 +301,11 @@ export default function MessagingHub() {
   );
   const [templateName, setTemplateName] = useState("");
   const [body, setBody] = useState(DEFAULT_SMS_BODY);
+  const [renewalVariants, setRenewalVariants] = useState<RenewalVariants>(
+    DEFAULT_RENEWAL_VARIANTS,
+  );
+  const [smsVariantTab, setSmsVariantTab] =
+    useState<RenewalPreviewStatus>("due_soon");
 
   const [selectedEmailTemplateId, setSelectedEmailTemplateId] = useState<
     string | null
@@ -476,7 +501,14 @@ export default function MessagingHub() {
   );
   const emailUsesPaymentLink =
     includePaymentLink || emailHasPaymentLinkToken;
-  const smsHasPaymentLinkToken = /\{\{\s*payment_link\s*\}\}/.test(body);
+  const smsHasPaymentLinkToken = /\{\{\s*payment_link\s*\}\}/.test(
+    [
+      body,
+      renewalVariants.enabled ? renewalVariants.expired : "",
+      renewalVariants.enabled ? renewalVariants.dueSoon : "",
+      renewalVariants.enabled ? renewalVariants.active : "",
+    ].join("\n"),
+  );
   const smsUsesPaymentLink =
     smsIncludePaymentLink || smsHasPaymentLinkToken;
 
@@ -865,6 +897,24 @@ export default function MessagingHub() {
         ? smsOfferContractOverrides[previewContactId]
         : smsOfferContractTemplateId;
 
+    const editingSmsTemplate =
+      activeTab === "templates" && templateEditorType === "sms";
+    const savedTemplate = templates.find((t) => t._id === selectedTemplateId);
+    const previewVariants = editingSmsTemplate
+      ? renewalVariants.enabled
+        ? renewalVariants
+        : undefined
+      : savedTemplate?.renewalVariants?.enabled
+        ? savedTemplate.renewalVariants
+        : undefined;
+    const previewStatus =
+      editingSmsTemplate && renewalVariants.enabled ? smsVariantTab : undefined;
+    const previewSourceKey = variantBodyKey(smsVariantTab);
+    const previewSource =
+      editingSmsTemplate && renewalVariants.enabled && previewSourceKey
+        ? renewalVariants[previewSourceKey]
+        : body;
+
     const timer = setTimeout(() => {
       previewMessagingMessage(token, {
         body,
@@ -874,6 +924,8 @@ export default function MessagingHub() {
         includePaymentLink: smsIncludePaymentLink,
         offerContractTemplateId: previewOffer,
         invoiceId: initialInvoiceId ?? undefined,
+        renewalVariants: previewVariants,
+        previewStatus,
       })
         .then((res) => {
           if (cancelled) return;
@@ -890,7 +942,7 @@ export default function MessagingHub() {
         })
         .catch(() => {
           if (cancelled) return;
-          setPreviewText(body);
+          setPreviewText(previewSource);
           setPreviewSample(true);
         });
     }, 250);
@@ -913,6 +965,10 @@ export default function MessagingHub() {
     smsOfferContractTemplateId,
     smsOfferContractOverrides,
     initialInvoiceId,
+    templates,
+    selectedTemplateId,
+    renewalVariants,
+    smsVariantTab,
   ]);
 
   useEffect(() => {
@@ -1023,6 +1079,7 @@ export default function MessagingHub() {
     setSelectedTemplateId(template._id);
     setTemplateName(template.name);
     setBody(template.body ?? "");
+    setRenewalVariants(renewalVariantsFrom(template));
     setSmsOfferContractTemplateId(template.offerContractTemplateId ?? null);
     setSmsOfferContractOverrides({});
   }
@@ -1031,6 +1088,8 @@ export default function MessagingHub() {
     setSelectedTemplateId(null);
     setTemplateName("");
     setBody(DEFAULT_SMS_BODY);
+    setRenewalVariants(DEFAULT_RENEWAL_VARIANTS);
+    setSmsVariantTab("due_soon");
     setSmsOfferContractTemplateId(null);
     setSmsOfferContractOverrides({});
   }
@@ -1121,7 +1180,22 @@ export default function MessagingHub() {
   }
 
   function insertSmsMergeField(key: string) {
-    insertAtCursor(bodyRef.current, body, setBody, `{{${key}}}`);
+    const tokenText = `{{${key}}}`;
+    const field =
+      activeTab === "templates" && renewalVariants.enabled
+        ? variantBodyKey(smsVariantTab)
+        : null;
+    if (field) {
+      insertAtCursor(
+        bodyRef.current,
+        renewalVariants[field],
+        (next) =>
+          setRenewalVariants((prev) => ({ ...prev, [field]: next })),
+        tokenText,
+      );
+      return;
+    }
+    insertAtCursor(bodyRef.current, body, setBody, tokenText);
   }
 
   function insertEmailMergeField(key: string) {
@@ -1158,6 +1232,7 @@ export default function MessagingHub() {
           offerContractTemplateId: isEmail
             ? offerContractTemplateId
             : smsOfferContractTemplateId,
+          renewalVariants: isEmail ? null : renewalVariants,
         });
         setTemplates((prev) =>
           prev.map((t) => (t._id === template._id ? template : t)),
@@ -1172,6 +1247,7 @@ export default function MessagingHub() {
           offerContractTemplateId: isEmail
             ? offerContractTemplateId
             : smsOfferContractTemplateId,
+          renewalVariants: isEmail ? null : renewalVariants,
         });
         setTemplates((prev) =>
           [...prev, template].sort((a, b) => a.name.localeCompare(b.name)),
@@ -1280,6 +1356,8 @@ export default function MessagingHub() {
     setSelectedTemplateId(null);
     setTemplateName("");
     setBody(DEFAULT_SMS_BODY);
+    setRenewalVariants(DEFAULT_RENEWAL_VARIANTS);
+    setSmsVariantTab("due_soon");
     setMediaUrlsRaw("");
     setSmsIncludePaymentLink(false);
     setSmsOfferContractTemplateId(null);
@@ -1395,7 +1473,15 @@ export default function MessagingHub() {
       setError("Select at least one contact.");
       return;
     }
-    if (!body.trim()) {
+    const scheduledTemplate = templates.find((t) => t._id === selectedTemplateId);
+    const scheduledVariants = scheduledTemplate?.renewalVariants;
+    const hasVariantCopy = Boolean(
+      scheduledVariants?.enabled &&
+        [scheduledVariants.expired, scheduledVariants.dueSoon, scheduledVariants.active].some(
+          (part) => part.trim(),
+        ),
+    );
+    if (!body.trim() && !hasVariantCopy) {
       setError("Message body is empty.");
       return;
     }
@@ -1599,6 +1685,10 @@ export default function MessagingHub() {
           onBodyChange={
             templateEditorType === "email" ? setEmailBody : setBody
           }
+          renewalVariants={renewalVariants}
+          onRenewalVariantsChange={setRenewalVariants}
+          variantTab={smsVariantTab}
+          onVariantTabChange={setSmsVariantTab}
           emailChrome={emailChrome}
           onEmailChromeChange={setEmailChrome}
           previewText={previewText}

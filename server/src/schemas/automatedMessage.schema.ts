@@ -97,44 +97,64 @@ export type SaveAutomatedMessageSettingsInput = z.infer<
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const testAutomatedMessageSchema = z
-  .object({
-    channel: z.enum(AUTOMATED_MESSAGE_CHANNELS),
+const automatedMessageDraftSchema = z.object({
+  channel: z.enum(AUTOMATED_MESSAGE_CHANNELS),
+  mode: z.enum(["template", "custom"]),
+  templateId: templateIdSchema,
+  subject: z
+    .string()
+    .trim()
+    .max(EMAIL_SUBJECT_MAX, "Subject must be 200 characters or fewer"),
+  body: z
+    .string()
+    .trim()
+    .max(
+      EMAIL_BODY_MAX,
+      `Message must be ${EMAIL_BODY_MAX.toLocaleString()} characters or fewer`,
+    ),
+});
+
+function refineAutomatedMessageDraft(
+  data: z.infer<typeof automatedMessageDraftSchema>,
+  ctx: z.RefinementCtx,
+) {
+  const parsed = channelSchema(AUTOMATED_MESSAGE_KIND[data.channel]).safeParse({
+    mode: data.mode,
+    templateId: data.templateId,
+    subject: data.subject,
+    body: data.body,
+  });
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      ctx.addIssue({
+        code: "custom",
+        path: issue.path,
+        message: issue.message,
+      });
+    }
+  }
+}
+
+export const previewAutomatedMessageSchema = automatedMessageDraftSchema
+  .extend({
+    offerRecommendedDates: z.boolean().optional(),
+  })
+  .superRefine(refineAutomatedMessageDraft);
+
+export type PreviewAutomatedMessageInput = z.infer<
+  typeof previewAutomatedMessageSchema
+>;
+
+export const testAutomatedMessageSchema = automatedMessageDraftSchema
+  .extend({
     to: z
       .string()
       .trim()
       .min(1, "Enter an email or phone number")
       .max(320),
-    mode: z.enum(["template", "custom"]),
-    templateId: templateIdSchema,
-    subject: z
-      .string()
-      .trim()
-      .max(EMAIL_SUBJECT_MAX, "Subject must be 200 characters or fewer"),
-    body: z
-      .string()
-      .trim()
-      .max(
-        EMAIL_BODY_MAX,
-        `Message must be ${EMAIL_BODY_MAX.toLocaleString()} characters or fewer`,
-      ),
   })
   .superRefine((data, ctx) => {
-    const parsed = channelSchema(AUTOMATED_MESSAGE_KIND[data.channel]).safeParse({
-      mode: data.mode,
-      templateId: data.templateId,
-      subject: data.subject,
-      body: data.body,
-    });
-    if (!parsed.success) {
-      for (const issue of parsed.error.issues) {
-        ctx.addIssue({
-          code: "custom",
-          path: issue.path,
-          message: issue.message,
-        });
-      }
-    }
+    refineAutomatedMessageDraft(data, ctx);
     const sms = AUTOMATED_MESSAGE_KIND[data.channel] === "sms";
     if (sms) {
       if (data.to.replace(/\D/g, "").length !== 10) {

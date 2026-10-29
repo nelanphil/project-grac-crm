@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import type { CustomerActivityItem } from "@/lib/api";
 import { activityHref, isCustomerPageHref } from "@/lib/activityLinks";
+import CustomerPaymentActivity from "@/components/customers/CustomerPaymentActivity";
 import {
   ALL_HISTORY_KEY,
   useCustomerHistoryStore,
@@ -514,6 +515,17 @@ export default function CustomerHistoryPanel({
       </div>
     ) : null;
 
+  function paymentActivity(enabled: boolean) {
+    if (allCustomers || !customerId) return null;
+    return (
+      <CustomerPaymentActivity
+        token={token}
+        customerId={customerId}
+        enabled={enabled}
+      />
+    );
+  }
+
   const overlay =
     expanded && typeof document !== "undefined"
       ? createPortal(
@@ -547,6 +559,7 @@ export default function CustomerHistoryPanel({
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pt-3">
               {filtersBar}
+              {paymentActivity(expanded)}
               {bucket?.error ? (
                 <p className="text-sm text-red-600">{bucket.error}</p>
               ) : null}
@@ -601,6 +614,8 @@ export default function CustomerHistoryPanel({
         </button>
       </div>
       ) : null}
+
+      {paymentActivity(active && !expanded)}
 
       {bucket?.error ? (
         <p className="text-sm text-red-600">{bucket.error}</p>

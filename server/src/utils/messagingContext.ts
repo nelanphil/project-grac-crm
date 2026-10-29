@@ -4,6 +4,7 @@ import { CustomerContact } from "../models/mongo/CustomerContact";
 import { Contract } from "../models/mongo/Contract";
 import { ContractTemplate } from "../models/mongo/ContractTemplate";
 import {
+  DUE_SOON_DAYS,
   differenceInCalendarDays,
   renewalCohortFilterForMonth,
   renewalCohortStatus,
@@ -14,6 +15,7 @@ import {
   MessageTemplateContext,
   SAMPLE_TEMPLATE_CONTEXT,
 } from "./messageTemplate";
+import { renewalTimingFields } from "./renewalVariants";
 import { normalizePhoneDigits } from "./customerSites";
 
 export interface RenewalScope {
@@ -26,6 +28,7 @@ export interface ContactRenewalInfo {
   contractType: string | null;
   renewalStatus: RenewalCohortStatus | null;
   lastRenewalDate: Date | null;
+  contractDate: Date | null;
 }
 
 export function emptyContactRenewal(): ContactRenewalInfo {
@@ -34,6 +37,7 @@ export function emptyContactRenewal(): ContactRenewalInfo {
     contractType: null,
     renewalStatus: null,
     lastRenewalDate: null,
+    contractDate: null,
   };
 }
 
@@ -103,7 +107,9 @@ export async function resolveRenewalsForCustomers(
 
   const contracts = await Contract.find(filter)
     .sort({ renewalDueDate: 1 })
-    .select("customerRef renewalDueDate lastRenewalDate contractType templateId")
+    .select(
+      "customerRef renewalDueDate lastRenewalDate contractDate contractType templateId",
+    )
     .lean();
 
   const labelByTemplate = new Map<string, string>();
@@ -130,6 +136,7 @@ export async function resolveRenewalsForCustomers(
   function infoForContract(contract: {
     renewalDueDate?: Date | null;
     lastRenewalDate?: Date | null;
+    contractDate?: Date | null;
     contractType?: string | null;
     templateId?: Types.ObjectId | null;
   }): ContactRenewalInfo {
@@ -141,6 +148,7 @@ export async function resolveRenewalsForCustomers(
     return {
       renewalDueDate,
       lastRenewalDate,
+      contractDate: contract.contractDate ?? null,
       contractType: templateLabel ?? contract.contractType ?? null,
       renewalStatus: renewalDueDate
         ? scope
@@ -177,7 +185,9 @@ export async function resolveRenewalsForCustomers(
         temporary: { $ne: true },
       })
         .sort({ renewalDueDate: 1 })
-        .select("customerRef renewalDueDate lastRenewalDate contractType templateId")
+        .select(
+          "customerRef renewalDueDate lastRenewalDate contractDate contractType templateId",
+        )
         .lean();
 
       await ensureTemplateLabels(fallback);
@@ -202,6 +212,7 @@ export async function resolveRenewalsForCustomers(
 export async function buildTemplateContextForContact(
   contactId: string,
   renewalScope?: RenewalScope,
+  dueSoonDays: number = DUE_SOON_DAYS,
 ): Promise<{
   context: MessageTemplateContext;
   contact: {
@@ -259,6 +270,7 @@ export async function buildTemplateContextForContact(
     zip: customer?.zip ?? "",
     renewal_due_date: formatDateForTemplate(renewal.renewalDueDate),
     contract_type: renewal.contractType ?? "",
+    ...renewalTimingFields(renewal, dueSoonDays),
     payment_link: "",
   };
 

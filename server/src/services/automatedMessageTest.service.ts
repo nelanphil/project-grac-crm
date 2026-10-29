@@ -17,7 +17,10 @@ import {
   invoiceBlocksSchema,
   sanitizeInvoiceBlocks,
 } from "../schemas/invoiceTemplate.schema";
-import type { TestAutomatedMessageInput } from "../schemas/automatedMessage.schema";
+import type {
+  PreviewAutomatedMessageInput,
+  TestAutomatedMessageInput,
+} from "../schemas/automatedMessage.schema";
 import { buildStaffOutboundEmail } from "../utils/emailTemplates";
 import {
   renderInvoiceTemplateEmail,
@@ -54,6 +57,7 @@ import { normalizePhoneLines } from "../utils/twilioPhoneLines";
 import { toE164 } from "../utils/messagingContext";
 
 const SAMPLE_PAID_AT = "2026-03-20T15:00:00.000Z";
+const SAMPLE_PREVIEW_RECIPIENT = "jordan.lee@example.com";
 const SAMPLE_QUOTE =
   "Can you confirm the service appointment for the generator?";
 
@@ -164,6 +168,10 @@ export async function composeAutomatedMessageTest(
     channel: AutomatedMessageChannelKey;
     resolved: ResolvedAutomatedMessage;
     recipient: string;
+    /** When false, the subject is the customer-facing line with no [Test] prefix. */
+    testLabel?: boolean;
+    /** Renewal emails only. Defaults to showing sample date buttons. */
+    includeRecommendedDates?: boolean;
   },
   renderers?: AutomatedTestRenderers,
 ): Promise<ComposedAutomatedMessageTest> {
@@ -204,9 +212,13 @@ export async function composeAutomatedMessageTest(
         },
       },
     });
+    const originalSubject =
+      input.testLabel === false
+        ? "Generator service"
+        : "[Test] Generator service";
     return {
       kind: "email",
-      subject: replySubject("[Test] Generator service", "reply"),
+      subject: replySubject(originalSubject, "reply"),
       text: email.text,
       html: email.html,
       smsBody: "",
@@ -241,8 +253,9 @@ export async function composeAutomatedMessageTest(
     };
   }
 
+  const renewal = input.channel === "renewalScheduleEmail";
   const sampleDates =
-    input.channel === "renewalScheduleEmail"
+    renewal && input.includeRecommendedDates !== false
       ? {
           pageUrl: `${env.clientUrl.replace(/\/$/, "")}/schedule-renewal`,
           token: "sample",
@@ -251,15 +264,17 @@ export async function composeAutomatedMessageTest(
       : null;
   const tokens = {
     ...invoiceTokens(automatedTestViewUrl()),
-    ...(sampleDates ? { contractType: "ASC" } : {}),
+    ...(renewal ? { contractType: "ASC" } : {}),
     ...appointmentSample(input.channel),
   };
-  const subject = prefixAutomatedTestSubject(
-    renderMessageTemplate(
-      applyInvoiceTokens(input.resolved.subject, tokens),
-      sampleContext(null),
-    ),
+  const renderedSubject = renderMessageTemplate(
+    applyInvoiceTokens(input.resolved.subject, tokens),
+    sampleContext(null),
   );
+  const subject =
+    input.testLabel === false
+      ? renderedSubject
+      : prefixAutomatedTestSubject(renderedSubject);
 
   if (input.resolved.useInvoiceDocument) {
     const active = renderers ?? (await defaultRenderers());
@@ -408,4 +423,28 @@ export async function sendAutomatedMessageTest(
     throw new AutomatedMessageError(message, 400);
   }
   return { message: `Test email sent to ${email.to}.` };
+}
+
+export async function previewAutomatedMessage(
+  input: PreviewAutomatedMessageInput,
+): Promise<
+  Pick<ComposedAutomatedMessageTest, "kind" | "subject" | "html" | "smsBody">
+> {
+  const resolved = await resolveDraftAutomatedMessage(input.channel, input);
+  const composed = await composeAutomatedMessageTest({
+    channel: input.channel,
+    resolved,
+    recipient: SAMPLE_PREVIEW_RECIPIENT,
+    testLabel: false,
+    includeRecommendedDates:
+      input.channel === "renewalScheduleEmail"
+        ? input.offerRecommendedDates !== false
+        : undefined,
+  });
+  return {
+    kind: composed.kind,
+    subject: composed.subject,
+    html: composed.html,
+    smsBody: composed.smsBody,
+  };
 }

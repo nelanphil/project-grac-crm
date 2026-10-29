@@ -19,6 +19,21 @@ export const offerContractTemplateIdSchema = z
   .regex(/^[a-fA-F0-9]{24}$/, "Invalid contract template")
   .nullable();
 
+export const renewalVariantsSchema = z.object({
+  enabled: z.boolean(),
+  dueSoonDays: z.number().int().min(1).max(365),
+  expired: z.string().max(SMS_BODY_MAX),
+  dueSoon: z.string().max(SMS_BODY_MAX),
+  active: z.string().max(SMS_BODY_MAX),
+});
+
+export const renewalPreviewStatusSchema = z.enum([
+  "expired",
+  "due_soon",
+  "active",
+  "fallback",
+]);
+
 export const offerContractOverrideSchema = z.object({
   contactId: z.string().trim().regex(/^[a-fA-F0-9]{24}$/),
   contractTemplateId: offerContractTemplateIdSchema,
@@ -48,6 +63,7 @@ export const createMessageTemplateSchema = z
     templateType: z.enum(MESSAGE_TEMPLATE_TYPES).optional().default("sms"),
     emailChrome: emailChromeSchema.optional(),
     offerContractTemplateId: offerContractTemplateIdSchema.optional(),
+    renewalVariants: renewalVariantsSchema.optional(),
     slug: z
       .string()
       .trim()
@@ -66,6 +82,7 @@ export const updateMessageTemplateSchema = z
     templateType: z.enum(MESSAGE_TEMPLATE_TYPES).optional(),
     emailChrome: emailChromeSchema.optional(),
     offerContractTemplateId: offerContractTemplateIdSchema.optional(),
+    renewalVariants: renewalVariantsSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (data.body === undefined) return;
@@ -91,6 +108,8 @@ export const messagingPreviewSchema = z
     renewalMonth: z.number().int().min(1).max(12).optional(),
     includePaymentLink: z.boolean().optional(),
     offerContractTemplateId: offerContractTemplateIdSchema.optional(),
+    renewalVariants: renewalVariantsSchema.optional(),
+    previewStatus: renewalPreviewStatusSchema.optional(),
   })
   .refine(
     (data) =>

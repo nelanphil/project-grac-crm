@@ -35,6 +35,13 @@ import {
   templateUsesPaymentLink,
 } from "../utils/messageTemplate";
 import {
+  enabledRenewalVariants,
+  pickRenewalVariantBody,
+  renewalVariantStatus,
+  renewalVariantsHaveCopy,
+  sampleContextForRenewalStatus,
+} from "../utils/renewalVariants";
+import {
   buildTemplateContextForContact,
   sampleTemplateContext,
   toE164,
@@ -179,17 +186,28 @@ export async function previewMessage(
       renewalMonth,
       includePaymentLink,
       offerContractTemplateId,
+      renewalVariants,
+      previewStatus,
     } = parsed.data;
     const scope =
       renewalYear !== undefined && renewalMonth !== undefined
         ? { year: renewalYear, month: renewalMonth }
         : undefined;
+    const variants = enabledRenewalVariants(renewalVariants);
 
     let context = sampleTemplateContext();
     let sample = true;
     let customerRef: string | null = null;
+    let contactRenewal: {
+      renewalDueDate: Date | null;
+      renewalStatus: "due" | "overdue" | "renewed" | null;
+    } | null = null;
     if (contactId) {
-      const built = await buildTemplateContextForContact(contactId, scope);
+      const built = await buildTemplateContextForContact(
+        contactId,
+        scope,
+        variants?.dueSoonDays,
+      );
       if (!built) {
         res.status(404).json({ message: "Contact not found" });
         return;
@@ -197,10 +215,34 @@ export async function previewMessage(
       context = built.context;
       sample = false;
       customerRef = built.contact.customerRef;
+      contactRenewal = built.renewal;
+    }
+
+    let bodyToRender = body;
+    if (variants) {
+      const status =
+        previewStatus === "fallback"
+          ? "none"
+          : previewStatus
+            ? previewStatus
+            : sample
+              ? "due_soon"
+              : renewalVariantStatus(
+                  contactRenewal ?? { renewalDueDate: null },
+                  variants.dueSoonDays,
+                );
+      if (sample && status !== "none") {
+        context = sampleContextForRenewalStatus(
+          context,
+          status,
+          variants.dueSoonDays,
+        );
+      }
+      bodyToRender = pickRenewalVariantBody(variants, status, body);
     }
 
     const wantsPayLink =
-      includePaymentLink === true || templateUsesPaymentLink(body);
+      includePaymentLink === true || templateUsesPaymentLink(bodyToRender);
     let paymentUrl: string | null = null;
     let paymentSummary = "";
     if (wantsPayLink) {
@@ -222,7 +264,7 @@ export async function previewMessage(
     }
 
     const composed = composeSmsPaymentBody({
-      bodyTemplate: body + (paymentSummary ? `\n${paymentSummary}` : ""),
+      bodyTemplate: bodyToRender + (paymentSummary ? `\n${paymentSummary}` : ""),
       context,
       includePaymentLink: includePaymentLink === true,
       paymentUrl,
@@ -283,6 +325,7 @@ export async function dispatchMessagingBatch(
     await validateInvoiceMessage(data);
     let bodyTemplate = data.body?.trim() ?? "";
     let templateOfferId: string | null = null;
+    let renewalVariants = enabledRenewalVariants(null);
 
     if (data.templateId) {
       if (!Types.ObjectId.isValid(data.templateId)) {
@@ -301,6 +344,7 @@ export async function dispatchMessagingBatch(
       templateOfferId = template.offerContractTemplateId
         ? String(template.offerContractTemplateId)
         : null;
+      renewalVariants = enabledRenewalVariants(template.renewalVariants);
       if (!bodyTemplate) {
         bodyTemplate = template.body ?? "";
       }
@@ -311,7 +355,11 @@ export async function dispatchMessagingBatch(
         ? data.offerContractTemplateId
         : templateOfferId;
 
-    if (!bodyTemplate.trim() && (data.mediaUrls ?? []).length === 0) {
+    if (
+      !bodyTemplate.trim() &&
+      !renewalVariantsHaveCopy(renewalVariants) &&
+      (data.mediaUrls ?? []).length === 0
+    ) {
       throw new MessagingDispatchError(400, "Message body is empty");
     }
 
@@ -346,7 +394,12 @@ export async function dispatchMessagingBatch(
     );
     const wantsPayLink =
       data.includePaymentLink === true ||
-      templateUsesPaymentLink(bodyTemplate);
+      templateUsesPaymentLink(
+        bodyTemplate,
+        renewalVariants?.expired,
+        renewalVariants?.dueSoon,
+        renewalVariants?.active,
+      );
     if (data.invoiceId && wantsPayLink && data.expectedAmountCents === undefined) {
       throw new MessagingDispatchError(409, "Refresh the invoice before sending its payment link.");
     }
@@ -370,12 +423,31 @@ export async function dispatchMessagingBatch(
           };
         }
 
-        const built = await buildTemplateContextForContact(contactId, scope);
+        const built = await buildTemplateContextForContact(
+          contactId,
+          scope,
+          renewalVariants?.dueSoonDays,
+        );
         if (!built) {
           return {
             contactId,
             status: "failed" as const,
             error: "Contact not found",
+          };
+        }
+
+        const recipientBody = renewalVariants
+          ? pickRenewalVariantBody(
+              renewalVariants,
+              renewalVariantStatus(built.renewal, renewalVariants.dueSoonDays),
+              bodyTemplate,
+            )
+          : bodyTemplate;
+        if (!recipientBody.trim() && mediaUrls.length === 0) {
+          return {
+            contactId,
+            status: "failed" as const,
+            error: "Message body is empty",
           };
         }
 
@@ -393,7 +465,10 @@ export async function dispatchMessagingBatch(
         let paymentUrl: string | null = null;
         let paymentLabel = "";
         let linkedInvoiceId = data.invoiceId;
-        if (wantsPayLink && paymentLinkForCustomer) {
+        const recipientWantsPayLink =
+          data.includePaymentLink === true ||
+          templateUsesPaymentLink(recipientBody);
+        if (recipientWantsPayLink && paymentLinkForCustomer) {
           paymentUrl = await resolveSmsPaymentUrl({
             contactId,
             customerId: built.contact.customerRef,
@@ -416,7 +491,7 @@ export async function dispatchMessagingBatch(
           });
         }
         const composed = composeSmsPaymentBody({
-          bodyTemplate: bodyTemplate + (paymentLabel ? `\n${paymentLabel}` : ""),
+          bodyTemplate: recipientBody + (paymentLabel ? `\n${paymentLabel}` : ""),
           context: built.context,
           includePaymentLink: data.includePaymentLink === true,
           paymentUrl,
@@ -777,6 +852,7 @@ export async function scheduleMessages(
     await validateInvoiceMessage(data);
     let bodyTemplate = data.body?.trim() ?? "";
     let templateOfferId: string | null = null;
+    let renewalVariants = enabledRenewalVariants(null);
 
     if (data.templateId) {
       if (!Types.ObjectId.isValid(data.templateId)) {
@@ -797,10 +873,11 @@ export async function scheduleMessages(
       templateOfferId = template.offerContractTemplateId
         ? String(template.offerContractTemplateId)
         : null;
+      renewalVariants = enabledRenewalVariants(template.renewalVariants);
       if (!bodyTemplate) bodyTemplate = template.body ?? "";
     }
 
-    if (!bodyTemplate.trim()) {
+    if (!bodyTemplate.trim() && !renewalVariantsHaveCopy(renewalVariants)) {
       res.status(400).json({ message: "Message body is empty" });
       return;
     }

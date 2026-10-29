@@ -45,6 +45,7 @@ import {
 import { getCustomerCheckoutLink } from "../controllers/checkout.controller";
 import {
   getCustomerActivity,
+  getCustomerPaymentInvoices,
   streamCustomerActivity,
 } from "../controllers/customerActivity.controller";
 
@@ -79,6 +80,11 @@ router.get(
   "/:id/activity",
   requirePermission("customers:read"),
   getCustomerActivity,
+);
+router.get(
+  "/:id/payment-invoices",
+  requirePermission("customers:read"),
+  getCustomerPaymentInvoices,
 );
 
 // Notes

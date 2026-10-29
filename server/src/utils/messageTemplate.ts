@@ -32,6 +32,32 @@ export const MERGE_FIELDS: MergeFieldDef[] = [
     description: "Soonest matching renewal due date",
   },
   {
+    key: "renewal_status",
+    label: "Renewal status",
+    description:
+      "expired, due soon, or active. Due soon uses the template window, or 30 days when the message has no template setting.",
+  },
+  {
+    key: "days_until_due",
+    label: "Days until due",
+    description: "Whole days until the renewal date. Blank once that date has passed.",
+  },
+  {
+    key: "days_past_due",
+    label: "Days past due",
+    description: "Whole days since the renewal date. Blank until that date has passed.",
+  },
+  {
+    key: "last_renewal_date",
+    label: "Last renewal date",
+    description: "Date the contract was last renewed",
+  },
+  {
+    key: "contract_start_date",
+    label: "Contract start date",
+    description: "Date the contract started",
+  },
+  {
     key: "contract_type",
     label: "Contract type",
     description: "Contract type for the renewal context",
@@ -123,6 +149,11 @@ export const SAMPLE_TEMPLATE_CONTEXT: MessageTemplateContext = {
   state: "FL",
   zip: "33601",
   renewal_due_date: "08/15/2026",
+  renewal_status: "due soon",
+  days_until_due: "14",
+  days_past_due: "",
+  last_renewal_date: "08/15/2025",
+  contract_start_date: "08/15/2024",
   contract_type: "Service Contract",
   payment_link: "",
 };

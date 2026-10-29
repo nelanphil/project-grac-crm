@@ -7,13 +7,17 @@ import {
   ApiError,
   getAutomatedMessageSettings,
   getMessageTemplates,
+  previewAutomatedMessage,
   saveAutomatedMessageSettings,
   sendAutomatedMessageTest,
+  type AutomatedMessagePreview,
   type AutomatedEmailDelivery,
   type AutomatedMessageChannel,
   type AutomatedMessageSettings,
   type MessageTemplateItem,
 } from "@/lib/api";
+import EmailPreview from "@/components/messaging/EmailPreview";
+import PhonePreview from "@/components/messaging/PhonePreview";
 import MobileTabBar from "@/components/ui/MobileTabBar";
 
 const EMAIL_SUBJECT_MAX = 200;
@@ -394,6 +398,7 @@ function ChannelEditor({
   channel,
   templates,
   onChange,
+  onPreview,
   onTest,
   testProblem,
   sending,
@@ -403,6 +408,7 @@ function ChannelEditor({
   channel: AutomatedMessageChannel;
   templates: MessageTemplateItem[];
   onChange: (next: AutomatedMessageChannel) => void;
+  onPreview: () => void;
   onTest: () => void;
   testProblem: string | null;
   sending?: boolean;
@@ -436,6 +442,15 @@ function ChannelEditor({
               onChange={onSendingChange}
             />
           ) : null}
+          <button
+            type="button"
+            onClick={onPreview}
+            disabled={Boolean(testProblem)}
+            title={testProblem ?? undefined}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-1 text-xs font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Preview
+          </button>
           <button
             type="button"
             onClick={onTest}
@@ -566,6 +581,158 @@ function ChannelEditor({
       {spec.hint && (
         <p className="mt-3 text-xs text-neutral-500">{spec.hint}</p>
       )}
+    </div>
+  );
+}
+
+function previewNote(
+  channelKey: ChannelKey,
+  offerRecommendedDates: boolean,
+): string {
+  const sampleInvoice =
+    channelKey === "mailboxReply"
+      ? "This uses a sample reply to Jordan Lee."
+      : "This uses sample invoice INV-1042.";
+  const extra =
+    channelKey === "workOrderCompleteEmail" ||
+    channelKey === "workOrderCompleteSms"
+      ? " The payment link is a sample and cannot be paid."
+      : channelKey === "renewalScheduleEmail"
+        ? offerRecommendedDates
+          ? " Recommended dates are samples and cannot be booked."
+          : " Recommended dates are turned off, so that spot is blank."
+        : channelKey === "appointmentConfirmationEmail" ||
+            channelKey === "appointmentConfirmationSms"
+          ? " The date, time, technician, and address are samples."
+          : "";
+  return `${sampleInvoice}${extra} Nothing is sent.`;
+}
+
+function PreviewDialog({
+  token,
+  channelKey,
+  channel,
+  offerRecommendedDates,
+  onClose,
+}: {
+  token: string;
+  channelKey: ChannelKey;
+  channel: AutomatedMessageChannel;
+  offerRecommendedDates: boolean;
+  onClose: () => void;
+}) {
+  const spec = CHANNELS[channelKey];
+  const sms = spec.kind === "sms";
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<AutomatedMessagePreview | null>(null);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const result = await previewAutomatedMessage(token, {
+          channel: channelKey,
+          mode: channel.mode,
+          templateId: channel.templateId,
+          subject: channel.subject,
+          body: channel.body,
+          offerRecommendedDates,
+        });
+        if (!cancelled) setPreview(result);
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(
+            err instanceof ApiError ? err.message : "Failed to preview the message.",
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    token,
+    channelKey,
+    channel.mode,
+    channel.templateId,
+    channel.subject,
+    channel.body,
+    offerRecommendedDates,
+  ]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/40 px-4 py-8"
+      onClick={onClose}
+    >
+      <div className="flex min-h-full items-center justify-center">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="automated-preview-title"
+          className={`w-full rounded-xl border border-neutral-200 bg-white p-5 shadow-lg ${
+            sms ? "max-w-md" : "max-w-3xl"
+          }`}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <h3
+            id="automated-preview-title"
+            className="text-base font-semibold text-brand-dark"
+          >
+            {sms ? "Text preview" : "Email preview"}
+          </h3>
+          <p className="mt-1 text-sm text-neutral-500">
+            {previewNote(channelKey, offerRecommendedDates)}
+          </p>
+          <div className="mt-4">
+            {loading ? (
+              <p className="py-8 text-center text-sm text-neutral-500">
+                Loading preview…
+              </p>
+            ) : loadError ? (
+              <p className="text-sm text-red-600">{loadError}</p>
+            ) : preview && sms ? (
+              <PhonePreview
+                message={preview.smsBody}
+                contactLabel="Jordan Lee"
+                isSample
+              />
+            ) : preview ? (
+              <EmailPreview
+                fromLabel="Billing"
+                toLabel="Jordan Lee"
+                subject={preview.subject}
+                html={preview.html}
+                isSample
+                fullWidth
+              />
+            ) : null}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:text-brand-dark"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -706,6 +873,7 @@ export default function AutomatedMessagesCard({
   const messageTab = parseMessageTab(searchParams.get("message"));
   const [settings, setSettings] = useState<AutomatedMessageSettings | null>(null);
   const [testing, setTesting] = useState<ChannelKey | null>(null);
+  const [previewing, setPreviewing] = useState<ChannelKey | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState("");
   const [templates, setTemplates] = useState<MessageTemplateItem[]>([]);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
@@ -974,6 +1142,7 @@ export default function AutomatedMessagesCard({
                     ? (next) => updateEmailDelivery({ [key]: next })
                     : undefined
                 }
+                onPreview={() => setPreviewing(key)}
                 onTest={() => setTesting(key)}
                 onChange={(next) => updateChannel(key, next)}
               />
@@ -1000,6 +1169,15 @@ export default function AutomatedMessagesCard({
         </div>
       </form>
     </div>
+      {previewing && token && settings && (
+        <PreviewDialog
+          token={token}
+          channelKey={previewing}
+          channel={settings[previewing]}
+          offerRecommendedDates={settings.renewalSchedule.offerRecommendedDates}
+          onClose={() => setPreviewing(null)}
+        />
+      )}
       {testing && token && settings && (
         <TestSendDialog
           token={token}
