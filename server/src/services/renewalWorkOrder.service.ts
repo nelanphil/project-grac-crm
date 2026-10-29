@@ -134,9 +134,11 @@ export type RenewalWorkOrderGateway = {
 };
 
 /**
- * Paid renewal invoices with no explicit work order, and no later work order
- * for the same customer, belong on the Paid Renewals report.
- * `referenceAt` is the payment time, or the issue time when paidAt is missing.
+ * Paid contract invoices belong on the Paid Renewals report when they still
+ * need a visit: no work order yet, or a linked work order with no date and
+ * no dispatch time. A completed visit, or any visit that already has a date,
+ * stays off the report. `referenceAt` is the payment time, or the issue time
+ * when paidAt is missing.
  */
 export function invoiceNeedsRenewalReportRow(input: {
   sourceType: string;
@@ -145,11 +147,17 @@ export function invoiceNeedsRenewalReportRow(input: {
   dismissedAt?: Date | null;
   referenceAt?: Date | null;
   laterWorkOrderCreatedAt?: Date | null;
+  /** False when the linked work order still needs a date. Omitted means it does not belong on the report. */
+  linkedWorkOrderScheduled?: boolean | null;
+  linkedWorkOrderCompleted?: boolean;
 }): boolean {
   if (!isContractServiceInvoice(input.sourceType)) return false;
   if (input.status !== "paid") return false;
-  if (input.serviceWorkOrderRef) return false;
   if (input.dismissedAt) return false;
+  if (input.serviceWorkOrderRef) {
+    if (input.linkedWorkOrderCompleted) return false;
+    return input.linkedWorkOrderScheduled === false;
+  }
   if (
     input.referenceAt &&
     input.laterWorkOrderCreatedAt &&
@@ -447,14 +455,18 @@ export async function findPaidRenewalsWithoutWorkOrder(input?: {
   customerRefs?: Types.ObjectId[];
   skip?: number;
   limit?: number;
+  /** Also include paid contracts whose work order exists but has no date yet. */
+  includeUnscheduled?: boolean;
 }): Promise<{ invoices: Array<Record<string, unknown>>; total: number }> {
   const match: Record<string, unknown> = {
     sourceType: { $in: [...CONTRACT_SERVICE_SOURCE_TYPES] },
     status: "paid",
-    serviceWorkOrderRef: null,
     renewalWorkOrderDismissedAt: null,
     ...excludeDeletedCustomerRefs(await loadDeletedCustomerIds()),
   };
+  if (!input?.includeUnscheduled) {
+    match.serviceWorkOrderRef = null;
+  }
   if (input?.number || (input?.customerRefs && input.customerRefs.length > 0)) {
     const or: Record<string, unknown>[] = [];
     if (input.number) or.push({ number: input.number });
@@ -492,10 +504,69 @@ export async function findPaidRenewalsWithoutWorkOrder(input?: {
         as: "laterWorkOrders",
       },
     },
-    { $match: { laterWorkOrders: { $size: 0 } } },
-    { $sort: { paidAt: -1, issuedAt: -1, createdAt: -1 } },
-    { $project: { laterWorkOrders: 0 } },
   ] as PipelineStage[];
+
+  if (input?.includeUnscheduled) {
+    pipeline.push(
+      {
+        $lookup: {
+          from: WorkOrder.collection.name,
+          let: { workOrderId: "$serviceWorkOrderRef" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $ne: ["$$workOrderId", null] },
+                    { $eq: ["$_id", "$$workOrderId"] },
+                    { $eq: [{ $ifNull: ["$deletedAt", null] }, null] },
+                    { $ne: ["$completed", true] },
+                    { $eq: [{ $ifNull: ["$date", null] }, null] },
+                    { $eq: [{ $ifNull: ["$scheduledStart", null] }, null] },
+                  ],
+                },
+              },
+            },
+            { $limit: 1 },
+            { $project: { _id: 1, number: 1 } },
+          ],
+          as: "linkedWorkOrders",
+        },
+      },
+      {
+        $match: {
+          $or: [
+            { serviceWorkOrderRef: null, laterWorkOrders: { $size: 0 } },
+            { "linkedWorkOrders.0": { $exists: true } },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          scheduleWorkOrder: {
+            $let: {
+              vars: { visit: { $arrayElemAt: ["$linkedWorkOrders", 0] } },
+              in: {
+                $cond: [
+                  { $ifNull: ["$$visit", false] },
+                  { _id: "$$visit._id", number: "$$visit.number" },
+                  null,
+                ],
+              },
+            },
+          },
+        },
+      },
+      { $project: { laterWorkOrders: 0, linkedWorkOrders: 0 } },
+    );
+  } else {
+    pipeline.push(
+      { $match: { laterWorkOrders: { $size: 0 } } },
+      { $project: { laterWorkOrders: 0 } },
+    );
+  }
+
+  pipeline.push({ $sort: { paidAt: -1, issuedAt: -1, createdAt: -1 } });
 
   if (input?.limit == null) {
     const invoices = await Invoice.aggregate(pipeline);
@@ -609,7 +680,19 @@ export async function dismissPaidRenewal(input: {
 }): Promise<void> {
   const invoice = await paidRenewalInvoice(input.invoiceId);
   if (invoice.serviceWorkOrderRef) {
-    throw new RenewalWorkOrderError("This invoice already has a work order");
+    const workOrder = await WorkOrder.findById(invoice.serviceWorkOrderRef)
+      .select("date scheduledStart deletedAt")
+      .lean();
+    if (
+      workOrder &&
+      !workOrder.deletedAt &&
+      isRenewalVisitScheduled({
+        date: workOrder.date,
+        scheduledStart: workOrder.scheduledStart,
+      })
+    ) {
+      throw new RenewalWorkOrderError("This renewal is already scheduled");
+    }
   }
   const actorId =
     input.actor?.actorUserId && Types.ObjectId.isValid(input.actor.actorUserId)

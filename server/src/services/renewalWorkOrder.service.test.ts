@@ -121,6 +121,41 @@ describe("invoiceNeedsRenewalReportRow", () => {
       false,
     );
   });
+
+  it("includes a linked work order that still needs a date", () => {
+    assert.equal(
+      invoiceNeedsRenewalReportRow({
+        ...open,
+        serviceWorkOrderRef: "wo-1",
+        linkedWorkOrderScheduled: false,
+        laterWorkOrderCreatedAt: new Date("2026-03-02T15:00:00.000Z"),
+      }),
+      true,
+    );
+  });
+
+  it("skips a linked work order that already has a date", () => {
+    assert.equal(
+      invoiceNeedsRenewalReportRow({
+        ...open,
+        serviceWorkOrderRef: "wo-1",
+        linkedWorkOrderScheduled: true,
+      }),
+      false,
+    );
+  });
+
+  it("skips a linked work order that is already completed", () => {
+    assert.equal(
+      invoiceNeedsRenewalReportRow({
+        ...open,
+        serviceWorkOrderRef: "wo-1",
+        linkedWorkOrderScheduled: false,
+        linkedWorkOrderCompleted: true,
+      }),
+      false,
+    );
+  });
 });
 
 describe("performRenewalWorkOrderEnsure", () => {

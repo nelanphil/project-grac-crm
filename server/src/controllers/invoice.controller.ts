@@ -596,6 +596,7 @@ export async function getPaidRenewals(
       customerRefs: search ? customerRefs : undefined,
       skip: paginate ? (page - 1) * pageSize : undefined,
       limit: paginate ? pageSize : undefined,
+      includeUnscheduled: true,
     });
     const names = await invoiceListNames(
       invoices as Array<{ customerRef?: Types.ObjectId | null }>,

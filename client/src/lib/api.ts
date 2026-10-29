@@ -3777,6 +3777,8 @@ export interface InvoiceItem {
   contactName?: string;
   /** Present on the paid-renewals report. */
   contractLabel?: string;
+  /** Linked work order that still needs a date. Present on the paid-renewals report. */
+  scheduleWorkOrder?: { _id: string; number: string } | null;
   /** Staff view of a paid ASC renewal. Absent for other invoices and for customers. */
   renewalVisit?: {
     workOrderId: string | null;

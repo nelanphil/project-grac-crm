@@ -79,7 +79,12 @@ function BriefingRow({
   unread?: boolean;
   onMarkRead?: () => void;
   marking?: boolean;
-  action?: { label: string; busy?: boolean; onClick: () => void };
+  action?: {
+    label: string;
+    busy?: boolean;
+    onClick?: () => void;
+    href?: string;
+  };
 }) {
   return (
     <li className="flex items-start gap-3 px-4 py-3.5 hover:bg-[var(--staff-cream)] lg:py-2.5">
@@ -121,7 +126,14 @@ function BriefingRow({
           {marking ? "Marking…" : "Mark as read"}
         </button>
       ) : null}
-      {action ? (
+      {action?.href ? (
+        <Link
+          href={action.href}
+          className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-brand-orange hover:underline"
+        >
+          {action.label}
+        </Link>
+      ) : action ? (
         <button
           type="button"
           disabled={action.busy}
@@ -205,7 +217,7 @@ export default function StaffBriefingHome() {
     s.hasPermission("contracts:write"),
   );
   const [paymentsTab, setPaymentsTab] = useState<"pending" | "renewals">(
-    "pending",
+    "renewals",
   );
   const [payments, setPayments] = useState<InvoiceItem[] | null>(null);
   const [paymentsError, setPaymentsError] = useState<string | null>(null);
@@ -629,18 +641,6 @@ export default function StaffBriefingHome() {
                 <button
                   type="button"
                   role="tab"
-                  aria-selected={paymentsTab === "pending"}
-                  onClick={() => setPaymentsTab("pending")}
-                  className={tabClass(paymentsTab === "pending")}
-                >
-                  Pending payments
-                  {payments ? (
-                    <span className="ml-1 font-medium">({payments.length})</span>
-                  ) : null}
-                </button>
-                <button
-                  type="button"
-                  role="tab"
                   aria-selected={paymentsTab === "renewals"}
                   onClick={() => setPaymentsTab("renewals")}
                   className={tabClass(paymentsTab === "renewals")}
@@ -648,6 +648,18 @@ export default function StaffBriefingHome() {
                   Paid renewals
                   {renewals ? (
                     <span className="ml-1 font-medium">({renewals.length})</span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={paymentsTab === "pending"}
+                  onClick={() => setPaymentsTab("pending")}
+                  className={tabClass(paymentsTab === "pending")}
+                >
+                  Pending payments
+                  {payments ? (
+                    <span className="ml-1 font-medium">({payments.length})</span>
                   ) : null}
                 </button>
               </div>
@@ -674,7 +686,7 @@ export default function StaffBriefingHome() {
                   </p>
                 ) : null}
                 {renewals.length === 0 ? (
-                  <EmptyLine>No paid renewals waiting for a work order.</EmptyLine>
+                  <EmptyLine>No paid renewals waiting to be scheduled.</EmptyLine>
                 ) : (
                   <ul className="divide-y divide-[var(--staff-border)]">
                     {renewals.map((invoice) => (
@@ -692,16 +704,22 @@ export default function StaffBriefingHome() {
                           .filter(Boolean)
                           .join(" · ")}
                         action={
-                          canWriteInvoices
+                          invoice.scheduleWorkOrder
                             ? {
-                                label:
-                                  creatingRenewalId === invoice._id
-                                    ? "Creating…"
-                                    : "Create WO",
-                                busy: creatingRenewalId === invoice._id,
-                                onClick: () => void createRenewalVisit(invoice._id),
+                                label: "Schedule",
+                                href: `/dashboard/work-orders/detail?id=${invoice.scheduleWorkOrder._id}`,
                               }
-                            : undefined
+                            : canWriteInvoices
+                              ? {
+                                  label:
+                                    creatingRenewalId === invoice._id
+                                      ? "Creating…"
+                                      : "Create WO",
+                                  busy: creatingRenewalId === invoice._id,
+                                  onClick: () =>
+                                    void createRenewalVisit(invoice._id),
+                                }
+                              : undefined
                         }
                       />
                     ))}

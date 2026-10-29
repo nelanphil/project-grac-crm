@@ -250,33 +250,45 @@ export default function PaidRenewalsPanel() {
   function rowActions(invoice: InvoiceItem) {
     if (!canWrite) return null;
     const busy = busyId === invoice._id || bulkBusy;
+    const visit = invoice.scheduleWorkOrder;
     return (
       <div
         className="flex flex-wrap gap-2"
         onClick={(event) => event.stopPropagation()}
       >
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void createOne(invoice._id)}
-          className="rounded-md bg-brand-dark px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
-        >
-          {busyId === invoice._id ? "Working…" : "Create work order"}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => {
-            setLinkingId((current) =>
-              current === invoice._id ? null : invoice._id,
-            );
-            setLinkNumber("");
-            setDismissId(null);
-          }}
-          className="rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
-        >
-          Link existing
-        </button>
+        {visit ? (
+          <Link
+            href={`/dashboard/work-orders/detail?id=${visit._id}`}
+            className="rounded-md bg-brand-dark px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+          >
+            Schedule {visit.number || "work order"}
+          </Link>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void createOne(invoice._id)}
+              className="rounded-md bg-brand-dark px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
+            >
+              {busyId === invoice._id ? "Working…" : "Create work order"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setLinkingId((current) =>
+                  current === invoice._id ? null : invoice._id,
+                );
+                setLinkNumber("");
+                setDismissId(null);
+              }}
+              className="rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
+            >
+              Link existing
+            </button>
+          </>
+        )}
         <button
           type="button"
           disabled={busy}
@@ -431,8 +443,8 @@ export default function PaidRenewalsPanel() {
             empty={
               <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 bg-white py-24 text-center shadow-sm">
                 <FileText className="mb-4 h-10 w-10 text-neutral-300" />
-                <p className="text-sm font-medium text-neutral-500">
-                  No paid renewals are waiting for a work order
+                  <p className="text-sm font-medium text-neutral-500">
+                  No paid renewals are waiting to be scheduled
                 </p>
               </div>
             }
@@ -463,6 +475,10 @@ export default function PaidRenewalsPanel() {
                         {invoice.contractLabel ? (
                           <DataField label="Contract" value={invoice.contractLabel} />
                         ) : null}
+                        <DataField
+                          label="Work order"
+                          value={invoice.scheduleWorkOrder?.number || "None yet"}
+                        />
                       </>
                     }
                   >
@@ -491,6 +507,9 @@ export default function PaidRenewalsPanel() {
                       <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                         Amount
                       </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                        Work order
+                      </th>
                       {canWrite ? (
                         <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                           Actions
@@ -504,20 +523,22 @@ export default function PaidRenewalsPanel() {
                         <tr className="align-top">
                           {canWrite ? (
                             <td className="w-10 px-4 py-4">
-                              <input
-                                type="checkbox"
-                                checked={selectedIds.has(invoice._id)}
-                                aria-label={`Select invoice ${invoice.number}`}
-                                onChange={() =>
-                                  setSelectedIds((current) => {
-                                    const next = new Set(current);
-                                    if (next.has(invoice._id)) next.delete(invoice._id);
-                                    else next.add(invoice._id);
-                                    return next;
-                                  })
-                                }
-                                className="h-4 w-4"
-                              />
+                              {invoice.scheduleWorkOrder ? null : (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIds.has(invoice._id)}
+                                  aria-label={`Select invoice ${invoice.number}`}
+                                  onChange={() =>
+                                    setSelectedIds((current) => {
+                                      const next = new Set(current);
+                                      if (next.has(invoice._id)) next.delete(invoice._id);
+                                      else next.add(invoice._id);
+                                      return next;
+                                    })
+                                  }
+                                  className="h-4 w-4"
+                                />
+                              )}
                             </td>
                           ) : null}
                           <td className="px-6 py-4 font-medium text-brand-dark">
@@ -542,6 +563,18 @@ export default function PaidRenewalsPanel() {
                           <td className="px-6 py-4 text-neutral-700">
                             {formatMoney(invoice.amountCents)}
                           </td>
+                          <td className="px-6 py-4 text-neutral-600">
+                            {invoice.scheduleWorkOrder ? (
+                              <Link
+                                href={`/dashboard/work-orders/detail?id=${invoice.scheduleWorkOrder._id}`}
+                                className="font-medium text-brand-orange hover:underline"
+                              >
+                                {invoice.scheduleWorkOrder.number || "Work order"}
+                              </Link>
+                            ) : (
+                              "None yet"
+                            )}
+                          </td>
                           {canWrite ? (
                             <td className="px-6 py-4">{rowActions(invoice)}</td>
                           ) : null}
@@ -549,7 +582,7 @@ export default function PaidRenewalsPanel() {
                         {linkingId === invoice._id || dismissId === invoice._id ? (
                           <tr>
                             <td
-                              colSpan={canWrite ? 6 : 4}
+                              colSpan={canWrite ? 7 : 5}
                               className="px-6 pb-4"
                             >
                               {rowExtras(invoice)}
