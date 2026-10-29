@@ -2,12 +2,50 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   invoiceNeedsRenewalReportRow,
+  isRenewalVisitScheduled,
   performRenewalWorkOrderEnsure,
   runRenewalWorkOrderSideEffect,
   type RenewalWorkOrderGateway,
 } from "./renewalWorkOrder.service";
 
 const paidAt = new Date("2026-03-01T15:00:00.000Z");
+
+describe("isRenewalVisitScheduled", () => {
+  it("treats a missing work order as unscheduled", () => {
+    assert.equal(isRenewalVisitScheduled(null), false);
+    assert.equal(isRenewalVisitScheduled(undefined), false);
+  });
+
+  it("treats a work order with no date as unscheduled", () => {
+    assert.equal(
+      isRenewalVisitScheduled({ date: null, scheduledStart: null }),
+      false,
+    );
+  });
+
+  it("treats a ticket date or a dispatch time as scheduled", () => {
+    assert.equal(
+      isRenewalVisitScheduled({ date: new Date("2026-11-03T00:00:00.000Z") }),
+      true,
+    );
+    assert.equal(
+      isRenewalVisitScheduled({
+        scheduledStart: new Date("2026-11-03T14:00:00.000Z"),
+      }),
+      true,
+    );
+  });
+
+  it("ignores a deleted work order", () => {
+    assert.equal(
+      isRenewalVisitScheduled({
+        date: new Date("2026-11-03T00:00:00.000Z"),
+        deletedAt: new Date("2026-11-01T00:00:00.000Z"),
+      }),
+      false,
+    );
+  });
+});
 
 describe("invoiceNeedsRenewalReportRow", () => {
   const open = {

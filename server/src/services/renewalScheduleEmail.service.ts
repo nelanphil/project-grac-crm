@@ -17,8 +17,14 @@ import {
   loadInvoiceEmailContext,
   renderAutomatedBillingEmail,
 } from "./paymentReceipt.service";
-import { ensureRenewalWorkOrder } from "./renewalWorkOrder.service";
-import { recommendedDatesEmailHtml } from "./renewalScheduleChoice";
+import {
+  ensureRenewalWorkOrder,
+  renewalVisitState,
+} from "./renewalWorkOrder.service";
+import {
+  recommendedDatesEmailHtml,
+  recommendedDatesEmailText,
+} from "./renewalScheduleChoice";
 import { recommendDatesForSite } from "./schedule.service";
 
 const OFFERED_DATE_LIMIT = 3;
@@ -96,6 +102,11 @@ async function deliver(
     return { status: "skipped", reason: "Billing alerts are off for this customer." };
   }
 
+  const visit = await renewalVisitState(fresh);
+  if (visit.scheduled) {
+    return { status: "skipped", reason: "This renewal visit is already scheduled." };
+  }
+
   if (options?.force) {
     await releaseScheduleClaim(fresh._id as Types.ObjectId);
   }
@@ -124,14 +135,18 @@ async function deliver(
     const dates = settings.offerRecommendedDates
       ? await offeredDatesFor(workOrderId || null)
       : [];
-    let datesHtml = "";
+    let recommendedDates: { html: string; text: string } | null = null;
     if (dates.length > 0) {
       const minted = mintPayToken();
-      datesHtml = recommendedDatesEmailHtml({
+      const offered = {
         pageUrl: schedulePageUrl(),
         token: minted.token,
         dates,
-      });
+      };
+      recommendedDates = {
+        html: recommendedDatesEmailHtml(offered),
+        text: recommendedDatesEmailText(offered),
+      };
       await Invoice.updateOne(
         { _id: fresh._id },
         {
@@ -159,7 +174,6 @@ async function deliver(
       amountCents: fresh.amountCents,
       dueDate: fresh.dueDate,
       contractType: label || "service",
-      recommendedDatesHtml: datesHtml,
     };
     const rendered = await renderAutomatedBillingEmail({
       subject: applyInvoiceTokens(copy.subject, tokens),
@@ -168,6 +182,7 @@ async function deliver(
       invoiceId: String(fresh._id),
       customerRef: fresh.customerRef,
       recipient,
+      recommendedDates,
     });
     await sendRoleEmail("billing_notifications", {
       to: recipient,

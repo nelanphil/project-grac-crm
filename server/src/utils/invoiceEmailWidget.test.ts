@@ -34,6 +34,34 @@ describe("invoice email widget", () => {
     assert.match(wrapped.text, /Annual service — \$150\.00/);
   });
 
+  it("inserts calendar tiles after body sanitization", () => {
+    const wrapped = buildStaffOutboundEmail({
+      subject: "Let's schedule",
+      bodyText:
+        "<p>Choose a day.</p><p>{{recommended_dates}}</p><table><tr><td>stripped</td></tr></table>",
+      recommendedDates: {
+        html: '<table><tr><td style="background-color:#f36c21;">NOV</td></tr></table>',
+        text: "Tuesday, November 3: https://example.com/schedule-renewal?token=abc&date=2026-11-03",
+      },
+    });
+    assert.match(wrapped.html, /background-color:#f36c21/);
+    assert.match(wrapped.html, />NOV</);
+    assert.doesNotMatch(wrapped.html, /<td>stripped<\/td>/);
+    assert.doesNotMatch(wrapped.html, /\{\{\s*recommended_dates\s*\}\}/);
+    assert.match(wrapped.text, /Tuesday, November 3: https:\/\/example\.com\/schedule-renewal/);
+  });
+
+  it("removes the recommended dates token when no dates are passed", () => {
+    const wrapped = buildStaffOutboundEmail({
+      subject: "Schedule {{recommended_dates}}",
+      bodyText: "<p>Call us.</p><p>{{recommended_dates}}</p>",
+    });
+    assert.equal(wrapped.subject, "Schedule");
+    assert.doesNotMatch(wrapped.html, /\{\{\s*recommended_dates\s*\}\}/);
+    assert.doesNotMatch(wrapped.text, /\{\{\s*recommended_dates\s*\}\}/);
+    assert.match(wrapped.html, /Call us/);
+  });
+
   it("omits the widget when the email has the token and no invoice", () => {
     const wrapped = buildStaffOutboundEmail({
       subject: "Hello",

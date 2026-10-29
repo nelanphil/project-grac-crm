@@ -295,19 +295,22 @@ export function buildContactFormEmail(opts: {
   return { subject, text, html };
 }
 
-function injectInvoiceWidgetHtml(html: string, widgetHtml: string): string {
-  const unwrapped = html.replace(
-    /<p\b[^>]*>\s*\{\{\s*invoice\s*\}\}\s*<\/p>/gi,
-    widgetHtml,
+function injectTokenHtml(html: string, token: string, replacement: string): string {
+  const wrapped = new RegExp(
+    `<p\\b[^>]*>\\s*\\{\\{\\s*${token}\\s*\\}\\}\\s*<\\/p>`,
+    "gi",
   );
-  return unwrapped.replace(/\{\{\s*invoice\s*\}\}/g, widgetHtml);
+  const bare = new RegExp(`\\{\\{\\s*${token}\\s*\\}\\}`, "g");
+  return html.replace(wrapped, replacement).replace(bare, replacement);
 }
 
-function injectInvoiceWidgetText(text: string, widgetText: string): string {
-  if (!/\{\{\s*invoice\s*\}\}/.test(text)) return text;
-  const replacement = widgetText ? `\n${widgetText}\n` : "";
+function injectTokenText(text: string, token: string, replacement: string): string {
+  const bare = new RegExp(`\\{\\{\\s*${token}\\s*\\}\\}`, "g");
+  if (!bare.test(text)) return text;
+  bare.lastIndex = 0;
+  const block = replacement ? `\n${replacement}\n` : "";
   return text
-    .replace(/\{\{\s*invoice\s*\}\}/g, replacement)
+    .replace(bare, block)
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -334,16 +337,25 @@ export function buildStaffOutboundEmail(opts: {
   unsubscribeUrl?: string;
   /** Trusted HTML inserted where {{invoice}} sits, after body sanitization. */
   invoiceWidget?: { html: string; text: string } | null;
+  /** Trusted calendar tiles inserted where {{recommended_dates}} sits, after sanitization. */
+  recommendedDates?: { html: string; text: string } | null;
 }): { subject: string; text: string; html: string } {
   const paymentUrl = opts.paymentUrl?.trim();
   const unsubscribeUrl = opts.unsubscribeUrl?.trim();
   const chrome = mergeEmailChrome(opts.chrome);
   const widgetHtml = opts.invoiceWidget?.html ?? "";
   const widgetText = opts.invoiceWidget?.text ?? "";
+  const datesHtml = opts.recommendedDates?.html ?? "";
+  const datesText = opts.recommendedDates?.text ?? "";
   const subjectRaw = paymentUrl
     ? stripPaymentLinkFromText(opts.subject, paymentUrl)
     : opts.subject;
-  const subject = injectInvoiceWidgetText(subjectRaw, "").trim() || "Message";
+  const subject =
+    injectTokenText(
+      injectTokenText(subjectRaw, "invoice", ""),
+      "recommended_dates",
+      "",
+    ).trim() || "Message";
   const bodyForHtml = paymentUrl
     ? stripPaymentLinkFromText(opts.bodyText, paymentUrl)
     : opts.bodyText;
@@ -357,11 +369,23 @@ export function buildStaffOutboundEmail(opts: {
             `<p style="margin:0 0 12px;">${block.replace(/\n/g, "<br />")}</p>`,
         )
         .join("");
-  const bodyHtml = injectInvoiceWidgetHtml(sanitizedBody, widgetHtml) +
-    (opts.paymentSummary ? `<p>${escapeHtml(opts.paymentSummary)}</p>` : "");
+  const bodyHtml =
+    injectTokenHtml(
+      injectTokenHtml(sanitizedBody, "invoice", widgetHtml),
+      "recommended_dates",
+      datesHtml,
+    ) + (opts.paymentSummary ? `<p>${escapeHtml(opts.paymentSummary)}</p>` : "");
   const plainSource = isHtml ? htmlToPlainText(bodyForHtml) : bodyForHtml;
-  const plainBody = [injectInvoiceWidgetText(plainSource, widgetText), opts.paymentSummary]
-    .filter(Boolean).join("\n\n");
+  const plainBody = [
+    injectTokenText(
+      injectTokenText(plainSource, "invoice", widgetText),
+      "recommended_dates",
+      datesText,
+    ),
+    opts.paymentSummary,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const previewText = plainBody.replace(/\s+/g, " ").trim().slice(0, 140);
 
   const html = renderBrandedEmail({

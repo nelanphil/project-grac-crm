@@ -120,8 +120,6 @@ export type InvoiceTokenInput = {
   dueDate?: Date | string | null;
   viewUrl?: string | null;
   contractType?: string | null;
-  /** Trusted HTML for date links. Inserted without escaping. Omitted leaves the token in place. */
-  recommendedDatesHtml?: string | null;
 };
 
 const INVOICE_TOKEN_RE = (key: string) =>
@@ -182,12 +180,6 @@ export function applyInvoiceTokens(
     result = result.replace(
       INVOICE_TOKEN_RE("contract_type"),
       encode(invoice.contractType.trim()),
-    );
-  }
-  if (invoice.recommendedDatesHtml != null) {
-    result = result.replace(
-      INVOICE_TOKEN_RE("recommended_dates"),
-      invoice.recommendedDatesHtml,
     );
   }
   if (!due) result = clearEmptyDueSentence(result);

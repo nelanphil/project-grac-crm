@@ -18,7 +18,7 @@ import {
   automatedEmailPauseReasonFor,
   resolveAutomatedMessage,
 } from "./automatedMessage.service";
-import { renderMessageTemplate } from "../utils/messageTemplate";
+import { renderMessageTemplate, stripInvoiceToken } from "../utils/messageTemplate";
 import {
   getTwilioAccountForSend,
   sendSms,
@@ -229,7 +229,7 @@ export async function textInvoiceReceipt(input: {
       account: line.account,
       from: line.from,
       to,
-      body: renderMessageTemplate(copy.body, { first_name: "" }),
+      body: stripInvoiceToken(renderMessageTemplate(copy.body, { first_name: "" })),
     });
     return { status: "sent", to: phone.phone };
   } catch (err) {

@@ -172,6 +172,7 @@ export async function renderAutomatedBillingEmail(input: {
   invoiceId: string;
   customerRef?: Types.ObjectId | string | null;
   recipient: string;
+  recommendedDates?: { html: string; text: string } | null;
 }): Promise<{ subject: string; text: string; html: string }> {
   let context: Record<string, string> = { first_name: "" };
   const customerRef = input.customerRef ? String(input.customerRef) : "";
@@ -210,6 +211,7 @@ export async function renderAutomatedBillingEmail(input: {
     chrome,
     unsubscribeUrl: buildUnsubscribeUrl(input.recipient, "billing"),
     invoiceWidget,
+    recommendedDates: input.recommendedDates,
   });
 }
 

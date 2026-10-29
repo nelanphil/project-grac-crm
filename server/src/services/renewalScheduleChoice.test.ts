@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   evaluateRenewalScheduleChoice,
   recommendedDatesEmailHtml,
+  recommendedDatesEmailText,
   renewalOfferDateLabel,
 } from "./renewalScheduleChoice";
 
@@ -63,7 +64,7 @@ describe("evaluateRenewalScheduleChoice", () => {
 });
 
 describe("recommendedDatesEmailHtml", () => {
-  it("builds a confirm link for each date and is empty when there are none", () => {
+  it("builds a calendar tile for each date and is empty when there are none", () => {
     assert.equal(
       recommendedDatesEmailHtml({
         pageUrl: "https://crm.example.com/schedule-renewal",
@@ -75,10 +76,45 @@ describe("recommendedDatesEmailHtml", () => {
     const html = recommendedDatesEmailHtml({
       pageUrl: "https://crm.example.com/schedule-renewal/",
       token: "abc",
+      dates: ["2026-11-03", "2026-11-05"],
+    });
+    assert.match(
+      html,
+      /href="https:\/\/crm\.example\.com\/schedule-renewal\?token=abc&amp;date=2026-11-03"/,
+    );
+    assert.match(
+      html,
+      /href="https:\/\/crm\.example\.com\/schedule-renewal\?token=abc&amp;date=2026-11-05"/,
+    );
+    assert.match(html, />NOV</);
+    assert.match(html, />3</);
+    assert.match(html, />Tuesday</);
+    assert.match(html, /Choose this day/);
+    assert.match(html, /background-color:#f36c21/);
+    assert.doesNotMatch(html, /<script/);
+  });
+});
+
+describe("recommendedDatesEmailText", () => {
+  it("lists each date with its confirm link", () => {
+    assert.equal(
+      recommendedDatesEmailText({
+        pageUrl: "https://crm.example.com/schedule-renewal",
+        token: "abc",
+        dates: [],
+      }),
+      "",
+    );
+    const text = recommendedDatesEmailText({
+      pageUrl: "https://crm.example.com/schedule-renewal/",
+      token: "abc",
       dates: ["2026-11-03"],
     });
-    assert.match(html, /href="https:\/\/crm\.example\.com\/schedule-renewal\?token=abc&amp;date=2026-11-03"/);
-    assert.match(html, new RegExp(renewalOfferDateLabel("2026-11-03")));
-    assert.doesNotMatch(html, /<script/);
+    assert.match(text, new RegExp(renewalOfferDateLabel("2026-11-03")));
+    assert.match(
+      text,
+      /https:\/\/crm\.example\.com\/schedule-renewal\?token=abc&date=2026-11-03/,
+    );
+    assert.doesNotMatch(text, /&amp;/);
   });
 });

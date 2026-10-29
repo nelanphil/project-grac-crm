@@ -54,6 +54,7 @@ import {
   ensureRenewalWorkOrder,
   findPaidRenewalsWithoutWorkOrder,
   linkRenewalWorkOrder,
+  renewalVisitState,
   RenewalWorkOrderError,
   type RenewalWorkOrderActor,
 } from "../services/renewalWorkOrder.service";
@@ -764,7 +765,10 @@ export async function resendRenewalScheduleEmail(
       res.json({ message: "Scheduling email sent." });
       return;
     }
-    res.status(result.status === "failed" ? 502 : 400).json({
+    const alreadyScheduled =
+      result.status === "skipped" &&
+      result.reason === "This renewal visit is already scheduled.";
+    res.status(result.status === "failed" ? 502 : alreadyScheduled ? 409 : 400).json({
       message:
         result.status === "failed" ? result.error : result.reason,
     });
@@ -801,8 +805,19 @@ export async function getInvoiceById(
       ...toPublicInvoice(invoice),
       ...enrichment,
     };
+    const renewalVisit =
+      isStaff(req.user) &&
+      invoice.sourceType === "contract_renewal" &&
+      invoice.status === "paid"
+        ? {
+            ...(await renewalVisitState(invoice)),
+            scheduleEmailSentAt: invoice.renewalScheduleEmailSentAt ?? null,
+          }
+        : null;
     res.json({
-      invoice: isStaff(req.user) ? pub : hideOfflineProof(pub),
+      invoice: isStaff(req.user)
+        ? { ...pub, ...(renewalVisit ? { renewalVisit } : {}) }
+        : hideOfflineProof(pub),
     });
   } catch {
     res.status(500).json({ message: "Failed to load invoice" });

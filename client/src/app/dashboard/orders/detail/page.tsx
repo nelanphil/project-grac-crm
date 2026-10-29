@@ -1,8 +1,10 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  CalendarDays,
   CheckCircle2,
   CreditCard,
   Download,
@@ -38,6 +40,7 @@ import {
   type InvoiceStatus,
   markInvoicePaid,
   reopenInvoice,
+  resendRenewalScheduleEmail,
   startInvoiceCheckout,
   updateInvoiceTax,
 } from "@/lib/api";
@@ -63,6 +66,21 @@ function formatMoney(cents: number): string {
 function formatDate(value: string | null): string | null {
   if (!value) return null;
   return new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatCalendarDate(value: string | null): string | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return formatDate(value);
+  return new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+  ).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -120,6 +138,8 @@ function InvoiceDetailContent() {
   const [confirmingStatus, setConfirmingStatus] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
   const [activityKey, setActivityKey] = useState(0);
+  const [sendingSchedule, setSendingSchedule] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const refreshActivity = () => setActivityKey((key) => key + 1);
   const send = useInvoiceCustomerSend(invoice, canEmail && !isCustomer, {
     onSendFinished: refreshActivity,
@@ -179,6 +199,28 @@ function InvoiceDetailContent() {
       );
     } finally {
       setStatusBusy(false);
+    }
+  }
+
+  async function handleResendSchedule() {
+    if (!token || !invoice) return;
+    setSendingSchedule(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await resendRenewalScheduleEmail(token, invoice._id);
+      setNotice(result.message);
+      const { invoice: next } = await getInvoice(token, invoice._id);
+      setInvoice(next);
+      refreshActivity();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to send the scheduling email.",
+      );
+    } finally {
+      setSendingSchedule(false);
     }
   }
 
@@ -246,6 +288,15 @@ function InvoiceDetailContent() {
   const customerName = invoice.customer?.name || invoice.customerName || null;
   const dueDate = formatDate(invoice.dueDate);
   const paidDate = invoice.status === "paid" ? formatDate(invoice.paidAt) : null;
+  const canResendSchedule =
+    !isCustomer &&
+    canWrite &&
+    invoice.status === "paid" &&
+    invoice.sourceType === "contract_renewal" &&
+    Boolean(invoice.renewalVisit) &&
+    !invoice.renewalVisit?.scheduled;
+  const scheduledVisit =
+    !isCustomer && invoice.renewalVisit?.scheduled ? invoice.renewalVisit : null;
 
   const actions: ActionsMenuItem[] = [];
   if (isCustomer && canPay) {
@@ -255,6 +306,18 @@ function InvoiceDetailContent() {
       label: "Pay now",
       icon: CreditCard,
       onSelect: () => router.push(`/dashboard/checkout/?invoiceId=${invoice._id}`),
+    });
+  }
+  if (canResendSchedule && invoice.renewalVisit) {
+    const sentAt = formatDate(invoice.renewalVisit.scheduleEmailSentAt);
+    actions.push({
+      key: "resend-schedule",
+      group: "send",
+      label: "Resend scheduling email",
+      icon: CalendarDays,
+      disabled: sendingSchedule,
+      hint: sentAt ? `Last sent ${sentAt}` : "Not sent yet",
+      onSelect: () => void handleResendSchedule(),
     });
   }
   if (!isCustomer && send.enabled) {
@@ -349,15 +412,17 @@ function InvoiceDetailContent() {
     onSelect: () => window.print(),
   });
 
-  const busyLabel = tapToPay.busy
-    ? "Opening Square…"
-    : paying
-      ? "Redirecting…"
-      : squareCheck.busy
-        ? "Checking Square…"
-        : savingTax
-          ? "Saving tax…"
-          : null;
+  const busyLabel = sendingSchedule
+    ? "Sending scheduling email…"
+    : tapToPay.busy
+      ? "Opening Square…"
+      : paying
+        ? "Redirecting…"
+        : squareCheck.busy
+          ? "Checking Square…"
+          : savingTax
+            ? "Saving tax…"
+            : null;
 
   const activityPanel =
     showActivity && token ? (
@@ -411,6 +476,27 @@ function InvoiceDetailContent() {
                 .filter(Boolean)
                 .join(" · ")}
             </p>
+            {scheduledVisit ? (
+              <p className="mt-1 text-sm text-neutral-500">
+                Renewal visit scheduled
+                {scheduledVisit.date
+                  ? ` for ${formatCalendarDate(scheduledVisit.date)}`
+                  : ""}
+                {scheduledVisit.workOrderId ? (
+                  <>
+                    {" "}
+                    (
+                    <Link
+                      href={`/dashboard/work-orders/detail?id=${scheduledVisit.workOrderId}`}
+                      className="font-medium text-brand-dark hover:text-brand-orange"
+                    >
+                      {scheduledVisit.workOrderNumber || "Work order"}
+                    </Link>
+                    )
+                  </>
+                ) : null}
+              </p>
+            ) : null}
           </div>
           <ActionsMenu items={actions} busyLabel={busyLabel} className="w-full sm:w-auto" />
         </div>
@@ -436,6 +522,10 @@ function InvoiceDetailContent() {
       ) : error ? (
         <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 print:hidden">
           {error}
+        </div>
+      ) : notice ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 print:hidden">
+          {notice}
         </div>
       ) : null}
 

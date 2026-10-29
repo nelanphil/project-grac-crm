@@ -3777,6 +3777,14 @@ export interface InvoiceItem {
   contactName?: string;
   /** Present on the paid-renewals report. */
   contractLabel?: string;
+  /** Staff view of a paid ASC renewal. Absent for other invoices and for customers. */
+  renewalVisit?: {
+    workOrderId: string | null;
+    workOrderNumber: string | null;
+    scheduled: boolean;
+    date: string | null;
+    scheduleEmailSentAt: string | null;
+  };
   /** Present on GET /invoices/:id only. */
   customer?: InvoiceCustomerSummary | null;
   /** Present on GET /invoices/:id only. */

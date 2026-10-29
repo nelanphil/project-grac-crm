@@ -1,5 +1,8 @@
 import { env } from "../config/env";
-import { recommendedDatesEmailHtml } from "./renewalScheduleChoice";
+import {
+  recommendedDatesEmailHtml,
+  recommendedDatesEmailText,
+} from "./renewalScheduleChoice";
 import { sendRoleEmail } from "./email.service";
 import {
   AutomatedMessageError,
@@ -220,18 +223,17 @@ export async function composeAutomatedMessageTest(
     };
   }
 
+  const sampleDates =
+    input.channel === "renewalScheduleEmail"
+      ? {
+          pageUrl: `${env.clientUrl.replace(/\/$/, "")}/schedule-renewal`,
+          token: "sample",
+          dates: ["2026-11-03", "2026-11-05", "2026-11-10"],
+        }
+      : null;
   const tokens = {
     ...invoiceTokens(automatedTestViewUrl()),
-    ...(input.channel === "renewalScheduleEmail"
-      ? {
-          contractType: "ASC",
-          recommendedDatesHtml: recommendedDatesEmailHtml({
-            pageUrl: `${env.clientUrl.replace(/\/$/, "")}/schedule-renewal`,
-            token: "sample",
-            dates: ["2026-11-03", "2026-11-05", "2026-11-10"],
-          }),
-        }
-      : {}),
+    ...(sampleDates ? { contractType: "ASC" } : {}),
   };
   const subject = prefixAutomatedTestSubject(
     renderMessageTemplate(
@@ -287,6 +289,12 @@ export async function composeAutomatedMessageTest(
     chrome: chrome ?? undefined,
     unsubscribeUrl: buildUnsubscribeUrl(input.recipient, "billing"),
     invoiceWidget: widget,
+    recommendedDates: sampleDates
+      ? {
+          html: recommendedDatesEmailHtml(sampleDates),
+          text: recommendedDatesEmailText(sampleDates),
+        }
+      : null,
   });
   return {
     kind: "email",

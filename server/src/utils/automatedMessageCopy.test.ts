@@ -150,18 +150,14 @@ describe("applyInvoiceTokens", () => {
     assert.match(sms, /https:\/\/example\.com\/invoice\/\?t=abc/);
   });
 
-  it("fills contract type and inserts recommended dates without escaping the links", () => {
+  it("fills contract type and leaves recommended dates for the email shell", () => {
     const html = applyInvoiceTokens(
       "<p>Your {{contract_type}} visit.</p>{{recommended_dates}}",
-      {
-        contractType: "A&B",
-        recommendedDatesHtml:
-          '<p><a href="https://example.com/schedule-renewal?token=abc&amp;date=2026-11-03">Tuesday, November 3</a></p>',
-      },
+      { contractType: "A&B" },
     );
     assert.equal(
       html,
-      '<p>Your A&amp;B visit.</p><p><a href="https://example.com/schedule-renewal?token=abc&amp;date=2026-11-03">Tuesday, November 3</a></p>',
+      "<p>Your A&amp;B visit.</p>{{recommended_dates}}",
     );
   });
 

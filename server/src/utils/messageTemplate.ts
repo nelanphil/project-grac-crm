@@ -57,7 +57,7 @@ const TOKEN_RE = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
 const PAYMENT_LINK_TOKEN_RE = /\{\{\s*payment_link\s*\}\}/;
 const INVOICE_TOKEN_RE = /\{\{\s*invoice\s*\}\}/;
 /** Tokens resolved after HTML sanitization, not by string replacement. */
-const PRESERVED_TOKEN_KEYS = new Set(["invoice"]);
+const PRESERVED_TOKEN_KEYS = new Set(["invoice", "recommended_dates"]);
 
 /** True when any part includes {{payment_link}}. */
 export function templateUsesPaymentLink(...parts: Array<string | undefined>): boolean {
@@ -70,7 +70,7 @@ export function templateUsesInvoice(...parts: Array<string | undefined>): boolea
 }
 
 export function stripInvoiceToken(value: string): string {
-  return value.replace(/\{\{\s*invoice\s*\}\}/g, "");
+  return value.replace(/\{\{\s*(?:invoice|recommended_dates)\s*\}\}/g, "");
 }
 
 /**
@@ -87,7 +87,7 @@ export function stripEmptyGreeting(value: string): string {
   return value.replace(/^Hi\s*,\s*/i, "");
 }
 
-/** Replace {{key}} tokens. Unknown keys become empty strings. {{invoice}} is left in place. */
+/** Replace {{key}} tokens. Unknown keys become empty strings. {{invoice}} and {{recommended_dates}} stay in place. */
 export function renderMessageTemplate(
   body: string,
   context: MessageTemplateContext,

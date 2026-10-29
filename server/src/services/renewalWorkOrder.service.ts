@@ -18,6 +18,7 @@ import { logNotificationAsync } from "./notification.service";
 import { nextPrefixedNumber } from "./serviceTicket";
 import { resolveTicketWorkOrderType } from "./ticketWorkOrderType";
 import { recordWorkOrderActivity } from "./workOrderActivity.service";
+import { formatLocalDate, storedTicketDateKey } from "../utils/scheduleTime";
 
 const RENEWAL_VISIT_MINUTES = 30;
 
@@ -40,6 +41,68 @@ export type RenewalWorkOrderResult = {
   number: string;
   created: boolean;
 };
+
+export type RenewalVisitWorkOrder = {
+  date?: Date | null;
+  scheduledStart?: Date | null;
+  deletedAt?: Date | null;
+} | null | undefined;
+
+/** A renewal visit is set once it has a ticket date or a dispatch time. */
+export function isRenewalVisitScheduled(workOrder: RenewalVisitWorkOrder): boolean {
+  if (!workOrder || workOrder.deletedAt) return false;
+  return Boolean(workOrder.date || workOrder.scheduledStart);
+}
+
+export type RenewalVisitState = {
+  workOrderId: string | null;
+  workOrderNumber: string | null;
+  scheduled: boolean;
+  date: string | null;
+};
+
+export async function renewalVisitState(invoice: {
+  serviceWorkOrderRef?: Types.ObjectId | string | null;
+}): Promise<RenewalVisitState> {
+  const id = invoice.serviceWorkOrderRef ? String(invoice.serviceWorkOrderRef) : "";
+  if (!id || !Types.ObjectId.isValid(id)) {
+    return {
+      workOrderId: null,
+      workOrderNumber: null,
+      scheduled: false,
+      date: null,
+    };
+  }
+  const workOrder = await WorkOrder.findById(id)
+    .select("number date scheduledStart deletedAt")
+    .lean();
+  if (!workOrder || workOrder.deletedAt) {
+    return {
+      workOrderId: null,
+      workOrderNumber: null,
+      scheduled: false,
+      date: null,
+    };
+  }
+  const ticketDate = workOrder.date ? new Date(workOrder.date) : null;
+  const date =
+    storedTicketDateKey(ticketDate) ??
+    (workOrder.scheduledStart
+      ? formatLocalDate(new Date(workOrder.scheduledStart))
+      : null);
+  return {
+    workOrderId: String(workOrder._id),
+    workOrderNumber: workOrder.number ?? null,
+    scheduled: isRenewalVisitScheduled({
+      date: ticketDate,
+      scheduledStart: workOrder.scheduledStart
+        ? new Date(workOrder.scheduledStart)
+        : null,
+      deletedAt: workOrder.deletedAt ? new Date(workOrder.deletedAt) : null,
+    }),
+    date,
+  };
+}
 
 export type RenewalWorkOrderGateway = {
   loadInvoice(id: string): Promise<{

@@ -1,6 +1,7 @@
 import { SMS_BODY_MAX } from "../schemas/messageTemplate.schema";
 import {
   renderMessageTemplate,
+  stripInvoiceToken,
   templateUsesPaymentLink,
   type MessageTemplateContext,
 } from "./messageTemplate";
@@ -25,10 +26,7 @@ export function composeSmsPaymentBody(input: {
     ...input.context,
     payment_link: input.paymentUrl ?? "",
   };
-  let body = renderMessageTemplate(input.bodyTemplate, context).replace(
-    /\{\{\s*invoice\s*\}\}/g,
-    "",
-  );
+  let body = stripInvoiceToken(renderMessageTemplate(input.bodyTemplate, context));
   if (input.includePaymentLink && !usesToken && input.paymentUrl) {
     const line = `Pay: ${input.paymentUrl}`;
     body = body.trim() ? `${body.replace(/\s+$/, "")}\n${line}` : line;
