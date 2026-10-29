@@ -116,7 +116,10 @@ export function messagingContactFromInvoice(
       phone: customer?.phone ?? "",
     },
     renewalDueDate: null,
+    lastRenewalDate: null,
+    renewalStatus: null,
     contractType: null,
+    lastContact: null,
     hasPayableInvoice: isInvoicePayable(invoice),
   };
 }

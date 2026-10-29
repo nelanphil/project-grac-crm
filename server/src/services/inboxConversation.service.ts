@@ -110,8 +110,9 @@ export type InboxLifecycle = {
 
 /**
  * Next inbox flags after a message. A blocked chat stays quiet. A deleted
- * chat comes back on a newer message and hides history from before the delete.
- * Staff replies reopen a chat that was marked done, unless this is a backfill.
+ * chat comes back only on a newer inbound message and hides history from
+ * before the delete. Only a customer reply reopens a chat marked done.
+ * Outbound messages clear unread and leave the chat where it is.
  */
 export function nextInboxLifecycle(
   state: InboxLifecycle,
@@ -126,7 +127,12 @@ export function nextInboxLifecycle(
   if (state.blocked) return { ...state };
   const next: InboxLifecycle = { ...state };
 
-  if (input.newer && input.reopen && state.deletedAt) {
+  if (
+    input.direction === "inbound" &&
+    input.newer &&
+    input.reopen &&
+    state.deletedAt
+  ) {
     next.historyFrom = state.deletedAt;
     next.deletedAt = null;
     next.status = "open";
@@ -142,9 +148,6 @@ export function nextInboxLifecycle(
   if (input.direction === "outbound" && input.newer) {
     next.unreadCount = 0;
     if (!state.readAt) next.readAt = input.at;
-    if (input.reopen && (state.status === "closed" || state.deletedAt)) {
-      next.status = "open";
-    }
     return next;
   }
 
@@ -218,6 +221,7 @@ export async function touchInboxConversation(
         handleKind: input.handleKind,
         displayName: named,
         lastMessageAt: at,
+        lastInboundAt: input.direction === "inbound" ? at : null,
         lastPreview: input.preview,
         lastChannel: input.channel,
         lastDirection: input.direction,
@@ -253,6 +257,14 @@ export async function touchInboxConversation(
     convo.lastDirection = input.direction;
     if (input.ourNumber) convo.ourNumber = input.ourNumber;
     if (input.emailAccountRef) convo.emailAccountRef = input.emailAccountRef;
+  }
+  if (input.direction === "inbound") {
+    const previousInbound = convo.lastInboundAt
+      ? new Date(convo.lastInboundAt).getTime()
+      : null;
+    if (previousInbound == null || at.getTime() >= previousInbound) {
+      convo.lastInboundAt = at;
+    }
   }
   if (customerRef) {
     convo.customerRef = customerRef;
@@ -541,6 +553,13 @@ export async function linkInboxConversationToCustomer(
       existing.handle = convo.handle;
       existing.handleKind = convo.handleKind;
     }
+    const sourceInbound = convo.lastInboundAt
+      ? new Date(convo.lastInboundAt).getTime()
+      : 0;
+    const targetInbound = existing.lastInboundAt
+      ? new Date(existing.lastInboundAt).getTime()
+      : 0;
+    if (sourceInbound > targetInbound) existing.lastInboundAt = convo.lastInboundAt;
     existing.unreadCount = (existing.unreadCount || 0) + (convo.unreadCount || 0);
     existing.displayName = customerDisplayName(customer);
     if (convo.lastDirection === "inbound" && sourceAt >= targetAt) {
@@ -642,12 +661,19 @@ type RebuildDraft = {
   handle: string;
   handleKind: InboxHandleKind;
   lastMessageAt: Date;
+  lastInboundAt: Date | null;
   lastPreview: string;
   lastChannel: InboxChannel;
   lastDirection: InboxDirection;
   ourNumber: string;
   emailAccountRef: Types.ObjectId | null;
 };
+
+function laterInbound(left: Date | null, right: Date | null): Date | null {
+  if (!left) return right;
+  if (!right) return left;
+  return right.getTime() >= left.getTime() ? right : left;
+}
 
 function consider(
   map: Map<string, RebuildDraft>,
@@ -658,14 +684,20 @@ function consider(
     : `${draft.handleKind}:${draft.handle}`;
   const current = map.get(key);
   if (!current || draft.lastMessageAt.getTime() >= current.lastMessageAt.getTime()) {
-    map.set(key, draft);
+    map.set(key, {
+      ...draft,
+      lastInboundAt: laterInbound(current?.lastInboundAt ?? null, draft.lastInboundAt),
+    });
+    return;
   }
+  current.lastInboundAt = laterInbound(current.lastInboundAt, draft.lastInboundAt);
 }
 
 /**
  * Build one conversation per customer (or unknown handle) from stored
- * messages. Reruns refresh the latest preview. Unread is set only when the
- * latest message is inbound and nobody has read past it.
+ * messages. Reruns refresh the latest preview and the latest customer reply.
+ * Unread is set only when the latest message is inbound and nobody has read
+ * past it.
  */
 export async function rebuildInboxConversations(): Promise<{
   conversations: number;
@@ -691,11 +723,13 @@ export async function rebuildInboxConversations(): Promise<{
     const handle = inboxPhoneHandle(theirNumber);
     const customerRef = asObjectId(doc.customerRef);
     if (!handle && !customerRef) continue;
+    const at = doc.createdAt ? new Date(doc.createdAt) : new Date(0);
     consider(map, {
       customerRef,
       handle: handle || "unknown",
       handleKind: "phone",
-      lastMessageAt: doc.createdAt ? new Date(doc.createdAt) : new Date(0),
+      lastMessageAt: at,
+      lastInboundAt: direction === "inbound" ? at : null,
       lastPreview: inboxPreview({ channel, body: doc.body }),
       lastChannel: channel,
       lastDirection: direction,
@@ -728,6 +762,7 @@ export async function rebuildInboxConversations(): Promise<{
       handle: handle || "unknown",
       handleKind: "email",
       lastMessageAt: at,
+      lastInboundAt: direction === "inbound" ? at : null,
       lastPreview: inboxPreview({
         channel: "email",
         body: doc.body,
@@ -769,6 +804,7 @@ export async function rebuildInboxConversations(): Promise<{
     const $set: {
       displayName: string;
       lastMessageAt: Date;
+      lastInboundAt: Date | null;
       lastPreview: string;
       lastChannel: InboxChannel;
       lastDirection: InboxDirection;
@@ -779,6 +815,7 @@ export async function rebuildInboxConversations(): Promise<{
     } = {
       displayName,
       lastMessageAt: draft.lastMessageAt,
+      lastInboundAt: draft.lastInboundAt,
       lastPreview: draft.lastPreview,
       lastChannel: draft.lastChannel,
       lastDirection: draft.lastDirection,

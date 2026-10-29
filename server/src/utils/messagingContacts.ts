@@ -9,6 +9,7 @@ import {
   resolveRenewalsForCustomers,
   type RenewalScope,
 } from "./messagingContext";
+import { lastOutboundContactForCustomers } from "./lastContact";
 import { payableInvoiceCustomerIds } from "./paymentLinkForCustomer";
 import { emailOptedOut } from "./emailPreferences";
 import { normalizeAccountEmail } from "./provisionCustomerAccount";
@@ -39,7 +40,14 @@ export interface HubContactItem {
     phone: string;
   };
   renewalDueDate: string | null;
+  lastRenewalDate: string | null;
+  renewalStatus: "due" | "overdue" | "renewed" | null;
   contractType: string | null;
+  lastContact: {
+    at: string;
+    method: "text" | "email" | "call";
+    status: string;
+  } | null;
   hasPayableInvoice?: boolean;
   doNotNotify: boolean;
   doNotNotifyReason: string;
@@ -266,6 +274,7 @@ export async function searchHubContacts(options: {
   const renewalMap = options.scope
     ? await resolveRenewalsForCustomers(renewalIds, options.scope)
     : new Map();
+  const lastContactMap = await lastOutboundContactForCustomers(renewalIds);
 
   const payableIds =
     channel === "email" || channel === "sms"
@@ -279,12 +288,19 @@ export async function searchHubContacts(options: {
     const renewalInfo = c.customerRef
       ? (renewalMap.get(String(c.customerRef)) ?? {
           renewalDueDate: null as Date | null,
+          lastRenewalDate: null as Date | null,
+          renewalStatus: null,
           contractType: null as string | null,
         })
       : {
           renewalDueDate: null as Date | null,
+          lastRenewalDate: null as Date | null,
+          renewalStatus: null,
           contractType: null as string | null,
         };
+    const lastContact = c.customerRef
+      ? lastContactMap.get(String(c.customerRef))
+      : undefined;
 
     return {
       _id: String(c._id),
@@ -311,7 +327,18 @@ export async function searchHubContacts(options: {
       renewalDueDate: renewalInfo.renewalDueDate
         ? renewalInfo.renewalDueDate.toISOString()
         : null,
+      lastRenewalDate: renewalInfo.lastRenewalDate
+        ? renewalInfo.lastRenewalDate.toISOString()
+        : null,
+      renewalStatus: renewalInfo.renewalStatus,
       contractType: renewalInfo.contractType,
+      lastContact: lastContact
+        ? {
+            at: lastContact.at.toISOString(),
+            method: lastContact.method,
+            status: lastContact.status,
+          }
+        : null,
       ...(payableIds
         ? {
             hasPayableInvoice: c.customerRef

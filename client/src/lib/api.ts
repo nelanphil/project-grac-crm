@@ -7071,7 +7071,14 @@ export interface MessagingContactItem {
     phone: string;
   };
   renewalDueDate: string | null;
+  lastRenewalDate: string | null;
+  renewalStatus: "due" | "overdue" | "renewed" | null;
   contractType: string | null;
+  lastContact: {
+    at: string;
+    method: "text" | "email" | "call";
+    status: string;
+  } | null;
   hasPayableInvoice?: boolean;
   doNotNotify?: boolean;
   doNotNotifyReason?: string;
@@ -8854,6 +8861,7 @@ export interface InboxConversationItem {
   phone: string;
   email: string;
   lastMessageAt: string | null;
+  lastInboundAt: string | null;
   lastPreview: string;
   lastChannel: InboxChannel | null;
   lastDirection: "inbound" | "outbound" | null;

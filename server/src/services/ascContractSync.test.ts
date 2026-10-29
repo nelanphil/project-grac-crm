@@ -8,9 +8,11 @@ import {
   workOrderContainsAscProduct,
 } from "../utils/ascProduct";
 import {
+  ascWorkOrderQuery,
   deriveAscContractDates,
   pickLatestAscOccurrence,
   standingFromLatestAscDate,
+  syncAscContractsFromRecords,
 } from "./ascContractSync";
 
 describe("ASC product detection", () => {
@@ -217,5 +219,42 @@ describe("ASC contract dates", () => {
       ),
       "due_soon",
     );
+  });
+});
+
+describe("ASC work order query", () => {
+  it("only counts completed work orders as renewals", () => {
+    const query = ascWorkOrderQuery(new Set(["prod-asc"]));
+    assert.equal(query.completed, true);
+    const or = query.$or as Array<Record<string, unknown>>;
+    assert.ok(or.some((clause) => "parts.productRef" in clause));
+  });
+
+  it("asks the work-order model for completed jobs only", async () => {
+    let captured: Record<string, unknown> | undefined;
+    const chain = {
+      select() {
+        return chain;
+      },
+      lean: async () => [],
+    };
+    const find = () => chain;
+    await syncAscContractsFromRecords(
+      {
+        Product: { find },
+        WorkOrder: {
+          find: (query: Record<string, unknown>) => {
+            captured = query;
+            return chain;
+          },
+        },
+        Invoice: { find },
+        Customer: { find },
+        Contract: { find },
+        ContractTemplate: { findOne: async () => null },
+      } as never,
+      { dryRun: true },
+    );
+    assert.equal(captured?.completed, true);
   });
 });

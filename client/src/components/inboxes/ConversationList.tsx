@@ -107,7 +107,7 @@ function ConversationRow({
             {item.openTaskCount > 0 ? (
               <SquareCheck className="h-3 w-3 text-[#2f6fed]" aria-label="Open task" />
             ) : null}
-            {formatRelativeTime(item.lastMessageAt)}
+            {formatRelativeTime(item.lastInboundAt)}
           </span>
         </span>
         <span className="mt-0.5 flex items-center gap-1 text-xs text-[var(--staff-muted)]">

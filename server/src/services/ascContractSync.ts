@@ -187,6 +187,40 @@ async function loadAscProductIds(models: AscSyncModels): Promise<Set<string>> {
 
 const ASC_CODES = ["ASC", "ACS"];
 
+/** Incomplete visits are scheduled work, not a completed renewal. */
+export function ascWorkOrderQuery(
+  ascProductIds: Set<string>,
+): Record<string, unknown> {
+  const productRefFilter =
+    ascProductIds.size > 0
+      ? [{ "parts.productRef": { $in: [...ascProductIds] } }]
+      : [];
+
+  return {
+    completed: true,
+    $or: [
+      { "parts.partNumber": { $in: ASC_CODES } },
+      { "parts.productCode": { $in: ASC_CODES } },
+      ...productRefFilter,
+      {
+        "parts.description": {
+          $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i,
+        },
+      },
+      {
+        descPerform: {
+          $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i,
+        },
+      },
+      {
+        descPerformed: {
+          $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i,
+        },
+      },
+    ],
+  };
+}
+
 function refString(
   value: { toString(): string } | string | null | undefined,
 ): string | undefined {
@@ -292,21 +326,8 @@ export async function syncAscContractsFromRecords(
   };
 
   const ascProductIds = await loadAscProductIds(models);
-  const productRefFilter =
-    ascProductIds.size > 0
-      ? [{ "parts.productRef": { $in: [...ascProductIds] } }]
-      : [];
 
-  const workOrders = await models.WorkOrder.find({
-    $or: [
-      { "parts.partNumber": { $in: ASC_CODES } },
-      { "parts.productCode": { $in: ASC_CODES } },
-      ...productRefFilter,
-      { "parts.description": { $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i } },
-      { descPerform: { $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i } },
-      { descPerformed: { $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i } },
-    ],
-  })
+  const workOrders = await models.WorkOrder.find(ascWorkOrderQuery(ascProductIds))
     .select(
       "_id legacyId customerId customerRef addressRef equipmentRef date descPerform descPerformed userId parts",
     )

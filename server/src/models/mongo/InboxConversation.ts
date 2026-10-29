@@ -16,6 +16,8 @@ export interface IInboxConversation extends Document {
   handleKind: InboxHandleKind;
   displayName: string;
   lastMessageAt: Date | null;
+  /** Latest message from the customer. The inbox list is ordered by this, not lastMessageAt. */
+  lastInboundAt: Date | null;
   lastPreview: string;
   lastChannel: InboxChannel | null;
   lastDirection: InboxDirection | null;
@@ -52,6 +54,7 @@ const inboxConversationSchema = new Schema<IInboxConversation>(
     },
     displayName: { type: String, default: "", trim: true },
     lastMessageAt: { type: Date, default: null },
+    lastInboundAt: { type: Date, default: null },
     lastPreview: { type: String, default: "" },
     lastChannel: {
       type: String,
@@ -115,6 +118,8 @@ inboxConversationSchema.index(
 );
 inboxConversationSchema.index({ status: 1, lastMessageAt: -1 });
 inboxConversationSchema.index({ status: 1, lastChannel: 1, lastMessageAt: -1 });
+inboxConversationSchema.index({ status: 1, lastInboundAt: -1 });
+inboxConversationSchema.index({ status: 1, lastChannel: 1, lastInboundAt: -1 });
 
 export const InboxConversation = mongoose.model<IInboxConversation>(
   "InboxConversation",

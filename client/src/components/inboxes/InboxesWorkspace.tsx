@@ -407,6 +407,7 @@ export default function InboxesWorkspace() {
                   phone: "",
                   email: "",
                   lastMessageAt: null,
+                  lastInboundAt: null,
                   lastPreview: "",
                   lastChannel: null,
                   lastDirection: null,

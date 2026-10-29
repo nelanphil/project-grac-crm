@@ -41,7 +41,7 @@ describe("nextInboxLifecycle", () => {
     blocked: false,
   };
 
-  it("reopens a done chat when staff send a newer message", () => {
+  it("leaves a done chat closed when staff send a newer message", () => {
     const next = nextInboxLifecycle(closed, {
       direction: "outbound",
       at,
@@ -49,7 +49,7 @@ describe("nextInboxLifecycle", () => {
       countUnread: false,
       reopen: true,
     });
-    assert.equal(next.status, "open");
+    assert.equal(next.status, "closed");
     assert.equal(next.unreadCount, 0);
   });
 
@@ -93,7 +93,24 @@ describe("nextInboxLifecycle", () => {
     assert.equal(next.blocked, true);
   });
 
-  it("brings a deleted chat back and hides the old history", () => {
+  it("brings a deleted chat back when the customer writes", () => {
+    const deletedAt = new Date("2026-10-20T00:00:00.000Z");
+    const next = nextInboxLifecycle(
+      { ...closed, deletedAt },
+      {
+        direction: "inbound",
+        at,
+        newer: true,
+        countUnread: true,
+        reopen: true,
+      },
+    );
+    assert.equal(next.status, "open");
+    assert.equal(next.deletedAt, null);
+    assert.equal(next.historyFrom?.toISOString(), deletedAt.toISOString());
+  });
+
+  it("keeps a deleted chat hidden when staff message", () => {
     const deletedAt = new Date("2026-10-20T00:00:00.000Z");
     const next = nextInboxLifecycle(
       { ...closed, deletedAt },
@@ -105,9 +122,9 @@ describe("nextInboxLifecycle", () => {
         reopen: true,
       },
     );
-    assert.equal(next.status, "open");
-    assert.equal(next.deletedAt, null);
-    assert.equal(next.historyFrom?.toISOString(), deletedAt.toISOString());
+    assert.equal(next.status, "closed");
+    assert.equal(next.deletedAt?.toISOString(), deletedAt.toISOString());
+    assert.equal(next.historyFrom, null);
   });
 
   it("keeps a deleted chat hidden during backfill", () => {

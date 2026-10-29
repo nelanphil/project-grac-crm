@@ -144,3 +144,51 @@ export function renewalDueDateFilterForMonth(
     ],
   };
 }
+
+export type RenewalCohortStatus = "due" | "overdue" | "renewed";
+
+/**
+ * Wizard audience for a calendar month: still due that month, overdue from
+ * an earlier year with the same anniversary month, or already renewed so the
+ * next due date landed in that month one year later.
+ */
+export function renewalCohortFilterForMonth(
+  year: number,
+  month: number,
+): Record<string, unknown> {
+  const { gte, lt } = renewalMonthWindow(year, month);
+  const nextYear = renewalMonthWindow(year + 1, month);
+  return {
+    $or: [
+      { renewalDueDate: { $gte: gte, $lt: lt } },
+      {
+        renewalDueDate: { $lt: gte, $ne: null },
+        $expr: { $eq: [{ $month: "$renewalDueDate" }, month] },
+      },
+      {
+        renewalDueDate: { $gte: nextYear.gte, $lt: nextYear.lt },
+        lastRenewalDate: { $exists: true, $ne: null },
+      },
+    ],
+  };
+}
+
+/** Status of one contract inside a selected renewal month. */
+export function renewalCohortStatus(
+  renewalDueDate: Date,
+  lastRenewalDate: Date | null | undefined,
+  scope: { year: number; month: number },
+  today: Date = new Date(),
+): RenewalCohortStatus {
+  const nextYear = renewalMonthWindow(scope.year + 1, scope.month);
+  const dueTime = renewalDueDate.getTime();
+  if (
+    lastRenewalDate &&
+    dueTime >= nextYear.gte.getTime() &&
+    dueTime < nextYear.lt.getTime()
+  ) {
+    return "renewed";
+  }
+  if (differenceInCalendarDays(renewalDueDate, today) < 0) return "overdue";
+  return "due";
+}

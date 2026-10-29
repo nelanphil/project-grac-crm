@@ -223,6 +223,7 @@ function publicConversation(row: {
   handleKind: "phone" | "email";
   displayName?: string;
   lastMessageAt?: Date | null;
+  lastInboundAt?: Date | null;
   lastPreview?: string;
   lastChannel?: string | null;
   lastDirection?: string | null;
@@ -259,6 +260,9 @@ function publicConversation(row: {
     email,
     lastMessageAt: row.lastMessageAt
       ? new Date(row.lastMessageAt).toISOString()
+      : null,
+    lastInboundAt: row.lastInboundAt
+      ? new Date(row.lastInboundAt).toISOString()
       : null,
     lastPreview: row.lastPreview || "",
     lastChannel: row.lastChannel || null,
@@ -304,6 +308,7 @@ function listQuery(req: AuthRequest): Record<string, unknown>[] {
     and.push({ blocked: true });
   } else {
     and.push({ blocked: { $ne: true } });
+    and.push({ lastInboundAt: { $ne: null } });
     if (status === "open" || status === "closed") and.push({ status });
     if (filterName === "unread") and.push({ unreadCount: { $gt: 0 } });
     if (filterName === "unresponded") and.push({ lastDirection: "inbound" });
@@ -321,7 +326,7 @@ function listQuery(req: AuthRequest): Record<string, unknown>[] {
 
 async function loadConversationPage(filter: Record<string, unknown>, limit: number) {
   return InboxConversation.find(filter)
-    .sort({ lastMessageAt: -1, _id: -1 })
+    .sort({ lastInboundAt: -1, _id: -1 })
     .limit(limit)
     .populate("customerRef", "accountName first last phone email")
     .populate("readByUserRef", "first_name last_name")
@@ -339,8 +344,8 @@ export async function listInboxConversations(
     if (cursor) {
       pageAnd.push({
         $or: [
-          { lastMessageAt: { $lt: cursor.at } },
-          { lastMessageAt: cursor.at, _id: { $lt: cursor.id } },
+          { lastInboundAt: { $lt: cursor.at } },
+          { lastInboundAt: cursor.at, _id: { $lt: cursor.id } },
         ],
       });
     }
@@ -365,8 +370,8 @@ export async function listInboxConversations(
       pinned: cursor ? undefined : pinned.map(presentRow),
       conversations: page.map(presentRow),
       nextCursor:
-        hasMore && last?.lastMessageAt
-          ? `${new Date(last.lastMessageAt).toISOString()}_${String(last._id)}`
+        hasMore && last?.lastInboundAt
+          ? `${new Date(last.lastInboundAt).toISOString()}_${String(last._id)}`
           : null,
     });
   } catch (err) {

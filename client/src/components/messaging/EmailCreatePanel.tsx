@@ -10,6 +10,10 @@ import {
   Loader2,
   Square,
 } from "lucide-react";
+import {
+  LastContactValue,
+  RenewalStatusBadge,
+} from "@/components/messaging/ContactMeta";
 import DoNotNotifyBadge from "@/components/messaging/DoNotNotifyBadge";
 import {
   EmailSendAccountItem,
@@ -633,10 +637,20 @@ export default function EmailCreatePanel({
                           {useRenewalsFilter ? (
                             <DataField
                               label="Renewal"
-                              value={formatRenewalDate(c.renewalDueDate)}
+                              value={
+                                <span className="inline-flex flex-col items-start gap-1">
+                                  <span>{formatRenewalDate(c.renewalDueDate)}</span>
+                                  <RenewalStatusBadge contact={c} />
+                                </span>
+                              }
                               className="col-span-2"
                             />
                           ) : null}
+                          <DataField
+                            label="Last contact"
+                            value={<LastContactValue contact={c} />}
+                            className="col-span-2"
+                          />
                           {showPaymentLinkColumn ? (
                             <DataField
                               label="Payment button"
@@ -685,6 +699,7 @@ export default function EmailCreatePanel({
                         {useRenewalsFilter ? (
                           <th className="px-2 py-2 font-medium">Renewal</th>
                         ) : null}
+                        <th className="px-2 py-2 font-medium">Last contact</th>
                         {showPaymentLinkColumn ? (
                           <th className="px-2 py-2 font-medium">
                             Payment button
@@ -739,9 +754,15 @@ export default function EmailCreatePanel({
                             </td>
                             {useRenewalsFilter ? (
                               <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
-                                {formatRenewalDate(c.renewalDueDate)}
+                                <span className="inline-flex flex-col items-start gap-1">
+                                  <span>{formatRenewalDate(c.renewalDueDate)}</span>
+                                  <RenewalStatusBadge contact={c} />
+                                </span>
                               </td>
                             ) : null}
+                            <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
+                              <LastContactValue contact={c} />
+                            </td>
                             {showPaymentLinkColumn ? (
                               <td className="px-2 py-2">
                                 <div className="flex flex-col items-start gap-1">
@@ -1071,7 +1092,17 @@ export default function EmailCreatePanel({
                             />
                             <DataField
                               label="Renewal"
-                              value={formatRenewalDate(c.renewalDueDate)}
+                              value={
+                                <span className="inline-flex flex-col items-start gap-1">
+                                  <span>{formatRenewalDate(c.renewalDueDate)}</span>
+                                  <RenewalStatusBadge contact={c} />
+                                </span>
+                              }
+                              className="col-span-2"
+                            />
+                            <DataField
+                              label="Last contact"
+                              value={<LastContactValue contact={c} />}
                               className="col-span-2"
                             />
                             {showPaymentLinkColumn ? (
@@ -1101,6 +1132,7 @@ export default function EmailCreatePanel({
                           <th className="px-2 py-2 font-medium">Email</th>
                           <th className="px-2 py-2 font-medium">Customer</th>
                           <th className="px-2 py-2 font-medium">Renewal</th>
+                          <th className="px-2 py-2 font-medium">Last contact</th>
                           {showPaymentLinkColumn ? (
                             <th className="px-2 py-2 font-medium">
                               Payment button
@@ -1132,7 +1164,13 @@ export default function EmailCreatePanel({
                               {formatCustomerRecordName(c.customer) || "—"}
                             </td>
                             <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
-                              {formatRenewalDate(c.renewalDueDate)}
+                              <span className="inline-flex flex-col items-start gap-1">
+                                <span>{formatRenewalDate(c.renewalDueDate)}</span>
+                                <RenewalStatusBadge contact={c} />
+                              </span>
+                            </td>
+                            <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
+                              <LastContactValue contact={c} />
                             </td>
                             {showPaymentLinkColumn ? (
                               <td className="px-2 py-2">

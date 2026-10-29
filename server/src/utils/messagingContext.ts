@@ -3,7 +3,12 @@ import { activeCustomerFilter, Customer } from "../models/mongo/Customer";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { Contract } from "../models/mongo/Contract";
 import { ContractTemplate } from "../models/mongo/ContractTemplate";
-import { renewalDueDateFilterForMonth } from "./contractDates";
+import {
+  differenceInCalendarDays,
+  renewalCohortFilterForMonth,
+  renewalCohortStatus,
+  type RenewalCohortStatus,
+} from "./contractDates";
 import {
   formatDateForTemplate,
   MessageTemplateContext,
@@ -19,14 +24,32 @@ export interface RenewalScope {
 export interface ContactRenewalInfo {
   renewalDueDate: Date | null;
   contractType: string | null;
+  renewalStatus: RenewalCohortStatus | null;
+  lastRenewalDate: Date | null;
 }
 
-/** Customer refs that have a contract renewing in the given UTC month. */
+export function emptyContactRenewal(): ContactRenewalInfo {
+  return {
+    renewalDueDate: null,
+    contractType: null,
+    renewalStatus: null,
+    lastRenewalDate: null,
+  };
+}
+
+/** Due and overdue outrank a contract already renewed into next year. */
+function renewalStatusRank(status: RenewalCohortStatus | null): number {
+  if (status === "due" || status === "overdue") return 0;
+  if (status === "renewed") return 1;
+  return 2;
+}
+
+/** Customer refs in the renewal group for the given UTC month. */
 export async function customerRefsWithRenewalsInMonth(
   scope: RenewalScope,
 ): Promise<Types.ObjectId[]> {
   const rows = await Contract.find({
-    ...renewalDueDateFilterForMonth(scope.year, scope.month),
+    ...renewalCohortFilterForMonth(scope.year, scope.month),
     customerRef: { $exists: true, $ne: null },
     temporary: { $ne: true },
   })
@@ -51,10 +74,7 @@ export async function resolveRenewalForCustomer(
   scope?: RenewalScope,
 ): Promise<ContactRenewalInfo> {
   const map = await resolveRenewalsForCustomers([customerId], scope);
-  return map.get(String(customerId)) ?? {
-    renewalDueDate: null,
-    contractType: null,
-  };
+  return map.get(String(customerId)) ?? emptyContactRenewal();
 }
 
 /** Batch-resolve soonest renewal per customer (optional month scope). */
@@ -75,7 +95,7 @@ export async function resolveRenewalsForCustomers(
   };
 
   if (scope) {
-    Object.assign(filter, renewalDueDateFilterForMonth(scope.year, scope.month));
+    Object.assign(filter, renewalCohortFilterForMonth(scope.year, scope.month));
   } else {
     // Prefer soonest upcoming renewal
     filter.renewalDueDate = { $ne: null, $gte: new Date() };
@@ -83,7 +103,7 @@ export async function resolveRenewalsForCustomers(
 
   const contracts = await Contract.find(filter)
     .sort({ renewalDueDate: 1 })
-    .select("customerRef renewalDueDate contractType templateId")
+    .select("customerRef renewalDueDate lastRenewalDate contractType templateId")
     .lean();
 
   const labelByTemplate = new Map<string, string>();
@@ -107,16 +127,44 @@ export async function resolveRenewalsForCustomers(
 
   await ensureTemplateLabels(contracts);
 
-  for (const contract of contracts) {
-    const key = String(contract.customerRef);
-    if (result.has(key)) continue; // soonest already captured (sorted)
+  function infoForContract(contract: {
+    renewalDueDate?: Date | null;
+    lastRenewalDate?: Date | null;
+    contractType?: string | null;
+    templateId?: Types.ObjectId | null;
+  }): ContactRenewalInfo {
     const templateLabel = contract.templateId
       ? labelByTemplate.get(String(contract.templateId))
       : undefined;
-    result.set(key, {
-      renewalDueDate: contract.renewalDueDate ?? null,
+    const renewalDueDate = contract.renewalDueDate ?? null;
+    const lastRenewalDate = contract.lastRenewalDate ?? null;
+    return {
+      renewalDueDate,
+      lastRenewalDate,
       contractType: templateLabel ?? contract.contractType ?? null,
-    });
+      renewalStatus: renewalDueDate
+        ? scope
+          ? renewalCohortStatus(renewalDueDate, lastRenewalDate, scope)
+          : differenceInCalendarDays(renewalDueDate, new Date()) < 0
+            ? "overdue"
+            : "due"
+        : null,
+    };
+  }
+
+  for (const contract of contracts) {
+    const key = String(contract.customerRef);
+    const next = infoForContract(contract);
+    const current = result.get(key);
+    // Soonest date is visited first. Replace it only when a later contract
+    // is still due or overdue and the one we kept was already renewed.
+    if (
+      current &&
+      renewalStatusRank(current.renewalStatus) <= renewalStatusRank(next.renewalStatus)
+    ) {
+      continue;
+    }
+    result.set(key, next);
   }
 
   // When no month scope, fill missing with soonest renewal overall (including past)
@@ -129,7 +177,7 @@ export async function resolveRenewalsForCustomers(
         temporary: { $ne: true },
       })
         .sort({ renewalDueDate: 1 })
-        .select("customerRef renewalDueDate contractType templateId")
+        .select("customerRef renewalDueDate lastRenewalDate contractType templateId")
         .lean();
 
       await ensureTemplateLabels(fallback);
@@ -137,20 +185,14 @@ export async function resolveRenewalsForCustomers(
       for (const contract of fallback) {
         const key = String(contract.customerRef);
         if (result.has(key)) continue;
-        const templateLabel = contract.templateId
-          ? labelByTemplate.get(String(contract.templateId))
-          : undefined;
-        result.set(key, {
-          renewalDueDate: contract.renewalDueDate ?? null,
-          contractType: templateLabel ?? contract.contractType ?? null,
-        });
+        result.set(key, infoForContract(contract));
       }
     }
   }
 
   for (const id of unique) {
     if (!result.has(id)) {
-      result.set(id, { renewalDueDate: null, contractType: null });
+      result.set(id, emptyContactRenewal());
     }
   }
 
@@ -197,7 +239,7 @@ export async function buildTemplateContextForContact(
 
   const renewal = customer
     ? await resolveRenewalForCustomer(customer._id, renewalScope)
-    : { renewalDueDate: null, contractType: null };
+    : emptyContactRenewal();
 
   const first = contact.first ?? "";
   const last = contact.last ?? "";
