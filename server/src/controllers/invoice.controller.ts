@@ -53,6 +53,7 @@ import {
   dismissPaidRenewal,
   ensureRenewalWorkOrder,
   findPaidRenewalsWithoutWorkOrder,
+  isContractServiceInvoice,
   linkRenewalWorkOrder,
   renewalVisitState,
   RenewalWorkOrderError,
@@ -807,7 +808,7 @@ export async function getInvoiceById(
     };
     const renewalVisit =
       isStaff(req.user) &&
-      invoice.sourceType === "contract_renewal" &&
+      isContractServiceInvoice(invoice.sourceType) &&
       invoice.status === "paid"
         ? {
             ...(await renewalVisitState(invoice)),

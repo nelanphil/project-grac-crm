@@ -24,6 +24,8 @@ export class TemporaryContractOfferError extends Error {
   }
 }
 
+const OPEN_RENEWAL_STATUSES = ["open", "draft", "failed"] as const;
+
 function isDuplicateKey(err: unknown): boolean {
   return (
     Boolean(err) &&
@@ -36,8 +38,9 @@ function isDuplicateKey(err: unknown): boolean {
 
 /**
  * Create or reuse a hidden contract and an open initial invoice for the
- * selected catalog contract. The invoice is added to checkout with any unpaid
- * invoices or work orders the customer already has.
+ * selected catalog contract. When the customer already has that plan and an
+ * unpaid renewal, the renewal invoice is returned instead so the link does not
+ * start a second contract.
  */
 export async function ensureTemporaryContractOffer(
   customerId: string,
@@ -63,6 +66,26 @@ export async function ensureTemporaryContractOffer(
   const customer = await Customer.findById(customerId).select("_id legacyId");
   if (!customer || typeof customer.legacyId !== "number") {
     throw new TemporaryContractOfferError("Customer not found", 404);
+  }
+
+  const standing = await Contract.find({
+    customerRef: customer._id,
+    templateId: template._id,
+    temporary: { $ne: true },
+  }).select("_id");
+  if (standing.length > 0) {
+    const openRenewal = await Invoice.findOne({
+      contractRef: { $in: standing.map((contract) => contract._id) },
+      sourceType: "contract_renewal",
+      status: { $in: OPEN_RENEWAL_STATUSES },
+    }).sort({ issuedAt: -1, createdAt: -1 });
+    if (openRenewal?.contractRef) {
+      return {
+        contractId: String(openRenewal.contractRef),
+        invoiceId: String(openRenewal._id),
+        created: false,
+      };
+    }
   }
 
   const offerFilter = {

@@ -70,4 +70,8 @@ export const MIGRATIONS: MigrationEntry[] = [
     id: "2026-10-28-soft-delete-non-owner-customers",
     file: "soft-delete-non-owner-customers",
   },
+  {
+    id: "2026-10-29-paid-contract-work-orders",
+    file: "repair-paid-contract-work-orders",
+  },
 ];

@@ -98,7 +98,7 @@ export interface IInvoice extends Document {
   sourceType: InvoiceSourceType;
   contractRef?: Types.ObjectId | null;
   workOrderRef?: Types.ObjectId | null;
-  /** Work order created so a paid contract renewal can be scheduled. */
+  /** Work order created so a paid contract can be scheduled. */
   serviceWorkOrderRef?: Types.ObjectId | null;
   /** Set while the renewal scheduling email is claimed or sent. */
   renewalScheduleEmailSentAt?: Date | null;

@@ -6,8 +6,9 @@
  * from server/.env (repo-root .env is a fallback). The `grac-crm` database
  * name is appended using the same logic as src/config/env.ts.
  *
- * Skips `twiliocommunications` and `messagethreads` so live SMS/call
- * traffic is not copied into development.
+ * Copies every collection, including messaging traffic
+ * (`twiliocommunications`, `messagethreads`), and mirrors each
+ * collection's indexes onto development.
  *
  * Dry-run by default. Pass --yes to write. Pass --drop to replace each
  * development collection (true clone). The positional argument `p2d`
@@ -30,7 +31,13 @@ for (const envPath of envCandidates) {
   dotenv.config({ path: envPath });
 }
 
-import { MongoClient, Db } from "mongodb";
+import {
+  MongoClient,
+  Db,
+  Collection,
+  type CreateIndexesOptions,
+  type IndexSpecification,
+} from "mongodb";
 
 const DEFAULT_DB = "grac-crm";
 const BATCH_SIZE = 500;
@@ -52,6 +59,36 @@ function withDbName(raw: string): string {
 
 function hostOf(uri: string): string {
   return new URL(uri.replace("mongodb+srv", "https")).host;
+}
+
+async function copyIndexes(
+  name: string,
+  sourceDb: Db,
+  target: Collection,
+): Promise<void> {
+  const indexes = await sourceDb.collection(name).indexes();
+  for (const index of indexes) {
+    if (!index.name || index.name === "_id_") continue;
+
+    const options: CreateIndexesOptions = { name: index.name };
+    if (index.unique) options.unique = true;
+    if (index.sparse) options.sparse = true;
+    if (typeof index.expireAfterSeconds === "number") {
+      options.expireAfterSeconds = index.expireAfterSeconds;
+    }
+    if (index.partialFilterExpression) {
+      options.partialFilterExpression = index.partialFilterExpression;
+    }
+
+    try {
+      await target.createIndex(index.key as IndexSpecification, options);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `  ${name}: warning, index ${index.name} was not copied (${message})`,
+      );
+    }
+  }
 }
 
 async function copyCollection(
@@ -92,6 +129,7 @@ async function copyCollection(
     }
   }
   await flush();
+  await copyIndexes(name, sourceDb, target);
 
   return { name, copied, source: sourceCount };
 }
@@ -158,8 +196,6 @@ async function main() {
       : "\nMODE: DRY RUN (no writes). Re-run with --yes --drop to clone.\n",
   );
 
-  const skipCollections = new Set(["twiliocommunications", "messagethreads"]);
-
   const collections = await sourceDb
     .listCollections({}, { nameOnly: true })
     .toArray();
@@ -170,10 +206,6 @@ async function main() {
 
   const results: { name: string; copied: number; source: number }[] = [];
   for (const name of names) {
-    if (skipCollections.has(name.toLowerCase())) {
-      console.log(`  ${name}: skipped (do not copy messaging traffic into dev)`);
-      continue;
-    }
     const res = await copyCollection(name, sourceDb, targetDb, {
       execute,
       drop,

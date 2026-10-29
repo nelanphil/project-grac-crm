@@ -9,13 +9,14 @@ import {
   parseDateOnly,
   startOfDay,
 } from "../utils/contractDates";
-import { promoteTemporaryContract } from "../utils/temporaryContractOffer";
 import { SCHEDULE_TIMEZONE } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
 import { recordCustomerActivityAsync } from "./customerActivity.service";
+import { foldOfferIntoExistingContract } from "./offerRenewalFold";
 import { recordWorkOrderActivity } from "./workOrderActivity.service";
 import {
   ensureRenewalWorkOrder,
+  isContractServiceInvoice,
   runRenewalWorkOrderSideEffect,
 } from "./renewalWorkOrder.service";
 import {
@@ -153,7 +154,10 @@ export async function markInvoicePaid(params: {
     params;
 
   if (invoice.status === "paid") {
-    if (invoice.sourceType === "contract_renewal" && !invoice.serviceWorkOrderRef) {
+    if (invoice.sourceType === "contract_initial" && invoice.contractRef) {
+      await foldOfferIntoExistingContract(invoice);
+    }
+    if (isContractServiceInvoice(invoice.sourceType) && !invoice.serviceWorkOrderRef) {
       await runRenewalWorkOrderSideEffect(() =>
         ensureRenewalWorkOrder(invoice, {
           actorUserId: actor?.actorUserId ?? null,
@@ -241,16 +245,11 @@ export async function markInvoicePaid(params: {
     });
   }
 
-  if (
-    (invoice.sourceType === "contract_renewal" ||
-      invoice.sourceType === "contract_initial") &&
-    invoice.contractRef
-  ) {
+  if (invoice.sourceType === "contract_initial" && invoice.contractRef) {
+    await foldOfferIntoExistingContract(invoice);
+  } else if (invoice.sourceType === "contract_renewal" && invoice.contractRef) {
     const contract = await Contract.findById(invoice.contractRef);
-    if (contract && invoice.sourceType === "contract_initial" && contract.temporary) {
-      promoteTemporaryContract(contract, invoice.paidAt ?? new Date());
-      await contract.save();
-    } else if (contract && invoice.sourceType === "contract_renewal") {
+    if (contract) {
       const durationMonths =
         typeof invoice.metadata?.durationMonths === "number"
           ? invoice.metadata.durationMonths
@@ -279,7 +278,7 @@ export async function markInvoicePaid(params: {
     }
   }
 
-  if (invoice.sourceType === "contract_renewal") {
+  if (isContractServiceInvoice(invoice.sourceType)) {
     await runRenewalWorkOrderSideEffect(() =>
       ensureRenewalWorkOrder(invoice, {
         actorUserId: actor?.actorUserId ?? null,

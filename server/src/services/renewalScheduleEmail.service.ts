@@ -18,7 +18,9 @@ import {
   renderAutomatedBillingEmail,
 } from "./paymentReceipt.service";
 import {
+  CONTRACT_SERVICE_SOURCE_TYPES,
   ensureRenewalWorkOrder,
+  isContractServiceInvoice,
   renewalVisitState,
 } from "./renewalWorkOrder.service";
 import {
@@ -85,8 +87,8 @@ async function deliver(
   options?: { force?: boolean },
 ): Promise<RenewalScheduleEmailResult> {
   const fresh = await Invoice.findById(invoice._id);
-  if (!fresh || fresh.status !== "paid" || fresh.sourceType !== "contract_renewal") {
-    return { status: "skipped", reason: "Not a paid renewal invoice." };
+  if (!fresh || fresh.status !== "paid" || !isContractServiceInvoice(fresh.sourceType)) {
+    return { status: "skipped", reason: "Not a paid contract invoice." };
   }
 
   const paused = await automatedEmailPauseReasonFor("renewalScheduleEmail");
@@ -114,7 +116,7 @@ async function deliver(
     {
       _id: fresh._id,
       status: "paid",
-      sourceType: "contract_renewal",
+      sourceType: { $in: [...CONTRACT_SERVICE_SOURCE_TYPES] },
       renewalScheduleEmailSentAt: null,
     },
     { $set: { renewalScheduleEmailSentAt: new Date() } },

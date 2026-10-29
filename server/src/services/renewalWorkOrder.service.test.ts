@@ -61,6 +61,20 @@ describe("invoiceNeedsRenewalReportRow", () => {
     assert.equal(invoiceNeedsRenewalReportRow(open), true);
   });
 
+  it("includes a paid new contract with no later work order", () => {
+    assert.equal(
+      invoiceNeedsRenewalReportRow({ ...open, sourceType: "contract_initial" }),
+      true,
+    );
+  });
+
+  it("skips invoices that are not contracts", () => {
+    assert.equal(
+      invoiceNeedsRenewalReportRow({ ...open, sourceType: "work_order" }),
+      false,
+    );
+  });
+
   it("excludes a renewal once a work order exists for that customer after payment", () => {
     assert.equal(
       invoiceNeedsRenewalReportRow({
@@ -110,7 +124,7 @@ describe("invoiceNeedsRenewalReportRow", () => {
 });
 
 describe("performRenewalWorkOrderEnsure", () => {
-  function memoryGateway(): {
+  function memoryGateway(sourceType = "contract_renewal"): {
     gateway: RenewalWorkOrderGateway;
     created: string[];
     discarded: string[];
@@ -124,7 +138,7 @@ describe("performRenewalWorkOrderEnsure", () => {
       async loadInvoice() {
         return {
           status: "paid",
-          sourceType: "contract_renewal",
+          sourceType,
           serviceWorkOrderRef: linked,
           dismissed: false,
         };
@@ -175,6 +189,20 @@ describe("performRenewalWorkOrderEnsure", () => {
     assert.equal(memory.created.length, 2);
     assert.equal(memory.discarded.length, 1);
     assert.notEqual(memory.discarded[0], memory.ref());
+  });
+
+  it("creates a work order for a paid new contract", async () => {
+    const memory = memoryGateway("contract_initial");
+    const result = await performRenewalWorkOrderEnsure("inv", memory.gateway);
+    assert.equal(result?.created, true);
+    assert.deepEqual(memory.created, [result?.workOrderId]);
+  });
+
+  it("does not create a work order for a work-order invoice", async () => {
+    const memory = memoryGateway("work_order");
+    const result = await performRenewalWorkOrderEnsure("inv", memory.gateway);
+    assert.equal(result, null);
+    assert.deepEqual(memory.created, []);
   });
 });
 

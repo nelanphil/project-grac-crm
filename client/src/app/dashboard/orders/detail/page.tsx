@@ -292,7 +292,8 @@ function InvoiceDetailContent() {
     !isCustomer &&
     canWrite &&
     invoice.status === "paid" &&
-    invoice.sourceType === "contract_renewal" &&
+    (invoice.sourceType === "contract_renewal" ||
+      invoice.sourceType === "contract_initial") &&
     Boolean(invoice.renewalVisit) &&
     !invoice.renewalVisit?.scheduled;
   const scheduledVisit =

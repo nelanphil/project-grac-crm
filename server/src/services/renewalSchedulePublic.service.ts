@@ -12,7 +12,10 @@ import {
   storedTicketDateKey,
 } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
-import { ensureRenewalWorkOrder } from "./renewalWorkOrder.service";
+import {
+  CONTRACT_SERVICE_SOURCE_TYPES,
+  ensureRenewalWorkOrder,
+} from "./renewalWorkOrder.service";
 import {
   evaluateRenewalScheduleChoice,
   renewalOfferDateLabel,
@@ -74,7 +77,7 @@ export async function loadPublicRenewalSchedule(
   if (!TOKEN_RE.test(trimmed)) return { status: "invalid" };
   const invoice = await Invoice.findOne({
     renewalScheduleTokenHash: hashPayToken(trimmed),
-    sourceType: "contract_renewal",
+    sourceType: { $in: [...CONTRACT_SERVICE_SOURCE_TYPES] },
   })
     .select(
       "customerRef renewalScheduleTokenExpiresAt renewalScheduleOfferedDates serviceWorkOrderRef",
@@ -122,7 +125,7 @@ export async function confirmPublicRenewalSchedule(
   }
   const invoice = await Invoice.findOne({
     renewalScheduleTokenHash: hashPayToken(trimmed),
-    sourceType: "contract_renewal",
+    sourceType: { $in: [...CONTRACT_SERVICE_SOURCE_TYPES] },
     status: "paid",
   });
   if (!invoice) {

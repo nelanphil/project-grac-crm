@@ -22,6 +22,18 @@ import { formatLocalDate, storedTicketDateKey } from "../utils/scheduleTime";
 
 const RENEWAL_VISIT_MINUTES = 30;
 
+/** Paid invoices of these kinds get a service visit work order. */
+export const CONTRACT_SERVICE_SOURCE_TYPES = [
+  "contract_renewal",
+  "contract_initial",
+] as const;
+
+export function isContractServiceInvoice(
+  sourceType: string | null | undefined,
+): boolean {
+  return CONTRACT_SERVICE_SOURCE_TYPES.some((type) => type === sourceType);
+}
+
 export class RenewalWorkOrderError extends Error {
   status: number;
   constructor(message: string, status = 400) {
@@ -134,7 +146,7 @@ export function invoiceNeedsRenewalReportRow(input: {
   referenceAt?: Date | null;
   laterWorkOrderCreatedAt?: Date | null;
 }): boolean {
-  if (input.sourceType !== "contract_renewal") return false;
+  if (!isContractServiceInvoice(input.sourceType)) return false;
   if (input.status !== "paid") return false;
   if (input.serviceWorkOrderRef) return false;
   if (input.dismissedAt) return false;
@@ -171,7 +183,7 @@ export async function performRenewalWorkOrderEnsure(
   if (
     !invoice ||
     invoice.status !== "paid" ||
-    invoice.sourceType !== "contract_renewal" ||
+    !isContractServiceInvoice(invoice.sourceType) ||
     invoice.dismissed
   ) {
     return null;
@@ -265,7 +277,9 @@ async function buildRenewalWorkOrder(
   ]);
 
   const label = templateLabelOf(invoice) || template?.label?.trim() || "";
-  const description = `ASC renewal service (invoice ${invoice.number}${
+  const visitLabel =
+    invoice.sourceType === "contract_initial" ? "new contract" : "renewal";
+  const description = `ASC ${visitLabel} service (invoice ${invoice.number}${
     label ? `, ${label}` : ""
   })`;
   const typeRef = await resolveTicketWorkOrderType({
@@ -394,6 +408,8 @@ function mongooseGateway(
       if (!invoice) return;
       const workOrderRef = new Types.ObjectId(workOrderId);
       await rememberWorkOrderOnContract(invoice, workOrderRef);
+      const kind =
+        invoice.sourceType === "contract_initial" ? "contract" : "renewal";
       await recordWorkOrderActivity({
         workOrderRef,
         action: "created",
@@ -402,7 +418,7 @@ function mongooseGateway(
           actorUserId: actor?.actorUserId ?? null,
           actorName: actor?.actorName ?? null,
         },
-        summary: `Created for paid ASC renewal ${invoice.number}`,
+        summary: `Created for paid ASC ${kind} ${invoice.number}`,
         source: actor?.actorUserId ? "crm" : "job",
       });
       logNotificationAsync({
@@ -410,7 +426,7 @@ function mongooseGateway(
         action: "created",
         entityId: workOrderId,
         customerRef: invoice.customerRef ?? null,
-        summary: `Work order created for paid renewal ${invoice.number}`,
+        summary: `Work order created for paid ${kind} ${invoice.number}`,
         actorType: actor?.actorUserId ? "user" : "system",
         actorUserId: actor?.actorUserId ?? null,
         actorName: actor?.actorName ?? (actor?.actorUserId ? undefined : "System"),
@@ -433,7 +449,7 @@ export async function findPaidRenewalsWithoutWorkOrder(input?: {
   limit?: number;
 }): Promise<{ invoices: Array<Record<string, unknown>>; total: number }> {
   const match: Record<string, unknown> = {
-    sourceType: "contract_renewal",
+    sourceType: { $in: [...CONTRACT_SERVICE_SOURCE_TYPES] },
     status: "paid",
     serviceWorkOrderRef: null,
     renewalWorkOrderDismissedAt: null,
@@ -507,8 +523,8 @@ async function paidRenewalInvoice(id: string): Promise<IInvoice> {
   }
   const invoice = await Invoice.findById(id);
   if (!invoice) throw new RenewalWorkOrderError("Invoice not found", 404);
-  if (invoice.sourceType !== "contract_renewal" || invoice.status !== "paid") {
-    throw new RenewalWorkOrderError("This is not a paid renewal invoice");
+  if (!isContractServiceInvoice(invoice.sourceType) || invoice.status !== "paid") {
+    throw new RenewalWorkOrderError("This is not a paid contract invoice");
   }
   return invoice;
 }
