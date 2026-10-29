@@ -28,6 +28,7 @@ import { User, activeUserFilter } from "../models/mongo/User";
 import {
   completeWorkOrderSchema,
   createWorkOrderSchema,
+  sendWorkOrderAppointmentSchema,
   sendWorkOrderReceiptSchema,
   updateWorkOrderSchema,
 } from "../schemas/workOrder.schema";
@@ -86,6 +87,14 @@ import {
   emailInvoiceReceipt,
   textInvoiceReceipt,
 } from "../services/invoiceReceipt.service";
+import {
+  appointmentNoticeKey,
+  appointmentSendBlocker,
+  emailAppointmentNotice,
+  loadAppointmentNoticeDetails,
+  textAppointmentNotice,
+  type AppointmentChannelResult,
+} from "../services/appointmentNotice.service";
 
 const localDateRe = /^\d{4}-\d{2}-\d{2}$/;
 /** Autosave patches often; one "updated" event per editor per window is enough. */
@@ -1614,6 +1623,101 @@ export async function postWorkOrderSendReceipt(
   } catch (err) {
     console.error("POST /work-orders/:id/send-receipt error:", err);
     res.status(500).json({ message: "Failed to send this invoice" });
+  }
+}
+
+function appointmentNoticeSummary(input: {
+  sms?: AppointmentChannelResult;
+  email?: AppointmentChannelResult;
+}): string {
+  const parts: string[] = [];
+  if (input.sms?.status === "sent") {
+    parts.push(`Texted the appointment to ${input.sms.to}`);
+  }
+  if (input.email?.status === "sent") {
+    parts.push(`Emailed the appointment to ${input.email.to}`);
+  }
+  return parts.join(". ");
+}
+
+export async function postWorkOrderSendAppointment(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const parsed = sendWorkOrderAppointmentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message ?? "Invalid input",
+      });
+      return;
+    }
+
+    const workOrder = await loadAssignableWorkOrder(req, res);
+    if (!workOrder) return;
+
+    const blocker = appointmentSendBlocker(workOrder);
+    if (blocker) {
+      res.status(400).json({ message: blocker });
+      return;
+    }
+
+    const details = await loadAppointmentNoticeDetails(workOrder);
+    const invoiceId = workOrder.renewalInvoiceRef
+      ? String(workOrder.renewalInvoiceRef)
+      : "";
+    const [sms, email] = await Promise.all([
+      parsed.data.sms
+        ? textAppointmentNotice({
+            phone: parsed.data.sms.phone,
+            details,
+            customerRef: workOrder.customerRef,
+            userId: req.user?.id ?? null,
+            apiBase: requestApiBase(req),
+          })
+        : Promise.resolve(undefined),
+      parsed.data.email
+        ? emailAppointmentNotice({
+            to: parsed.data.email.address,
+            details,
+            customerRef: workOrder.customerRef,
+            invoiceId,
+          })
+        : Promise.resolve(undefined),
+    ]);
+
+    const summary = appointmentNoticeSummary({ sms, email });
+    if (summary) {
+      workOrder.appointmentNoticeSentAt = new Date();
+      workOrder.appointmentNoticeKey = appointmentNoticeKey(workOrder);
+      await workOrder.save();
+      await recordWorkOrderActivity({
+        workOrderRef: workOrder._id,
+        action: "appointment_sent",
+        actor: actorFromAuthUser(req.user),
+        summary,
+        source: "crm",
+      });
+      logNotificationAsync({
+        entityType: "work_order",
+        action: "updated",
+        entityId: String(workOrder._id),
+        customerRef: workOrder.customerRef ?? null,
+        summary,
+        ...actorFromRequest(req.user),
+      });
+    }
+
+    const lean = workOrder.toObject() as unknown as Record<string, unknown>;
+    const [enriched] = await enrichWithAddress([lean]);
+    res.json({
+      workOrder: enriched,
+      ...(sms ? { sms } : {}),
+      ...(email ? { email } : {}),
+    });
+  } catch (err) {
+    console.error("POST /work-orders/:id/send-appointment error:", err);
+    res.status(500).json({ message: "Failed to send the appointment" });
   }
 }
 

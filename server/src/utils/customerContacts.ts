@@ -7,6 +7,7 @@ import {
 } from "../models/mongo/CustomerContact";
 import { ensureCustomerLoginForPrimaryEmail } from "./ensureCustomerLogin";
 import { normalizePhoneDigits } from "./customerSites";
+import { accountNameFromPerson } from "./vacantCustomer";
 
 export function lastContactBlock(
   activeCount: number,
@@ -107,6 +108,23 @@ export async function applyContactPrimaryFlag(
     next.isPrimary = true;
     await next.save();
   }
+}
+
+/**
+ * When the first contact is added to a property still named Vacant, the
+ * customer name becomes that person's name.
+ */
+export async function renameVacantAccountForFirstContact(
+  customerId: Types.ObjectId | string,
+  person: { first?: string | null; last?: string | null },
+): Promise<string | null> {
+  const nextName = accountNameFromPerson(person.first, person.last);
+  if (!nextName) return null;
+  const updated = await Customer.findOneAndUpdate(
+    { _id: customerId, accountName: { $regex: /^vacant$/i } },
+    { $set: { accountName: nextName } },
+  ).lean();
+  return updated ? nextName : null;
 }
 
 /** Refresh denormalized primary contact fields on the customer. */

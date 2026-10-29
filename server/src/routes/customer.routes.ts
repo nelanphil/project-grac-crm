@@ -5,6 +5,7 @@ import {
   requireRole,
 } from "../middleware/auth.middleware";
 import {
+  assignCustomerNewOwner,
   checkCustomerDuplicates,
   checkEquipmentSerial,
   createCustomer,
@@ -176,6 +177,11 @@ router.post(
   "/:id/contacts/:contactId/detach",
   requirePermission("customers:write"),
   detachCustomerContactFromCustomer,
+);
+router.post(
+  "/:id/new-owner",
+  requirePermission("customers:write"),
+  assignCustomerNewOwner,
 );
 
 router.get(

@@ -447,6 +447,16 @@ export interface ContactNameRow {
   customerName: string;
 }
 
+export interface VacantCustomerRow {
+  id: string;
+  accountName: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  county: string;
+}
+
 export interface NameReportPage<T> {
   rows: T[];
   total: number;
@@ -471,6 +481,23 @@ function nameReportQuery(options?: {
   }
   const qs = params.toString();
   return qs ? `?${qs}` : "";
+}
+
+export async function listVacantCustomers(
+  token: string,
+  options?: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  },
+): Promise<NameReportPage<VacantCustomerRow>> {
+  return authRequest<NameReportPage<VacantCustomerRow>>(
+    `/name-reports/vacant${nameReportQuery(options)}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function listCustomerNames(
@@ -1747,8 +1774,8 @@ export async function createCustomerContact(
     label?: string;
     isPrimary?: boolean;
   },
-): Promise<{ contact: CustomerContact }> {
-  return authRequest<{ contact: CustomerContact }>(
+): Promise<{ contact: CustomerContact; accountName?: string }> {
+  return authRequest<{ contact: CustomerContact; accountName?: string }>(
     `/customers/${customerId}/contacts`,
     {
       method: "POST",
@@ -1806,6 +1833,44 @@ export async function detachCustomerContact(
   );
 }
 
+export async function assignCustomerNewOwner(
+  token: string,
+  customerId: string,
+  data: {
+    contactId?: string;
+    contact?: {
+      first?: string;
+      last?: string;
+      phone?: string;
+      email?: string;
+    };
+  },
+): Promise<{
+  customer: {
+    accountName: string;
+    first: string;
+    last: string;
+    phone: string;
+    email: string;
+  };
+  contacts: CustomerContact[];
+}> {
+  return authRequest<{
+    customer: {
+      accountName: string;
+      first: string;
+      last: string;
+      phone: string;
+      email: string;
+    };
+    contacts: CustomerContact[];
+  }>(`/customers/${customerId}/new-owner`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
 export interface DirectoryContact {
   _id: string;
   first: string;
@@ -1853,12 +1918,15 @@ export async function attachDirectoryContact(
   token: string,
   contactId: string,
   customerId: string,
-): Promise<{ contact: DirectoryContact }> {
-  return authRequest<{ contact: DirectoryContact }>(`/contacts/${contactId}/attach`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ customerId }),
-  });
+): Promise<{ contact: DirectoryContact; accountName?: string }> {
+  return authRequest<{ contact: DirectoryContact; accountName?: string }>(
+    `/contacts/${contactId}/attach`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ customerId }),
+    },
+  );
 }
 
 export async function createCustomerAddress(
@@ -2538,6 +2606,8 @@ export interface WorkOrderListItem {
   routeLocked?: boolean;
   appointmentCanceledAt?: string | null;
   appointmentCanceledBy?: string | null;
+  appointmentNoticeSentAt?: string | null;
+  appointmentNoticeKey?: string | null;
   customerRef?: string | null;
   /** Primary customer contact's phone; only returned by schedule endpoints. */
   primaryContactPhone?: string | null;
@@ -2889,6 +2959,31 @@ export async function sendWorkOrderReceipt(
       body: JSON.stringify(data),
     },
   );
+}
+
+export type AppointmentNoticeResult =
+  | { status: "sent"; to: string }
+  | { status: "skipped"; error: string }
+  | { status: "failed"; error: string }
+  | { status: "invalid"; error: string };
+
+export async function sendWorkOrderAppointment(
+  token: string,
+  id: string,
+  data: {
+    sms?: { phone: string };
+    email?: { address: string };
+  },
+): Promise<{
+  workOrder: WorkOrderListItem;
+  sms?: AppointmentNoticeResult;
+  email?: AppointmentNoticeResult;
+}> {
+  return authRequest(`/work-orders/${id}/send-appointment`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
 }
 
 export async function getPublicInvoiceView(token: string): Promise<{
@@ -6715,6 +6810,7 @@ export interface AutomatedEmailDelivery {
   paidInvoiceReceiptEmail: boolean;
   mailboxReply: boolean;
   renewalScheduleEmail: boolean;
+  appointmentConfirmationEmail: boolean;
 }
 
 export interface AutomatedMessageSettings {
@@ -6726,6 +6822,8 @@ export interface AutomatedMessageSettings {
   paidInvoiceReceiptSms: AutomatedMessageChannel;
   mailboxReply: AutomatedMessageChannel;
   renewalScheduleEmail: AutomatedMessageChannel;
+  appointmentConfirmationEmail: AutomatedMessageChannel;
+  appointmentConfirmationSms: AutomatedMessageChannel;
   renewalSchedule: RenewalScheduleOptions;
   emailDelivery: AutomatedEmailDelivery;
 }
@@ -6757,6 +6855,8 @@ export async function saveAutomatedMessageSettings(
     paidInvoiceReceiptSms: channel(settings.paidInvoiceReceiptSms),
     mailboxReply: channel(settings.mailboxReply),
     renewalScheduleEmail: channel(settings.renewalScheduleEmail),
+    appointmentConfirmationEmail: channel(settings.appointmentConfirmationEmail),
+    appointmentConfirmationSms: channel(settings.appointmentConfirmationSms),
     renewalSchedule: settings.renewalSchedule,
     emailDelivery: settings.emailDelivery,
   };

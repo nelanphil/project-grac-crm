@@ -18,6 +18,7 @@ import {
   normalizeAddressKey,
   normalizePhoneDigits,
 } from "./customerSites";
+import { isVacantAccountName } from "./vacantCustomer";
 
 export const MIN_PHONE_DIGITS_FOR_CHECK = 7;
 export const MIN_ACCOUNT_NAME_LEN = 2;
@@ -359,6 +360,7 @@ export async function findAccountNameMatches(
 ): Promise<DuplicateMatch[]> {
   const trimmed = accountName.trim();
   if (trimmed.length < MIN_ACCOUNT_NAME_LEN) return [];
+  if (isVacantAccountName(trimmed)) return [];
 
   const nameRx = new RegExp(
     `^${trimmed.split(/\s+/).map(escapeRegex).join("\\s+")}$`,

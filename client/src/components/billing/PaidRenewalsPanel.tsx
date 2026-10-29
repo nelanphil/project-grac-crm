@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/useAuthStore";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
@@ -35,6 +36,7 @@ function formatMoney(cents: number): string {
 type CreatedVisit = { invoiceId: string; id: string; number: string };
 
 export default function PaidRenewalsPanel() {
+  const router = useRouter();
   const token = useAuthStore((s) => s.token);
   const canWrite = useAuthStore((s) => s.hasPermission("contracts:write"));
   const [invoices, setInvoices] = useState<InvoiceItem[]>([]);
@@ -126,27 +128,18 @@ export default function PaidRenewalsPanel() {
     });
   }
 
-  async function createOne(invoiceId: string) {
+  async function scheduleOne(invoiceId: string) {
     if (!token) return;
     setBusyId(invoiceId);
     setError(null);
     setNotice(null);
     try {
       const { workOrder } = await createRenewalWorkOrder(token, invoiceId);
-      dropInvoices([invoiceId]);
-      setCreated((list) => [
-        {
-          invoiceId,
-          id: workOrder.workOrderId,
-          number: workOrder.number || "Work order",
-        },
-        ...list,
-      ]);
+      router.push(`/dashboard/work-orders/detail?id=${workOrder.workOrderId}`);
     } catch (err) {
       setError(
-        err instanceof ApiError ? err.message : "Failed to create the work order.",
+        err instanceof ApiError ? err.message : "Failed to open the work order.",
       );
-    } finally {
       setBusyId(null);
     }
   }
@@ -261,17 +254,17 @@ export default function PaidRenewalsPanel() {
             href={`/dashboard/work-orders/detail?id=${visit._id}`}
             className="rounded-md bg-brand-dark px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
           >
-            Schedule {visit.number || "work order"}
+            Schedule WO
           </Link>
         ) : (
           <>
             <button
               type="button"
               disabled={busy}
-              onClick={() => void createOne(invoice._id)}
+              onClick={() => void scheduleOne(invoice._id)}
               className="rounded-md bg-brand-dark px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
             >
-              {busyId === invoice._id ? "Working…" : "Create work order"}
+              {busyId === invoice._id ? "Opening…" : "Schedule WO"}
             </button>
             <button
               type="button"

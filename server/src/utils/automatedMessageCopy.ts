@@ -10,6 +10,8 @@ export const AUTOMATED_MESSAGE_CHANNELS = [
   "paidInvoiceReceiptSms",
   "mailboxReply",
   "renewalScheduleEmail",
+  "appointmentConfirmationEmail",
+  "appointmentConfirmationSms",
 ] as const;
 
 export type AutomatedMessageChannelKey =
@@ -35,6 +37,8 @@ export const AUTOMATED_MESSAGE_KIND: Record<
   paidInvoiceReceiptSms: "sms",
   mailboxReply: "mailbox",
   renewalScheduleEmail: "email",
+  appointmentConfirmationEmail: "email",
+  appointmentConfirmationSms: "sms",
 };
 
 export const AUTOMATED_MESSAGE_DEFAULTS = {
@@ -58,6 +62,16 @@ export const AUTOMATED_MESSAGE_DEFAULTS = {
     "<p>Choose a recommended date below, or call our office at (386) 631-8982 for immediate scheduling help.</p>",
     "{{recommended_dates}}",
   ].join(""),
+  appointmentConfirmationSubject:
+    "Your service appointment on {{appointment_date}}",
+  appointmentConfirmationEmailBody: [
+    "<p>Hi {{first_name}},</p>",
+    "<p>Your service visit is scheduled for <strong>{{appointment_date}}</strong>{{appointment_time}} with {{technician_name}}.</p>",
+    "<p>We will be at {{service_address}}.</p>",
+    "<p>Reply to this email or call the office at (386) 631-8982 if you need a different time.</p>",
+  ].join(""),
+  appointmentConfirmationSms:
+    "Hi {{first_name}}, your service visit is set for {{appointment_date}}{{appointment_time}} with {{technician_name}}. Address: {{service_address}}.",
 } as const;
 
 export const AUTOMATED_MESSAGE_FALLBACK: Record<
@@ -92,6 +106,14 @@ export const AUTOMATED_MESSAGE_FALLBACK: Record<
     subject: AUTOMATED_MESSAGE_DEFAULTS.renewalScheduleEmailSubject,
     body: AUTOMATED_MESSAGE_DEFAULTS.renewalScheduleEmailBody,
   },
+  appointmentConfirmationEmail: {
+    subject: AUTOMATED_MESSAGE_DEFAULTS.appointmentConfirmationSubject,
+    body: AUTOMATED_MESSAGE_DEFAULTS.appointmentConfirmationEmailBody,
+  },
+  appointmentConfirmationSms: {
+    subject: "",
+    body: AUTOMATED_MESSAGE_DEFAULTS.appointmentConfirmationSms,
+  },
 };
 
 export type AutomatedTemplateCopy = {
@@ -120,6 +142,11 @@ export type InvoiceTokenInput = {
   dueDate?: Date | string | null;
   viewUrl?: string | null;
   contractType?: string | null;
+  appointmentDate?: string | null;
+  /** Includes a leading space and "at" or "between" when a time is known. */
+  appointmentTime?: string | null;
+  technicianName?: string | null;
+  serviceAddress?: string | null;
 };
 
 const INVOICE_TOKEN_RE = (key: string) =>
@@ -180,6 +207,30 @@ export function applyInvoiceTokens(
     result = result.replace(
       INVOICE_TOKEN_RE("contract_type"),
       encode(invoice.contractType.trim()),
+    );
+  }
+  if (invoice.appointmentDate != null) {
+    result = result.replace(
+      INVOICE_TOKEN_RE("appointment_date"),
+      encode(invoice.appointmentDate),
+    );
+  }
+  if (invoice.appointmentTime != null) {
+    result = result.replace(
+      INVOICE_TOKEN_RE("appointment_time"),
+      encode(invoice.appointmentTime),
+    );
+  }
+  if (invoice.technicianName != null) {
+    result = result.replace(
+      INVOICE_TOKEN_RE("technician_name"),
+      encode(invoice.technicianName),
+    );
+  }
+  if (invoice.serviceAddress != null) {
+    result = result.replace(
+      INVOICE_TOKEN_RE("service_address"),
+      encode(invoice.serviceAddress),
     );
   }
   if (!due) result = clearEmptyDueSentence(result);

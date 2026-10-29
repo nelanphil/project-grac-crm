@@ -1,5 +1,5 @@
 import { Response } from "express";
-import mongoose from "mongoose";
+import mongoose, { type PipelineStage } from "mongoose";
 import { getMongoStatus } from "../config/mongodb";
 import { AuthRequest } from "../middleware/auth.middleware";
 import {
@@ -478,5 +478,141 @@ export async function updateContactName(
   } catch (err) {
     console.error("PATCH /name-reports/contacts/:id error:", err);
     res.status(500).json({ message: "Failed to update contact name." });
+  }
+}
+
+type VacantCustomerRow = {
+  id: string;
+  accountName: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  county: string;
+};
+
+function vacantCustomerQuery(search: string): Record<string, unknown> {
+  const parts: Record<string, unknown>[] = [
+    {
+      ...activeCustomerFilter,
+      ...notMergedFilter,
+    },
+  ];
+  const tokens = buildTokenSearchFilter(search, [
+    "accountName",
+    "address",
+    "city",
+    "state",
+    "zip",
+    "county",
+  ]);
+  if (tokens) parts.push(tokens);
+  return parts.length === 1 ? parts[0] : { $and: parts };
+}
+
+function vacantContactLookup(): PipelineStage {
+  return {
+    $lookup: {
+      from: CustomerContact.collection.name,
+      let: { id: "$_id" },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $and: [
+                { $eq: ["$customerRef", "$$id"] },
+                { $eq: ["$deletedAt", null] },
+              ],
+            },
+          },
+        },
+        { $limit: 1 },
+        { $project: { _id: 1 } },
+      ],
+      as: "activeContacts",
+    },
+  };
+}
+
+function vacantRow(customer: {
+  _id: mongoose.Types.ObjectId;
+  accountName?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  county?: string;
+}): VacantCustomerRow {
+  return {
+    id: customer._id.toString(),
+    accountName: customer.accountName ?? "",
+    address: customer.address ?? "",
+    city: customer.city ?? "",
+    state: customer.state ?? "",
+    zip: customer.zip ?? "",
+    county: customer.county ?? "",
+  };
+}
+
+// GET /name-reports/vacant — active customers with no active contact.
+export async function listVacantCustomers(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  if (getMongoStatus() !== "connected") {
+    res.status(503).json({ message: "Database unavailable. Please try again later." });
+    return;
+  }
+
+  try {
+    const pageSize = parsePageSize(req.query.pageSize);
+    const requestedPage = parsePage(req.query.page);
+    const filter = vacantCustomerQuery(String(req.query.q ?? ""));
+    const withoutContacts: PipelineStage[] = [
+      { $match: filter },
+      vacantContactLookup(),
+      { $match: { activeContacts: { $size: 0 } } },
+    ];
+    const counted = await Customer.aggregate<{ count: number }>([
+      ...withoutContacts,
+      { $count: "count" },
+    ]);
+    const total = counted[0]?.count ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
+    const page = Math.min(requestedPage, totalPages);
+    const customers = await Customer.aggregate<{
+      _id: mongoose.Types.ObjectId;
+      accountName?: string;
+      address?: string;
+      city?: string;
+      state?: string;
+      zip?: string;
+      county?: string;
+    }>([
+      ...withoutContacts,
+      { $sort: { accountName: 1, address: 1, _id: 1 } },
+      { $skip: (page - 1) * pageSize },
+      { $limit: pageSize },
+      {
+        $project: {
+          accountName: 1,
+          address: 1,
+          city: 1,
+          state: 1,
+          zip: 1,
+          county: 1,
+        },
+      },
+    ]);
+
+    res.json({
+      rows: customers.map(vacantRow),
+      total,
+      page,
+      pageSize,
+    });
+  } catch (err) {
+    console.error("GET /name-reports/vacant error:", err);
+    res.status(500).json({ message: "Failed to list vacant customers." });
   }
 }

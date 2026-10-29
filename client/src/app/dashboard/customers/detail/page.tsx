@@ -11,6 +11,7 @@ import {
   Pencil,
   Plus,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
@@ -19,6 +20,7 @@ import { formatAddressLabel } from "@/components/customers/CustomerAddressesPane
 import CustomerRecordCard from "@/components/customers/CustomerRecordCard";
 import CustomerReputationControl from "@/components/customers/CustomerReputationControl";
 import MergeCustomersDialog from "@/components/customers/MergeCustomersDialog";
+import NewOwnerDialog from "@/components/customers/NewOwnerDialog";
 import MobileSectionNav from "@/components/ui/MobileSectionNav";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
@@ -135,6 +137,9 @@ function CustomerDetailContent() {
   const [error, setError] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeToast, setMergeToast] = useState<string | null>(null);
+  const [newOwnerOpen, setNewOwnerOpen] = useState(false);
+  const [newOwnerToast, setNewOwnerToast] = useState<string | null>(null);
+  const [contactsRevision, setContactsRevision] = useState(0);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
@@ -771,6 +776,19 @@ function CustomerDetailContent() {
           {canWrite ? (
             <button
               type="button"
+              onClick={() => {
+                setNewOwnerToast(null);
+                setNewOwnerOpen(true);
+              }}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange sm:w-auto"
+            >
+              <UserRound className="h-4 w-4" />
+              New Owner
+            </button>
+          ) : null}
+          {canWrite ? (
+            <button
+              type="button"
               onClick={() => setMergeOpen(true)}
               className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange sm:w-auto"
             >
@@ -810,6 +828,12 @@ function CustomerDetailContent() {
         </div>
       ) : null}
 
+      {newOwnerToast ? (
+        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+          {newOwnerToast}
+        </div>
+      ) : null}
+
       {checkoutLinkMessage ? (
         <div className="rounded-md border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-700 break-all">
           {checkoutLinkMessage}
@@ -821,6 +845,7 @@ function CustomerDetailContent() {
         token={token!}
         userId={user.id}
         canWrite={canWrite}
+        contactsRevision={contactsRevision}
         onCustomerChange={(next) => setCustomer(next)}
         filteredContracts={filteredContracts}
         addressFilter={addressFilter}
@@ -1145,6 +1170,30 @@ function CustomerDetailContent() {
           />
         )}
       </section>
+
+      <NewOwnerDialog
+        open={newOwnerOpen}
+        onClose={() => setNewOwnerOpen(false)}
+        token={token!}
+        customer={customer}
+        onSaved={(result) => {
+          setCustomer((current) =>
+            current
+              ? {
+                  ...current,
+                  ...result.customer,
+                  contacts: result.contacts,
+                }
+              : current,
+          );
+          setContactsRevision((value) => value + 1);
+          setNewOwnerToast(
+            result.customer.accountName.trim().toLowerCase() === "vacant"
+              ? "Property marked Vacant. Contacts were kept in the directory."
+              : `New owner saved as ${result.customer.accountName}. Contacts were kept in the directory.`,
+          );
+        }}
+      />
 
       <MergeCustomersDialog
         open={mergeOpen}

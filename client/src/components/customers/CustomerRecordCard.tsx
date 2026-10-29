@@ -86,6 +86,7 @@ type CustomerRecordCardProps = {
   token: string;
   userId: string;
   canWrite: boolean;
+  contactsRevision?: number;
   onCustomerChange: (customer: CustomerDetail) => void;
   filteredContracts: ContractListItem[];
   addressFilter: string;
@@ -98,6 +99,7 @@ export default function CustomerRecordCard({
   token,
   userId,
   canWrite,
+  contactsRevision = 0,
   onCustomerChange,
   filteredContracts,
   addressFilter,
@@ -284,6 +286,7 @@ export default function CustomerRecordCard({
             customer={customer}
             token={token}
             canWrite={canWrite}
+            contactsRevision={contactsRevision}
             onCustomerChange={onCustomerChange}
           />
         </div>

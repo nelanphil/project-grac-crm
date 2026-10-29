@@ -74,6 +74,8 @@ export const saveAutomatedMessageSettingsSchema = z.object({
   paidInvoiceReceiptSms: channelSchema("sms"),
   mailboxReply: channelSchema("mailbox"),
   renewalScheduleEmail: channelSchema("email"),
+  appointmentConfirmationEmail: channelSchema("email"),
+  appointmentConfirmationSms: channelSchema("sms"),
   renewalSchedule: z.object({
     enabled: z.boolean(),
     offerRecommendedDates: z.boolean(),
@@ -85,6 +87,7 @@ export const saveAutomatedMessageSettingsSchema = z.object({
     paidInvoiceReceiptEmail: z.boolean(),
     mailboxReply: z.boolean(),
     renewalScheduleEmail: z.boolean(),
+    appointmentConfirmationEmail: z.boolean(),
   }),
 });
 

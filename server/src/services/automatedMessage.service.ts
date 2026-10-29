@@ -164,6 +164,7 @@ export function readEmailDelivery(
     paidInvoiceReceiptEmail: on("paidInvoiceReceiptEmail"),
     mailboxReply: on("mailboxReply"),
     renewalScheduleEmail: on("renewalScheduleEmail") && renewalEnabled,
+    appointmentConfirmationEmail: on("appointmentConfirmationEmail"),
   };
 }
 
@@ -247,6 +248,8 @@ export async function getAutomatedMessageForm(): Promise<AutomatedMessageForm> {
       paidInvoiceReceiptSms: blankChannel("paidInvoiceReceiptSms"),
       mailboxReply: blankChannel("mailboxReply"),
       renewalScheduleEmail: blankChannel("renewalScheduleEmail"),
+      appointmentConfirmationEmail: blankChannel("appointmentConfirmationEmail"),
+      appointmentConfirmationSms: blankChannel("appointmentConfirmationSms"),
       renewalSchedule: readRenewalScheduleOptions(null),
       emailDelivery: readEmailDelivery(null, true),
     };
@@ -320,6 +323,8 @@ const CHANNEL_LABEL: Record<AutomatedMessageChannelKey, string> = {
   paidInvoiceReceiptSms: "the paid invoice text",
   mailboxReply: "the mailbox reply",
   renewalScheduleEmail: "the renewal scheduling email",
+  appointmentConfirmationEmail: "the appointment email",
+  appointmentConfirmationSms: "the appointment text",
 };
 
 export async function saveAutomatedMessageForm(

@@ -136,6 +136,50 @@ export const mergeCustomersSchema = z.object({
   primaryContactId: z.string().min(1).optional(),
 });
 
+const newOwnerContactSchema = z.object({
+  first: personNameSchema.optional().default(""),
+  last: personNameSchema.optional().default(""),
+  phone: z.string().trim().max(40).optional().default(""),
+  email: z
+    .string()
+    .trim()
+    .max(200)
+    .optional()
+    .default("")
+    .refine((v) => v === "" || z.string().email().safeParse(v).success, {
+      message: "Invalid email address",
+    }),
+});
+
+export const newOwnerSchema = z
+  .object({
+    contactId: z.string().trim().min(1).optional(),
+    contact: newOwnerContactSchema.optional(),
+  })
+  .refine(
+    (value) => {
+      const contact = value.contact;
+      const hasFields = Boolean(
+        contact &&
+          (contact.first || contact.last || contact.phone || contact.email),
+      );
+      return !(value.contactId && hasFields);
+    },
+    { message: "Choose an existing contact or enter a new one." },
+  )
+  .refine(
+    (value) => {
+      const contact = value.contact;
+      if (!contact) return true;
+      const hasFields = Boolean(
+        contact.first || contact.last || contact.phone || contact.email,
+      );
+      if (!hasFields) return true;
+      return Boolean(contact.first || contact.last);
+    },
+    { message: "Enter a first or last name for the new contact." },
+  );
+
 export type CreateCustomerAddressInput = z.infer<typeof createCustomerAddressSchema>;
 export type UpdateCustomerAddressInput = z.infer<typeof updateCustomerAddressSchema>;
 export type CreateEquipmentInput = z.infer<typeof createEquipmentSchema>;
@@ -143,6 +187,7 @@ export type UpdateEquipmentInput = z.infer<typeof updateEquipmentSchema>;
 export type CreateCustomerContactInput = z.infer<typeof createCustomerContactSchema>;
 export type UpdateCustomerContactInput = z.infer<typeof updateCustomerContactSchema>;
 export type MergeCustomersInput = z.infer<typeof mergeCustomersSchema>;
+export type NewOwnerInput = z.infer<typeof newOwnerSchema>;
 export type PortalUpdateAddressInput = z.infer<typeof portalUpdateAddressSchema>;
 export type PortalUpdateContactInput = z.infer<typeof portalUpdateContactSchema>;
 export type PortalCreateAddressInput = z.infer<typeof portalCreateAddressSchema>;

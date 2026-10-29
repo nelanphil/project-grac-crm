@@ -30,6 +30,7 @@ import {
   createCustomerContactSchema,
   createEquipmentSchema,
   mergeCustomersSchema,
+  newOwnerSchema,
   updateCustomerAddressSchema,
   updateCustomerContactSchema,
   updateEquipmentSchema,
@@ -48,6 +49,7 @@ import {
   LastContactError,
   softDeleteCustomerContact,
   detachCustomerContact,
+  renameVacantAccountForFirstContact,
   syncCustomerPrimaryContactFields,
 } from "../utils/customerContacts";
 import { ensureCustomerLoginForPrimaryEmail } from "../utils/ensureCustomerLogin";
@@ -89,6 +91,7 @@ import { cascadeCustomerSoftDelete } from "../services/customerSoftDelete";
 import {
   diffFields,
 } from "../services/customerActivity.service";
+import { assignNewOwner, NewOwnerError } from "../services/newOwner.service";
 import { CustomerActivity } from "../models/mongo/CustomerActivity";
 import { normalizeCountyName } from "../constants/floridaCounties";
 import {
@@ -2767,6 +2770,10 @@ export async function createCustomerContact(
       legacyCustomerId: null,
     });
 
+    const renamedAccount =
+      existingCount === 0
+        ? await renameVacantAccountForFirstContact(customer._id, contact)
+        : null;
     const refreshed = await CustomerContact.findById(contact._id);
     await syncCustomerPrimaryContactFields(customer._id);
     if (makePrimary) {
@@ -2787,6 +2794,7 @@ export async function createCustomerContact(
 
     res.status(201).json({
       contact: formatContact((refreshed ?? contact).toObject()),
+      accountName: renamedAccount ?? customer.accountName ?? "",
     });
   } catch (err) {
     console.error("POST /customers/:id/contacts error:", err);
@@ -3052,6 +3060,65 @@ export async function detachCustomerContactFromCustomer(
     res.json({ contact: formatContact(contact.toObject()) });
   } catch (err) {
     console.error("POST /customers/:id/contacts/:contactId/detach error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// POST /customers/:id/new-owner
+export async function assignCustomerNewOwner(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
+    if (!customer) return;
+    if (customer.mergedIntoRef) {
+      res.status(404).json({ message: "Customer not found" });
+      return;
+    }
+
+    const parsed = newOwnerSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res
+        .status(400)
+        .json({ message: parsed.error.issues[0]?.message ?? "Invalid input" });
+      return;
+    }
+
+    const contact = parsed.data.contact;
+    const hasContact = Boolean(
+      contact &&
+        (contact.first || contact.last || contact.phone || contact.email),
+    );
+
+    const result = await assignNewOwner({
+      customerId: customer._id.toString(),
+      contactId: parsed.data.contactId,
+      contact: hasContact && contact ? contact : undefined,
+      actorUserId: req.user?.id ?? null,
+    });
+    const contacts = await loadContactsForCustomer(customer._id);
+    res.json({
+      customer: {
+        accountName: result.accountName,
+        first: result.first,
+        last: result.last,
+        phone: result.phone,
+        email: result.email,
+      },
+      contacts,
+    });
+  } catch (err) {
+    if (err instanceof NewOwnerError || err instanceof LastContactError) {
+      const status = err instanceof NewOwnerError ? err.status : 409;
+      res.status(status).json({ message: err.message });
+      return;
+    }
+    console.error("POST /customers/:id/new-owner error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 }

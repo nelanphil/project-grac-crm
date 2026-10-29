@@ -11,6 +11,7 @@ export const WORK_ORDER_ACTIVITY_ACTIONS = [
   "note_removed",
   "completed",
   "appointment_canceled",
+  "appointment_sent",
   "deleted",
   "restored",
   "receipt_sent",

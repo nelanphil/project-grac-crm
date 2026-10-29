@@ -14,6 +14,7 @@ import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
 import InvoiceWorkOrderButton from "@/components/billing/InvoiceWorkOrderButton";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 import WorkOrderActivityPanel from "@/components/work-orders/WorkOrderActivityPanel";
+import SendAppointmentPrompt from "@/components/work-orders/SendAppointmentPrompt";
 import PosChargeCheck from "@/components/billing/PosChargeCheck";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
@@ -343,6 +344,16 @@ function WorkOrderDetailContent() {
         </div>
       ) : canWrite ? (
         <>
+          {token ? (
+            <SendAppointmentPrompt
+              token={token}
+              order={order}
+              onSent={(next) => {
+                setOrder((current) => (current ? { ...current, ...next } : next));
+                setActivityVersion((version) => version + 1);
+              }}
+            />
+          ) : null}
           <ServiceTicketForm
             variant="work-order"
             initial={ticketFromRecord(order)}

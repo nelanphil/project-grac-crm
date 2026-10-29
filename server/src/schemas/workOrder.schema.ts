@@ -149,5 +149,25 @@ export const sendWorkOrderReceiptSchema = z.discriminatedUnion("channel", [
   }),
 ]);
 
+export const sendWorkOrderAppointmentSchema = z
+  .object({
+    sms: z
+      .object({
+        phone: z.string().trim().max(40),
+      })
+      .optional(),
+    email: z
+      .object({
+        address: z.string().trim().max(200),
+      })
+      .optional(),
+  })
+  .refine((data) => Boolean(data.sms || data.email), {
+    message: "Choose text, email, or both.",
+  });
+
 export type CompleteWorkOrderInput = z.infer<typeof completeWorkOrderSchema>;
 export type SendWorkOrderReceiptInput = z.infer<typeof sendWorkOrderReceiptSchema>;
+export type SendWorkOrderAppointmentInput = z.infer<
+  typeof sendWorkOrderAppointmentSchema
+>;

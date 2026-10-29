@@ -33,6 +33,7 @@ const EMAIL_CHANNELS = new Set<ChannelKey>([
   "paidInvoiceReceiptEmail",
   "mailboxReply",
   "renewalScheduleEmail",
+  "appointmentConfirmationEmail",
 ]);
 
 function isEmailChannel(key: ChannelKey): key is EmailChannelKey {
@@ -57,6 +58,22 @@ const CONTRACT_TYPE: TokenDef = { key: "contract_type", label: "Contract type" }
 const RECOMMENDED_DATES: TokenDef = {
   key: "recommended_dates",
   label: "Recommended dates",
+};
+const APPOINTMENT_DATE: TokenDef = {
+  key: "appointment_date",
+  label: "Appointment date",
+};
+const APPOINTMENT_TIME: TokenDef = {
+  key: "appointment_time",
+  label: "Appointment time",
+};
+const TECHNICIAN_NAME: TokenDef = {
+  key: "technician_name",
+  label: "Technician",
+};
+const SERVICE_ADDRESS: TokenDef = {
+  key: "service_address",
+  label: "Service address",
 };
 
 const INVOICE_SUBJECT_TOKENS = [INVOICE_NUMBER, INVOICE_TOTAL, DUE_DATE];
@@ -136,6 +153,34 @@ const CHANNELS: Record<
     bodyTokens: [FIRST_NAME, INVOICE_NUMBER, CONTRACT_TYPE, RECOMMENDED_DATES],
     hint: "Put {{recommended_dates}} where the date buttons should appear. Turning recommended dates off leaves that spot blank, and the customer can still call to schedule.",
   },
+  appointmentConfirmationEmail: {
+    label: "Email",
+    kind: "email",
+    templateKind: "email",
+    subjectTokens: [APPOINTMENT_DATE],
+    bodyTokens: [
+      FIRST_NAME,
+      APPOINTMENT_DATE,
+      APPOINTMENT_TIME,
+      TECHNICIAN_NAME,
+      SERVICE_ADDRESS,
+    ],
+    hint: "{{appointment_time}} already includes \"at\" or \"between\", and it is blank when no time is set.",
+  },
+  appointmentConfirmationSms: {
+    label: "Text",
+    kind: "sms",
+    templateKind: "sms",
+    subjectTokens: [],
+    bodyTokens: [
+      FIRST_NAME,
+      APPOINTMENT_DATE,
+      APPOINTMENT_TIME,
+      TECHNICIAN_NAME,
+      SERVICE_ADDRESS,
+    ],
+    hint: "A blank first name removes a leading \"Hi,\". {{appointment_time}} is blank when no time is set.",
+  },
 };
 
 type MessageTabId =
@@ -143,7 +188,8 @@ type MessageTabId =
   | "payment-received"
   | "paid-invoice-receipt"
   | "mailbox-reply"
-  | "renewal-scheduling";
+  | "renewal-scheduling"
+  | "appointment-confirmation";
 
 const SECTIONS: {
   id: MessageTabId;
@@ -185,6 +231,13 @@ const SECTIONS: {
     description:
       "Sent after a customer pays an ASC renewal. It offers recommended dates they can click, or asks them to call for immediate scheduling help. Clicking a date sets that day on the work order created when the renewal was paid.",
     keys: ["renewalScheduleEmail"],
+  },
+  {
+    id: "appointment-confirmation",
+    title: "Appointment confirmation",
+    description:
+      "Sent when staff schedule a work order and choose to text or email the customer the date. The date, time or arrival window, technician, and service address are filled in.",
+    keys: ["appointmentConfirmationEmail", "appointmentConfirmationSms"],
   },
 ];
 
@@ -594,6 +647,10 @@ function TestSendDialog({
           {workOrder ? " The payment link is a sample and cannot be paid." : ""}
           {channelKey === "renewalScheduleEmail"
             ? " Recommended dates in this test are samples and cannot be booked."
+            : ""}
+          {channelKey === "appointmentConfirmationEmail" ||
+          channelKey === "appointmentConfirmationSms"
+            ? " The date, time, technician, and address are samples."
             : ""}
         </p>
         <form onSubmit={onSubmit} className="mt-4 space-y-3">

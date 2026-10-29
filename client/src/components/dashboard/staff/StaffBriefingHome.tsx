@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Maximize2 } from "lucide-react";
 import CustomerHistoryPanel from "@/components/customers/CustomerHistoryPanel";
 import CommunicationsLogFeed from "@/components/dashboard/staff/CommunicationsLogFeed";
@@ -180,6 +181,7 @@ const tabClass = (active: boolean) =>
   }`;
 
 export default function StaffBriefingHome() {
+  const router = useRouter();
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const canSeeInbox = useAuthStore(
@@ -226,10 +228,6 @@ export default function StaffBriefingHome() {
   const [creatingRenewalId, setCreatingRenewalId] = useState<string | null>(
     null,
   );
-  const [createdVisit, setCreatedVisit] = useState<{
-    id: string;
-    number: string;
-  } | null>(null);
   if (useDashboardStore.getState().canSeeInbox !== canSeeInbox) {
     setCanSeeInbox(canSeeInbox);
   }
@@ -293,26 +291,21 @@ export default function StaffBriefingHome() {
     };
   }, [token]);
 
-  async function createRenewalVisit(invoiceId: string) {
+  async function openRenewalVisit(invoiceId: string) {
     if (!token || creatingRenewalId) return;
     setCreatingRenewalId(invoiceId);
     setRenewalsError(null);
     try {
       const { workOrder } = await createRenewalWorkOrder(token, invoiceId);
-      setRenewals((list) =>
-        (list ?? []).filter((invoice) => invoice._id !== invoiceId),
+      router.push(
+        `/dashboard/work-orders/detail?id=${workOrder.workOrderId}`,
       );
-      setCreatedVisit({
-        id: workOrder.workOrderId,
-        number: workOrder.number || "Work order",
-      });
     } catch (err: unknown) {
       setRenewalsError(
         err instanceof ApiError
           ? err.message
-          : "Could not create the work order",
+          : "Could not open the work order",
       );
-    } finally {
       setCreatingRenewalId(null);
     }
   }
@@ -674,17 +667,6 @@ export default function StaffBriefingHome() {
               <EmptyLine>Loading paid renewals…</EmptyLine>
             ) : (
               <>
-                {createdVisit ? (
-                  <p className="px-4 pt-3 text-sm text-[var(--staff-ink)]">
-                    Created{" "}
-                    <Link
-                      href={`/dashboard/work-orders/detail?id=${createdVisit.id}`}
-                      className="font-medium text-brand-orange hover:underline"
-                    >
-                      {createdVisit.number}
-                    </Link>
-                  </p>
-                ) : null}
                 {renewals.length === 0 ? (
                   <EmptyLine>No paid renewals waiting to be scheduled.</EmptyLine>
                 ) : (
@@ -706,18 +688,18 @@ export default function StaffBriefingHome() {
                         action={
                           invoice.scheduleWorkOrder
                             ? {
-                                label: "Schedule",
+                                label: "Schedule WO",
                                 href: `/dashboard/work-orders/detail?id=${invoice.scheduleWorkOrder._id}`,
                               }
                             : canWriteInvoices
                               ? {
                                   label:
                                     creatingRenewalId === invoice._id
-                                      ? "Creating…"
-                                      : "Create WO",
+                                      ? "Opening…"
+                                      : "Schedule WO",
                                   busy: creatingRenewalId === invoice._id,
                                   onClick: () =>
-                                    void createRenewalVisit(invoice._id),
+                                    void openRenewalVisit(invoice._id),
                                 }
                               : undefined
                         }

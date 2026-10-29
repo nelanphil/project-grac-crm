@@ -66,6 +66,10 @@ export interface IWorkOrder extends Document {
   routeLocked: boolean;
   appointmentCanceledAt: Date | null;
   appointmentCanceledBy?: Types.ObjectId | null;
+  /** Set when staff text or email the customer the current appointment. */
+  appointmentNoticeSentAt: Date | null;
+  /** Date, dispatch time, and crew the last notice described. */
+  appointmentNoticeKey: string;
   descPerformed: string;
   parts: IWorkOrderPart[];
   customerName: string;
@@ -217,6 +221,8 @@ const workOrderSchema = new Schema<IWorkOrder>(
       ref: "User",
       default: null,
     },
+    appointmentNoticeSentAt: { type: Date, default: null },
+    appointmentNoticeKey: { type: String, default: "" },
     descPerformed: { type: String, default: "" },
     parts: { type: [workOrderPartSchema], default: [] },
     customerName: { type: String, default: "" },

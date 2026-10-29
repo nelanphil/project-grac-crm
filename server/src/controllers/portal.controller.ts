@@ -38,6 +38,7 @@ import {
   clearOtherPrimaryContacts,
   isHomeownerLabel,
   LastContactError,
+  renameVacantAccountForFirstContact,
   softDeleteCustomerContact,
   syncCustomerPrimaryContactFields,
 } from "../utils/customerContacts";
@@ -868,6 +869,9 @@ export async function createPortalContact(
       legacyCustomerId: null,
     });
 
+    if (existingCount === 0) {
+      await renameVacantAccountForFirstContact(customer._id, contact);
+    }
     const refreshed = await CustomerContact.findById(contact._id);
     await syncCustomerPrimaryContactFields(customer._id);
     if (makePrimary) {

@@ -137,6 +137,21 @@ function invoiceTokens(viewUrl: string) {
   };
 }
 
+function appointmentSample(channel: AutomatedMessageChannelKey) {
+  if (
+    channel !== "appointmentConfirmationEmail" &&
+    channel !== "appointmentConfirmationSms"
+  ) {
+    return {};
+  }
+  return {
+    appointmentDate: "Thursday, November 5",
+    appointmentTime: " at 9:00 AM",
+    technicianName: "Sam Rivera",
+    serviceAddress: "123 Oak Street, Tampa, FL 33601",
+  };
+}
+
 function sampleContext(paymentUrl: string | null): MessageTemplateContext {
   return {
     ...SAMPLE_TEMPLATE_CONTEXT,
@@ -204,7 +219,10 @@ export async function composeAutomatedMessageTest(
     const includePaymentLink = input.channel === "workOrderCompleteSms";
     const paymentUrl = includePaymentLink ? automatedTestPayUrl() : null;
     const composed = composeSmsPaymentBody({
-      bodyTemplate: applyInvoiceTokens(input.resolved.body, invoiceTokens(automatedTestViewUrl())),
+      bodyTemplate: applyInvoiceTokens(input.resolved.body, {
+        ...invoiceTokens(automatedTestViewUrl()),
+        ...appointmentSample(input.channel),
+      }),
       context: sampleContext(paymentUrl),
       includePaymentLink,
       paymentUrl,
@@ -234,6 +252,7 @@ export async function composeAutomatedMessageTest(
   const tokens = {
     ...invoiceTokens(automatedTestViewUrl()),
     ...(sampleDates ? { contractType: "ASC" } : {}),
+    ...appointmentSample(input.channel),
   };
   const subject = prefixAutomatedTestSubject(
     renderMessageTemplate(

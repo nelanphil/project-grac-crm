@@ -8,11 +8,13 @@ import {
   ApiError,
   listContactNames,
   listCustomerNames,
+  listVacantCustomers,
   updateContactName,
   updateCustomerName,
   type ContactNameRow,
   type CustomerNameRow,
   type CustomerReputation,
+  type VacantCustomerRow,
 } from "@/lib/api";
 import {
   DEFAULT_PAGE_SIZE,
@@ -126,6 +128,7 @@ function ReportFrame({
   description,
   query,
   onQueryChange,
+  searchPlaceholder = "Search names",
   toolbar,
   total,
   page,
@@ -141,6 +144,7 @@ function ReportFrame({
   description: string;
   query: string;
   onQueryChange: (value: string) => void;
+  searchPlaceholder?: string;
   toolbar?: ReactNode;
   total: number;
   page: number;
@@ -182,7 +186,7 @@ function ReportFrame({
             <input
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
-              placeholder="Search names"
+              placeholder={searchPlaceholder}
               className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue"
             />
           </label>
@@ -215,24 +219,56 @@ function useDebouncedQuery(input: string): string {
   return query;
 }
 
+type ReportView = "customers" | "vacant";
+
 export default function NameReportsTab({ token }: { token: string | null }) {
   const [customerRefresh, setCustomerRefresh] = useState(0);
   const [contactRefresh, setContactRefresh] = useState(0);
+  const [view, setView] = useState<ReportView>("customers");
 
   return (
-    <div className="space-y-8">
-      <CustomerNamesTable
-        token={token}
-        refreshToken={customerRefresh}
-        onPrimaryContactChanged={() => setContactRefresh((value) => value + 1)}
-      />
-      <ContactNamesTable
-        token={token}
-        refreshToken={contactRefresh}
-        onPrimaryCustomerChanged={() =>
-          setCustomerRefresh((value) => value + 1)
-        }
-      />
+    <div className="space-y-6">
+      <div className="flex gap-1 overflow-x-auto border-b border-neutral-200">
+        {(
+          [
+            { id: "customers", label: "Customer Names" },
+            { id: "vacant", label: "Vacant" },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setView(tab.id)}
+            className={`shrink-0 border-b-2 px-3 pb-2 text-sm font-medium ${
+              view === tab.id
+                ? "border-brand-orange text-brand-dark"
+                : "border-transparent text-neutral-500 hover:text-brand-dark"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {view === "customers" ? (
+        <div className="space-y-8">
+          <CustomerNamesTable
+            token={token}
+            refreshToken={customerRefresh}
+            onPrimaryContactChanged={() =>
+              setContactRefresh((value) => value + 1)
+            }
+          />
+          <ContactNamesTable
+            token={token}
+            refreshToken={contactRefresh}
+            onPrimaryCustomerChanged={() =>
+              setCustomerRefresh((value) => value + 1)
+            }
+          />
+        </div>
+      ) : (
+        <VacantCustomersTable token={token} />
+      )}
     </div>
   );
 }
@@ -604,6 +640,133 @@ function ContactNamesTable({
                   ) : (
                     <span className="text-neutral-400">—</span>
                   )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </ReportFrame>
+  );
+}
+
+function VacantCustomersTable({ token }: { token: string | null }) {
+  const [queryInput, setQueryInput] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [rows, setRows] = useState<VacantCustomerRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const query = useDebouncedQuery(queryInput);
+  const appliedQuery = useRef(query);
+
+  useEffect(() => {
+    if (appliedQuery.current === query) return;
+    appliedQuery.current = query;
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    listVacantCustomers(token, { page, pageSize, q: query })
+      .then((data) => {
+        if (cancelled) return;
+        setRows(data.rows);
+        setTotal(data.total);
+        setError("");
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Failed to load vacant customers.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, page, pageSize, query]);
+
+  return (
+    <ReportFrame
+      title="Vacant"
+      description="Properties with no contact. New Owner sets the customer name to Vacant until a person is assigned."
+      query={queryInput}
+      onQueryChange={setQueryInput}
+      searchPlaceholder="Search name or address"
+      total={total}
+      page={page}
+      pageSize={pageSize}
+      onPageSizeChange={(size) => {
+        setPageSize(size);
+        setPage(1);
+      }}
+      onPrev={() => setPage((current) => Math.max(1, current - 1))}
+      onNext={() => setPage((current) => current + 1)}
+      loading={loading}
+      error={error}
+    >
+      {!loading && rows.length === 0 ? (
+        <p className="px-4 py-8 text-sm text-neutral-500 sm:px-6">
+          No vacant customers match this filter.
+        </p>
+      ) : rows.length === 0 ? null : (
+        <table className="min-w-full divide-y divide-neutral-100 text-sm">
+          <thead className="bg-neutral-50">
+            <tr>
+              <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 sm:px-6">
+                Customer
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500">
+                Address
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500">
+                City
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500">
+                State
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500">
+                ZIP
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 sm:px-6">
+                County
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-neutral-100">
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td className="px-4 py-2 align-top sm:px-6">
+                  <Link
+                    href={`/dashboard/customers/detail?id=${row.id}`}
+                    className="text-brand-blue hover:underline"
+                  >
+                    {row.accountName || "Vacant"}
+                  </Link>
+                </td>
+                <td className="px-4 py-2 align-top text-brand-dark">
+                  {row.address || "—"}
+                </td>
+                <td className="px-4 py-2 align-top text-brand-dark">
+                  {row.city || "—"}
+                </td>
+                <td className="px-4 py-2 align-top text-brand-dark">
+                  {row.state || "—"}
+                </td>
+                <td className="px-4 py-2 align-top text-brand-dark">
+                  {row.zip || "—"}
+                </td>
+                <td className="px-4 py-2 align-top text-brand-dark sm:px-6">
+                  {row.county || "—"}
                 </td>
               </tr>
             ))}

@@ -13,6 +13,7 @@ import {
   getWorkOrderCompletion,
   postWorkOrderComplete,
   postWorkOrderPaymentProof,
+  postWorkOrderSendAppointment,
   postWorkOrderSendReceipt,
   uploadWorkOrderPaymentProofMiddleware,
 } from "../controllers/workOrder.controller";
@@ -58,6 +59,11 @@ router.post(
   "/:id/send-receipt",
   requirePermission("jobs:write"),
   postWorkOrderSendReceipt,
+);
+router.post(
+  "/:id/send-appointment",
+  requirePermission("jobs:write"),
+  postWorkOrderSendAppointment,
 );
 router.get("/:id", getWorkOrderById);
 router.post("/", createWorkOrder);

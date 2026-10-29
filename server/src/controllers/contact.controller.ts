@@ -23,6 +23,7 @@ import {
   clearOtherPrimaryContacts,
   detachCustomerContact,
   LastContactError,
+  renameVacantAccountForFirstContact,
   syncCustomerPrimaryContactFields,
 } from "../utils/customerContacts";
 import { ensureCustomerLoginForPrimaryEmail } from "../utils/ensureCustomerLogin";
@@ -147,8 +148,11 @@ async function loadActiveCustomer(customerId: string) {
 async function attachToCustomer(
   contact: ICustomerContact,
   customerId: string,
-): Promise<void> {
-  if (contact.customerRef && String(contact.customerRef) === customerId) return;
+): Promise<{ accountName: string }> {
+  if (contact.customerRef && String(contact.customerRef) === customerId) {
+    const current = await Customer.findById(customerId).select("accountName").lean();
+    return { accountName: current?.accountName ?? "" };
+  }
 
   const customer = await loadActiveCustomer(customerId);
   if (!customer) {
@@ -190,10 +194,16 @@ async function attachToCustomer(
   contact.customerRef = customer._id;
   contact.isPrimary = makePrimary;
   await contact.save();
+  let accountName = customer.accountName ?? "";
+  if (makePrimary) {
+    const renamed = await renameVacantAccountForFirstContact(customer._id, contact);
+    if (renamed) accountName = renamed;
+  }
   await syncCustomerPrimaryContactFields(customer._id);
   if (makePrimary) {
     await ensureCustomerLoginForPrimaryEmail(customer._id, { previousEmail });
   }
+  return { accountName };
 }
 
 export async function searchContacts(req: AuthRequest, res: Response): Promise<void> {
@@ -403,7 +413,7 @@ export async function attachStandaloneContact(
       return;
     }
 
-    await attachToCustomer(contact, parsed.data.customerId);
+    const { accountName } = await attachToCustomer(contact, parsed.data.customerId);
     const [presented] = await presentContacts([contact]);
     const name = `${contact.first} ${contact.last}`.trim() || "Contact";
     logNotificationAsync({
@@ -415,7 +425,7 @@ export async function attachStandaloneContact(
       metadata: { contactName: name },
       ...actorFromRequest(req.user),
     });
-    res.json({ contact: presented });
+    res.json({ contact: presented, accountName });
   } catch (err) {
     if (err instanceof ContactRequestError) {
       res.status(err.status).json({ message: err.message });

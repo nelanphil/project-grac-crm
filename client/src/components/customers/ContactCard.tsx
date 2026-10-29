@@ -30,6 +30,7 @@ interface ContactCardProps {
   customer: CustomerDetail;
   token: string;
   canWrite?: boolean;
+  contactsRevision?: number;
   onCustomerChange?: (customer: CustomerDetail) => void;
 }
 
@@ -57,15 +58,20 @@ function applyPrimaryToCustomer(
   return {
     ...customer,
     contacts,
-    first: primary?.first ?? customer.first,
-    last: primary?.last ?? customer.last,
-    phone: primary?.phone ?? customer.phone,
-    email: primary?.email ?? customer.email,
+    first: primary?.first ?? "",
+    last: primary?.last ?? "",
+    phone: primary?.phone ?? "",
+    email: primary?.email ?? "",
   };
 }
 
 export default function ContactCard(props: ContactCardProps) {
-  return <ContactCardContent key={props.customer._id} {...props} />;
+  return (
+    <ContactCardContent
+      key={`${props.customer._id}:${props.contactsRevision ?? 0}`}
+      {...props}
+    />
+  );
 }
 
 function ContactCardContent({
@@ -123,9 +129,12 @@ function ContactCardContent({
     };
   }, [linking, linkQuery, token, contacts]);
 
-  function publishContacts(next: CustomerContact[]) {
+  function publishContacts(next: CustomerContact[], accountName?: string) {
     setContacts(next);
-    onCustomerChange?.(applyPrimaryToCustomer(customer, next));
+    onCustomerChange?.({
+      ...applyPrimaryToCustomer(customer, next),
+      ...(accountName !== undefined ? { accountName } : {}),
+    });
   }
 
   function startAdd() {
@@ -170,11 +179,15 @@ function ContactCardContent({
         const next = contacts.map((c) => (c._id === contact._id ? contact : c));
         publishContacts(next);
       } else {
-        const { contact } = await createCustomerContact(token, customer._id, {
-          ...form,
-          isPrimary: contacts.length === 0,
-        });
-        publishContacts([...contacts, contact]);
+        const { contact, accountName } = await createCustomerContact(
+          token,
+          customer._id,
+          {
+            ...form,
+            isPrimary: contacts.length === 0,
+          },
+        );
+        publishContacts([...contacts, contact], accountName);
       }
       cancelForm();
     } catch (err) {
@@ -241,9 +254,9 @@ function ContactCardContent({
     setSaving(true);
     setError(null);
     try {
-      await attachDirectoryContact(token, contactId, customer._id);
+      const attached = await attachDirectoryContact(token, contactId, customer._id);
       const refreshed = await getCustomerContacts(token, customer._id);
-      publishContacts(refreshed.contacts);
+      publishContacts(refreshed.contacts, attached.accountName);
       setLinking(false);
       setLinkQuery("");
       setLinkMatches([]);

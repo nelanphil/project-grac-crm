@@ -21,6 +21,8 @@ export interface IAutomatedMessageSettings extends Document {
   paidInvoiceReceiptSms: IAutomatedMessageChannel;
   mailboxReply: IAutomatedMessageChannel;
   renewalScheduleEmail: IAutomatedMessageChannel;
+  appointmentConfirmationEmail: IAutomatedMessageChannel;
+  appointmentConfirmationSms: IAutomatedMessageChannel;
   renewalSchedule: IRenewalScheduleOptions;
   emailDelivery: IAutomatedEmailDelivery;
   createdAt: Date;
@@ -38,6 +40,7 @@ export const AUTOMATED_EMAIL_CHANNELS = [
   "paidInvoiceReceiptEmail",
   "mailboxReply",
   "renewalScheduleEmail",
+  "appointmentConfirmationEmail",
 ] as const;
 
 export type AutomatedEmailChannelKey = (typeof AUTOMATED_EMAIL_CHANNELS)[number];
@@ -50,6 +53,7 @@ export interface IAutomatedEmailDelivery {
   paidInvoiceReceiptEmail: boolean;
   mailboxReply: boolean;
   renewalScheduleEmail: boolean;
+  appointmentConfirmationEmail: boolean;
 }
 
 const channelSchema = new Schema<IAutomatedMessageChannel>(
@@ -86,6 +90,8 @@ const automatedMessageSettingsSchema = new Schema<IAutomatedMessageSettings>(
     paidInvoiceReceiptSms: { type: channelSchema, default: () => ({}) },
     mailboxReply: { type: channelSchema, default: () => ({}) },
     renewalScheduleEmail: { type: channelSchema, default: () => ({}) },
+    appointmentConfirmationEmail: { type: channelSchema, default: () => ({}) },
+    appointmentConfirmationSms: { type: channelSchema, default: () => ({}) },
     renewalSchedule: {
       type: new Schema<IRenewalScheduleOptions>(
         {
@@ -105,6 +111,7 @@ const automatedMessageSettingsSchema = new Schema<IAutomatedMessageSettings>(
           paidInvoiceReceiptEmail: { type: Boolean, default: true },
           mailboxReply: { type: Boolean, default: true },
           renewalScheduleEmail: { type: Boolean, default: true },
+          appointmentConfirmationEmail: { type: Boolean, default: true },
         },
         { _id: false },
       ),
@@ -115,6 +122,7 @@ const automatedMessageSettingsSchema = new Schema<IAutomatedMessageSettings>(
         paidInvoiceReceiptEmail: true,
         mailboxReply: true,
         renewalScheduleEmail: true,
+        appointmentConfirmationEmail: true,
       }),
     },
   },
