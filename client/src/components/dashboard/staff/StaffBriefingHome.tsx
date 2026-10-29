@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Maximize2 } from "lucide-react";
 import CustomerHistoryPanel from "@/components/customers/CustomerHistoryPanel";
+import CommunicationsLogFeed from "@/components/dashboard/staff/CommunicationsLogFeed";
 import {
   ApiError,
   getPendingPayments,
@@ -18,7 +19,7 @@ import TechnicianHomeDashboard from "@/components/dashboard/staff/TechnicianHome
 
 const NOTE_PREVIEW = 4;
 
-type BriefingTab = "reminders" | "notes" | "inbox" | "history";
+type BriefingTab = "reminders" | "notes" | "inbox" | "history" | "communications";
 
 function ticketHref(item: ReminderListItem): string {
   return item.source === "estimate"
@@ -159,7 +160,11 @@ export default function StaffBriefingHome() {
     (s) => s.hasRole("admin", "super-admin") && s.hasPermission("messages:read"),
   );
   const canSeeHistory = useAuthStore((s) => s.hasRole("admin", "super-admin"));
+  const canSeeCommunications = useAuthStore(
+    (s) => s.hasRole("admin", "super-admin") && s.hasPermission("messages:read"),
+  );
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [commsExpanded, setCommsExpanded] = useState(false);
   const firstName = user?.first_name?.trim() || "";
 
   const [tab, setTab] = useState<BriefingTab>(
@@ -277,8 +282,20 @@ export default function StaffBriefingHome() {
     <button
       type="button"
       onClick={() => setHistoryExpanded(true)}
-      title="Expand customer history to full screen"
-      aria-label="Expand customer history to full screen"
+      title="Expand customer log to full screen"
+      aria-label="Expand customer log to full screen"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-600 shadow-2xs transition-colors hover:bg-neutral-100 hover:text-brand-dark"
+    >
+      <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+      <span className="hidden sm:inline">Expand</span>
+    </button>
+  );
+  const commsExpand = (
+    <button
+      type="button"
+      onClick={() => setCommsExpanded(true)}
+      title="Expand communications log to full screen"
+      aria-label="Expand communications log to full screen"
       className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-600 shadow-2xs transition-colors hover:bg-neutral-100 hover:text-brand-dark"
     >
       <Maximize2 className="h-3.5 w-3.5" aria-hidden />
@@ -288,6 +305,8 @@ export default function StaffBriefingHome() {
   const tabAction =
     tab === "history" ? (
       historyExpand
+    ) : tab === "communications" ? (
+      commsExpand
     ) : tab === "reminders" ? (
       remindersLink
     ) : tab === "inbox" ? (
@@ -368,7 +387,20 @@ export default function StaffBriefingHome() {
                     onClick={() => setTab("history")}
                     className={tabClass(tab === "history")}
                   >
-                    Customer History
+                    Customer Log
+                  </button>
+                ) : null}
+                {canSeeCommunications ? (
+                  <button
+                    type="button"
+                    role="tab"
+                    id="briefing-tab-communications"
+                    aria-selected={tab === "communications"}
+                    aria-controls="briefing-panel"
+                    onClick={() => setTab("communications")}
+                    className={tabClass(tab === "communications")}
+                  >
+                    Communications Log
                   </button>
                 ) : null}
               </div>
@@ -386,7 +418,9 @@ export default function StaffBriefingHome() {
                   ? "briefing-tab-inbox"
                   : tab === "history"
                     ? "briefing-tab-history"
-                    : "briefing-tab-notes"
+                    : tab === "communications"
+                      ? "briefing-tab-communications"
+                      : "briefing-tab-notes"
             }
           >
             {tab === "history" && canSeeHistory && token ? (
@@ -398,6 +432,14 @@ export default function StaffBriefingHome() {
                   showHeader={false}
                   expanded={historyExpanded}
                   onExpandedChange={setHistoryExpanded}
+                />
+              </div>
+            ) : tab === "communications" && canSeeCommunications && token ? (
+              <div className="px-3 py-3">
+                <CommunicationsLogFeed
+                  token={token}
+                  expanded={commsExpanded}
+                  onExpandedChange={setCommsExpanded}
                 />
               </div>
             ) : tab === "reminders" ? (

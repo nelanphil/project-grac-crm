@@ -520,14 +520,14 @@ export default function CustomerHistoryPanel({
           <div
             role="dialog"
             aria-modal="true"
-            aria-label={allCustomers ? "Expanded customer history" : "Expanded history"}
+            aria-label={allCustomers ? "Expanded customer log" : "Expanded history"}
             className="fixed inset-0 z-[60] flex h-dvh w-dvw flex-col overflow-hidden bg-white p-3 text-brand-dark shadow-2xl sm:p-5"
           >
             <div className="flex shrink-0 items-center justify-between gap-3 border-b border-neutral-200 pb-3">
               <div className="flex min-w-0 items-center gap-2">
                 <History className="h-5 w-5 text-brand-orange" aria-hidden />
                 <span className="font-semibold text-brand-dark">
-                  {allCustomers ? "Customer History" : "History"}
+                  {allCustomers ? "Customer Log" : "History"}
                 </span>
                 {status}
               </div>

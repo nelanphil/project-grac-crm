@@ -8033,6 +8033,113 @@ export async function getSentEmail(
   );
 }
 
+export type CommunicationLogChannel =
+  | "sms"
+  | "mms"
+  | "voice"
+  | "email"
+  | "contact-form";
+
+export type CommunicationLogSource =
+  | "wizard"
+  | "invoice"
+  | "auto-reply"
+  | "inbox"
+  | "website-form"
+  | "mailbox-form";
+
+export type CommunicationLogActor = "customer" | "staff" | "system";
+
+export type CommunicationLogThreadStatus =
+  | "replied"
+  | "no-reply"
+  | "inbound-only";
+
+export type CommunicationLogEntry = {
+  id: string;
+  at: string;
+  direction: "inbound" | "outbound";
+  channel: CommunicationLogChannel;
+  subject: string;
+  preview: string;
+  status: string;
+  source: CommunicationLogSource;
+  from: string;
+  to: string;
+  inMonth: boolean;
+  emailId: string | null;
+  actor: CommunicationLogActor;
+};
+
+export type CommunicationLogThread = {
+  id: string;
+  customerRef: string | null;
+  customerName: string;
+  handle: string;
+  channels: CommunicationLogChannel[];
+  firstOutboundAt: string | null;
+  firstReplyAt: string | null;
+  lastActivityAt: string;
+  messageCount: number;
+  replyCount: number;
+  status: CommunicationLogThreadStatus;
+  entries: CommunicationLogEntry[];
+};
+
+export type CommunicationLogSummary = {
+  outbound: number;
+  inbound: number;
+  threads: number;
+  repliedThreads: number;
+  replyRate: number;
+  byChannel: Record<
+    CommunicationLogChannel,
+    { outbound: number; inbound: number }
+  >;
+};
+
+export async function getCommunicationsLog(
+  token: string,
+  options: {
+    from: string;
+    to: string;
+    channel?: CommunicationLogChannel;
+    direction?: "inbound" | "outbound";
+    repliedOnly?: boolean;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  threads: CommunicationLogThread[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: CommunicationLogSummary;
+}> {
+  const params = new URLSearchParams();
+  params.set("from", options.from);
+  params.set("to", options.to);
+  if (options.channel) params.set("channel", options.channel);
+  if (options.direction) params.set("direction", options.direction);
+  if (options.repliedOnly) params.set("repliedOnly", "true");
+  if (options.search) params.set("search", options.search);
+  if (options.page !== undefined) params.set("page", String(options.page));
+  if (options.pageSize !== undefined) {
+    params.set("pageSize", String(options.pageSize));
+  }
+  return authRequest<{
+    threads: CommunicationLogThread[];
+    total: number;
+    page: number;
+    pageSize: number;
+    summary: CommunicationLogSummary;
+  }>(`/communications-log?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export type LegacyDumpKind = "customers" | "work_orders";
 
 export type LegacyDumpTargetInfo = {

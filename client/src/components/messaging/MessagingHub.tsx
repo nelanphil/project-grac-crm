@@ -57,6 +57,7 @@ import { EmailBodyEditorHandle } from "./EmailBodyEditor";
 import ScheduledEmailsPanel from "./ScheduledEmailsPanel";
 import ScheduledMessagesPanel from "./ScheduledMessagesPanel";
 import ContactFormSubmissionsPanel from "./ContactFormSubmissionsPanel";
+import CommunicationsLogPanel from "./CommunicationsLogPanel";
 import SentEmailsPanel from "./SentEmailsPanel";
 import SentMessagesPanel from "./SentMessagesPanel";
 import TemplatesPanel from "./TemplatesPanel";
@@ -68,7 +69,12 @@ const DEFAULT_SMS_BODY =
 const DEFAULT_EMAIL_SUBJECT = "Service renewal reminder";
 const DEFAULT_EMAIL_BODY = DEFAULT_SMS_BODY;
 
-type MessagingTab = "templates" | "create" | "email" | "contact-form";
+type MessagingTab =
+  | "templates"
+  | "create"
+  | "email"
+  | "contact-form"
+  | "communications-log";
 
 type MessageSubTab = "wizard" | "sent-messages" | "scheduled";
 
@@ -118,7 +124,12 @@ function messagingTabFromQuery(
   ) {
     return "create";
   }
-  if (tab === "templates" || tab === "create" || tab === "email") {
+  if (
+    tab === "templates" ||
+    tab === "create" ||
+    tab === "email" ||
+    tab === "communications-log"
+  ) {
     return tab;
   }
   return "contact-form";
@@ -1476,6 +1487,7 @@ export default function MessagingHub() {
             ["templates", "Templates"],
             ["create", "Message Wizard"],
             ["email", "Email Wizard"],
+            ["communications-log", "Communications Log"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -1890,6 +1902,8 @@ export default function MessagingHub() {
         />
           )}
         </div>
+      ) : activeTab === "communications-log" ? (
+        <CommunicationsLogPanel token={token} />
       ) : (
         <ContactFormSubmissionsPanel token={token} />
       )}
