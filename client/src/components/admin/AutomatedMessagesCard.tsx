@@ -9,6 +9,7 @@ import {
   getMessageTemplates,
   saveAutomatedMessageSettings,
   sendAutomatedMessageTest,
+  type AutomatedEmailDelivery,
   type AutomatedMessageChannel,
   type AutomatedMessageSettings,
   type MessageTemplateItem,
@@ -19,7 +20,24 @@ const EMAIL_SUBJECT_MAX = 200;
 const EMAIL_BODY_MAX = 25_000;
 const SMS_BODY_MAX = 1600;
 
-type ChannelKey = Exclude<keyof AutomatedMessageSettings, "saved">;
+type ChannelKey = Exclude<
+  keyof AutomatedMessageSettings,
+  "saved" | "renewalSchedule" | "emailDelivery"
+>;
+
+type EmailChannelKey = Exclude<keyof AutomatedEmailDelivery, "enabled">;
+
+const EMAIL_CHANNELS = new Set<ChannelKey>([
+  "workOrderCompleteEmail",
+  "paymentReceivedEmail",
+  "paidInvoiceReceiptEmail",
+  "mailboxReply",
+  "renewalScheduleEmail",
+]);
+
+function isEmailChannel(key: ChannelKey): key is EmailChannelKey {
+  return EMAIL_CHANNELS.has(key);
+}
 type TemplateKind = "email" | "sms";
 type EditorKind = "email" | "sms" | "receipt-email" | "mailbox";
 
@@ -35,6 +53,11 @@ const DUE_DATE: TokenDef = { key: "due_date", label: "Due date" };
 const VIEW_URL: TokenDef = { key: "invoice_view_url", label: "Invoice link" };
 const PAYMENT_LINK: TokenDef = { key: "payment_link", label: "Payment link" };
 const INVOICE: TokenDef = { key: "invoice", label: "Invoice" };
+const CONTRACT_TYPE: TokenDef = { key: "contract_type", label: "Contract type" };
+const RECOMMENDED_DATES: TokenDef = {
+  key: "recommended_dates",
+  label: "Recommended dates",
+};
 
 const INVOICE_SUBJECT_TOKENS = [INVOICE_NUMBER, INVOICE_TOTAL, DUE_DATE];
 const INVOICE_TEXT_TOKENS = [
@@ -105,13 +128,22 @@ const CHANNELS: Record<
     bodyTokens: [FIRST_NAME],
     hint: "The subject stays Re: plus the original subject. This wording is placed inside the usual reply layout.",
   },
+  renewalScheduleEmail: {
+    label: "Email",
+    kind: "email",
+    templateKind: "email",
+    subjectTokens: [INVOICE_NUMBER, CONTRACT_TYPE],
+    bodyTokens: [FIRST_NAME, INVOICE_NUMBER, CONTRACT_TYPE, RECOMMENDED_DATES],
+    hint: "Put {{recommended_dates}} where the date buttons should appear. Turning recommended dates off leaves that spot blank, and the customer can still call to schedule.",
+  },
 };
 
 type MessageTabId =
   | "work-orders"
   | "payment-received"
   | "paid-invoice-receipt"
-  | "mailbox-reply";
+  | "mailbox-reply"
+  | "renewal-scheduling";
 
 const SECTIONS: {
   id: MessageTabId;
@@ -147,6 +179,13 @@ const SECTIONS: {
       "Wording used when an email account acknowledges new mail. The switch stays on that account. The subject is always Re: plus the customer’s subject, and this wording sits inside the usual reply above a quote of their message.",
     keys: ["mailboxReply"],
   },
+  {
+    id: "renewal-scheduling",
+    title: "Renewal scheduling",
+    description:
+      "Sent after a customer pays an ASC renewal. It offers recommended dates they can click, or asks them to call for immediate scheduling help. Clicking a date sets that day on the work order created when the renewal was paid.",
+    keys: ["renewalScheduleEmail"],
+  },
 ];
 
 function parseMessageTab(value: string | null): MessageTabId {
@@ -169,7 +208,51 @@ function editableSnapshot(settings: AutomatedMessageSettings): string {
       ];
     }),
   );
-  return JSON.stringify(channels);
+  return JSON.stringify({
+    channels,
+    renewalSchedule: settings.renewalSchedule,
+    emailDelivery: settings.emailDelivery,
+  });
+}
+
+function ToggleSwatch({
+  checked,
+  label,
+  description,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  description?: string;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex items-start gap-3 text-left"
+    >
+      <span
+        className={`relative mt-0.5 inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${
+          checked ? "bg-brand-orange" : "bg-neutral-300"
+        }`}
+      >
+        <span
+          className={`pointer-events-none mt-0.5 inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+            checked ? "translate-x-4" : "translate-x-0.5"
+          }`}
+        />
+      </span>
+      <span>
+        <span className="block text-sm font-medium text-brand-dark">{label}</span>
+        {description ? (
+          <span className="mt-0.5 block text-sm text-neutral-500">{description}</span>
+        ) : null}
+      </span>
+    </button>
+  );
 }
 
 function insertToken(
@@ -260,6 +343,8 @@ function ChannelEditor({
   onChange,
   onTest,
   testProblem,
+  sending,
+  onSendingChange,
 }: {
   channelKey: ChannelKey;
   channel: AutomatedMessageChannel;
@@ -267,6 +352,8 @@ function ChannelEditor({
   onChange: (next: AutomatedMessageChannel) => void;
   onTest: () => void;
   testProblem: string | null;
+  sending?: boolean;
+  onSendingChange?: (next: boolean) => void;
 }) {
   const spec = CHANNELS[channelKey];
   const [subjectEl, setSubjectEl] = useState<HTMLInputElement | null>(null);
@@ -287,8 +374,15 @@ function ChannelEditor({
   return (
     <div className="rounded-lg border border-neutral-200 px-4 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-sm font-semibold text-brand-dark">{spec.label}</h3>
+          {onSendingChange ? (
+            <ToggleSwatch
+              checked={Boolean(sending)}
+              label="Send this email"
+              onChange={onSendingChange}
+            />
+          ) : null}
           <button
             type="button"
             onClick={onTest}
@@ -498,6 +592,9 @@ function TestSendDialog({
           Sends the wording on this screen, filled with sample invoice INV-1042.
           It does not go to a customer and does not mark any invoice sent.
           {workOrder ? " The payment link is a sample and cannot be paid." : ""}
+          {channelKey === "renewalScheduleEmail"
+            ? " Recommended dates in this test are samples and cannot be booked."
+            : ""}
         </p>
         <form onSubmit={onSubmit} className="mt-4 space-y-3">
           <label className="block">
@@ -603,6 +700,40 @@ export default function AutomatedMessagesCard({
     setSaveError(null);
   }
 
+  function updateEmailDelivery(
+    partial: Partial<AutomatedMessageSettings["emailDelivery"]>,
+  ) {
+    setSettings((current) => {
+      if (!current) return current;
+      const emailDelivery = { ...current.emailDelivery, ...partial };
+      return {
+        ...current,
+        emailDelivery,
+        renewalSchedule: {
+          ...current.renewalSchedule,
+          enabled: emailDelivery.renewalScheduleEmail,
+        },
+      };
+    });
+    setSaveSuccess(false);
+    setSaveError(null);
+  }
+
+  function updateRenewalSchedule(
+    partial: Partial<AutomatedMessageSettings["renewalSchedule"]>,
+  ) {
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            renewalSchedule: { ...current.renewalSchedule, ...partial },
+          }
+        : current,
+    );
+    setSaveSuccess(false);
+    setSaveError(null);
+  }
+
   function setMessageTab(id: MessageTabId) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", "automated-messages");
@@ -676,13 +807,28 @@ export default function AutomatedMessagesCard({
           </h2>
           <p className="mt-0.5 text-sm text-neutral-500">
             Choose a Messaging Hub template, or write the wording here. Editing
-            a template later changes every message that uses it. These messages
-            still send the same way they do now.
+            a template later changes every message that uses it. Turn emails off
+            here if something should stop going out. Texts are not affected.
           </p>
         </div>
       </div>
 
       <form onSubmit={onSave} className="space-y-6 px-6 py-5">
+        <div className="rounded-lg border border-neutral-200 px-4 py-3">
+          <ToggleSwatch
+            checked={settings.emailDelivery.enabled}
+            label="Send automated emails"
+            description="Turn this off to stop every automated email. Texts still go out. Send test still works, so you can check wording while sending is paused."
+            onChange={(enabled) => updateEmailDelivery({ enabled })}
+          />
+          {settings.emailDelivery.enabled ? null : (
+            <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Automated emails are paused. Each email below keeps its own switch
+              for when you turn this back on.
+            </p>
+          )}
+        </div>
+
         {!settings.saved && (
           <p className="rounded-md border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
             These are the messages going out today. Save to keep a choice, or
@@ -732,6 +878,27 @@ export default function AutomatedMessagesCard({
                 {section.description}
               </p>
             </div>
+            {section.id === "renewal-scheduling" ? (
+              <div className="rounded-lg border border-neutral-200 px-4 py-3">
+                <label className="flex items-center gap-2 text-sm text-brand-dark">
+                  <input
+                    type="checkbox"
+                    checked={settings.renewalSchedule.offerRecommendedDates}
+                    disabled={
+                      !settings.emailDelivery.enabled ||
+                      !settings.emailDelivery.renewalScheduleEmail
+                    }
+                    onChange={(event) =>
+                      updateRenewalSchedule({
+                        offerRecommendedDates: event.target.checked,
+                      })
+                    }
+                    className="h-4 w-4"
+                  />
+                  Offer recommended schedule dates
+                </label>
+              </div>
+            ) : null}
             {section.keys.map((key) => (
               <ChannelEditor
                 key={key}
@@ -744,6 +911,12 @@ export default function AutomatedMessagesCard({
                   templates,
                   templatesLoaded,
                 )}
+                sending={isEmailChannel(key) ? settings.emailDelivery[key] : undefined}
+                onSendingChange={
+                  isEmailChannel(key)
+                    ? (next) => updateEmailDelivery({ [key]: next })
+                    : undefined
+                }
                 onTest={() => setTesting(key)}
                 onChange={(next) => updateChannel(key, next)}
               />

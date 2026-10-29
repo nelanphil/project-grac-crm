@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  AUTOMATED_MESSAGE_FALLBACK,
   applyInvoiceTokens,
   formatMailboxReplyHtml,
   resolveChannelCopy,
@@ -149,6 +150,28 @@ describe("applyInvoiceTokens", () => {
     assert.match(sms, /https:\/\/example\.com\/invoice\/\?t=abc/);
   });
 
+  it("fills contract type and inserts recommended dates without escaping the links", () => {
+    const html = applyInvoiceTokens(
+      "<p>Your {{contract_type}} visit.</p>{{recommended_dates}}",
+      {
+        contractType: "A&B",
+        recommendedDatesHtml:
+          '<p><a href="https://example.com/schedule-renewal?token=abc&amp;date=2026-11-03">Tuesday, November 3</a></p>',
+      },
+    );
+    assert.equal(
+      html,
+      '<p>Your A&amp;B visit.</p><p><a href="https://example.com/schedule-renewal?token=abc&amp;date=2026-11-03">Tuesday, November 3</a></p>',
+    );
+  });
+
+  it("leaves recommended dates in place until the send fills them", () => {
+    const html = applyInvoiceTokens("<p>{{recommended_dates}}</p>", {
+      number: "INV-1",
+    });
+    assert.match(html, /\{\{recommended_dates\}\}/);
+  });
+
   it("drops an empty due sentence and escapes html values", () => {
     const html = applyInvoiceTokens(
       "<p>Invoice <strong>{{invoice_number}}</strong>. Due {{due_date}}.</p>",
@@ -186,5 +209,15 @@ describe("formatMailboxReplyHtml", () => {
       formatMailboxReplyHtml("<p>Thanks</p><script>alert(1)</script>"),
       "<p>Thanks</p>",
     );
+  });
+});
+
+describe("renewal schedule email fallback", () => {
+  it("offers recommended dates and a call for immediate scheduling", () => {
+    const copy = AUTOMATED_MESSAGE_FALLBACK.renewalScheduleEmail;
+    assert.match(copy.subject, /schedule/i);
+    assert.match(copy.body, /\{\{first_name\}\}/);
+    assert.match(copy.body, /\{\{recommended_dates\}\}/);
+    assert.match(copy.body, /call our office/i);
   });
 });

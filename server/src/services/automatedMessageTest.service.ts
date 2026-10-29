@@ -1,4 +1,5 @@
 import { env } from "../config/env";
+import { recommendedDatesEmailHtml } from "./renewalScheduleChoice";
 import { sendRoleEmail } from "./email.service";
 import {
   AutomatedMessageError,
@@ -149,7 +150,8 @@ export async function composeAutomatedMessageTest(
   renderers?: AutomatedTestRenderers,
 ): Promise<ComposedAutomatedMessageTest> {
   const kind = AUTOMATED_MESSAGE_KIND[input.channel];
-  const paidInvoice = kind === "receipt-email";
+  const paidInvoice =
+    kind === "receipt-email" || input.channel === "renewalScheduleEmail";
   const invoice = sampleAutomatedInvoice(paidInvoice);
   const invoiceStatus: ComposedAutomatedMessageTest["invoiceStatus"] =
     kind === "mailbox" || kind === "sms"
@@ -218,7 +220,19 @@ export async function composeAutomatedMessageTest(
     };
   }
 
-  const tokens = invoiceTokens(automatedTestViewUrl());
+  const tokens = {
+    ...invoiceTokens(automatedTestViewUrl()),
+    ...(input.channel === "renewalScheduleEmail"
+      ? {
+          contractType: "ASC",
+          recommendedDatesHtml: recommendedDatesEmailHtml({
+            pageUrl: `${env.clientUrl.replace(/\/$/, "")}/schedule-renewal`,
+            token: "sample",
+            dates: ["2026-11-03", "2026-11-05", "2026-11-10"],
+          }),
+        }
+      : {}),
+  };
   const subject = prefixAutomatedTestSubject(
     renderMessageTemplate(
       applyInvoiceTokens(input.resolved.subject, tokens),

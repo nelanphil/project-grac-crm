@@ -5,7 +5,9 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import {
   activeCustomerFilter,
   Customer,
+  isCustomerReputation,
   notMergedFilter,
+  type CustomerReputation,
 } from "../models/mongo/Customer";
 import {
   activeContactFilter,
@@ -15,6 +17,12 @@ import {
   updateContactNameReportSchema,
   updateCustomerNameReportSchema,
 } from "../schemas/nameReport.schema";
+import {
+  actorFromRequest,
+  customerDisplayName,
+  logNotificationAsync,
+} from "../services/notification.service";
+import { diffFields } from "../services/customerActivity.service";
 import { syncCustomerPrimaryContactFields } from "../utils/customerContacts";
 import {
   DUPLICATE_ACCOUNT_NAME,
@@ -29,6 +37,7 @@ type CustomerNameRow = {
   accountName: string;
   first: string;
   last: string;
+  reputation: CustomerReputation | null;
 };
 
 type ContactNameRow = {
@@ -66,28 +75,46 @@ function customerRow(customer: {
   accountName?: string | null;
   first?: string | null;
   last?: string | null;
+  reputation?: string | null;
 }): CustomerNameRow {
   return {
     id: customer._id.toString(),
     accountName: customer.accountName ?? "",
     first: customer.first ?? "",
     last: customer.last ?? "",
+    reputation: isCustomerReputation(customer.reputation)
+      ? customer.reputation
+      : null,
   };
+}
+
+function reputationQuery(value: string): Record<string, unknown> | null {
+  const raw = value.trim();
+  if (!raw || raw === "all") return null;
+  if (raw === "unrated") return { reputation: null };
+  if (isCustomerReputation(raw)) return { reputation: raw };
+  return null;
 }
 
 function activeCustomerQuery(
   search: string,
+  reputation: string,
 ): Record<string, unknown> {
-  const base = {
-    ...activeCustomerFilter,
-    ...notMergedFilter,
-  };
+  const parts: Record<string, unknown>[] = [
+    {
+      ...activeCustomerFilter,
+      ...notMergedFilter,
+    },
+  ];
   const tokens = buildTokenSearchFilter(search, [
     "accountName",
     "first",
     "last",
   ]);
-  return tokens ? { $and: [base, tokens] } : base;
+  if (tokens) parts.push(tokens);
+  const reputationMatch = reputationQuery(reputation);
+  if (reputationMatch) parts.push(reputationMatch);
+  return parts.length === 1 ? parts[0] : { $and: parts };
 }
 
 export async function listCustomerNames(
@@ -102,7 +129,10 @@ export async function listCustomerNames(
   try {
     const pageSize = parsePageSize(req.query.pageSize);
     const requestedPage = parsePage(req.query.page);
-    const filter = activeCustomerQuery(String(req.query.q ?? ""));
+    const filter = activeCustomerQuery(
+      String(req.query.q ?? ""),
+      String(req.query.reputation ?? ""),
+    );
     const total = await Customer.countDocuments(filter);
     const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
     const page = Math.min(requestedPage, totalPages);
@@ -110,7 +140,7 @@ export async function listCustomerNames(
       .sort({ last: 1, first: 1, accountName: 1, _id: 1 })
       .skip((page - 1) * pageSize)
       .limit(pageSize)
-      .select("accountName first last")
+      .select("accountName first last reputation")
       .lean();
 
     res.json({
@@ -120,6 +150,7 @@ export async function listCustomerNames(
           accountName: customer.accountName,
           first: customer.first,
           last: customer.last,
+          reputation: customer.reputation,
         }),
       ),
       total,
@@ -160,7 +191,7 @@ export async function updateCustomerName(
       _id: id,
       ...activeCustomerFilter,
       ...notMergedFilter,
-    }).select("accountName first last");
+    }).select("accountName first last reputation");
     if (!customer) {
       res.status(404).json({ message: "Customer not found" });
       return;
@@ -187,7 +218,13 @@ export async function updateCustomerName(
       last: string;
       isPrimary: boolean;
     } | null = null;
-    const customerSet: Record<string, string> = {};
+    const customerSet: Record<string, unknown> = {};
+    const previousReputation = isCustomerReputation(customer.reputation)
+      ? customer.reputation
+      : null;
+    const reputationChanged =
+      parsed.data.reputation !== undefined &&
+      previousReputation !== parsed.data.reputation;
 
     if (parsed.data.first !== undefined || parsed.data.last !== undefined) {
       const primary = await CustomerContact.findOne({
@@ -215,12 +252,40 @@ export async function updateCustomerName(
     if (parsed.data.accountName !== undefined) {
       customerSet.accountName = nextAccount;
     }
+    if (reputationChanged && parsed.data.reputation !== undefined) {
+      customerSet.reputation = parsed.data.reputation;
+    }
     if (Object.keys(customerSet).length > 0) {
       await Customer.updateOne({ _id: customer._id }, { $set: customerSet });
     }
 
+    if (reputationChanged) {
+      const custName = customerDisplayName({
+        accountName: nextAccount,
+        first: nextFirst,
+        last: nextLast,
+      });
+      logNotificationAsync({
+        entityType: "customer",
+        action: "updated",
+        entityId: String(customer._id),
+        customerRef: customer._id,
+        summary: `Customer ${custName} reputation updated`,
+        metadata: {
+          customerName: custName,
+          accountName: nextAccount,
+          changes: diffFields(
+            { reputation: previousReputation },
+            { reputation: parsed.data.reputation ?? null },
+            ["reputation"],
+          ),
+        },
+        ...actorFromRequest(req.user),
+      });
+    }
+
     const refreshed = await Customer.findById(customer._id)
-      .select("accountName first last")
+      .select("accountName first last reputation")
       .lean();
     if (!refreshed) {
       res.status(404).json({ message: "Customer not found" });
@@ -233,6 +298,7 @@ export async function updateCustomerName(
         accountName: refreshed.accountName,
         first: refreshed.first,
         last: refreshed.last,
+        reputation: refreshed.reputation,
       }),
       contact,
     });
@@ -365,7 +431,7 @@ export async function updateContactName(
       _id: contact.customerRef,
       ...activeCustomerFilter,
       ...notMergedFilter,
-    }).select("accountName first last");
+    }).select("accountName first last reputation");
     if (!customer) {
       res.status(404).json({ message: "Contact not found" });
       return;
@@ -380,7 +446,7 @@ export async function updateContactName(
     }
 
     const refreshedCustomer = await Customer.findById(customer._id)
-      .select("accountName first last")
+      .select("accountName first last reputation")
       .lean();
 
     const row: ContactNameRow = {
@@ -405,6 +471,7 @@ export async function updateContactName(
               accountName: refreshedCustomer.accountName,
               first: refreshedCustomer.first,
               last: refreshedCustomer.last,
+              reputation: refreshedCustomer.reputation,
             })
           : null,
     });

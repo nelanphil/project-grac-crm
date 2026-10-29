@@ -1,6 +1,9 @@
 import { z } from "zod";
+import { CUSTOMER_REPUTATIONS } from "../models/mongo/Customer";
 import { propertyTypeSchema } from "./customerSite.schema";
 import { personNameSchema } from "./personName";
+
+export const customerReputationSchema = z.enum(CUSTOMER_REPUTATIONS);
 
 const optionalEmail = z
   .string()
@@ -53,6 +56,7 @@ export const updateCustomerSchema = z.object({
   accountName: z.string().trim().max(200).optional(),
   ownerUserId: z.union([z.string().trim(), z.null()]).optional(),
   ownerManual: z.boolean().optional(),
+  reputation: customerReputationSchema.nullable().optional(),
 });
 
 export const checkCustomerDuplicatesSchema = z.object({

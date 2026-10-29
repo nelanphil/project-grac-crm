@@ -18,7 +18,10 @@ import {
 import { CustomerContact, activeContactFilter } from "../models/mongo/CustomerContact";
 import { EmailAccount } from "../models/mongo/EmailAccount";
 import type { IWorkOrder } from "../models/mongo/WorkOrder";
-import { resolveAutomatedMessage } from "./automatedMessage.service";
+import {
+  automatedEmailPauseReasonFor,
+  resolveAutomatedMessage,
+} from "./automatedMessage.service";
 import { CheckoutError } from "./checkout.service";
 import { createScopedPaymentLink } from "./checkoutLink.service";
 import { dispatchStaffEmailBatch } from "./emailMessage.service";
@@ -77,6 +80,8 @@ export interface WorkOrderCompletionCheck {
   invoiceOpen: boolean;
   /** Staff-recorded check or cash payment that can be reopened. Card payments are omitted. */
   offlinePayment: PublicOfflinePayment | null;
+  /** Paid renewal visit. Completing it must not create or send another invoice. */
+  prepaidRenewal: boolean;
   contacts: CompletionContact[];
 }
 
@@ -98,6 +103,8 @@ export interface WorkOrderCompletionResult {
     phoneValid: boolean;
     viewUrl: string;
   };
+  /** The renewal invoice was already paid. No new bill was created. */
+  prepaidRenewal?: boolean;
 }
 
 export function isTenDigitUsPhone(phone: string): boolean {
@@ -108,9 +115,11 @@ export function completionBlockedReason(input: {
   completed: boolean;
   totalCents: number;
   hasCustomer: boolean;
+  /** Prepaid ASC renewal visits are already billed and may close at $0. */
+  allowZeroTotal?: boolean;
 }): string | null {
   if (input.completed) return ALREADY_COMPLETE_REASON;
-  if (input.totalCents <= 0) return ZERO_TOTAL_REASON;
+  if (input.totalCents <= 0 && !input.allowZeroTotal) return ZERO_TOTAL_REASON;
   if (!input.hasCustomer) return NO_CUSTOMER_REASON;
   return null;
 }
@@ -355,6 +364,8 @@ export async function checkWorkOrderCompletion(
   const reachableContacts = contacts.filter(
     (contact) => contact.phoneValid || contact.emailValid,
   ).length;
+  const prepaidRenewal =
+    Boolean(workOrder.renewalInvoiceRef) && totalCents <= 0;
   const openInvoice = await findOpenInvoiceForWorkOrder(workOrder._id);
   const offlineInvoice = openInvoice
     ? null
@@ -365,10 +376,12 @@ export async function checkWorkOrderCompletion(
       completed: Boolean(workOrder.completed),
       totalCents,
       hasCustomer: Boolean(customerRef),
+      allowZeroTotal: prepaidRenewal,
     }),
     sendBlockedReason: sendBlockedReason(reachableContacts),
     invoiceOpen: Boolean(openInvoice),
     offlinePayment: toPublicOfflinePayment(offlineInvoice?.offlinePayment),
+    prepaidRenewal,
     contacts,
   };
 }
@@ -485,6 +498,8 @@ async function sendEmail(input: {
   userId?: string | null;
 }): Promise<ChannelDelivery> {
   if (input.plan.email.status !== "send") return { status: "skipped" };
+  const paused = await automatedEmailPauseReasonFor("workOrderCompleteEmail");
+  if (paused) return { status: "failed", error: paused };
   try {
     const account = await EmailAccount.findOne({ isActive: true }).sort({
       friendlyName: 1,
@@ -530,6 +545,28 @@ export async function completeWorkOrder(input: {
   actor?: CompletionActor;
   apiBase: string;
 }): Promise<WorkOrderCompletionResult> {
+  if (
+    input.workOrder.renewalInvoiceRef &&
+    dollarsToCents(input.workOrder.total || 0) <= 0
+  ) {
+    if (input.workOrder.completed) {
+      throw new WorkOrderCompletionError(ALREADY_COMPLETE_REASON);
+    }
+    input.workOrder.completed = true;
+    await input.workOrder.save();
+    const paidInvoice = await Invoice.findById(input.workOrder.renewalInvoiceRef)
+      .select("number amountCents")
+      .lean();
+    return {
+      invoice: {
+        _id: String(input.workOrder.renewalInvoiceRef),
+        number: paidInvoice?.number ?? "Paid renewal",
+        amountCents: paidInvoice?.amountCents ?? 0,
+      },
+      prepaidRenewal: true,
+    };
+  }
+
   const check = await checkWorkOrderCompletion(input.workOrder);
   const alreadyComplete = Boolean(input.workOrder.completed);
   const decision = settleCompletedBlockedReason({
@@ -735,6 +772,14 @@ export async function resendWorkOrderInvoice(input: {
   if (!input.workOrder.completed) {
     throw new WorkOrderCompletionError(
       "Mark this work order complete before resending its invoice.",
+    );
+  }
+  if (
+    input.workOrder.renewalInvoiceRef &&
+    dollarsToCents(input.workOrder.total || 0) <= 0
+  ) {
+    throw new WorkOrderCompletionError(
+      "This renewal visit was already paid, so there is no invoice to resend.",
     );
   }
   let invoice = await findOpenInvoiceForWorkOrder(input.workOrder._id);

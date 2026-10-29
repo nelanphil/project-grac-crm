@@ -57,6 +57,13 @@ describe("completionBlockedReason", () => {
     );
   });
 
+  it("allows a prepaid renewal visit to close at zero", () => {
+    assert.equal(
+      completionBlockedReason({ ...open, totalCents: 0, allowZeroTotal: true }),
+      null,
+    );
+  });
+
   it("blocks a work order with no customer", () => {
     assert.equal(
       completionBlockedReason({ ...open, hasCustomer: false }),

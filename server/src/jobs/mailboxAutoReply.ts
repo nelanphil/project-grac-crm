@@ -7,7 +7,10 @@ import {
   replySubject,
   shouldSendReceiptReply,
 } from "../utils/mailboxReply";
-import { resolveMailboxReplyHtml } from "../services/automatedMessage.service";
+import {
+  automatedEmailPauseReasonFor,
+  resolveMailboxReplyHtml,
+} from "../services/automatedMessage.service";
 
 const PER_ACCOUNT_LIMIT = 15;
 
@@ -114,6 +117,12 @@ async function acknowledgeAccount(
 }
 
 export async function runMailboxAutoReplyJob(): Promise<{ sent: number }> {
+  const paused = await automatedEmailPauseReasonFor("mailboxReply");
+  if (paused) {
+    console.info(`[mailbox-auto-reply] ${paused}`);
+    return { sent: 0 };
+  }
+
   const accounts = await EmailAccount.find({
     isActive: true,
     autoAcknowledge: true,

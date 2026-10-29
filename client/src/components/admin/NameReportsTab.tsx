@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import CustomerReputationControl from "@/components/customers/CustomerReputationControl";
 import TablePagination from "@/components/ui/TablePagination";
 import {
   ApiError,
@@ -11,6 +12,7 @@ import {
   updateCustomerName,
   type ContactNameRow,
   type CustomerNameRow,
+  type CustomerReputation,
 } from "@/lib/api";
 import {
   DEFAULT_PAGE_SIZE,
@@ -19,6 +21,15 @@ import {
 } from "@/lib/pagination";
 
 type NameField = "accountName" | "first" | "last";
+type ReputationFilter = "" | CustomerReputation | "unrated";
+
+const REPUTATION_FILTERS: { value: ReputationFilter; label: string }[] = [
+  { value: "", label: "All" },
+  { value: "do_not_contact", label: "Do not contact" },
+  { value: "past_due", label: "Past due" },
+  { value: "good", label: "Good customer" },
+  { value: "unrated", label: "Unrated" },
+];
 
 function EditableCell({
   value,
@@ -115,6 +126,7 @@ function ReportFrame({
   description,
   query,
   onQueryChange,
+  toolbar,
   total,
   page,
   pageSize,
@@ -129,6 +141,7 @@ function ReportFrame({
   description: string;
   query: string;
   onQueryChange: (value: string) => void;
+  toolbar?: ReactNode;
   total: number;
   page: number;
   pageSize: PageSize;
@@ -163,15 +176,18 @@ function ReportFrame({
           <h2 className="text-base font-semibold text-brand-dark">{title}</h2>
           <p className="mt-1 text-sm text-neutral-500">{description}</p>
         </div>
-        <label className="block max-w-sm text-xs text-neutral-500">
-          Filter
-          <input
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="Search names"
-            className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue"
-          />
-        </label>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <label className="block max-w-sm flex-1 text-xs text-neutral-500">
+            Filter
+            <input
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="Search names"
+              className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue"
+            />
+          </label>
+          {toolbar}
+        </div>
       </div>
       {error ? (
         <p className="px-4 py-3 text-sm text-red-600 sm:px-6">{error}</p>
@@ -231,6 +247,7 @@ function CustomerNamesTable({
   onPrimaryContactChanged: () => void;
 }) {
   const [queryInput, setQueryInput] = useState("");
+  const [reputationFilter, setReputationFilter] = useState<ReputationFilter>("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [rows, setRows] = useState<CustomerNameRow[]>([]);
@@ -252,7 +269,12 @@ function CustomerNamesTable({
     let cancelled = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    listCustomerNames(token, { page, pageSize, q: query })
+    listCustomerNames(token, {
+      page,
+      pageSize,
+      q: query,
+      reputation: reputationFilter || undefined,
+    })
       .then((data) => {
         if (cancelled) return;
         setRows(data.rows);
@@ -270,7 +292,7 @@ function CustomerNamesTable({
     return () => {
       cancelled = true;
     };
-  }, [token, page, pageSize, query, refreshToken]);
+  }, [token, page, pageSize, query, reputationFilter, refreshToken]);
 
   async function save(row: CustomerNameRow, field: NameField, value: string) {
     if (!token) return;
@@ -293,12 +315,67 @@ function CustomerNamesTable({
     }
   }
 
+  async function saveReputation(
+    row: CustomerNameRow,
+    value: CustomerReputation | null,
+  ) {
+    if (!token) return;
+    try {
+      const result = await updateCustomerName(token, row.id, {
+        reputation: value,
+      });
+      const stillVisible =
+        reputationFilter === "" ||
+        (reputationFilter === "unrated"
+          ? result.row.reputation == null
+          : result.row.reputation === reputationFilter);
+      setRows((current) =>
+        stillVisible
+          ? current.map((item) =>
+              item.id === result.row.id ? result.row : item,
+            )
+          : current.filter((item) => item.id !== row.id),
+      );
+      if (!stillVisible) setTotal((current) => Math.max(0, current - 1));
+      setRowErrors((current) => {
+        const next = { ...current };
+        delete next[row.id];
+        return next;
+      });
+    } catch (err: unknown) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Failed to update customer reputation.";
+      setRowErrors((current) => ({ ...current, [row.id]: message }));
+    }
+  }
+
   return (
     <ReportFrame
       title="Customer names"
-      description="Account names stay as stored. First and last names are saved in title case and copied onto the primary contact."
+      description="Account names stay as stored. First and last names are saved in title case and copied onto the primary contact. Reputation is the staff signal for who to contact."
       query={queryInput}
       onQueryChange={setQueryInput}
+      toolbar={
+        <label className="block text-xs text-neutral-500">
+          Reputation
+          <select
+            value={reputationFilter}
+            onChange={(event) => {
+              setReputationFilter(event.target.value as ReputationFilter);
+              setPage(1);
+            }}
+            className="mt-1 w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue sm:w-48"
+          >
+            {REPUTATION_FILTERS.map((option) => (
+              <option key={option.value || "all"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      }
       total={total}
       page={page}
       pageSize={pageSize}
@@ -328,6 +405,9 @@ function CustomerNamesTable({
               <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 sm:px-6">
                 Last
               </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 sm:px-6">
+                Reputation
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-100">
@@ -350,10 +430,17 @@ function CustomerNamesTable({
                     onSave={(value) => save(row, "first", value)}
                   />
                 </td>
-                <td className="px-4 py-2 align-top sm:px-6">
+                <td className="px-4 py-2 align-top">
                   <EditableCell
                     value={row.last}
                     onSave={(value) => save(row, "last", value)}
+                  />
+                </td>
+                <td className="px-4 py-2 align-top sm:px-6">
+                  <CustomerReputationControl
+                    value={row.reputation}
+                    disabled={!token}
+                    onChange={(value) => void saveReputation(row, value)}
                   />
                 </td>
               </tr>

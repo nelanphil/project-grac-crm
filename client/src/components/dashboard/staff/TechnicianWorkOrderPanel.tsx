@@ -184,6 +184,7 @@ function CompletionControl({
         completed={Boolean(order.completed)}
         paid={Boolean(order.paid)}
         offlinePaid={Boolean(order.offlinePayment)}
+        prepaidRenewal={Boolean(order.renewalInvoiceRef)}
         autoStart={autoStart}
         autoResend={autoResend}
         onCompleted={onCompleted}

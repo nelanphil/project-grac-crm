@@ -1,5 +1,15 @@
 import mongoose, { Connection, Schema, Document, Types } from "mongoose";
 
+export const CUSTOMER_REPUTATIONS = ["do_not_contact", "past_due", "good"] as const;
+export type CustomerReputation = (typeof CUSTOMER_REPUTATIONS)[number];
+
+export function isCustomerReputation(value: unknown): value is CustomerReputation {
+  return (
+    typeof value === "string" &&
+    (CUSTOMER_REPUTATIONS as readonly string[]).includes(value)
+  );
+}
+
 export interface ICustomer extends Document {
   legacyId: number;
   userId: number;
@@ -38,6 +48,11 @@ export interface ICustomer extends Document {
   leadRef?: Types.ObjectId | null;
   /** Soft delete — excluded from default lists when set. */
   deletedAt: Date | null;
+  /**
+   * Staff signal for who to contact and schedule.
+   * Unset until someone rates the customer.
+   */
+  reputation?: CustomerReputation | null;
   /** Unguessable public checkout capability key. Generated lazily. */
   checkoutKey?: string | null;
   /** Short public code for SMS payment links. Maps to checkoutKey. */
@@ -89,6 +104,12 @@ const customerSchema = new Schema<ICustomer>(
       index: true,
     },
     deletedAt: { type: Date, default: null, index: true },
+    reputation: {
+      type: String,
+      enum: [...CUSTOMER_REPUTATIONS, null],
+      default: null,
+      index: true,
+    },
     checkoutKey: { type: String },
     payCode: { type: String },
   },

@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
+import CustomerReputationControl from "@/components/customers/CustomerReputationControl";
 import LucideIconByName from "@/components/icons/LucideIconByName";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
@@ -111,7 +112,12 @@ function CustomerMobileCard({
 
   return (
     <MobileDataCard
-      title={formatCustomerRecordName(customer)}
+      title={
+        <span className="inline-flex items-center gap-2">
+          <CustomerReputationControl value={customer.reputation} readOnly />
+          {formatCustomerRecordName(customer)}
+        </span>
+      }
       subtitle={formatPhone(customer.phone)}
       onClick={isDeleted ? undefined : onOpen}
       badges={
@@ -615,6 +621,10 @@ function CustomersContent() {
                         >
                           <td className="px-6 py-4 font-medium text-brand-dark whitespace-nowrap">
                             <span className="inline-flex items-center gap-2">
+                              <CustomerReputationControl
+                                value={customer.reputation}
+                                readOnly
+                              />
                               {formatCustomerRecordName(customer)}
                               {isDeleted ? (
                                 <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-600 ring-1 ring-inset ring-neutral-300">

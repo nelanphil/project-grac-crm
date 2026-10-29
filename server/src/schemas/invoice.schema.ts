@@ -33,3 +33,25 @@ export const bulkInvoiceStatusSchema = z.object({
 });
 
 export type BulkInvoiceStatusInput = z.infer<typeof bulkInvoiceStatusSchema>;
+
+export const BULK_RENEWAL_WORK_ORDER_LIMIT = 100;
+
+export const bulkRenewalWorkOrderSchema = z.object({
+  ids: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .max(BULK_RENEWAL_WORK_ORDER_LIMIT),
+});
+
+export type BulkRenewalWorkOrderInput = z.infer<
+  typeof bulkRenewalWorkOrderSchema
+>;
+
+export const linkRenewalWorkOrderSchema = z
+  .object({
+    workOrderId: z.string().trim().optional(),
+    workOrderNumber: z.string().trim().max(40).optional(),
+  })
+  .refine((value) => Boolean(value.workOrderId || value.workOrderNumber), {
+    message: "Enter a work order number",
+  });

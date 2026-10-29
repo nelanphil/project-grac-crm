@@ -5,7 +5,9 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import {
   activeCustomerFilter,
   Customer,
+  isCustomerReputation,
   notMergedFilter,
+  type CustomerReputation,
 } from "../models/mongo/Customer";
 import {
   CustomerAddress,
@@ -359,6 +361,7 @@ async function findActiveCustomerOr404(
   extime: string;
   mergedIntoRef?: mongoose.Types.ObjectId | null;
   deletedAt?: Date | null;
+  reputation: CustomerReputation | null;
 } | null> {
   if (!mongoose.Types.ObjectId.isValid(customerId)) {
     res.status(400).json({ message: "Invalid customer id" });
@@ -385,6 +388,9 @@ async function findActiveCustomerOr404(
   return {
     ...customer,
     accountName: customer.accountName ?? "",
+    reputation: isCustomerReputation(customer.reputation)
+      ? customer.reputation
+      : null,
   };
 }
 
@@ -673,6 +679,7 @@ export async function listCustomers(
           deletedAt: c.deletedAt ? c.deletedAt.toISOString() : null,
           duplicateCount: peers,
           contracts: contractsByCustomer.get(c.legacyId) ?? [],
+          reputation: isCustomerReputation(c.reputation) ? c.reputation : null,
         };
       }),
       total,
@@ -1541,6 +1548,13 @@ export async function updateCustomer(
       updateFields.ownerManual = nextOwnerManual;
     }
 
+    const reputationChanged =
+      parsed.data.reputation !== undefined &&
+      (customer.reputation ?? null) !== parsed.data.reputation;
+    if (parsed.data.reputation !== undefined) {
+      updateFields.reputation = parsed.data.reputation;
+    }
+
     if (Object.keys(updateFields).length > 0) {
       await Customer.findByIdAndUpdate(customer._id, {
         $set: updateFields,
@@ -1583,6 +1597,7 @@ export async function updateCustomer(
       first: updatedCustomer.first,
       last: updatedCustomer.last,
     });
+    const accountNameChanged = parsed.data.accountName !== undefined;
     logNotificationAsync({
       entityType: "customer",
       action: "updated",
@@ -1590,7 +1605,9 @@ export async function updateCustomer(
       customerRef: customer._id,
       summary: ownerChanged
         ? `Customer ${custName} owner updated${owner ? ` to ${owner.first_name} ${owner.last_name}` : ""}`
-        : `Customer ${custName} updated`,
+        : reputationChanged && !accountNameChanged
+          ? `Customer ${custName} reputation updated`
+          : `Customer ${custName} updated`,
       metadata: {
         customerName: custName,
         accountName: updatedCustomer.accountName,
@@ -1605,6 +1622,7 @@ export async function updateCustomer(
               ? String(customer.ownerUserRef)
               : "",
             ownerManual: Boolean(customer.ownerManual),
+            reputation: customer.reputation ?? null,
           },
           {
             accountName: updatedCustomer.accountName ?? "",
@@ -1612,8 +1630,11 @@ export async function updateCustomer(
               ? String(updatedCustomer.ownerUserRef)
               : "",
             ownerManual: Boolean(updatedCustomer.ownerManual),
+            reputation: isCustomerReputation(updatedCustomer.reputation)
+              ? updatedCustomer.reputation
+              : null,
           },
-          ["accountName", "ownerUserId", "ownerManual"],
+          ["accountName", "ownerUserId", "ownerManual", "reputation"],
         ),
       },
       ...actorFromRequest(req.user),
@@ -1641,6 +1662,9 @@ export async function updateCustomer(
         generatorModel: updatedCustomer.generatorModel ?? "",
         lastSvc: updatedCustomer.lastSvc ? updatedCustomer.lastSvc.toISOString() : null,
         deletedAt: updatedCustomer.deletedAt ? updatedCustomer.deletedAt.toISOString() : null,
+        reputation: isCustomerReputation(updatedCustomer.reputation)
+          ? updatedCustomer.reputation
+          : null,
       },
     });
   } catch (err) {

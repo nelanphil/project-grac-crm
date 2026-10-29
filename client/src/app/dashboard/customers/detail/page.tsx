@@ -17,6 +17,7 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import { formatAddressLabel } from "@/components/customers/CustomerAddressesPanel";
 import CustomerRecordCard from "@/components/customers/CustomerRecordCard";
+import CustomerReputationControl from "@/components/customers/CustomerReputationControl";
 import MergeCustomersDialog from "@/components/customers/MergeCustomersDialog";
 import MobileSectionNav from "@/components/ui/MobileSectionNav";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
@@ -36,6 +37,7 @@ import {
   promoteCustomer,
   softDeleteCustomer,
   CustomerDetail,
+  CustomerReputation,
   WorkOrderListItem,
   ContractListItem,
   TerritoryOwner,
@@ -137,6 +139,8 @@ function CustomerDetailContent() {
   const [nameDraft, setNameDraft] = useState("");
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [savingReputation, setSavingReputation] = useState(false);
+  const [reputationError, setReputationError] = useState<string | null>(null);
   const [editingOwner, setEditingOwner] = useState(false);
   const [ownerDraft, setOwnerDraft] = useState<string>("auto");
   const [savingOwner, setSavingOwner] = useState(false);
@@ -347,6 +351,30 @@ function CustomerDetailContent() {
     );
   }
 
+  async function saveReputation(next: CustomerReputation | null) {
+    if (!token || !customer || !canWrite) return;
+    setSavingReputation(true);
+    setReputationError(null);
+    try {
+      const { customer: updated } = await updateCustomer(token, customer._id, {
+        reputation: next,
+      });
+      setCustomer((current) =>
+        current
+          ? { ...current, reputation: updated.reputation ?? next }
+          : current,
+      );
+    } catch (err) {
+      setReputationError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to update customer reputation.",
+      );
+    } finally {
+      setSavingReputation(false);
+    }
+  }
+
   async function handleSoftDelete() {
     if (!token || !customer) return;
     const name = formatCustomerRecordName(customer) || "this customer";
@@ -441,7 +469,8 @@ function CustomerDetailContent() {
       <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <DashboardBackLink fallbackHref="/dashboard/customers" />
-          <h1 className="mt-4 text-xl font-bold text-brand-dark sm:text-2xl break-words">
+          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h1 className="text-xl font-bold text-brand-dark sm:text-2xl break-words">
             {editingName ? (
               <span className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                 <input
@@ -533,8 +562,19 @@ function CustomerDetailContent() {
               </span>
             )}
           </h1>
+          <CustomerReputationControl
+            value={customer.reputation}
+            readOnly={!canWrite}
+            disabled={savingReputation}
+            showLabel
+            onChange={(next) => void saveReputation(next)}
+          />
+          </div>
           {nameError ? (
             <p className="mt-1 text-sm text-red-600">{nameError}</p>
+          ) : null}
+          {reputationError ? (
+            <p className="mt-1 text-sm text-red-600">{reputationError}</p>
           ) : null}
           <p className="mt-1 hidden text-sm text-neutral-500 sm:block">
             Customer details, addresses, and work order history

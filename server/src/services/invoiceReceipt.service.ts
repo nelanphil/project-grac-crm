@@ -14,7 +14,10 @@ import {
   loadInvoiceEmailContext,
   renderAutomatedBillingEmail,
 } from "./paymentReceipt.service";
-import { resolveAutomatedMessage } from "./automatedMessage.service";
+import {
+  automatedEmailPauseReasonFor,
+  resolveAutomatedMessage,
+} from "./automatedMessage.service";
 import { renderMessageTemplate } from "../utils/messageTemplate";
 import {
   getTwilioAccountForSend,
@@ -104,6 +107,8 @@ export async function emailInvoiceReceipt(input: {
       error: "This address is unsubscribed from billing emails.",
     };
   }
+  const paused = await automatedEmailPauseReasonFor("paidInvoiceReceiptEmail");
+  if (paused) return { status: "skipped", error: paused };
 
   try {
     const copy = await resolveAutomatedMessage("paidInvoiceReceiptEmail", {

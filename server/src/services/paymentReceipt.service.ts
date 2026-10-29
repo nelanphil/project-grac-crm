@@ -18,7 +18,10 @@ import {
   sanitizeInvoiceBlocks,
 } from "../schemas/invoiceTemplate.schema";
 import { sendRoleEmail } from "./email.service";
-import { resolveAutomatedMessage } from "./automatedMessage.service";
+import {
+  automatedEmailPauseReasonFor,
+  resolveAutomatedMessage,
+} from "./automatedMessage.service";
 import { resolveInvoiceWidget } from "./invoiceWidget.service";
 import { isEmailChannelEnabled } from "../utils/emailPreferences";
 import { buildStaffOutboundEmail } from "../utils/emailTemplates";
@@ -223,6 +226,11 @@ async function deliverPaymentReceipt(invoice: IInvoice): Promise<void> {
     console.info(
       `[payment-receipt] Billing alerts off for ${recipient}; skipped invoice ${fresh.number}`,
     );
+    return;
+  }
+  const paused = await automatedEmailPauseReasonFor("paymentReceivedEmail");
+  if (paused) {
+    console.info(`[payment-receipt] ${paused} Skipped invoice ${fresh.number}`);
     return;
   }
 

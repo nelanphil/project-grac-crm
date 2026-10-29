@@ -2,6 +2,8 @@ import { Types } from "mongoose";
 import {
   AUTOMATED_MESSAGE_SETTINGS_SLUG,
   AutomatedMessageSettings,
+  type AutomatedEmailChannelKey,
+  type IAutomatedEmailDelivery,
   type IAutomatedMessageChannel,
 } from "../models/mongo/AutomatedMessageSettings";
 import {
@@ -50,8 +52,17 @@ export type AutomatedMessageChannelForm = {
   templateMissing: boolean;
 };
 
+export type RenewalScheduleOptions = {
+  enabled: boolean;
+  offerRecommendedDates: boolean;
+};
+
+export type EmailDeliveryOptions = IAutomatedEmailDelivery;
+
 export type AutomatedMessageForm = {
   saved: boolean;
+  renewalSchedule: RenewalScheduleOptions;
+  emailDelivery: EmailDeliveryOptions;
 } & Record<AutomatedMessageChannelKey, AutomatedMessageChannelForm>;
 
 type LiveTemplate = AutomatedTemplateCopy & {
@@ -122,6 +133,64 @@ async function loadLegacyTemplates(): Promise<{
   };
 }
 
+export function readRenewalScheduleOptions(value: unknown): RenewalScheduleOptions {
+  const row =
+    value && typeof value === "object"
+      ? (value as Partial<RenewalScheduleOptions>)
+      : {};
+  return {
+    enabled: row.enabled !== false,
+    offerRecommendedDates: row.offerRecommendedDates !== false,
+  };
+}
+
+const EMAIL_PAUSED = "Automated emails are turned off.";
+const EMAIL_CHANNEL_PAUSED = "This email is turned off in Automated messages.";
+
+/** Missing switches stay on. A renewal email turned off before this switch stays off. */
+export function readEmailDelivery(
+  value: unknown,
+  renewalEnabled = true,
+): EmailDeliveryOptions {
+  const row =
+    value && typeof value === "object"
+      ? (value as Partial<EmailDeliveryOptions>)
+      : {};
+  const on = (key: AutomatedEmailChannelKey) => row[key] !== false;
+  return {
+    enabled: row.enabled !== false,
+    workOrderCompleteEmail: on("workOrderCompleteEmail"),
+    paymentReceivedEmail: on("paymentReceivedEmail"),
+    paidInvoiceReceiptEmail: on("paidInvoiceReceiptEmail"),
+    mailboxReply: on("mailboxReply"),
+    renewalScheduleEmail: on("renewalScheduleEmail") && renewalEnabled,
+  };
+}
+
+export function automatedEmailPauseReason(
+  delivery: EmailDeliveryOptions,
+  channel: AutomatedEmailChannelKey,
+): string | null {
+  if (!delivery.enabled) return EMAIL_PAUSED;
+  if (!delivery[channel]) return EMAIL_CHANNEL_PAUSED;
+  return null;
+}
+
+export async function automatedEmailPauseReasonFor(
+  channel: AutomatedEmailChannelKey,
+): Promise<string | null> {
+  const doc = await AutomatedMessageSettings.findOne({
+    slug: AUTOMATED_MESSAGE_SETTINGS_SLUG,
+  })
+    .select("emailDelivery renewalSchedule")
+    .lean();
+  const renewal = readRenewalScheduleOptions(doc?.renewalSchedule);
+  return automatedEmailPauseReason(
+    readEmailDelivery(doc?.emailDelivery, renewal.enabled),
+    channel,
+  );
+}
+
 function blankChannel(
   key: AutomatedMessageChannelKey,
   mode: AutomatedMessageMode = "custom",
@@ -177,24 +246,47 @@ export async function getAutomatedMessageForm(): Promise<AutomatedMessageForm> {
       paidInvoiceReceiptEmail: blankChannel("paidInvoiceReceiptEmail"),
       paidInvoiceReceiptSms: blankChannel("paidInvoiceReceiptSms"),
       mailboxReply: blankChannel("mailboxReply"),
+      renewalScheduleEmail: blankChannel("renewalScheduleEmail"),
+      renewalSchedule: readRenewalScheduleOptions(null),
+      emailDelivery: readEmailDelivery(null, true),
     };
   }
 
   const stored = Object.fromEntries(
-    AUTOMATED_MESSAGE_CHANNELS.map((key) => [key, readChannel(doc[key])]),
-  ) as Record<AutomatedMessageChannelKey, IAutomatedMessageChannel>;
+    AUTOMATED_MESSAGE_CHANNELS.map((key) => {
+      const raw = (doc as Record<string, unknown>)[key];
+      return [key, raw == null ? null : readChannel(raw)];
+    }),
+  ) as Record<AutomatedMessageChannelKey, IAutomatedMessageChannel | null>;
   const live = await Promise.all(
     AUTOMATED_MESSAGE_CHANNELS.map((key) =>
-      loadLiveTemplate(stored[key].templateRef),
+      loadLiveTemplate(stored[key]?.templateRef),
     ),
   );
   const channels = Object.fromEntries(
     AUTOMATED_MESSAGE_CHANNELS.map((key, index) => [
       key,
-      savedChannelForm(key, stored[key], live[index] ?? null),
+      stored[key]
+        ? savedChannelForm(key, stored[key], live[index] ?? null)
+        : blankChannel(key),
     ]),
   ) as Record<AutomatedMessageChannelKey, AutomatedMessageChannelForm>;
-  return { saved: true, ...channels };
+  const renewalSchedule = readRenewalScheduleOptions(doc.renewalSchedule);
+  return {
+    saved: true,
+    renewalSchedule,
+    emailDelivery: readEmailDelivery(doc.emailDelivery, renewalSchedule.enabled),
+    ...channels,
+  };
+}
+
+export async function getRenewalScheduleOptions(): Promise<RenewalScheduleOptions> {
+  const doc = await AutomatedMessageSettings.findOne({
+    slug: AUTOMATED_MESSAGE_SETTINGS_SLUG,
+  })
+    .select("renewalSchedule")
+    .lean();
+  return readRenewalScheduleOptions(doc?.renewalSchedule);
 }
 
 async function templateRefFor(
@@ -227,6 +319,7 @@ const CHANNEL_LABEL: Record<AutomatedMessageChannelKey, string> = {
   paidInvoiceReceiptEmail: "the paid invoice email",
   paidInvoiceReceiptSms: "the paid invoice text",
   mailboxReply: "the mailbox reply",
+  renewalScheduleEmail: "the renewal scheduling email",
 };
 
 export async function saveAutomatedMessageForm(
@@ -260,6 +353,11 @@ export async function saveAutomatedMessageForm(
       $set: {
         slug: AUTOMATED_MESSAGE_SETTINGS_SLUG,
         configured: true,
+        renewalSchedule: {
+          enabled: input.emailDelivery.renewalScheduleEmail,
+          offerRecommendedDates: input.renewalSchedule.offerRecommendedDates,
+        },
+        emailDelivery: input.emailDelivery,
         ...stored,
       },
     },

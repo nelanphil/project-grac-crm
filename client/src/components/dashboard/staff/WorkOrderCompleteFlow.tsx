@@ -137,6 +137,9 @@ const INVOICE_ALREADY_CLOSED_REASON =
   "This invoice is already paid or closed.";
 
 function resendBlockedReason(check: WorkOrderCompletionCheck): string | null {
+  if (check.prepaidRenewal) {
+    return "This renewal visit was already paid, so there is no invoice to resend.";
+  }
   if (
     check.blockedReason &&
     check.blockedReason !== ALREADY_COMPLETE_REASON
@@ -157,6 +160,7 @@ export default function WorkOrderCompleteFlow({
   offlinePaid,
   autoStart,
   autoResend,
+  prepaidRenewal = false,
   onCompleted,
 }: {
   orderId: string;
@@ -166,10 +170,13 @@ export default function WorkOrderCompleteFlow({
   offlinePaid: boolean;
   autoStart: boolean;
   autoResend: boolean;
+  prepaidRenewal?: boolean;
   onCompleted: (order: WorkOrderListItem) => void;
 }) {
   const [phase, setPhase] = useState<Phase>(
-    (autoResend && completed) || (autoStart && !completed) ? "loading" : "idle",
+    (autoResend && completed && !prepaidRenewal) || (autoStart && !completed)
+      ? "loading"
+      : "idle",
   );
   const [changingPayment, setChangingPayment] = useState(false);
   const [resent, setResent] = useState(false);
@@ -303,7 +310,7 @@ export default function WorkOrderCompleteFlow({
   }, []);
 
   useEffect(() => {
-    if (!autoResend || !completed) return;
+    if (!autoResend || !completed || prepaidRenewal) return;
     let cancelled = false;
     getWorkOrderCompletionCheck(token, orderId)
       .then((next) => {
@@ -320,7 +327,7 @@ export default function WorkOrderCompleteFlow({
     };
     // The card button remounts this flow when Resend is clicked.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoResend, completed, orderId, token]);
+  }, [autoResend, completed, orderId, prepaidRenewal, token]);
 
   useEffect(() => {
     if (!autoStart || completed) return;
@@ -501,6 +508,7 @@ export default function WorkOrderCompleteFlow({
     return (
       <div className="flex flex-wrap items-center gap-2">
         <span className={badge}>Complete</span>
+        {prepaidRenewal ? null : (
         <button
           type="button"
           onClick={() => void beginResend()}
@@ -508,6 +516,7 @@ export default function WorkOrderCompleteFlow({
         >
           Resend
         </button>
+        )}
         {paid && !offlinePaid ? null : (
           <button
             type="button"
@@ -534,7 +543,7 @@ export default function WorkOrderCompleteFlow({
             >
               Resend
             </button>
-            {(paid && !offlinePaid) || result.offlinePayment ? null : (
+            {(paid && !offlinePaid) || result.offlinePayment || result.prepaidRenewal ? null : (
               <button
                 type="button"
                 onClick={() => void beginChangePayment()}
@@ -549,6 +558,8 @@ export default function WorkOrderCompleteFlow({
         <p>
           {resent
             ? `Invoice ${result.invoice.number} was resent.`
+            : result.prepaidRenewal
+              ? `This renewal visit is complete. Invoice ${result.invoice.number} was already paid, so no new bill was sent.`
             : result.offlinePayment
               ? `This work order is complete. Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} was marked paid by ${offlinePaymentLabel(result.offlinePayment)}.`
               : `This work order is complete. Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} is ready${result.payUrl ? " to pay" : ""}.`}
@@ -738,23 +749,37 @@ export default function WorkOrderCompleteFlow({
     return (
       <div className="complete-notice rounded-md border px-3 py-3 text-sm">
         <p>
-          {completed
+          {check?.prepaidRenewal
+            ? "This ASC renewal is already paid. Marking the visit complete will not create or send another invoice."
+            : completed
             ? check?.offlinePayment
               ? `Invoice for ${amount} is marked paid. Choose how the customer will pay.`
               : `Invoice for ${amount} is open. Choose how the customer will pay.`
             : `Completing this work order will generate an invoice for ${amount} to be paid by the customer.`}
         </p>
-        {check?.offlinePayment ? (
+        {check?.offlinePayment && !check.prepaidRenewal ? (
           <p className="mt-2">
             This invoice is marked paid by {offlinePaymentLabel(check.offlinePayment)}.
             Choosing another option will mark it unpaid.
           </p>
         ) : null}
-        {contactSendBlocked ? (
+        {contactSendBlocked && !check?.prepaidRenewal ? (
           <p className="complete-notice-error mt-2">{check?.sendBlockedReason}</p>
         ) : null}
         {error ? <p className="complete-notice-error mt-2 text-sm">{error}</p> : null}
         <div className="mt-3 flex flex-wrap gap-2">
+          {check?.prepaidRenewal ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void finish({ mode: "pay_now" }, "Failed to mark this job complete.")
+              }
+              className={primaryButton}
+            >
+              {busy ? "Saving…" : "Mark visit complete"}
+            </button>
+          ) : (
           <button
             type="button"
             disabled={busy || contactSendBlocked}
@@ -770,6 +795,8 @@ export default function WorkOrderCompleteFlow({
           >
             {busy ? "Saving…" : "Take payment on this device"}
           </button>
+          )}
+          {check?.prepaidRenewal ? null : (
           <button
             type="button"
             disabled={busy || contactSendBlocked}
@@ -783,6 +810,8 @@ export default function WorkOrderCompleteFlow({
           >
             Send to customer
           </button>
+          )}
+          {check?.prepaidRenewal ? null : (
           <button
             type="button"
             disabled={busy}
@@ -794,6 +823,7 @@ export default function WorkOrderCompleteFlow({
           >
             Paid Check/Cash
           </button>
+          )}
           <button
             type="button"
             disabled={busy}

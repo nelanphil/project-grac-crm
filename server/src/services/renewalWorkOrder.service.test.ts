@@ -1,0 +1,151 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import {
+  invoiceNeedsRenewalReportRow,
+  performRenewalWorkOrderEnsure,
+  runRenewalWorkOrderSideEffect,
+  type RenewalWorkOrderGateway,
+} from "./renewalWorkOrder.service";
+
+const paidAt = new Date("2026-03-01T15:00:00.000Z");
+
+describe("invoiceNeedsRenewalReportRow", () => {
+  const open = {
+    sourceType: "contract_renewal",
+    status: "paid",
+    serviceWorkOrderRef: null,
+    dismissedAt: null,
+    referenceAt: paidAt,
+    laterWorkOrderCreatedAt: null,
+  };
+
+  it("includes a paid renewal with no later work order", () => {
+    assert.equal(invoiceNeedsRenewalReportRow(open), true);
+  });
+
+  it("excludes a renewal once a work order exists for that customer after payment", () => {
+    assert.equal(
+      invoiceNeedsRenewalReportRow({
+        ...open,
+        laterWorkOrderCreatedAt: new Date("2026-03-02T15:00:00.000Z"),
+      }),
+      false,
+    );
+    assert.equal(
+      invoiceNeedsRenewalReportRow({
+        ...open,
+        laterWorkOrderCreatedAt: paidAt,
+      }),
+      false,
+    );
+  });
+
+  it("keeps a renewal when the only later work order is before the payment", () => {
+    assert.equal(
+      invoiceNeedsRenewalReportRow({
+        ...open,
+        laterWorkOrderCreatedAt: new Date("2026-02-01T15:00:00.000Z"),
+      }),
+      true,
+    );
+  });
+
+  it("keeps dismissed renewals out of the report", () => {
+    assert.equal(
+      invoiceNeedsRenewalReportRow({
+        ...open,
+        dismissedAt: new Date("2026-03-03T15:00:00.000Z"),
+      }),
+      false,
+    );
+  });
+
+  it("skips renewals that already have a linked work order", () => {
+    assert.equal(
+      invoiceNeedsRenewalReportRow({
+        ...open,
+        serviceWorkOrderRef: "wo-1",
+      }),
+      false,
+    );
+  });
+});
+
+describe("performRenewalWorkOrderEnsure", () => {
+  function memoryGateway(): {
+    gateway: RenewalWorkOrderGateway;
+    created: string[];
+    discarded: string[];
+    ref: () => string | null;
+  } {
+    let linked: string | null = null;
+    const created: string[] = [];
+    const discarded: string[] = [];
+    let seq = 0;
+    const gateway: RenewalWorkOrderGateway = {
+      async loadInvoice() {
+        return {
+          status: "paid",
+          sourceType: "contract_renewal",
+          serviceWorkOrderRef: linked,
+          dismissed: false,
+        };
+      },
+      async loadExistingWorkOrder(id) {
+        return { id, number: `WO-${id}` };
+      },
+      async createWorkOrder() {
+        seq += 1;
+        const id = `new-${seq}`;
+        created.push(id);
+        return { id, number: `WO-${id}` };
+      },
+      async linkIfUnset(_invoiceId, workOrderId) {
+        if (linked) return false;
+        linked = workOrderId;
+        return true;
+      },
+      async readLinkedRef() {
+        return linked;
+      },
+      async discardWorkOrder(id) {
+        discarded.push(id);
+      },
+    };
+    return { gateway, created, discarded, ref: () => linked };
+  }
+
+  it("creates one work order when called twice", async () => {
+    const memory = memoryGateway();
+    const first = await performRenewalWorkOrderEnsure("inv", memory.gateway);
+    const second = await performRenewalWorkOrderEnsure("inv", memory.gateway);
+    assert.equal(first?.created, true);
+    assert.equal(second?.created, false);
+    assert.equal(second?.workOrderId, first?.workOrderId);
+    assert.deepEqual(memory.created, [first?.workOrderId]);
+    assert.deepEqual(memory.discarded, []);
+  });
+
+  it("keeps the winning work order when two creates race", async () => {
+    const memory = memoryGateway();
+    const [left, right] = await Promise.all([
+      performRenewalWorkOrderEnsure("inv", memory.gateway),
+      performRenewalWorkOrderEnsure("inv", memory.gateway),
+    ]);
+    const ids = [left?.workOrderId, right?.workOrderId];
+    assert.equal(ids.filter((id) => id === memory.ref()).length, 2);
+    assert.equal(memory.created.length, 2);
+    assert.equal(memory.discarded.length, 1);
+    assert.notEqual(memory.discarded[0], memory.ref());
+  });
+});
+
+describe("runRenewalWorkOrderSideEffect", () => {
+  it("lets payment succeed when work order creation throws", async () => {
+    await assert.doesNotReject(() =>
+      runRenewalWorkOrderSideEffect(async () => {
+        throw new Error("service type missing");
+      }),
+    );
+  });
+});

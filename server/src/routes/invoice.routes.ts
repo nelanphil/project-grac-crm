@@ -14,6 +14,12 @@ import {
   getInvoiceVisitSnapshot,
   getInvoices,
   getPendingPayments,
+  getPaidRenewals,
+  bulkCreateRenewalWorkOrders,
+  createRenewalWorkOrderForInvoice,
+  dismissPaidRenewalInvoice,
+  linkRenewalWorkOrderForInvoice,
+  resendRenewalScheduleEmail,
   markInvoicePaidByStaff,
   reopenInvoiceByStaff,
   confirmInvoicePosCharge,
@@ -29,6 +35,12 @@ router.use(authenticate);
 
 router.get("/", getInvoices);
 router.get("/pending-payments", getPendingPayments);
+router.get("/paid-renewals", getPaidRenewals);
+router.post(
+  "/paid-renewals/bulk-work-orders",
+  requirePermission("contracts:write"),
+  bulkCreateRenewalWorkOrders,
+);
 router.get("/:id/activity", getInvoiceActivity);
 router.get("/:id/visits/:sessionId", getInvoiceVisit);
 router.get("/:id/visits/:sessionId/snapshots/:snapshotId", getInvoiceVisitSnapshot);
@@ -75,6 +87,26 @@ router.post(
   "/:id/reopen",
   requirePermission("contracts:write"),
   reopenInvoiceByStaff,
+);
+router.post(
+  "/:id/renewal-work-order",
+  requirePermission("contracts:write"),
+  createRenewalWorkOrderForInvoice,
+);
+router.post(
+  "/:id/renewal-work-order/link",
+  requirePermission("contracts:write"),
+  linkRenewalWorkOrderForInvoice,
+);
+router.post(
+  "/:id/renewal-work-order/dismiss",
+  requirePermission("contracts:write"),
+  dismissPaidRenewalInvoice,
+);
+router.post(
+  "/:id/renewal-schedule-email",
+  requirePermission("contracts:write"),
+  resendRenewalScheduleEmail,
 );
 
 export default router;

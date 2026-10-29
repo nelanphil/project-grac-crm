@@ -7,6 +7,8 @@ import CustomerHistoryPanel from "@/components/customers/CustomerHistoryPanel";
 import CommunicationsLogFeed from "@/components/dashboard/staff/CommunicationsLogFeed";
 import {
   ApiError,
+  createRenewalWorkOrder,
+  getPaidRenewals,
   getPendingPayments,
   type InvoiceItem,
   type ReminderListItem,
@@ -69,6 +71,7 @@ function BriefingRow({
   unread = false,
   onMarkRead,
   marking = false,
+  action,
 }: {
   href: string;
   text: string;
@@ -76,6 +79,7 @@ function BriefingRow({
   unread?: boolean;
   onMarkRead?: () => void;
   marking?: boolean;
+  action?: { label: string; busy?: boolean; onClick: () => void };
 }) {
   return (
     <li className="flex items-start gap-3 px-4 py-3.5 hover:bg-[var(--staff-cream)] lg:py-2.5">
@@ -115,6 +119,16 @@ function BriefingRow({
           className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-brand-orange hover:underline disabled:cursor-wait disabled:opacity-60"
         >
           {marking ? "Marking…" : "Mark as read"}
+        </button>
+      ) : null}
+      {action ? (
+        <button
+          type="button"
+          disabled={action.busy}
+          onClick={action.onClick}
+          className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-brand-orange hover:underline disabled:cursor-wait disabled:opacity-60"
+        >
+          {action.label}
         </button>
       ) : null}
     </li>
@@ -187,8 +201,23 @@ export default function StaffBriefingHome() {
   const disconnect = useDashboardStore((s) => s.disconnect);
   const setCanSeeInbox = useDashboardStore((s) => s.setCanSeeInbox);
   const [showAllNotes, setShowAllNotes] = useState(false);
+  const canWriteInvoices = useAuthStore((s) =>
+    s.hasPermission("contracts:write"),
+  );
+  const [paymentsTab, setPaymentsTab] = useState<"pending" | "renewals">(
+    "pending",
+  );
   const [payments, setPayments] = useState<InvoiceItem[] | null>(null);
   const [paymentsError, setPaymentsError] = useState<string | null>(null);
+  const [renewals, setRenewals] = useState<InvoiceItem[] | null>(null);
+  const [renewalsError, setRenewalsError] = useState<string | null>(null);
+  const [creatingRenewalId, setCreatingRenewalId] = useState<string | null>(
+    null,
+  );
+  const [createdVisit, setCreatedVisit] = useState<{
+    id: string;
+    number: string;
+  } | null>(null);
   if (useDashboardStore.getState().canSeeInbox !== canSeeInbox) {
     setCanSeeInbox(canSeeInbox);
   }
@@ -230,6 +259,52 @@ export default function StaffBriefingHome() {
     };
   }, [token]);
 
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    getPaidRenewals(token)
+      .then(({ invoices }) => {
+        if (cancelled) return;
+        setRenewals(invoices);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setRenewals([]);
+        setRenewalsError(
+          err instanceof ApiError
+            ? err.message
+            : "Could not load paid renewals",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  async function createRenewalVisit(invoiceId: string) {
+    if (!token || creatingRenewalId) return;
+    setCreatingRenewalId(invoiceId);
+    setRenewalsError(null);
+    try {
+      const { workOrder } = await createRenewalWorkOrder(token, invoiceId);
+      setRenewals((list) =>
+        (list ?? []).filter((invoice) => invoice._id !== invoiceId),
+      );
+      setCreatedVisit({
+        id: workOrder.workOrderId,
+        number: workOrder.number || "Work order",
+      });
+    } catch (err: unknown) {
+      setRenewalsError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not create the work order",
+      );
+    } finally {
+      setCreatingRenewalId(null);
+    }
+  }
+
   const visibleNotes =
     notes && !showAllNotes ? notes.slice(0, NOTE_PREVIEW) : (notes ?? []);
   const canShowMoreNotes = (notes?.length ?? 0) > NOTE_PREVIEW;
@@ -263,7 +338,11 @@ export default function StaffBriefingHome() {
   );
   const paymentsLink = (
     <Link
-      href="/dashboard/orders?pending=completed"
+      href={
+        paymentsTab === "renewals"
+          ? "/dashboard/orders?pending=renewals"
+          : "/dashboard/orders?pending=completed"
+      }
       className="text-sm font-medium text-brand-orange hover:underline"
     >
       See all
@@ -542,19 +621,95 @@ export default function StaffBriefingHome() {
         <CardShell
           header={
             <>
-              <h2 className="min-w-0 flex-1 text-sm font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
-                Pending payments
-                {payments ? (
-                  <span className="ml-1 font-medium text-[var(--staff-ink)]">
-                    ({payments.length})
-                  </span>
-                ) : null}
-              </h2>
+              <div
+                role="tablist"
+                aria-label="Pending payments and paid renewals"
+                className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={paymentsTab === "pending"}
+                  onClick={() => setPaymentsTab("pending")}
+                  className={tabClass(paymentsTab === "pending")}
+                >
+                  Pending payments
+                  {payments ? (
+                    <span className="ml-1 font-medium">({payments.length})</span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={paymentsTab === "renewals"}
+                  onClick={() => setPaymentsTab("renewals")}
+                  className={tabClass(paymentsTab === "renewals")}
+                >
+                  Paid renewals
+                  {renewals ? (
+                    <span className="ml-1 font-medium">({renewals.length})</span>
+                  ) : null}
+                </button>
+              </div>
               <div className="shrink-0">{paymentsLink}</div>
             </>
           }
         >
-          {paymentsError ? (
+          {paymentsTab === "renewals" ? (
+            renewalsError ? (
+              <p className="px-4 py-6 text-sm text-red-700">{renewalsError}</p>
+            ) : !renewals ? (
+              <EmptyLine>Loading paid renewals…</EmptyLine>
+            ) : (
+              <>
+                {createdVisit ? (
+                  <p className="px-4 pt-3 text-sm text-[var(--staff-ink)]">
+                    Created{" "}
+                    <Link
+                      href={`/dashboard/work-orders/detail?id=${createdVisit.id}`}
+                      className="font-medium text-brand-orange hover:underline"
+                    >
+                      {createdVisit.number}
+                    </Link>
+                  </p>
+                ) : null}
+                {renewals.length === 0 ? (
+                  <EmptyLine>No paid renewals waiting for a work order.</EmptyLine>
+                ) : (
+                  <ul className="divide-y divide-[var(--staff-border)]">
+                    {renewals.map((invoice) => (
+                      <BriefingRow
+                        key={invoice._id}
+                        href={`/dashboard/orders/detail?id=${invoice._id}`}
+                        text={`${invoice.number} · ${formatMoney(invoice.amountCents)}`}
+                        meta={[
+                          invoiceCustomerLabel(invoice),
+                          invoice.contractLabel ?? "",
+                          invoice.paidAt
+                            ? `Paid ${formatDateOnly(invoice.paidAt)}`
+                            : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                        action={
+                          canWriteInvoices
+                            ? {
+                                label:
+                                  creatingRenewalId === invoice._id
+                                    ? "Creating…"
+                                    : "Create WO",
+                                busy: creatingRenewalId === invoice._id,
+                                onClick: () => void createRenewalVisit(invoice._id),
+                              }
+                            : undefined
+                        }
+                      />
+                    ))}
+                  </ul>
+                )}
+              </>
+            )
+          ) : paymentsError ? (
             <p className="px-4 py-6 text-sm text-red-700">{paymentsError}</p>
           ) : !payments ? (
             <EmptyLine>Loading pending payments…</EmptyLine>

@@ -6,6 +6,7 @@ import { finalizeRedemptionsForInvoices } from "./discount.service";
 import { markInvoicePaid } from "./invoice.service";
 import { textInvoiceReceipt } from "./invoiceReceipt.service";
 import { sendPaymentReceipt } from "./paymentReceipt.service";
+import { sendRenewalScheduleEmail } from "./renewalScheduleEmail.service";
 
 type SettleActor = {
   actorType?: "user" | "system";
@@ -85,6 +86,9 @@ export const settlementEffects = {
   async sendReceipts(invoice: IInvoice, apiBase: string): Promise<void> {
     await sendPaymentReceipt(invoice);
     await sendPaymentReceiptText(invoice, apiBase);
+    if (invoice.sourceType === "contract_renewal") {
+      await sendRenewalScheduleEmail(invoice);
+    }
   },
 };
 

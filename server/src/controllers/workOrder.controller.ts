@@ -1762,6 +1762,7 @@ export async function postWorkOrderComplete(
         ? { offlinePayment: result.offlinePayment }
         : {}),
       ...(result.receipt ? { receipt: result.receipt } : {}),
+      ...(result.prepaidRenewal ? { prepaidRenewal: true } : {}),
     });
   } catch (err) {
     if (err instanceof WorkOrderCompletionError) {

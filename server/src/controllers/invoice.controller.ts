@@ -21,7 +21,9 @@ import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import {
   bulkInvoiceStatusSchema,
+  bulkRenewalWorkOrderSchema,
   createInvoiceSchema,
+  linkRenewalWorkOrderSchema,
   updateInvoiceTaxSchema,
 } from "../schemas/invoice.schema";
 import {
@@ -46,6 +48,15 @@ import {
   recordInvoiceEventAsync,
 } from "../services/invoiceEvent.service";
 import { loadInvoiceActivity } from "../services/invoiceActivity.service";
+import { sendRenewalScheduleEmail } from "../services/renewalScheduleEmail.service";
+import {
+  dismissPaidRenewal,
+  ensureRenewalWorkOrder,
+  findPaidRenewalsWithoutWorkOrder,
+  linkRenewalWorkOrder,
+  RenewalWorkOrderError,
+  type RenewalWorkOrderActor,
+} from "../services/renewalWorkOrder.service";
 import {
   getJourneySnapshotForInvoice,
   getJourneyVisitForInvoice,
@@ -537,6 +548,229 @@ export async function getPendingPayments(
   } catch (err) {
     console.error("[invoices] pending payments failed", err);
     res.status(500).json({ message: "Failed to list pending payments" });
+  }
+}
+
+function renewalActor(req: AuthRequest): RenewalWorkOrderActor {
+  return { actorUserId: req.user?.id ?? null, actorName: null };
+}
+
+function renewalError(res: Response, err: unknown, fallback: string): void {
+  if (err instanceof RenewalWorkOrderError) {
+    res.status(err.status).json({ message: err.message });
+    return;
+  }
+  console.error(`[invoices] ${fallback}`, err);
+  res.status(500).json({ message: fallback });
+}
+
+function contractLabelOf(metadata: unknown): string {
+  if (!metadata || typeof metadata !== "object") return "";
+  const label = (metadata as { templateLabel?: unknown }).templateLabel;
+  return typeof label === "string" ? label : "";
+}
+
+export async function getPaidRenewals(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    const search =
+      typeof req.query.search === "string" ? req.query.search.trim() : "";
+    const pageRaw = typeof req.query.page === "string" ? req.query.page : "";
+    const paginate = Boolean(pageRaw);
+    const page = Math.max(1, parseInt(pageRaw, 10) || 1);
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? "50"), 10);
+    const pageSize = INVOICE_PAGE_SIZES.includes(pageSizeRaw)
+      ? pageSizeRaw
+      : 50;
+    const customerRefs = search ? await customerRefsMatchingSearch(search) : [];
+    const { invoices, total } = await findPaidRenewalsWithoutWorkOrder({
+      number: search ? new RegExp(escapeRegex(search), "i") : undefined,
+      customerRefs: search ? customerRefs : undefined,
+      skip: paginate ? (page - 1) * pageSize : undefined,
+      limit: paginate ? pageSize : undefined,
+    });
+    const names = await invoiceListNames(
+      invoices as Array<{ customerRef?: Types.ObjectId | null }>,
+    );
+    res.json({
+      invoices: withInvoiceNames(invoices, names).map((invoice) => ({
+        ...invoice,
+        contractLabel: contractLabelOf(invoice.metadata),
+      })),
+      total,
+      ...(paginate ? { page, pageSize } : {}),
+    });
+  } catch (err) {
+    console.error("[invoices] paid renewals failed", err);
+    res.status(500).json({ message: "Failed to list paid renewals" });
+  }
+}
+
+export async function createRenewalWorkOrderForInvoice(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+    const workOrder = await ensureRenewalWorkOrder(invoice, renewalActor(req));
+    if (!workOrder) {
+      res.status(400).json({
+        message: "Could not create a work order for this invoice.",
+      });
+      return;
+    }
+    res.json({ workOrder });
+  } catch (err) {
+    renewalError(res, err, "Failed to create the work order");
+  }
+}
+
+export async function bulkCreateRenewalWorkOrders(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    const parsed = bulkRenewalWorkOrderSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message || "Validation failed",
+      });
+      return;
+    }
+    const actor = renewalActor(req);
+    const created: Array<{
+      invoiceId: string;
+      workOrderId: string;
+      number: string;
+    }> = [];
+    const failed: Array<{ invoiceId: string; message: string }> = [];
+    for (const invoiceId of parsed.data.ids) {
+      try {
+        const invoice = await Invoice.findById(invoiceId);
+        if (!invoice) {
+          failed.push({ invoiceId, message: "Invoice not found" });
+          continue;
+        }
+        const workOrder = await ensureRenewalWorkOrder(invoice, actor);
+        if (!workOrder) {
+          failed.push({
+            invoiceId,
+            message: "Could not create a work order for this invoice.",
+          });
+          continue;
+        }
+        created.push({
+          invoiceId,
+          workOrderId: workOrder.workOrderId,
+          number: workOrder.number,
+        });
+      } catch (err) {
+        failed.push({
+          invoiceId,
+          message:
+            err instanceof RenewalWorkOrderError
+              ? err.message
+              : "Could not create a work order for this invoice.",
+        });
+      }
+    }
+    res.json({ created, failed });
+  } catch (err) {
+    renewalError(res, err, "Failed to create work orders");
+  }
+}
+
+export async function linkRenewalWorkOrderForInvoice(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    const parsed = linkRenewalWorkOrderSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues[0]?.message || "Validation failed",
+      });
+      return;
+    }
+    const workOrder = await linkRenewalWorkOrder({
+      invoiceId: String(req.params.id ?? ""),
+      workOrderId: parsed.data.workOrderId,
+      workOrderNumber: parsed.data.workOrderNumber,
+      actor: renewalActor(req),
+    });
+    res.json({ workOrder });
+  } catch (err) {
+    renewalError(res, err, "Failed to link the work order");
+  }
+}
+
+export async function dismissPaidRenewalInvoice(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    await dismissPaidRenewal({
+      invoiceId: String(req.params.id ?? ""),
+      actor: renewalActor(req),
+    });
+    res.json({ dismissed: true });
+  } catch (err) {
+    renewalError(res, err, "Failed to dismiss this renewal");
+  }
+}
+
+export async function resendRenewalScheduleEmail(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isStaff(req.user)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+    const result = await sendRenewalScheduleEmail(invoice, { force: true });
+    if (result.status === "sent") {
+      res.json({ message: "Scheduling email sent." });
+      return;
+    }
+    res.status(result.status === "failed" ? 502 : 400).json({
+      message:
+        result.status === "failed" ? result.error : result.reason,
+    });
+  } catch (err) {
+    console.error("[invoices] renewal schedule email failed", err);
+    res.status(500).json({ message: "Failed to send the scheduling email" });
   }
 }
 

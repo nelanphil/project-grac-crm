@@ -15,7 +15,7 @@ import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import TablePagination from "@/components/ui/TablePagination";
 import { useAuthStore } from "@/store/useAuthStore";
-import { isCustomerRole } from "@/lib/dashboard-role";
+import { isCustomerRole, isStaffUser } from "@/lib/dashboard-role";
 import {
   ApiError,
   bulkUpdateInvoiceStatus,
@@ -33,6 +33,7 @@ import {
 import { invoiceCustomerLabel } from "@/lib/formatName";
 import { FileText, Search } from "lucide-react";
 import InvoiceTemplateTab from "@/components/billing/invoice-template/InvoiceTemplateTab";
+import PaidRenewalsPanel from "@/components/billing/PaidRenewalsPanel";
 
 function formatMoney(cents: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -91,6 +92,8 @@ function OrdersContent() {
   const pendingCompleted = searchParams.get("pending") === "completed";
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
+  const pendingRenewals =
+    searchParams.get("pending") === "renewals" && isStaffUser(user);
   const canWrite = useAuthStore((s) => s.hasPermission("contracts:write"));
   const [invoices, setInvoices] = useState<InvoiceItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -338,6 +341,21 @@ function OrdersContent() {
   }
 
   const columnCount = showActions ? 6 : 5;
+
+  if (pendingRenewals) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-brand-dark">Paid renewals</h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            Paid ASC renewal invoices that do not have a work order yet.
+            Creating one puts the visit on the schedule.
+          </p>
+        </div>
+        <PaidRenewalsPanel />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

@@ -15,6 +15,10 @@ import { logNotificationAsync } from "./notification.service";
 import { recordCustomerActivityAsync } from "./customerActivity.service";
 import { recordWorkOrderActivity } from "./workOrderActivity.service";
 import {
+  ensureRenewalWorkOrder,
+  runRenewalWorkOrderSideEffect,
+} from "./renewalWorkOrder.service";
+import {
   inferPaymentMethod,
   paymentSourceEventId,
   recordInvoiceEventAsync,
@@ -149,6 +153,14 @@ export async function markInvoicePaid(params: {
     params;
 
   if (invoice.status === "paid") {
+    if (invoice.sourceType === "contract_renewal" && !invoice.serviceWorkOrderRef) {
+      await runRenewalWorkOrderSideEffect(() =>
+        ensureRenewalWorkOrder(invoice, {
+          actorUserId: actor?.actorUserId ?? null,
+          actorName: actor?.actorName ?? null,
+        }),
+      );
+    }
     return invoice;
   }
 
@@ -265,6 +277,15 @@ export async function markInvoicePaid(params: {
         }
       }
     }
+  }
+
+  if (invoice.sourceType === "contract_renewal") {
+    await runRenewalWorkOrderSideEffect(() =>
+      ensureRenewalWorkOrder(invoice, {
+        actorUserId: actor?.actorUserId ?? null,
+        actorName: actor?.actorName ?? null,
+      }),
+    );
   }
 
   if (invoice.sourceType === "work_order" && invoice.workOrderRef) {
@@ -443,6 +464,7 @@ export type WorkOrderInvoiceSource = {
   completed?: boolean;
   date?: Date | null;
   updatedAt?: Date;
+  renewalInvoiceRef?: Types.ObjectId | null;
 };
 
 function invoiceTaxFromWorkOrder(wo: WorkOrderInvoiceSource) {
@@ -914,6 +936,12 @@ export async function syncWorkOrderInvoice(
 ): Promise<SyncWorkOrderInvoiceResult> {
   await alignUnpaidWorkOrderToCompanyTax(wo);
   const amountCents = dollarsToCents(wo.total || 0);
+
+  // A prepaid ASC renewal visit is already billed. Completing the $0 stop
+  // must not open another invoice or send another bill.
+  if (wo.renewalInvoiceRef && amountCents <= 0) {
+    return { action: "skipped" };
+  }
 
   if (wo.paid) {
     const unpaid = await Invoice.find({

@@ -98,6 +98,16 @@ export interface IInvoice extends Document {
   sourceType: InvoiceSourceType;
   contractRef?: Types.ObjectId | null;
   workOrderRef?: Types.ObjectId | null;
+  /** Work order created so a paid contract renewal can be scheduled. */
+  serviceWorkOrderRef?: Types.ObjectId | null;
+  /** Set while the renewal scheduling email is claimed or sent. */
+  renewalScheduleEmailSentAt?: Date | null;
+  renewalScheduleTokenHash?: string | null;
+  renewalScheduleTokenExpiresAt?: Date | null;
+  /** YYYY-MM-DD dates offered in the scheduling email. */
+  renewalScheduleOfferedDates?: string[];
+  renewalWorkOrderDismissedAt?: Date | null;
+  renewalWorkOrderDismissedBy?: Types.ObjectId | null;
   templateRef?: Types.ObjectId | null;
   lineItems: IInvoiceLineItem[];
   amountCents: number;
@@ -166,6 +176,22 @@ const invoiceSchema = new Schema<IInvoice>(
       ref: "WorkOrder",
       default: null,
       index: true,
+    },
+    serviceWorkOrderRef: {
+      type: Schema.Types.ObjectId,
+      ref: "WorkOrder",
+      default: null,
+      index: true,
+    },
+    renewalScheduleEmailSentAt: { type: Date, default: null },
+    renewalScheduleTokenHash: { type: String, default: null, index: true },
+    renewalScheduleTokenExpiresAt: { type: Date, default: null },
+    renewalScheduleOfferedDates: { type: [String], default: [] },
+    renewalWorkOrderDismissedAt: { type: Date, default: null },
+    renewalWorkOrderDismissedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
     },
     templateRef: {
       type: Schema.Types.ObjectId,

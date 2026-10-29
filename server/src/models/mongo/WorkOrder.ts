@@ -41,6 +41,8 @@ export interface IWorkOrder extends Document {
   equipmentRef?: Types.ObjectId | null;
   estimateRef?: Types.ObjectId | null;
   contractRef?: Types.ObjectId | null;
+  /** Paid renewal invoice this visit was created from. The visit is already paid. */
+  renewalInvoiceRef?: Types.ObjectId | null;
   contractDiscount?: TicketContractDiscount | null;
   descPerform: string;
   paid: boolean;
@@ -168,6 +170,12 @@ const workOrderSchema = new Schema<IWorkOrder>(
       type: Schema.Types.ObjectId,
       ref: "Contract",
       default: null,
+    },
+    renewalInvoiceRef: {
+      type: Schema.Types.ObjectId,
+      ref: "Invoice",
+      default: null,
+      index: true,
     },
     contractDiscount: {
       type: ticketContractDiscountSchema,

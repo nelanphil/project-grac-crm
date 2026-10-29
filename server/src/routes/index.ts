@@ -49,6 +49,7 @@ import xaiCredentialsRoutes from "./xaiCredentials.routes";
 import quoCredentialsRoutes from "./quoCredentials.routes";
 import paymentPlatformAppRoutes from "./paymentPlatformApp.routes";
 import publicAssetRoutes from "./publicAsset.routes";
+import renewalScheduleRoutes from "./renewalSchedule.routes";
 import contactDirectoryRoutes from "./contact.routes";
 import contactRouter, {
   contactFormSettingsRouter,
@@ -128,6 +129,7 @@ router.use("/payment-platform-apps", paymentPlatformAppRoutes);
 router.get("/public-assets/:slug/health", publicAssetHealth);
 router.get("/public-assets/:slug", getPublicAssetBySlug);
 router.use("/public-assets", publicAssetRoutes);
+router.use("/public/renewal-schedule", renewalScheduleRoutes);
 router.use("/contacts", contactDirectoryRoutes);
 router.use("/contact", contactRouter);
 router.use("/sms-opt-in", smsOptInRoutes);

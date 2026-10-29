@@ -428,11 +428,14 @@ export async function updateCrashReport(
   });
 }
 
+export type CustomerReputation = "do_not_contact" | "past_due" | "good";
+
 export interface CustomerNameRow {
   id: string;
   accountName: string;
   first: string;
   last: string;
+  reputation: CustomerReputation | null;
 }
 
 export interface ContactNameRow {
@@ -455,6 +458,7 @@ function nameReportQuery(options?: {
   page?: number;
   pageSize?: number;
   q?: string;
+  reputation?: string;
 }): string {
   const params = new URLSearchParams();
   if (options?.page !== undefined) params.set("page", String(options.page));
@@ -462,13 +466,21 @@ function nameReportQuery(options?: {
     params.set("pageSize", String(options.pageSize));
   }
   if (options?.q?.trim()) params.set("q", options.q.trim());
+  if (options?.reputation?.trim()) {
+    params.set("reputation", options.reputation.trim());
+  }
   const qs = params.toString();
   return qs ? `?${qs}` : "";
 }
 
 export async function listCustomerNames(
   token: string,
-  options?: { page?: number; pageSize?: number; q?: string },
+  options?: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    reputation?: CustomerReputation | "unrated";
+  },
 ): Promise<NameReportPage<CustomerNameRow>> {
   return authRequest<NameReportPage<CustomerNameRow>>(
     `/name-reports/customers${nameReportQuery(options)}`,
@@ -482,7 +494,12 @@ export async function listCustomerNames(
 export async function updateCustomerName(
   token: string,
   id: string,
-  data: { accountName?: string; first?: string; last?: string },
+  data: {
+    accountName?: string;
+    first?: string;
+    last?: string;
+    reputation?: CustomerReputation | null;
+  },
 ): Promise<{
   row: CustomerNameRow;
   contact: { id: string; first: string; last: string; isPrimary: boolean } | null;
@@ -1234,6 +1251,7 @@ export interface CustomerListItem {
   duplicateCount?: number;
   /** Lightweight contract badges for the customer (from list API). */
   contracts?: CustomerContractBadge[];
+  reputation?: CustomerReputation | null;
 }
 
 export interface CreateCustomerContactInput {
@@ -1345,6 +1363,7 @@ export async function updateCustomer(
     accountName?: string;
     ownerUserId?: string | null;
     ownerManual?: boolean;
+    reputation?: CustomerReputation | null;
   },
 ): Promise<{ customer: CustomerDetail }> {
   return authRequest<{ customer: CustomerDetail }>(`/customers/${id}`, {
@@ -1455,6 +1474,7 @@ export interface CustomerDetail {
   extime: string;
   mergedIntoRef?: string | null;
   isTemporary?: boolean;
+  reputation?: CustomerReputation | null;
   addresses: CustomerAddress[];
   contacts: CustomerContact[];
 }
@@ -2504,6 +2524,7 @@ export interface WorkOrderListItem {
   equipmentRef?: string | null;
   estimateRef?: string | null;
   contractRef?: string | null;
+  renewalInvoiceRef?: string | null;
   contractDiscount?: TicketContractDiscount | null;
   address?: CustomerAddressSummary | null;
   assignedUserRef?: string | null;
@@ -2763,6 +2784,7 @@ export interface WorkOrderCompletionCheck {
   sendBlockedReason: string | null;
   invoiceOpen: boolean;
   offlinePayment?: OfflinePayment | null;
+  prepaidRenewal?: boolean;
   contacts: WorkOrderCompletionContact[];
 }
 
@@ -2800,6 +2822,7 @@ export interface WorkOrderCompletionResult {
   };
   offlinePayment?: OfflinePayment;
   receipt?: WorkOrderReceiptDelivery;
+  prepaidRenewal?: boolean;
 }
 
 export async function getWorkOrderCompletionCheck(
@@ -2876,6 +2899,29 @@ export async function getPublicInvoiceView(token: string): Promise<{
     `/invoice-view/${encodeURIComponent(token)}`,
     { method: "GET" },
   );
+}
+
+export type PublicRenewalSchedule =
+  | { status: "expired"; firstName: string }
+  | { status: "chosen"; firstName: string; date: string; label: string }
+  | { status: "open"; firstName: string; dates: { date: string; label: string }[] };
+
+export async function getPublicRenewalSchedule(
+  token: string,
+): Promise<PublicRenewalSchedule> {
+  return authRequest<PublicRenewalSchedule>(
+    `/public/renewal-schedule/${encodeURIComponent(token)}`,
+    { method: "GET" },
+  );
+}
+
+export async function confirmPublicRenewalSchedule(
+  token: string,
+  date: string,
+): Promise<{ status: "scheduled"; date: string; label: string }> {
+  return publicPost(`/public/renewal-schedule/${encodeURIComponent(token)}`, {
+    date,
+  });
 }
 
 export async function updateWorkOrder(
@@ -3729,6 +3775,8 @@ export interface InvoiceItem {
   customerName?: string;
   /** Present on GET /invoices list responses. */
   contactName?: string;
+  /** Present on the paid-renewals report. */
+  contractLabel?: string;
   /** Present on GET /invoices/:id only. */
   customer?: InvoiceCustomerSummary | null;
   /** Present on GET /invoices/:id only. */
@@ -3774,6 +3822,109 @@ export async function getPendingPayments(
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+export interface RenewalWorkOrderResult {
+  workOrderId: string;
+  number: string;
+  created?: boolean;
+}
+
+export async function getPaidRenewals(
+  token: string,
+  params?: {
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<{
+  invoices: InvoiceItem[];
+  total?: number;
+  page?: number;
+  pageSize?: number;
+}> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.page != null) qs.set("page", String(params.page));
+  if (params?.pageSize != null) qs.set("pageSize", String(params.pageSize));
+  const q = qs.toString();
+  return authRequest<{
+    invoices: InvoiceItem[];
+    total?: number;
+    page?: number;
+    pageSize?: number;
+  }>(`/invoices/paid-renewals${q ? `?${q}` : ""}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createRenewalWorkOrder(
+  token: string,
+  invoiceId: string,
+): Promise<{ workOrder: RenewalWorkOrderResult }> {
+  return authRequest<{ workOrder: RenewalWorkOrderResult }>(
+    `/invoices/${invoiceId}/renewal-work-order`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function bulkCreateRenewalWorkOrders(
+  token: string,
+  ids: string[],
+): Promise<{
+  created: Array<{ invoiceId: string; workOrderId: string; number: string }>;
+  failed: Array<{ invoiceId: string; message: string }>;
+}> {
+  return authRequest(`/invoices/paid-renewals/bulk-work-orders`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export async function linkRenewalWorkOrder(
+  token: string,
+  invoiceId: string,
+  workOrderNumber: string,
+): Promise<{ workOrder: RenewalWorkOrderResult }> {
+  return authRequest<{ workOrder: RenewalWorkOrderResult }>(
+    `/invoices/${invoiceId}/renewal-work-order/link`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ workOrderNumber }),
+    },
+  );
+}
+
+export async function dismissPaidRenewal(
+  token: string,
+  invoiceId: string,
+): Promise<{ dismissed: boolean }> {
+  return authRequest<{ dismissed: boolean }>(
+    `/invoices/${invoiceId}/renewal-work-order/dismiss`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function resendRenewalScheduleEmail(
+  token: string,
+  invoiceId: string,
+): Promise<{ message: string }> {
+  return authRequest<{ message: string }>(
+    `/invoices/${invoiceId}/renewal-schedule-email`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
 }
 
 export async function getInvoices(
@@ -6542,6 +6693,20 @@ export interface AutomatedMessageChannel {
   templateMissing: boolean;
 }
 
+export interface RenewalScheduleOptions {
+  enabled: boolean;
+  offerRecommendedDates: boolean;
+}
+
+export interface AutomatedEmailDelivery {
+  enabled: boolean;
+  workOrderCompleteEmail: boolean;
+  paymentReceivedEmail: boolean;
+  paidInvoiceReceiptEmail: boolean;
+  mailboxReply: boolean;
+  renewalScheduleEmail: boolean;
+}
+
 export interface AutomatedMessageSettings {
   saved: boolean;
   workOrderCompleteEmail: AutomatedMessageChannel;
@@ -6550,6 +6715,9 @@ export interface AutomatedMessageSettings {
   paidInvoiceReceiptEmail: AutomatedMessageChannel;
   paidInvoiceReceiptSms: AutomatedMessageChannel;
   mailboxReply: AutomatedMessageChannel;
+  renewalScheduleEmail: AutomatedMessageChannel;
+  renewalSchedule: RenewalScheduleOptions;
+  emailDelivery: AutomatedEmailDelivery;
 }
 
 export async function getAutomatedMessageSettings(
@@ -6578,6 +6746,9 @@ export async function saveAutomatedMessageSettings(
     paidInvoiceReceiptEmail: channel(settings.paidInvoiceReceiptEmail),
     paidInvoiceReceiptSms: channel(settings.paidInvoiceReceiptSms),
     mailboxReply: channel(settings.mailboxReply),
+    renewalScheduleEmail: channel(settings.renewalScheduleEmail),
+    renewalSchedule: settings.renewalSchedule,
+    emailDelivery: settings.emailDelivery,
   };
   return authRequest<AutomatedMessageSettings>("/automated-message-settings", {
     method: "PUT",
@@ -6589,7 +6760,10 @@ export async function saveAutomatedMessageSettings(
 export async function sendAutomatedMessageTest(
   token: string,
   input: {
-    channel: Exclude<keyof AutomatedMessageSettings, "saved">;
+    channel: Exclude<
+      keyof AutomatedMessageSettings,
+      "saved" | "renewalSchedule" | "emailDelivery"
+    >;
     mode: AutomatedMessageMode;
     templateId: string | null;
     subject: string;

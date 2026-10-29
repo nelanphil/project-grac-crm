@@ -9,6 +9,7 @@ export const AUTOMATED_MESSAGE_CHANNELS = [
   "paidInvoiceReceiptEmail",
   "paidInvoiceReceiptSms",
   "mailboxReply",
+  "renewalScheduleEmail",
 ] as const;
 
 export type AutomatedMessageChannelKey =
@@ -33,6 +34,7 @@ export const AUTOMATED_MESSAGE_KIND: Record<
   paidInvoiceReceiptEmail: "receipt-email",
   paidInvoiceReceiptSms: "sms",
   mailboxReply: "mailbox",
+  renewalScheduleEmail: "email",
 };
 
 export const AUTOMATED_MESSAGE_DEFAULTS = {
@@ -49,6 +51,13 @@ export const AUTOMATED_MESSAGE_DEFAULTS = {
   paidInvoiceReceiptSms:
     "Hi {{first_name}}, thank you for your payment. View or download invoice {{invoice_number}}: {{invoice_view_url}}",
   mailboxReply: RECEIPT_REPLY_HTML,
+  renewalScheduleEmailSubject: "Let's schedule your service visit",
+  renewalScheduleEmailBody: [
+    "<p>Hi {{first_name}},</p>",
+    "<p>Thank you for renewing your {{contract_type}} agreement. Invoice {{invoice_number}} is paid.</p>",
+    "<p>Choose a recommended date below, or call our office at (386) 631-8982 for immediate scheduling help.</p>",
+    "{{recommended_dates}}",
+  ].join(""),
 } as const;
 
 export const AUTOMATED_MESSAGE_FALLBACK: Record<
@@ -79,6 +88,10 @@ export const AUTOMATED_MESSAGE_FALLBACK: Record<
     subject: "",
     body: AUTOMATED_MESSAGE_DEFAULTS.mailboxReply,
   },
+  renewalScheduleEmail: {
+    subject: AUTOMATED_MESSAGE_DEFAULTS.renewalScheduleEmailSubject,
+    body: AUTOMATED_MESSAGE_DEFAULTS.renewalScheduleEmailBody,
+  },
 };
 
 export type AutomatedTemplateCopy = {
@@ -106,6 +119,9 @@ export type InvoiceTokenInput = {
   amountCents?: number | null;
   dueDate?: Date | string | null;
   viewUrl?: string | null;
+  contractType?: string | null;
+  /** Trusted HTML for date links. Inserted without escaping. Omitted leaves the token in place. */
+  recommendedDatesHtml?: string | null;
 };
 
 const INVOICE_TOKEN_RE = (key: string) =>
@@ -162,6 +178,18 @@ export function applyInvoiceTokens(
     .replace(INVOICE_TOKEN_RE("invoice_total"), encode(total))
     .replace(INVOICE_TOKEN_RE("due_date"), encode(due))
     .replace(INVOICE_TOKEN_RE("invoice_view_url"), encode(viewUrl));
+  if (invoice.contractType != null) {
+    result = result.replace(
+      INVOICE_TOKEN_RE("contract_type"),
+      encode(invoice.contractType.trim()),
+    );
+  }
+  if (invoice.recommendedDatesHtml != null) {
+    result = result.replace(
+      INVOICE_TOKEN_RE("recommended_dates"),
+      invoice.recommendedDatesHtml,
+    );
+  }
   if (!due) result = clearEmptyDueSentence(result);
   return result;
 }

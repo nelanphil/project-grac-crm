@@ -20,8 +20,36 @@ export interface IAutomatedMessageSettings extends Document {
   paidInvoiceReceiptEmail: IAutomatedMessageChannel;
   paidInvoiceReceiptSms: IAutomatedMessageChannel;
   mailboxReply: IAutomatedMessageChannel;
+  renewalScheduleEmail: IAutomatedMessageChannel;
+  renewalSchedule: IRenewalScheduleOptions;
+  emailDelivery: IAutomatedEmailDelivery;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IRenewalScheduleOptions {
+  enabled: boolean;
+  offerRecommendedDates: boolean;
+}
+
+export const AUTOMATED_EMAIL_CHANNELS = [
+  "workOrderCompleteEmail",
+  "paymentReceivedEmail",
+  "paidInvoiceReceiptEmail",
+  "mailboxReply",
+  "renewalScheduleEmail",
+] as const;
+
+export type AutomatedEmailChannelKey = (typeof AUTOMATED_EMAIL_CHANNELS)[number];
+
+/** Master switch plus one switch per automated email. Missing values stay on. */
+export interface IAutomatedEmailDelivery {
+  enabled: boolean;
+  workOrderCompleteEmail: boolean;
+  paymentReceivedEmail: boolean;
+  paidInvoiceReceiptEmail: boolean;
+  mailboxReply: boolean;
+  renewalScheduleEmail: boolean;
 }
 
 const channelSchema = new Schema<IAutomatedMessageChannel>(
@@ -57,6 +85,38 @@ const automatedMessageSettingsSchema = new Schema<IAutomatedMessageSettings>(
     paidInvoiceReceiptEmail: { type: channelSchema, default: () => ({}) },
     paidInvoiceReceiptSms: { type: channelSchema, default: () => ({}) },
     mailboxReply: { type: channelSchema, default: () => ({}) },
+    renewalScheduleEmail: { type: channelSchema, default: () => ({}) },
+    renewalSchedule: {
+      type: new Schema<IRenewalScheduleOptions>(
+        {
+          enabled: { type: Boolean, default: true },
+          offerRecommendedDates: { type: Boolean, default: true },
+        },
+        { _id: false },
+      ),
+      default: () => ({ enabled: true, offerRecommendedDates: true }),
+    },
+    emailDelivery: {
+      type: new Schema<IAutomatedEmailDelivery>(
+        {
+          enabled: { type: Boolean, default: true },
+          workOrderCompleteEmail: { type: Boolean, default: true },
+          paymentReceivedEmail: { type: Boolean, default: true },
+          paidInvoiceReceiptEmail: { type: Boolean, default: true },
+          mailboxReply: { type: Boolean, default: true },
+          renewalScheduleEmail: { type: Boolean, default: true },
+        },
+        { _id: false },
+      ),
+      default: () => ({
+        enabled: true,
+        workOrderCompleteEmail: true,
+        paymentReceivedEmail: true,
+        paidInvoiceReceiptEmail: true,
+        mailboxReply: true,
+        renewalScheduleEmail: true,
+      }),
+    },
   },
   { timestamps: true },
 );
