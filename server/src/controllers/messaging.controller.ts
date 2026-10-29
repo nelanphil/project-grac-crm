@@ -3,6 +3,7 @@ import { Readable } from "stream";
 import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { CustomerContact } from "../models/mongo/CustomerContact";
+import { loadContactDisplayNames } from "../utils/customerContacts";
 import { Customer } from "../models/mongo/Customer";
 import { MessageTemplate } from "../models/mongo/MessageTemplate";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
@@ -1265,11 +1266,17 @@ export async function listCommunications(
     const names = await accountNameMap(
       rows.map((r) => String(r.twilioAccountRef)),
     );
+    const contactNames = await loadContactDisplayNames(
+      rows.map((r) => r.contactRef),
+    );
 
     res.json({
-      communications: rows.map((r) =>
-        toPublicCommunication(r, names.get(String(r.twilioAccountRef))),
-      ),
+      communications: rows.map((r) => ({
+        ...toPublicCommunication(r, names.get(String(r.twilioAccountRef))),
+        contactName: r.contactRef
+          ? (contactNames.get(String(r.contactRef)) ?? null)
+          : null,
+      })),
       total,
       page,
       pageSize,

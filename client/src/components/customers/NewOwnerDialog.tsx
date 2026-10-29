@@ -54,6 +54,7 @@ function NewOwnerDialogForm({
   onSaved,
 }: NewOwnerDialogProps) {
   const [form, setForm] = useState(emptyForm);
+  const [reason, setReason] = useState("");
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<DirectoryContact[]>([]);
   const [selected, setSelected] = useState<DirectoryContact | null>(null);
@@ -91,14 +92,26 @@ function NewOwnerDialogForm({
     event.preventDefault();
     setSaving(true);
     setError(null);
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      setSaving(false);
+      setError("A reason is required.");
+      return;
+    }
     try {
       const result = selected
         ? await assignCustomerNewOwner(token, customer._id, {
+            reason: trimmedReason,
             contactId: selected._id,
           })
         : hasNewPerson
-          ? await assignCustomerNewOwner(token, customer._id, { contact: form })
-          : await assignCustomerNewOwner(token, customer._id, {});
+          ? await assignCustomerNewOwner(token, customer._id, {
+              reason: trimmedReason,
+              contact: form,
+            })
+          : await assignCustomerNewOwner(token, customer._id, {
+              reason: trimmedReason,
+            });
       onSaved(result);
       onClose();
     } catch (err) {
@@ -144,6 +157,20 @@ function NewOwnerDialogForm({
 
         <form onSubmit={(event) => void handleSubmit(event)} className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
+            <label className="block">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                Reason
+              </span>
+              <textarea
+                required
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                rows={3}
+                maxLength={2000}
+                placeholder="Why is this property changing owners?"
+                className="mt-2 w-full rounded-md border border-neutral-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+              />
+            </label>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
                 Contacts leaving this property
@@ -290,7 +317,7 @@ function NewOwnerDialogForm({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || !reason.trim()}
               className="inline-flex items-center gap-2 rounded-md bg-brand-orange px-3 py-2 text-sm font-medium text-white hover:bg-brand-orange/90 disabled:opacity-50"
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

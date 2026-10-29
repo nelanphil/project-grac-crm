@@ -5,9 +5,12 @@ import {
   CustomerContact,
   ICustomerContact,
 } from "../models/mongo/CustomerContact";
+import { CustomerNote } from "../models/mongo/CustomerNote";
 import { recordCustomerActivity } from "./customerActivity.service";
+import { logNotificationAsync } from "./notification.service";
 import {
   detachCustomerContact,
+  forgetFormerContact,
   LastContactError,
   syncCustomerPrimaryContactFields,
 } from "../utils/customerContacts";
@@ -57,6 +60,7 @@ export type NewOwnerPlan =
       create: { first: string; last: string; phone: string; email: string } | null;
       accountName: string;
       identity: { first: string; last: string; phone: string; email: string };
+      removedNames: string[];
       summary: string;
       ensureLogin: boolean;
     };
@@ -70,6 +74,26 @@ function removedSentence(names: string[]): string {
   return ` Removed ${names.join(", ")}.`;
 }
 
+function withReason(summary: string, reason?: string): string {
+  const trimmed = reason?.trim() ?? "";
+  return trimmed ? `${summary} Reason: ${trimmed}` : summary;
+}
+
+/** Unread customer note: who left, the new name or Vacant, and the reason. */
+export function newOwnerNoteContent(input: {
+  accountName: string;
+  removedNames: string[];
+  reason: string;
+}): string {
+  const outcome = isVacantAccountName(input.accountName)
+    ? "Property is Vacant."
+    : `New owner: ${input.accountName}.`;
+  const who = input.removedNames.length
+    ? `Removed ${input.removedNames.join(", ")}.`
+    : "No contacts were on this property.";
+  return `${outcome} ${who}\nReason: ${input.reason.trim()}`;
+}
+
 /**
  * Decide who leaves, who becomes primary, and what the customer is named.
  * Does not write. The last-contact rule for a different property is enforced
@@ -81,6 +105,7 @@ export function planNewOwner(input: {
   selected?: NewOwnerContactSnapshot | null;
   otherCustomerActiveCount?: number;
   create?: { first: string; last: string; phone: string; email: string } | null;
+  reason?: string;
 }): NewOwnerPlan {
   const selected = input.selected ?? null;
   const create = input.create ?? null;
@@ -120,7 +145,11 @@ export function planNewOwner(input: {
       create: null,
       accountName: VACANT_ACCOUNT_NAME,
       identity: { first: "", last: "", phone: "", email: "" },
-      summary: `New owner: property is Vacant.${removedSentence(removedNames)}`,
+      removedNames,
+      summary: withReason(
+        `New owner: property is Vacant.${removedSentence(removedNames)}`,
+        input.reason,
+      ),
       ensureLogin: false,
     };
   }
@@ -147,7 +176,11 @@ export function planNewOwner(input: {
       : { first, last, phone, email },
     accountName,
     identity: { first, last, phone, email },
-    summary: `New owner: ${named}.${removedSentence(removedNames)}`,
+    removedNames,
+    summary: withReason(
+      `New owner: ${named}.${removedSentence(removedNames)}`,
+      input.reason,
+    ),
     ensureLogin: Boolean(email.trim()),
   };
 }
@@ -181,10 +214,18 @@ function snapshotContact(contact: {
 
 export async function assignNewOwner(input: {
   customerId: string;
+  reason: string;
   contactId?: string;
   contact?: { first: string; last: string; phone: string; email: string };
   actorUserId?: string | null;
 }): Promise<AssignNewOwnerResult> {
+  const reason = input.reason?.trim() ?? "";
+  if (!reason) {
+    throw new NewOwnerError(400, "A reason is required.");
+  }
+  if (reason.length > 2000) {
+    throw new NewOwnerError(400, "Reason must be 2000 characters or fewer.");
+  }
   if (!Types.ObjectId.isValid(input.customerId)) {
     throw new NewOwnerError(404, "Customer not found");
   }
@@ -242,6 +283,7 @@ export async function assignNewOwner(input: {
     selected: selected ? snapshotContact(selected) : null,
     otherCustomerActiveCount,
     create,
+    reason,
   });
   if (!plan.ok) {
     throw new NewOwnerError(plan.status, plan.message);
@@ -317,10 +359,21 @@ export async function assignNewOwner(input: {
   }
 
   const previousName = customer.accountName ?? "";
+  const formerIds = plan.detachIds
+    .filter((id) => Types.ObjectId.isValid(id))
+    .map((id) => new Types.ObjectId(id));
   await Customer.updateOne(
     { _id: customer._id },
-    { $set: { accountName: plan.accountName } },
+    {
+      $set: { accountName: plan.accountName },
+      ...(formerIds.length > 0
+        ? { $addToSet: { formerContactRefs: { $each: formerIds } } }
+        : {}),
+    },
   );
+  if (keeperId) {
+    await forgetFormerContact(customer._id, keeperId);
+  }
   await syncCustomerPrimaryContactFields(customer._id);
   if (plan.ensureLogin) {
     await ensureCustomerLoginForPrimaryEmail(customer._id);
@@ -339,9 +392,33 @@ export async function assignNewOwner(input: {
     metadata: {
       detachedContactIds: plan.detachIds,
       vacant: isVacantAccountName(plan.accountName),
+      reason,
     },
     source: "crm",
   });
+
+  if (input.actorUserId && Types.ObjectId.isValid(input.actorUserId)) {
+    const note = await CustomerNote.create({
+      customerRef: customer._id,
+      authorId: input.actorUserId,
+      content: newOwnerNoteContent({
+        accountName: plan.accountName,
+        removedNames: plan.removedNames,
+        reason,
+      }),
+      viewedAt: null,
+    });
+    logNotificationAsync({
+      entityType: "customer_note",
+      action: "created",
+      entityId: String(note._id),
+      customerRef: customer._id,
+      summary: `Note added for ${plan.accountName}`,
+      metadata: { customerName: plan.accountName },
+      actorType: "user",
+      actorUserId: input.actorUserId,
+    });
+  }
 
   const refreshed = await Customer.findById(customer._id)
     .select("accountName first last phone email")

@@ -24,6 +24,23 @@ type CustomerThreadsPanelProps = {
   channelFilter?: CommunicationChannel | "all" | "email";
 };
 
+function threadGroupName(
+  contactId: string,
+  threads: MessageThreadItem[],
+  contactNameById: Map<string, string>,
+): string {
+  const contact = threads.find((thread) => thread.contact)?.contact;
+  if (contact) {
+    return (
+      formatCustomerName(contact.first, contact.last) || contact.phone || "Contact"
+    );
+  }
+  return (
+    contactNameById.get(contactId) ||
+    (contactId === "unknown" ? "Unknown caller" : "Contact")
+  );
+}
+
 export default function CustomerThreadsPanel({
   customerId,
   contacts,
@@ -143,8 +160,7 @@ export default function CustomerThreadsPanel({
           {[...threadsByContact.entries()].map(([contactId, contactThreads]) => (
             <div key={contactId}>
               <h3 className="mb-2 text-sm font-medium text-neutral-600">
-                {contactNameById.get(contactId) ||
-                  (contactId === "unknown" ? "Unknown caller" : "Contact")}
+                {threadGroupName(contactId, contactThreads, contactNameById)}
               </h3>
               <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {contactThreads.map((t) => (

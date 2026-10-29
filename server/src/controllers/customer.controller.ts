@@ -364,6 +364,7 @@ async function findActiveCustomerOr404(
   extime: string;
   mergedIntoRef?: mongoose.Types.ObjectId | null;
   deletedAt?: Date | null;
+  formerContactRefs?: mongoose.Types.ObjectId[];
   reputation: CustomerReputation | null;
 } | null> {
   if (!mongoose.Types.ObjectId.isValid(customerId)) {
@@ -3097,6 +3098,7 @@ export async function assignCustomerNewOwner(
 
     const result = await assignNewOwner({
       customerId: customer._id.toString(),
+      reason: parsed.data.reason,
       contactId: parsed.data.contactId,
       contact: hasContact && contact ? contact : undefined,
       actorUserId: req.user?.id ?? null,
@@ -3728,6 +3730,29 @@ export async function getCustomerNotifications(
       email: (contact.email ?? "").trim(),
       phone: (contact.phone ?? "").trim(),
     }));
+
+    const attachedIds = new Set(rows.map((row) => row.id));
+    const formerIds = (customer.formerContactRefs ?? [])
+      .map((id) => String(id))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id) && !attachedIds.has(id));
+    if (formerIds.length > 0) {
+      const former = await CustomerContact.find({
+        _id: { $in: formerIds },
+        ...activeContactFilter,
+      })
+        .select("first last email phone")
+        .lean();
+      for (const contact of former) {
+        rows.push({
+          id: String(contact._id),
+          name: `${contact.first ?? ""} ${contact.last ?? ""}`.trim(),
+          label: "Previous contact",
+          isPrimary: false,
+          email: (contact.email ?? "").trim(),
+          phone: (contact.phone ?? "").trim(),
+        });
+      }
+    }
 
     const seenEmails = new Set(
       rows.map((row) => normalizeAccountEmail(row.email)).filter(Boolean),

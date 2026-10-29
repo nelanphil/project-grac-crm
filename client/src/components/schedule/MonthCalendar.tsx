@@ -30,6 +30,7 @@ import {
   formatLocalClock,
   formatMonthYear,
   formatPrettyDate,
+  groupDayJobsByTechnician,
   nyDateParts,
   opaqueTechnicianTint,
   properCaseCity,
@@ -630,112 +631,12 @@ export default function MonthCalendar({
 
   // Grouped Appointments for Selected Day (Unscheduled at top, then technicians earliest to latest)
   const groupedDayJobs = useMemo(() => {
-    if (!selectedDate) {
-      return {
-        unscheduled: [] as WorkOrderListItem[],
-        technicianGroups: [] as Array<{
-          technicianId: string;
-          technicianName: string;
-          technicianColor: string;
-          earliestStart: string;
-          timeSpan?: string;
-          jobs: WorkOrderListItem[];
-        }>,
-        totalCount: 0,
-      };
-    }
-
-    const dayJobs = byDate.get(selectedDate) ?? [];
-    const unscheduled: WorkOrderListItem[] = [];
-    const techMap = new Map<string, WorkOrderListItem[]>();
-
-    for (const job of dayJobs) {
-      if (!job.scheduledStart) {
-        unscheduled.push(job);
-        continue;
-      }
-
-      const crew = workOrderCrewIds(job);
-      const techId = crew[0] || job.assignedUserRef || job.assignee?._id || "unassigned";
-
-      const list = techMap.get(techId) ?? [];
-      list.push(job);
-      techMap.set(techId, list);
-    }
-
-    unscheduled.sort(compareWithinDay);
-
-    // Build sorted technician groups
-    const technicianGroups: Array<{
-      technicianId: string;
-      technicianName: string;
-      technicianColor: string;
-      earliestStart: string;
-      timeSpan?: string;
-      jobs: WorkOrderListItem[];
-    }> = [];
-
-    const knownTechMap = new Map<string, { name: string; color: string }>();
-    for (const t of technicianList) {
-      knownTechMap.set(t.id, { name: t.name, color: t.color });
-    }
-
-    for (const [techId, jobs] of techMap.entries()) {
-      // Sort jobs ascending from earliest to latest
-      const sortedJobs = [...jobs].sort((a, b) => {
-        const aTime = a.scheduledStart ? new Date(a.scheduledStart).getTime() : 0;
-        const bTime = b.scheduledStart ? new Date(b.scheduledStart).getTime() : 0;
-        return aTime - bTime;
-      });
-
-      const meta = knownTechMap.get(techId);
-      const techName =
-        meta?.name ||
-        technicianNames[techId] ||
-        jobAssigneeName(sortedJobs[0]) ||
-        (techId === "unassigned" ? "Unassigned" : "Technician");
-
-      const color =
-        techId === "unassigned"
-          ? "#6b7280"
-          : meta?.color || technicianColors[techId] || technicianColor(techId);
-
-      const earliestStart = sortedJobs[0]?.scheduledStart ?? "";
-      const latestJob = sortedJobs[sortedJobs.length - 1];
-
-      let timeSpan = "";
-      if (sortedJobs.length > 0 && sortedJobs[0].scheduledStart) {
-        const firstTimeStr = formatLocalClock(new Date(sortedJobs[0].scheduledStart));
-        if (sortedJobs.length > 1 && latestJob?.scheduledStart) {
-          const lastTimeStr = formatLocalClock(new Date(latestJob.scheduledStart));
-          timeSpan = firstTimeStr === lastTimeStr ? firstTimeStr : `${firstTimeStr} – ${lastTimeStr}`;
-        } else {
-          timeSpan = firstTimeStr;
-        }
-      }
-
-      technicianGroups.push({
-        technicianId: techId,
-        technicianName: techName,
-        technicianColor: color,
-        earliestStart,
-        timeSpan,
-        jobs: sortedJobs,
-      });
-    }
-
-    // Sort technician groups by their earliest appointment time, then by technician name
-    technicianGroups.sort((a, b) => {
-      const cmp = a.earliestStart.localeCompare(b.earliestStart);
-      if (cmp !== 0) return cmp;
-      return a.technicianName.localeCompare(b.technicianName);
+    const dayJobs = selectedDate ? (byDate.get(selectedDate) ?? []) : [];
+    return groupDayJobsByTechnician(dayJobs, {
+      names: technicianNames,
+      colors: technicianColors,
+      technicians: technicianList,
     });
-
-    return {
-      unscheduled,
-      technicianGroups,
-      totalCount: dayJobs.length,
-    };
   }, [byDate, selectedDate, technicianList, technicianNames, technicianColors]);
 
   // Existing appointments for selected technician on this date

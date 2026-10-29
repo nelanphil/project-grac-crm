@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 import { lastContactBlock } from "../utils/customerContacts";
 import { findAccountNameMatches } from "../utils/customerDuplicates";
 import { isVacantReportCustomer } from "../utils/vacantCustomer";
+import { newOwnerSchema } from "../schemas/customerSite.schema";
 import {
   NEW_OWNER_DETACH_UPDATE,
+  newOwnerNoteContent,
   planNewOwner,
   type NewOwnerContactSnapshot,
 } from "./newOwner.service";
@@ -134,6 +136,66 @@ describe("planNewOwner", () => {
     if (!plan.ok) return;
     assert.deepEqual(plan.detachIds, ["only"]);
     assert.equal(plan.accountName, "Vacant");
+  });
+
+  it("rejects a missing reason and records who left with that reason", () => {
+    const missing = newOwnerSchema.safeParse({});
+    assert.equal(missing.success, false);
+    if (!missing.success) {
+      assert.equal(missing.error.issues[0]?.message, "A reason is required.");
+    }
+
+    const blank = newOwnerSchema.safeParse({ reason: "   " });
+    assert.equal(blank.success, false);
+    if (!blank.success) {
+      assert.equal(blank.error.issues[0]?.message, "A reason is required.");
+    }
+
+    const plan = planNewOwner({
+      customerId: house,
+      contactsOnCustomer: [
+        person({ id: "c1", first: "Claire", last: "Keijer" }),
+      ],
+      reason: "  Sold the house  ",
+    });
+    assert.equal(plan.ok, true);
+    if (!plan.ok) return;
+    const note = newOwnerNoteContent({
+      accountName: plan.accountName,
+      removedNames: plan.removedNames,
+      reason: "  Sold the house  ",
+    });
+    assert.match(note, /Claire Keijer/);
+    assert.match(note, /Property is Vacant\./);
+    assert.match(note, /Reason: Sold the house/);
+    assert.match(plan.summary, /Claire Keijer/);
+    assert.match(plan.summary, /Reason: Sold the house/);
+    assert.deepEqual(plan.detachIds, ["c1"]);
+
+    const named = planNewOwner({
+      customerId: house,
+      contactsOnCustomer: [
+        person({ id: "c1", first: "Claire", last: "Keijer" }),
+      ],
+      create: {
+        first: "taylor",
+        last: "smith",
+        phone: "",
+        email: "",
+      },
+      reason: "Bought the house",
+    });
+    assert.equal(named.ok, true);
+    if (!named.ok) return;
+    const namedNote = newOwnerNoteContent({
+      accountName: named.accountName,
+      removedNames: named.removedNames,
+      reason: "Bought the house",
+    });
+    assert.match(namedNote, /New owner: Taylor Smith\./);
+    assert.match(namedNote, /Removed Claire Keijer\./);
+    assert.match(namedNote, /Reason: Bought the house/);
+    assert.deepEqual(named.detachIds, ["c1"]);
   });
 });
 

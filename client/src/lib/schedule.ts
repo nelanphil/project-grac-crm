@@ -5,6 +5,7 @@ import type {
   WeekdayKey,
   WeeklyDayHours,
 } from "@/lib/api";
+import { compareWithinDay, type ScheduleIdentity } from "@/lib/scheduleDuplicates";
 
 export const SCHEDULE_TIMEZONE = "America/New_York";
 
@@ -564,4 +565,124 @@ export function workOrderViewHref(job: {
   if (job._id) return `/dashboard/work-orders/detail?id=${job._id}`;
   if (!job.customerRef) return null;
   return `/dashboard/customers/detail?id=${job.customerRef}#customer-work-orders`;
+}
+
+type GroupableDayJob = ScheduleIdentity & {
+  assignedUserRefs?: string[] | null;
+  assignedUserRef?: string | null;
+  assignee?: {
+    _id: string;
+    first_name?: string | null;
+    last_name?: string | null;
+  } | null;
+  tech?: string | null;
+};
+
+export type TechnicianDayGroup<T> = {
+  technicianId: string;
+  technicianName: string;
+  technicianColor: string;
+  earliestStart: string;
+  timeSpan: string;
+  jobs: T[];
+};
+
+export type GroupedDayJobs<T> = {
+  unscheduled: T[];
+  technicianGroups: TechnicianDayGroup<T>[];
+  totalCount: number;
+};
+
+function assigneeDisplayName(job: GroupableDayJob): string {
+  const name = [job.assignee?.first_name, job.assignee?.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  return name || job.tech?.trim() || "Technician";
+}
+
+function groupTimeSpan(jobs: GroupableDayJob[]): string {
+  const first = jobs[0]?.scheduledStart;
+  if (!first) return "";
+  const firstLabel = formatLocalClock(new Date(first));
+  const last = jobs[jobs.length - 1]?.scheduledStart;
+  if (jobs.length > 1 && last) {
+    const lastLabel = formatLocalClock(new Date(last));
+    return firstLabel === lastLabel ? firstLabel : `${firstLabel} – ${lastLabel}`;
+  }
+  return firstLabel;
+}
+
+/**
+ * Split one day's jobs into unscheduled appointments, then one group per
+ * technician ordered by that technician's earliest start.
+ */
+export function groupDayJobsByTechnician<T extends GroupableDayJob>(
+  jobs: T[],
+  options: {
+    names?: Record<string, string>;
+    colors?: Record<string, string>;
+    technicians?: Array<{ id: string; name: string; color: string }>;
+  } = {},
+): GroupedDayJobs<T> {
+  const names = options.names ?? {};
+  const colors = options.colors ?? {};
+  const known = new Map<string, { name: string; color: string }>();
+  for (const tech of options.technicians ?? []) {
+    known.set(tech.id, { name: tech.name, color: tech.color });
+  }
+
+  const unscheduled: T[] = [];
+  const byTechnician = new Map<string, T[]>();
+  for (const job of jobs) {
+    if (!job.scheduledStart) {
+      unscheduled.push(job);
+      continue;
+    }
+    const crew = workOrderCrewIds(job);
+    const techId = crew[0] || job.assignedUserRef || job.assignee?._id || "unassigned";
+    const list = byTechnician.get(techId) ?? [];
+    list.push(job);
+    byTechnician.set(techId, list);
+  }
+  unscheduled.sort(compareWithinDay);
+
+  const technicianGroups: TechnicianDayGroup<T>[] = [];
+  for (const [techId, techJobs] of byTechnician) {
+    const sortedJobs = [...techJobs].sort((a, b) => {
+      const aTime = a.scheduledStart ? new Date(a.scheduledStart).getTime() : 0;
+      const bTime = b.scheduledStart ? new Date(b.scheduledStart).getTime() : 0;
+      return aTime - bTime;
+    });
+    const meta = known.get(techId);
+    const technicianName =
+      meta?.name ||
+      names[techId] ||
+      assigneeDisplayName(sortedJobs[0]!) ||
+      (techId === "unassigned" ? "Unassigned" : "Technician");
+    const swatch =
+      techId === "unassigned"
+        ? "#6b7280"
+        : meta?.color || colors[techId] || technicianColor(techId);
+    technicianGroups.push({
+      technicianId: techId,
+      technicianName,
+      technicianColor: swatch,
+      earliestStart: sortedJobs[0]?.scheduledStart ?? "",
+      timeSpan: groupTimeSpan(sortedJobs),
+      jobs: sortedJobs,
+    });
+  }
+
+  technicianGroups.sort((a, b) => {
+    const byStart = a.earliestStart.localeCompare(b.earliestStart);
+    if (byStart !== 0) return byStart;
+    return a.technicianName.localeCompare(b.technicianName);
+  });
+
+  return {
+    unscheduled,
+    technicianGroups,
+    totalCount: jobs.length,
+  };
 }

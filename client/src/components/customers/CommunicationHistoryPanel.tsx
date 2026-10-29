@@ -364,6 +364,7 @@ export default function CommunicationHistoryPanel({
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-neutral-400">
                     <span className="capitalize">{row.status}</span>
+                    {row.contactName ? <span>{row.contactName}</span> : null}
                     <span className="truncate">{row.toEmail}</span>
                   </div>
                   {row.errorMessage ? (
@@ -421,7 +422,9 @@ export default function CommunicationHistoryPanel({
                     </span>
                     {row.contactRef ? (
                       <span>
-                        {contactNameById.get(row.contactRef) || "Contact"}
+                        {row.contactName ||
+                          contactNameById.get(row.contactRef) ||
+                          "Contact"}
                       </span>
                     ) : null}
                   </div>

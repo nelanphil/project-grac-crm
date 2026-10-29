@@ -9,6 +9,58 @@ import { ensureCustomerLoginForPrimaryEmail } from "./ensureCustomerLogin";
 import { normalizePhoneDigits } from "./customerSites";
 import { accountNameFromPerson } from "./vacantCustomer";
 
+export function contactDisplayName(contact: {
+  first?: string | null;
+  last?: string | null;
+  phone?: string | null;
+}): string {
+  return (
+    `${contact.first ?? ""} ${contact.last ?? ""}`.trim() ||
+    (contact.phone ?? "").trim() ||
+    "Contact"
+  );
+}
+
+/** Names for message and call rows, including people no longer on the property. */
+export async function loadContactDisplayNames(
+  ids: Array<unknown>,
+): Promise<Map<string, string>> {
+  const unique = [
+    ...new Set(
+      ids
+        .map((id) => (id == null ? "" : String(id)))
+        .filter((id) => Types.ObjectId.isValid(id)),
+    ),
+  ];
+  if (unique.length === 0) return new Map();
+  const contacts = await CustomerContact.find({ _id: { $in: unique } })
+    .select("first last phone")
+    .lean();
+  return new Map(
+    contacts.map((contact) => [
+      String(contact._id),
+      contactDisplayName(contact),
+    ]),
+  );
+}
+
+/** Drop a person from the previous-contact list once they are on the property again. */
+export async function forgetFormerContact(
+  customerId: Types.ObjectId | string,
+  contactId: Types.ObjectId | string,
+): Promise<void> {
+  if (
+    !Types.ObjectId.isValid(String(customerId)) ||
+    !Types.ObjectId.isValid(String(contactId))
+  ) {
+    return;
+  }
+  await Customer.updateOne(
+    { _id: customerId },
+    { $pull: { formerContactRefs: contactId } },
+  );
+}
+
 export function lastContactBlock(
   activeCount: number,
   action: "delete" | "detach",

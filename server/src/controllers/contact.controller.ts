@@ -24,6 +24,7 @@ import {
   detachCustomerContact,
   LastContactError,
   renameVacantAccountForFirstContact,
+  forgetFormerContact,
   syncCustomerPrimaryContactFields,
 } from "../utils/customerContacts";
 import { ensureCustomerLoginForPrimaryEmail } from "../utils/ensureCustomerLogin";
@@ -194,6 +195,7 @@ async function attachToCustomer(
   contact.customerRef = customer._id;
   contact.isPrimary = makePrimary;
   await contact.save();
+  await forgetFormerContact(customer._id, contact._id);
   let accountName = customer.accountName ?? "";
   if (makePrimary) {
     const renamed = await renameVacantAccountForFirstContact(customer._id, contact);

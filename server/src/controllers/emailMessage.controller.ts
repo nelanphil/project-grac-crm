@@ -3,6 +3,7 @@ import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { EmailAccount } from "../models/mongo/EmailAccount";
 import { EmailCommunication } from "../models/mongo/EmailCommunication";
+import { loadContactDisplayNames } from "../utils/customerContacts";
 import {
   ScheduledEmailSend,
   ScheduledEmailStatus,
@@ -703,14 +704,20 @@ export async function listEmailMessages(
     const names = await accountNameMap(
       rows.map((r) => String(r.emailAccountRef)),
     );
+    const contactNames = await loadContactDisplayNames(
+      rows.map((r) => r.contactRef),
+    );
 
     res.json({
-      emails: rows.map((r) =>
-        toPublicEmailCommunication(
+      emails: rows.map((r) => ({
+        ...toPublicEmailCommunication(
           r,
           names.get(String(r.emailAccountRef)),
         ),
-      ),
+        contactName: r.contactRef
+          ? (contactNames.get(String(r.contactRef)) ?? null)
+          : null,
+      })),
       total,
       page,
       pageSize,

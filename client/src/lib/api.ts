@@ -1844,6 +1844,7 @@ export async function assignCustomerNewOwner(
       phone?: string;
       email?: string;
     };
+    reason: string;
   },
 ): Promise<{
   customer: {
@@ -7121,6 +7122,7 @@ export interface TwilioCommunicationItem {
   twilioSid: string | null;
   customerRef: string | null;
   contactRef: string | null;
+  contactName?: string | null;
   threadRef: string | null;
   templateRef: string | null;
   createdByUserRef: string | null;
@@ -8090,6 +8092,7 @@ export interface EmailCommunicationItem {
   errorMessage: string | null;
   customerRef: string | null;
   contactRef: string | null;
+  contactName?: string | null;
   templateRef: string | null;
   createdByUserRef: string | null;
   createdAt: string;

@@ -20,7 +20,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
   ApiError,
@@ -64,6 +64,7 @@ import {
   formatMonthYear,
   formatPrettyDate,
   formatWeekdayDate,
+  groupDayJobsByTechnician,
   isDispatcherRole,
   isScheduledOnDate,
   localDateTimeToIso,
@@ -436,6 +437,7 @@ function ScheduleRail({
   onPane,
   technicianPane,
   technicianColors,
+  technicianNames = {},
   tasks = [],
   onCreateTask,
   duplicateIds,
@@ -462,6 +464,7 @@ function ScheduleRail({
   onPane?: (pane: MapRailPane) => void;
   technicianPane?: ReactNode;
   technicianColors: Record<string, string>;
+  technicianNames?: Record<string, string>;
   tasks?: TaskItem[];
   onCreateTask?: () => void;
   duplicateIds?: Set<string>;
@@ -471,6 +474,55 @@ function ScheduleRail({
   const showUnscheduleDrop = isOver && draggingScheduled;
   const empty = dayJobs.length === 0 && undatedJobs.length === 0 && tasks.length === 0;
   const showTechnicians = pane === "technicians" && technicianPane;
+  const [collapsedTechGroups, setCollapsedTechGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [noDateCollapsed, setNoDateCollapsed] = useState(false);
+  const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
+  const groupedDayJobs = useMemo(
+    () =>
+      groupDayJobsByTechnician(dayJobs, {
+        names: technicianNames,
+        colors: technicianColors,
+      }),
+    [dayJobs, technicianNames, technicianColors],
+  );
+
+  function toggleCollapseGroup(techId: string) {
+    setCollapsedTechGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(techId)) next.delete(techId);
+      else next.add(techId);
+      return next;
+    });
+  }
+
+  function renderRailJob(order: WorkOrderListItem) {
+    return (
+      <UnscheduledCard
+        key={order._id}
+        order={order}
+        selected={selectedId === order._id}
+        onSelect={() => onSelect(order)}
+        draggable={draggable}
+        lift={liftDrag}
+        recommendation={recommendedTechnician(recommendations[order._id])}
+        technicians={recommendations[order._id] ?? []}
+        technicianColors={technicianColors}
+        dayLabel={dayLabel}
+        onAssignTechnician={
+          onAssignTechnician
+            ? (userId) => onAssignTechnician(order, userId)
+            : undefined
+        }
+        onUnschedule={onUnschedule ? () => onUnschedule(order) : undefined}
+        onView={onView ? () => onView(order) : undefined}
+        onMoveDate={onMoveDate ? (date) => onMoveDate(order, date) : undefined}
+        onNoteAdded={onNoteAdded}
+        duplicate={duplicateIds?.has(order._id) ?? false}
+      />
+    );
+  }
 
   return (
     <aside
@@ -532,81 +584,107 @@ function ScheduleRail({
         <p className="text-xs text-neutral-400">No work orders on {dayLabel}.</p>
       ) : (
         <div className="-mx-1 min-h-0 space-y-3 overflow-y-auto px-1">
-          {dayJobs.length > 0 ? (
+          {groupedDayJobs.unscheduled.length > 0 ? (
             <section className="space-y-2">
-              {dayJobs.map((order) => (
-                <UnscheduledCard
-                  key={order._id}
-                  order={order}
-                  selected={selectedId === order._id}
-                  onSelect={() => onSelect(order)}
-                  draggable={draggable}
-                  lift={liftDrag}
-                  recommendation={recommendedTechnician(
-                    recommendations[order._id],
-                  )}
-                  technicians={recommendations[order._id] ?? []}
-                  technicianColors={technicianColors}
-                  dayLabel={dayLabel}
-                  onAssignTechnician={
-                    onAssignTechnician
-                      ? (userId) => onAssignTechnician(order, userId)
-                      : undefined
-                  }
-                  onUnschedule={
-                    onUnschedule ? () => onUnschedule(order) : undefined
-                  }
-                  onView={onView ? () => onView(order) : undefined}
-                  onMoveDate={
-                    onMoveDate
-                      ? (date) => onMoveDate(order, date)
-                      : undefined
-                  }
-                  onNoteAdded={onNoteAdded}
-                  duplicate={duplicateIds?.has(order._id) ?? false}
-                />
-              ))}
+              <button
+                type="button"
+                onClick={() =>
+                  setUnscheduledCollapsed((collapsed) => !collapsed)
+                }
+                aria-expanded={!unscheduledCollapsed}
+                title={unscheduledCollapsed ? "Expand" : "Collapse"}
+                className="sticky top-0 z-10 flex w-full cursor-pointer select-none items-center justify-between gap-2 rounded-lg border border-orange-500/25 bg-orange-50 px-2.5 py-1.5 text-left"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-[#c2410c]" />
+                  <span className="truncate text-[11px] font-bold uppercase tracking-wider text-[#c2410c]">
+                    Unscheduled Appointments
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <span className="rounded-full bg-[#c2410c] px-2 py-0.5 text-[11px] font-bold text-white">
+                    {groupedDayJobs.unscheduled.length}
+                  </span>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-[#c2410c] transition-transform duration-200 ${
+                      unscheduledCollapsed ? "-rotate-90" : "rotate-0"
+                    }`}
+                  />
+                </span>
+              </button>
+              {unscheduledCollapsed
+                ? null
+                : groupedDayJobs.unscheduled.map(renderRailJob)}
             </section>
           ) : null}
           {undatedJobs.length > 0 ? (
             <section className="space-y-2">
-              <h3 className="sticky top-0 z-10 bg-white py-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                No date
-              </h3>
-              {undatedJobs.map((order) => (
-                <UnscheduledCard
-                  key={order._id}
-                  order={order}
-                  selected={selectedId === order._id}
-                  onSelect={() => onSelect(order)}
-                  draggable={draggable}
-                  lift={liftDrag}
-                  recommendation={recommendedTechnician(
-                    recommendations[order._id],
-                  )}
-                  technicians={recommendations[order._id] ?? []}
-                  technicianColors={technicianColors}
-                  dayLabel={dayLabel}
-                  onAssignTechnician={
-                    onAssignTechnician
-                      ? (userId) => onAssignTechnician(order, userId)
-                      : undefined
-                  }
-                  onUnschedule={
-                    onUnschedule ? () => onUnschedule(order) : undefined
-                  }
-                  onView={onView ? () => onView(order) : undefined}
-                  onMoveDate={
-                    onMoveDate
-                      ? (date) => onMoveDate(order, date)
-                      : undefined
-                  }
-                  onNoteAdded={onNoteAdded}
-                  duplicate={duplicateIds?.has(order._id) ?? false}
-                />
-              ))}
+              <button
+                type="button"
+                onClick={() => setNoDateCollapsed((collapsed) => !collapsed)}
+                aria-expanded={!noDateCollapsed}
+                title={noDateCollapsed ? "Expand" : "Collapse"}
+                className="sticky top-0 z-10 flex w-full cursor-pointer select-none items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-neutral-100 px-2.5 py-1.5 text-left transition-colors hover:bg-neutral-200/80"
+              >
+                <span className="truncate text-[11px] font-bold uppercase tracking-wide text-neutral-500">
+                  No date
+                </span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <span className="rounded-full border border-neutral-200 bg-white px-2 py-0.5 text-[11px] font-bold text-neutral-700">
+                    {undatedJobs.length}
+                  </span>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-neutral-400 transition-transform duration-200 ${
+                      noDateCollapsed ? "-rotate-90" : "rotate-0"
+                    }`}
+                  />
+                </span>
+              </button>
+              {noDateCollapsed ? null : undatedJobs.map(renderRailJob)}
             </section>
           ) : null}
+          {groupedDayJobs.technicianGroups.map((group) => {
+            const isCollapsed = collapsedTechGroups.has(group.technicianId);
+            return (
+              <section key={group.technicianId} className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => toggleCollapseGroup(group.technicianId)}
+                  aria-expanded={!isCollapsed}
+                  title={isCollapsed ? "Expand" : "Collapse"}
+                  className="sticky top-0 z-10 flex w-full cursor-pointer select-none items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-neutral-100 px-2.5 py-1.5 text-left transition-colors hover:bg-neutral-200/80"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      aria-hidden
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: group.technicianColor }}
+                    />
+                    <span className="truncate text-xs font-bold text-brand-dark">
+                      {group.technicianName}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {group.timeSpan ? (
+                      <span className="text-[11px] font-semibold tabular-nums text-neutral-600">
+                        {group.timeSpan}
+                      </span>
+                    ) : null}
+                    <span className="rounded-full border border-neutral-200 bg-white px-2 py-0.5 text-[11px] font-bold text-neutral-700">
+                      {group.jobs.length}{" "}
+                      {group.jobs.length === 1 ? "stop" : "stops"}
+                    </span>
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 text-neutral-400 transition-transform duration-200 ${
+                        isCollapsed ? "-rotate-90" : "rotate-0"
+                      }`}
+                    />
+                  </div>
+                </button>
+                {isCollapsed ? null : group.jobs.map(renderRailJob)}
+              </section>
+            );
+          })}
           {tasks.length > 0 ? (
             <section className="space-y-2">
               <h3 className="sticky top-0 z-10 bg-white py-1 text-[11px] font-semibold uppercase tracking-wide text-violet-700">
@@ -2875,6 +2953,7 @@ export default function CalendarTab({
       onPane={setMapRailPane}
       technicianPane={technicianPane}
       technicianColors={technicianColors}
+      technicianNames={technicianNames}
       tasks={railTasks}
       onCreateTask={
         canManageTasks ? () => setCreatingTask(true) : undefined

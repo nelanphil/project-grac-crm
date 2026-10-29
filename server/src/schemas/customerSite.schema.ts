@@ -153,6 +153,11 @@ const newOwnerContactSchema = z.object({
 
 export const newOwnerSchema = z
   .object({
+    reason: z
+      .string({ error: "A reason is required." })
+      .trim()
+      .min(1, "A reason is required.")
+      .max(2000, "Reason must be 2000 characters or fewer."),
     contactId: z.string().trim().min(1).optional(),
     contact: newOwnerContactSchema.optional(),
   })

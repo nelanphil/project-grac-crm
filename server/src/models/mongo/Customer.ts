@@ -49,6 +49,11 @@ export interface ICustomer extends Document {
   /** Soft delete — excluded from default lists when set. */
   deletedAt: Date | null;
   /**
+   * Contacts New Owner removed from this property. They stay in the directory.
+   * Used so notifications can still show their email and text preferences.
+   */
+  formerContactRefs?: Types.ObjectId[];
+  /**
    * Staff signal for who to contact and schedule.
    * Unset until someone rates the customer.
    */
@@ -104,6 +109,12 @@ const customerSchema = new Schema<ICustomer>(
       index: true,
     },
     deletedAt: { type: Date, default: null, index: true },
+    formerContactRefs: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "CustomerContact",
+      },
+    ],
     reputation: {
       type: String,
       enum: [...CUSTOMER_REPUTATIONS, null],
