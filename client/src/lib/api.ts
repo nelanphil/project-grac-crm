@@ -8871,6 +8871,7 @@ export interface InboxConversationItem {
   readByName: string | null;
   pinned: boolean;
   blocked: boolean;
+  hidden: boolean;
   openTaskCount: number;
   ourNumber: string;
   emailAccountId: string | null;
@@ -8995,6 +8996,7 @@ export async function getInboxConversations(
 ): Promise<{
   conversations: InboxConversationItem[];
   pinned?: InboxConversationItem[];
+  customers?: InboxCustomerMatch[];
   nextCursor: string | null;
 }> {
   return authRequest(
@@ -9141,6 +9143,26 @@ export async function reopenInboxConversation(
   id: string,
 ): Promise<{ conversation: InboxConversationItem }> {
   return authRequest(`/inboxes/conversations/${id}/reopen`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function restoreInboxConversation(
+  token: string,
+  id: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/conversations/${id}/restore`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function openInboxCustomerConversation(
+  token: string,
+  customerId: string,
+): Promise<{ conversation: InboxConversationItem }> {
+  return authRequest(`/inboxes/customers/${customerId}/conversation`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -9338,11 +9360,18 @@ export async function addInboxNote(
   });
 }
 
+export interface InboxCustomerMatch {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+}
+
 export async function searchInboxCustomers(
   token: string,
   q: string,
 ): Promise<{
-  customers: { id: string; name: string; phone: string; email: string }[];
+  customers: InboxCustomerMatch[];
 }> {
   return authRequest(`/inboxes/customers${inboxQuery({ q })}`, {
     method: "GET",

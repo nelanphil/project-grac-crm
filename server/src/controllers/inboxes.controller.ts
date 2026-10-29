@@ -33,6 +33,7 @@ import {
   ensureInboxCustomer,
   inboxPhoneHandle,
   linkInboxConversationToCustomer,
+  openInboxConversationForCustomer,
   setInboxBlocked,
   touchFromTwilio,
 } from "../services/inboxConversation.service";
@@ -94,6 +95,7 @@ import {
   normalizeInboxMediaUrls,
   parseInboxScheduledAt,
 } from "../utils/inboxSms";
+import { inboxListFilter } from "../utils/inboxListFilter";
 
 const LIST_LIMIT = 40;
 const TIMELINE_LIMIT = 40;
@@ -233,6 +235,7 @@ function publicConversation(row: {
   readByUserRef?: unknown;
   pinnedAt?: Date | null;
   blocked?: boolean;
+  deletedAt?: Date | null;
   ourNumber?: string;
   emailAccountRef?: Types.ObjectId | null;
 }, openTaskCount = 0) {
@@ -273,6 +276,7 @@ function publicConversation(row: {
     readByName: personName(reader) || null,
     pinned: Boolean(row.pinnedAt),
     blocked: Boolean(row.blocked),
+    hidden: Boolean(row.deletedAt),
     openTaskCount,
     ourNumber: row.ourNumber || "",
     emailAccountId: row.emailAccountRef ? String(row.emailAccountRef) : null,
@@ -297,33 +301,6 @@ function decodeCursor(raw: string): { at: Date; id: Types.ObjectId } | null {
   return { at, id: new Types.ObjectId(id) };
 }
 
-function listQuery(req: AuthRequest): Record<string, unknown>[] {
-  const showBlocked = req.query.blocked === "1" || req.query.blocked === "true";
-  const status = String(req.query.status || "open");
-  const filterName = String(req.query.filter || "");
-  const channel = String(req.query.channel || "");
-  const q = String(req.query.q || "").trim();
-  const and: Record<string, unknown>[] = [{ deletedAt: null }];
-  if (showBlocked) {
-    and.push({ blocked: true });
-  } else {
-    and.push({ blocked: { $ne: true } });
-    and.push({ lastInboundAt: { $ne: null } });
-    if (status === "open" || status === "closed") and.push({ status });
-    if (filterName === "unread") and.push({ unreadCount: { $gt: 0 } });
-    if (filterName === "unresponded") and.push({ lastDirection: "inbound" });
-  }
-  if (channel === "text") and.push({ lastChannel: { $in: ["sms", "mms"] } });
-  else if (channel === "sms" || channel === "mms" || channel === "voice" || channel === "email") {
-    and.push({ lastChannel: channel });
-  }
-  if (q) {
-    const rx = new RegExp(escapeRegex(q), "i");
-    and.push({ $or: [{ displayName: rx }, { handle: rx }] });
-  }
-  return and;
-}
-
 async function loadConversationPage(filter: Record<string, unknown>, limit: number) {
   return InboxConversation.find(filter)
     .sort({ lastInboundAt: -1, _id: -1 })
@@ -338,8 +315,14 @@ export async function listInboxConversations(
   res: Response,
 ): Promise<void> {
   try {
-    const base = listQuery(req);
     const cursor = decodeCursor(String(req.query.cursor || ""));
+    const q = String(req.query.q || "").trim();
+    const showBlocked = req.query.blocked === "1" || req.query.blocked === "true";
+    const matched = q && !showBlocked ? await matchCustomers(q, 25) : [];
+    const base = inboxListFilter(
+      req.query,
+      matched.map((row) => row._id),
+    );
     const pageAnd = [...base, { pinnedAt: null }];
     if (cursor) {
       pageAnd.push({
@@ -366,9 +349,23 @@ export async function listInboxConversations(
     const presentRow = (row: (typeof page)[number]) =>
       publicConversation(row as never, counts.get(String(row._id)) || 0);
     const last = page[page.length - 1];
+    const withChat = matched.length && !cursor
+      ? new Set(
+          (
+            await InboxConversation.distinct("customerRef", {
+              customerRef: { $in: matched.map((row) => row._id) },
+            })
+          ).map(String),
+        )
+      : new Set<string>();
     res.json({
       pinned: cursor ? undefined : pinned.map(presentRow),
       conversations: page.map(presentRow),
+      customers: cursor
+        ? undefined
+        : matched
+            .filter((row) => !withChat.has(String(row._id)))
+            .map(publicCustomerMatch),
       nextCursor:
         hasMore && last?.lastInboundAt
           ? `${new Date(last.lastInboundAt).toISOString()}_${String(last._id)}`
@@ -428,13 +425,7 @@ export async function getInboxTimeline(
     const beforeRaw = String(req.query.before || "");
     const before = beforeRaw ? new Date(beforeRaw) : null;
     const beforeOk = before && !Number.isNaN(before.getTime()) ? before : null;
-    const afterRaw = convo.historyFrom ? new Date(convo.historyFrom) : null;
-    const after = afterRaw && !Number.isNaN(afterRaw.getTime()) ? afterRaw : null;
-    const createdRange: { $lt?: Date; $gt?: Date } = {};
-    if (beforeOk) createdRange.$lt = beforeOk;
-    if (after) createdRange.$gt = after;
-    const createdAt =
-      createdRange.$lt || createdRange.$gt ? { createdAt: createdRange } : {};
+    const createdAt = beforeOk ? { createdAt: { $lt: beforeOk } } : {};
     const match = commFilter(convo);
     const twilioQuery = { ...match.twilio, ...createdAt };
     const emailQuery = { ...match.email, ...createdAt };
@@ -694,6 +685,29 @@ export async function reopenInboxConversation(req: AuthRequest, res: Response): 
   } catch (err) {
     console.error("POST /inboxes/conversations/:id/reopen error:", err);
     res.status(500).json({ message: "Failed to reopen the conversation" });
+  }
+}
+
+export async function restoreInboxConversation(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const convo = await loadConversation(String(req.params.id));
+    if (!convo) {
+      res.status(404).json({ message: "Conversation not found" });
+      return;
+    }
+    convo.deletedAt = null;
+    convo.status = "open";
+    convo.closedAt = null;
+    convo.closedByUserRef = null;
+    await convo.save();
+    publishDashboardChanged();
+    await present(convo._id, res);
+  } catch (err) {
+    console.error("POST /inboxes/conversations/:id/restore error:", err);
+    res.status(500).json({ message: "Failed to restore the conversation" });
   }
 }
 
@@ -1722,38 +1736,69 @@ export async function addInboxNote(req: AuthRequest, res: Response): Promise<voi
   }
 }
 
-export async function searchInboxCustomers(req: AuthRequest, res: Response): Promise<void> {
+async function matchCustomers(q: string, limit: number) {
+  if (q.length < 2) return [];
+  const rx = new RegExp(escapeRegex(q), "i");
+  const or: Record<string, unknown>[] = [
+    { accountName: rx },
+    { first: rx },
+    { last: rx },
+    { email: rx },
+  ];
+  const digits = q.replace(/\D/g, "");
+  if (digits.length >= 3) or.push({ phoneDigits: new RegExp(digits) });
+  return Customer.find({
+    ...activeCustomerFilter,
+    ...notMerged,
+    $or: or,
+  })
+    .select("accountName first last phone email")
+    .limit(limit)
+    .lean();
+}
+
+function publicCustomerMatch(row: {
+  _id: unknown;
+  accountName?: string;
+  first?: string;
+  last?: string;
+  phone?: string;
+  email?: string;
+}) {
+  return {
+    id: String(row._id),
+    name: customerDisplayName(row),
+    phone: row.phone || "",
+    email: row.email || "",
+  };
+}
+
+export async function openInboxCustomerConversation(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
   try {
-    const q = String(req.query.q || "").trim();
-    if (q.length < 2) {
-      res.json({ customers: [] });
+    const customerId = String(req.params.customerId || "");
+    if (!Types.ObjectId.isValid(customerId)) {
+      res.status(400).json({ message: "Choose a customer." });
       return;
     }
-    const rx = new RegExp(escapeRegex(q), "i");
-    const or: Record<string, unknown>[] = [
-      { accountName: rx },
-      { first: rx },
-      { last: rx },
-      { email: rx },
-    ];
-    const digits = q.replace(/\D/g, "");
-    if (digits.length >= 3) or.push({ phoneDigits: new RegExp(digits) });
-    const rows = await Customer.find({
-      ...activeCustomerFilter,
-      ...notMerged,
-      $or: or,
-    })
-      .select("accountName first last phone email")
-      .limit(8)
-      .lean();
-    res.json({
-      customers: rows.map((row) => ({
-        id: String(row._id),
-        name: customerDisplayName(row),
-        phone: row.phone || "",
-        email: row.email || "",
-      })),
-    });
+    const convo = await openInboxConversationForCustomer(new Types.ObjectId(customerId));
+    if (!convo) {
+      res.status(404).json({ message: "Customer not found" });
+      return;
+    }
+    await present(convo._id, res);
+  } catch (err) {
+    console.error("POST /inboxes/customers/:customerId/conversation error:", err);
+    res.status(500).json({ message: "Failed to open the conversation" });
+  }
+}
+
+export async function searchInboxCustomers(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const rows = await matchCustomers(String(req.query.q || "").trim(), 8);
+    res.json({ customers: rows.map(publicCustomerMatch) });
   } catch (err) {
     console.error("GET /inboxes/customers error:", err);
     res.status(500).json({ message: "Failed to search customers" });

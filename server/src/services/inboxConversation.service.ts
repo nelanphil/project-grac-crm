@@ -104,14 +104,13 @@ export type InboxLifecycle = {
   unreadCount: number;
   readAt: Date | null;
   deletedAt: Date | null;
-  historyFrom: Date | null;
   blocked: boolean;
 };
 
 /**
  * Next inbox flags after a message. A blocked chat stays quiet. A deleted
- * chat comes back only on a newer inbound message and hides history from
- * before the delete. Only a customer reply reopens a chat marked done.
+ * chat comes back only on a newer inbound message, with its full history.
+ * Only a customer reply reopens a chat marked done.
  * Outbound messages clear unread and leave the chat where it is.
  */
 export function nextInboxLifecycle(
@@ -133,7 +132,6 @@ export function nextInboxLifecycle(
     input.reopen &&
     state.deletedAt
   ) {
-    next.historyFrom = state.deletedAt;
     next.deletedAt = null;
     next.status = "open";
   }
@@ -281,7 +279,6 @@ export async function touchInboxConversation(
       unreadCount: convo.unreadCount || 0,
       readAt: convo.readAt ?? null,
       deletedAt: convo.deletedAt ?? null,
-      historyFrom: convo.historyFrom ?? null,
       blocked: Boolean(convo.blocked),
     },
     {
@@ -295,7 +292,6 @@ export async function touchInboxConversation(
   convo.status = next.status;
   convo.unreadCount = next.unreadCount;
   convo.deletedAt = next.deletedAt;
-  convo.historyFrom = next.historyFrom;
   if (!next.readAt) {
     convo.readAt = null;
     convo.readByUserRef = null;
@@ -580,6 +576,68 @@ export async function linkInboxConversationToCustomer(
   return convo;
 }
 
+/**
+ * The customer's chat, created when staff start one by hand. Picks up a
+ * matching unlinked chat first so history stays in one thread. Returns null
+ * when the customer does not exist.
+ */
+export async function openInboxConversationForCustomer(
+  customerId: Types.ObjectId,
+): Promise<IInboxConversation | null> {
+  const customer = await Customer.findOne({
+    _id: customerId,
+    ...activeCustomerFilter,
+    ...notMerged,
+  })
+    .select("accountName first last phone email")
+    .lean();
+  if (!customer) return null;
+
+  const phone = inboxPhoneHandle(customer.phone);
+  const email = inboxEmailHandle(customer.email);
+  let convo: IInboxConversation | null = await InboxConversation.findOne({
+    customerRef: customer._id,
+  });
+  if (!convo && (phone || email)) {
+    const orphan = await InboxConversation.findOne({
+      customerRef: null,
+      $or: [
+        ...(phone ? [{ handle: phone, handleKind: "phone" }] : []),
+        ...(email ? [{ handle: email, handleKind: "email" }] : []),
+      ],
+    }).sort({ lastMessageAt: -1 });
+    if (orphan) convo = await linkInboxConversationToCustomer(orphan, customer._id);
+  }
+  if (!convo) {
+    const filter = { customerRef: customer._id };
+    try {
+      convo = await InboxConversation.create({
+        customerRef: customer._id,
+        handle: phone || email || String(customer._id),
+        handleKind: phone || !email ? "phone" : "email",
+        displayName: customerDisplayName(customer),
+        status: "open",
+      });
+    } catch (err) {
+      if (!isDuplicateKey(err)) throw err;
+      convo = await InboxConversation.findOne(filter);
+      if (!convo) throw err;
+    }
+    publishDashboardChanged();
+    return convo;
+  }
+
+  if (convo.deletedAt || convo.status === "closed") {
+    convo.deletedAt = null;
+    convo.status = "open";
+    convo.closedAt = null;
+    convo.closedByUserRef = null;
+    await convo.save();
+    publishDashboardChanged();
+  }
+  return convo;
+}
+
 /** Link an unknown conversation when the handle matches one customer. */
 export async function ensureInboxCustomer(
   convo: IInboxConversation,
@@ -848,7 +906,7 @@ export async function rebuildInboxConversations(): Promise<{
     }
   }
 
-  // Refresh unread only. Leave deletedAt, historyFrom, blocked, and pins alone.
+  // Refresh unread only. Leave deletedAt, blocked, and pins alone.
   await InboxConversation.updateMany(
     {
       lastDirection: "inbound",

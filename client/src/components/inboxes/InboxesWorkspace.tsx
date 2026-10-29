@@ -6,6 +6,7 @@ import {
   ApiError,
   InboxChannels,
   InboxConversationItem,
+  InboxCustomerMatch,
   blockInboxConversation,
   callInboxConversation,
   closeInboxConversation,
@@ -15,8 +16,10 @@ import {
   getInboxTimeline,
   markInboxConversationRead,
   markInboxConversationUnread,
+  openInboxCustomerConversation,
   pinInboxConversation,
   reopenInboxConversation,
+  restoreInboxConversation,
   unblockInboxConversation,
   unpinInboxConversation,
 } from "@/lib/api";
@@ -53,6 +56,7 @@ export default function InboxesWorkspace() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [conversations, setConversations] = useState<InboxConversationItem[]>([]);
   const [pinned, setPinned] = useState<InboxConversationItem[]>([]);
+  const [customerMatches, setCustomerMatches] = useState<InboxCustomerMatch[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const requestKey = `${closed}|${chip}|${tab}|${channel}|${debouncedQuery}|${showBlocked}|${refreshKey}`;
@@ -92,6 +96,7 @@ export default function InboxesWorkspace() {
         if (cancelled) return;
         setConversations(result.conversations);
         setPinned(result.pinned ?? []);
+        setCustomerMatches(result.customers ?? []);
         setNextCursor(result.nextCursor);
         setError(null);
         setLoadedKey(requestKey);
@@ -175,6 +180,37 @@ export default function InboxesWorkspace() {
     const qs = params.toString();
     router.replace(qs ? `/dashboard/inboxes?${qs}` : "/dashboard/inboxes", { scroll: false });
     setContextOpen(false);
+    const item = id ? findItem(id) : null;
+    if (token && canWrite && debouncedQuery && item && (item.hidden || item.status === "closed")) {
+      void restore(item);
+    }
+  }
+
+  async function openCustomer(match: InboxCustomerMatch) {
+    if (!token) return;
+    try {
+      const result = await openInboxCustomerConversation(token, match.id);
+      setCustomerMatches((current) => current.filter((row) => row.id !== match.id));
+      setConversations((current) => [
+        result.conversation,
+        ...current.filter((row) => row.id !== result.conversation.id),
+      ]);
+      select(result.conversation.id);
+      setRefreshKey((value) => value + 1);
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : "Could not open a chat for this customer");
+    }
+  }
+
+  async function restore(item: InboxConversationItem) {
+    if (!token) return;
+    try {
+      const result = await restoreInboxConversation(token, item.id);
+      remember(result.conversation);
+      setRefreshKey((value) => value + 1);
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : "Could not restore the conversation");
+    }
   }
 
   function remember(next: InboxConversationItem) {
@@ -334,6 +370,10 @@ export default function InboxesWorkspace() {
           query={query}
           conversations={conversations}
           pinned={pinned}
+          customers={canWrite && debouncedQuery ? customerMatches : []}
+          onSelectCustomer={(match) => {
+            void openCustomer(match);
+          }}
           selectedId={selectedId}
           loading={loading}
           error={error}
@@ -417,6 +457,7 @@ export default function InboxesWorkspace() {
                   readByName: null,
                   pinned: false,
                   blocked: false,
+                  hidden: false,
                   openTaskCount: 0,
                   ourNumber: "",
                   emailAccountId: null,

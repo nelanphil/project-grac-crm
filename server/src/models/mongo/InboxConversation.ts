@@ -31,8 +31,6 @@ export interface IInboxConversation extends Document {
   pinnedByUserRef: Types.ObjectId | null;
   blocked: boolean;
   deletedAt: Date | null;
-  /** Messages at or before this time stay hidden after a deleted chat comes back. */
-  historyFrom: Date | null;
   ourNumber: string;
   emailAccountRef: Types.ObjectId | null;
   createdAt: Date;
@@ -91,7 +89,6 @@ const inboxConversationSchema = new Schema<IInboxConversation>(
     },
     blocked: { type: Boolean, default: false, index: true },
     deletedAt: { type: Date, default: null },
-    historyFrom: { type: Date, default: null },
     ourNumber: { type: String, default: "" },
     emailAccountRef: {
       type: Schema.Types.ObjectId,

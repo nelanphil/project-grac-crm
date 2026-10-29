@@ -37,7 +37,6 @@ describe("nextInboxLifecycle", () => {
     unreadCount: 0,
     readAt: new Date("2026-10-25T12:00:00.000Z"),
     deletedAt: null,
-    historyFrom: null,
     blocked: false,
   };
 
@@ -107,7 +106,6 @@ describe("nextInboxLifecycle", () => {
     );
     assert.equal(next.status, "open");
     assert.equal(next.deletedAt, null);
-    assert.equal(next.historyFrom?.toISOString(), deletedAt.toISOString());
   });
 
   it("keeps a deleted chat hidden when staff message", () => {
@@ -124,7 +122,6 @@ describe("nextInboxLifecycle", () => {
     );
     assert.equal(next.status, "closed");
     assert.equal(next.deletedAt?.toISOString(), deletedAt.toISOString());
-    assert.equal(next.historyFrom, null);
   });
 
   it("keeps a deleted chat hidden during backfill", () => {

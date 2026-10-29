@@ -22,10 +22,12 @@ import {
   markInboxUnread,
   pinInboxConversation,
   reopenInboxConversation,
+  restoreInboxConversation,
   scheduleInboxSms,
   unblockInboxConversation,
   unpinInboxConversation,
   searchInboxCustomers,
+  openInboxCustomerConversation,
   sendInboxEmail,
   sendInboxSms,
   uploadInboxEmailAttachmentsMiddleware,
@@ -55,6 +57,11 @@ router.post(
 router.get("/channels", requirePermission("messages:read"), listInboxChannels);
 router.get("/templates", requirePermission("messages:read"), listInboxTemplates);
 router.get("/customers", requirePermission("messages:read"), searchInboxCustomers);
+router.post(
+  "/customers/:customerId/conversation",
+  requirePermission("messages:write"),
+  openInboxCustomerConversation,
+);
 router.get("/conversations", requirePermission("messages:read"), listInboxConversations);
 router.get(
   "/conversations/:id/timeline",
@@ -80,6 +87,11 @@ router.post(
   "/conversations/:id/reopen",
   requirePermission("messages:write"),
   reopenInboxConversation,
+);
+router.post(
+  "/conversations/:id/restore",
+  requirePermission("messages:write"),
+  restoreInboxConversation,
 );
 router.post(
   "/conversations/:id/unread",

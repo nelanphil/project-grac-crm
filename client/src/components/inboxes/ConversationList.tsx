@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef } from "react";
-import { InboxConversationItem } from "@/lib/api";
+import { InboxConversationItem, InboxCustomerMatch } from "@/lib/api";
 import { formatRelativeTime } from "@/components/messaging/conversationUtils";
 import { avatarColor, conversationPreview, initials } from "./inboxFormat";
 import { Phone, PhoneIncoming, PhoneOutgoing, Pin, Search, SlidersHorizontal, SquareCheck } from "lucide-react";
@@ -19,6 +19,8 @@ type ConversationListProps = {
   query: string;
   conversations: InboxConversationItem[];
   pinned: InboxConversationItem[];
+  customers: InboxCustomerMatch[];
+  onSelectCustomer: (customer: InboxCustomerMatch) => void;
   selectedId: string | null;
   loading: boolean;
   error: string | null;
@@ -102,6 +104,11 @@ function ConversationRow({
           >
             {item.pinned ? <Pin className="h-3 w-3 shrink-0 text-[var(--staff-muted)]" /> : null}
             <span className="truncate">{item.displayName || item.phone || item.email}</span>
+            {item.hidden || item.status === "closed" ? (
+              <span className="shrink-0 rounded bg-[var(--staff-cream)] px-1 text-[10px] font-medium text-[var(--staff-muted)]">
+                {item.hidden ? "Deleted" : "Done"}
+              </span>
+            ) : null}
           </span>
           <span className="flex shrink-0 items-center gap-1 text-[10px] text-[var(--staff-muted)]">
             {item.openTaskCount > 0 ? (
@@ -137,6 +144,8 @@ export default function ConversationList({
   query,
   conversations,
   pinned,
+  customers,
+  onSelectCustomer,
   selectedId,
   loading,
   error,
@@ -270,7 +279,7 @@ export default function ConversationList({
         {loading && rows.length === 0 ? (
           <p className="px-4 py-6 text-sm text-[var(--staff-muted)]">Loading conversations…</p>
         ) : null}
-        {!loading && rows.length === 0 ? (
+        {!loading && rows.length === 0 && customers.length === 0 ? (
           <p className="px-4 py-6 text-sm text-[var(--staff-muted)]">No conversations</p>
         ) : null}
         {pinned.length > 0 ? (
@@ -300,6 +309,36 @@ export default function ConversationList({
             onSelect={onSelect}
             onContextMenu={onContextMenu}
           />
+        ))}
+        {customers.length > 0 ? (
+          <p className="px-3 pt-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--staff-muted)]">
+            Customers
+          </p>
+        ) : null}
+        {customers.map((customer) => (
+          <button
+            key={customer.id}
+            type="button"
+            onClick={() => onSelectCustomer(customer)}
+            className="flex w-full items-start gap-3 border-b border-[var(--staff-border)] px-3 py-3 text-left hover:bg-[var(--staff-cream)]"
+          >
+            <span
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
+              style={{ backgroundColor: avatarColor(customer.name || customer.phone) }}
+            >
+              {initials(customer.name || customer.phone || customer.email)}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-[var(--staff-ink)]">
+                {customer.name || customer.phone || customer.email}
+              </span>
+              <span className="mt-0.5 block truncate text-xs text-[var(--staff-muted)]">
+                {[customer.phone, customer.email].filter(Boolean).join(" · ") ||
+                  "No phone or email on file"}
+                {" · Start a chat"}
+              </span>
+            </span>
+          </button>
         ))}
         {hasMore ? (
           <button
