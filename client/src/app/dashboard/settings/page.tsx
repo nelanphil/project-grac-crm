@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import AuthGuard from "@/components/auth/AuthGuard";
 import { useAuthStore } from "@/store/useAuthStore";
 import ProfileTab from "./ProfileTab";
@@ -31,6 +31,13 @@ export default function SettingsPage() {
 function SettingsContent() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabId>("profile");
+
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (tab === "profile" || tab === "password" || tab === "notifications") {
+      setActiveTab(tab);
+    }
+  }, []);
 
   if (!user) return null;
 

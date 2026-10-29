@@ -24,10 +24,15 @@ export interface IWorkOrderPart {
   amount: number;
 }
 
+export const WORK_ORDER_ORIGINS = ["user", "legacy_import", "legacy_linked"] as const;
+export type WorkOrderOrigin = (typeof WORK_ORDER_ORIGINS)[number];
+
 export interface IWorkOrder extends Document {
   legacyId: number;
   /** Set when a site-dump row was attached to a work order created in the CRM. */
   legacyLinkedAt: Date | null;
+  /** How the work order was first created. Older rows are classified from legacy fields. */
+  origin?: WorkOrderOrigin;
   number?: string;
   userId: number;
   customerId: number; // references Customer.legacyId
@@ -133,6 +138,10 @@ const workOrderSchema = new Schema<IWorkOrder>(
   {
     legacyId: { type: Number, index: true },
     legacyLinkedAt: { type: Date, default: null },
+    origin: {
+      type: String,
+      enum: WORK_ORDER_ORIGINS,
+    },
     number: { type: String, default: undefined },
     userId: { type: Number, index: true },
     customerId: { type: Number, index: true, required: true },

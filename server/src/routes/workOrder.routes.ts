@@ -3,6 +3,7 @@ import { authenticate, requirePermission } from "../middleware/auth.middleware";
 import {
   getWorkOrders,
   getWorkOrderById,
+  getWorkOrderActivity,
   getWorkOrdersByCustomer,
   createWorkOrder,
   updateWorkOrder,
@@ -33,6 +34,7 @@ router.get("/notes", listWorkOrderNoteHistory);
 router.get("/", getWorkOrders);
 router.get("/by-customer/:customerId", getWorkOrdersByCustomer);
 router.get("/:id/notes", getWorkOrderNotes);
+router.get("/:id/activity", getWorkOrderActivity);
 router.post("/:id/notes", createWorkOrderNote);
 router.patch("/:id/notes/:noteId", updateWorkOrderNote);
 router.delete("/:id/notes/:noteId", deleteWorkOrderNote);

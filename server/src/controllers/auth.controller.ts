@@ -59,6 +59,15 @@ import {
   renameEmailPreferences,
   setEmailPreferences,
 } from "../utils/emailPreferences";
+import {
+  recordEmailPreferenceChange,
+  recordSmsPreferenceActivity,
+} from "../utils/notificationActivity";
+import {
+  clearSmsOptOut,
+  getSmsPreference,
+  setSmsOptOut,
+} from "../utils/smsPreferences";
 import { capabilitiesForJobRoleIds, homeViewForJobRoleIds, slugsForJobRoleIds } from "../utils/jobRoles";
 import {
   isCustomerRole,
@@ -198,7 +207,10 @@ async function toUserPayload(
 ) {
   const own = (user.phone ?? "").trim();
   const phone = own || (await lookupContactPhone(user.email));
-  const prefs = await getEmailPreferences(user.email);
+  const [prefs, sms] = await Promise.all([
+    getEmailPreferences(user.email),
+    getSmsPreference(phone),
+  ]);
   const jobRoles = (user.jobRoles ?? []).map((id) => String(id));
   const [capabilities, jobRoleSlugs, homeView] = await Promise.all([
     capabilitiesForJobRoleIds(jobRoles),
@@ -216,6 +228,7 @@ async function toUserPayload(
     }),
     generalNotifications: prefs.generalNotifications,
     billingAlerts: prefs.billingAlerts,
+    smsOptIn: Boolean(user.smsOptIn) && sms.textNotifications,
   };
 }
 
@@ -422,6 +435,12 @@ export async function acceptLegalConsent(
     applyLegalConsent(user, parsed.data.smsOptIn);
     if (parsed.data.phone) user.phone = parsed.data.phone;
     await user.save();
+
+    if (parsed.data.smsOptIn) {
+      const phone =
+        (user.phone ?? "").trim() || (await lookupContactPhone(user.email));
+      await clearSmsOptOut(phone);
+    }
 
     if (isCustomerRole(user) && parsed.data.phone) {
       await syncEmptyContactPhone(user.email, parsed.data.phone);
@@ -828,15 +847,67 @@ export async function updateMyNotifications(
       user.smsOptIn = parsed.data.smsOptIn;
       user.smsOptInAt = parsed.data.smsOptIn ? new Date() : null;
       await user.save();
+      const phone =
+        (user.phone ?? "").trim() || (await lookupContactPhone(user.email));
+      const actorName =
+        `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim() || "Customer";
+      const actorKind = isCustomerRole(user) ? "customer" : "staff";
+      if (parsed.data.smsOptIn) {
+        const changed = await clearSmsOptOut(phone);
+        if (changed) {
+          await recordSmsPreferenceActivity({
+            phone,
+            action: "resubscribed",
+            summary: "Turned text notifications back on",
+            actorKind,
+            actorName,
+            actorUserId: String(user._id),
+            source: "portal",
+          });
+        }
+      } else {
+        const applied = await setSmsOptOut({
+          phone,
+          source: "settings",
+          userRef: user._id,
+        });
+        if (applied.changed) {
+          await recordSmsPreferenceActivity({
+            phone,
+            action: "opted_out",
+            summary: "Turned off text notifications",
+            actorKind,
+            actorName,
+            actorUserId: String(user._id),
+            source: "portal",
+          });
+        }
+      }
     }
 
     if (
       parsed.data.generalNotifications !== undefined ||
       parsed.data.billingAlerts !== undefined
     ) {
-      await setEmailPreferences(user.email, {
-        generalNotifications: parsed.data.generalNotifications,
-        billingAlerts: parsed.data.billingAlerts,
+      const before = await getEmailPreferences(user.email);
+      const after = await setEmailPreferences(
+        user.email,
+        {
+          generalNotifications: parsed.data.generalNotifications,
+          billingAlerts: parsed.data.billingAlerts,
+        },
+        { source: "settings" },
+      );
+      const actorName =
+        `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim() || "Customer";
+      await recordEmailPreferenceChange({
+        email: user.email,
+        before,
+        after,
+        actorKind: isCustomerRole(user) ? "customer" : "staff",
+        actorName,
+        actorUserId: String(user._id),
+        source: "portal",
       });
     }
 

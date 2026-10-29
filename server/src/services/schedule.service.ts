@@ -11,6 +11,11 @@ import {
 import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact, activeContactFilter } from "../models/mongo/CustomerContact";
 import { customerDisplayName } from "./notification.service";
+import {
+  recordWorkOrderScheduleChanges,
+  snapshotWorkOrderFields,
+  type WorkOrderActivityActor,
+} from "./workOrderActivity.service";
 import { publishDashboardChanged } from "./dashboardLive";
 import {
   addMinutes,
@@ -3402,6 +3407,7 @@ export async function applyPlannedRoute(opts: {
   date: string;
   orderedWorkOrderIds: string[];
   lockedStops?: Array<{ workOrderId: string; arrival: string }>;
+  actor?: WorkOrderActivityActor | null;
 }): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
   if (opts.orderedWorkOrderIds.length === 0) {
     throw routeError("Choose at least one stop.");
@@ -3519,6 +3525,9 @@ export async function applyPlannedRoute(opts: {
   });
   for (const message of placed.warnings) warn(message);
   const placementById = new Map(placed.placements.map((row) => [row.id, row]));
+  const beforeSchedule = new Map(
+    sequence.map((job) => [String(job._id), snapshotWorkOrderFields(job)]),
+  );
   for (const job of sequence) {
     const slot = placementById.get(String(job._id));
     if (!slot) continue;
@@ -3549,6 +3558,14 @@ export async function applyPlannedRoute(opts: {
   for (const job of sequence) {
     await job.save();
   }
+  await recordWorkOrderScheduleChanges({
+    actor: opts.actor,
+    jobs: sequence.map((job) => ({
+      id: String(job._id),
+      before: beforeSchedule.get(String(job._id)) ?? {},
+      after: snapshotWorkOrderFields(job),
+    })),
+  });
 
   const workOrders = await enrichScheduleWorkOrders(
     sequence.map((job) => job.toObject() as unknown as Record<string, unknown>),
@@ -3559,6 +3576,7 @@ export async function applyPlannedRoute(opts: {
 export async function setRouteStopLock(opts: {
   workOrderId: string;
   locked: boolean;
+  actor?: WorkOrderActivityActor | null;
 }): Promise<EnrichedWorkOrder> {
   if (!mongoose.Types.ObjectId.isValid(opts.workOrderId)) {
     throw routeError("Invalid work order.");
@@ -3568,8 +3586,19 @@ export async function setRouteStopLock(opts: {
   if (opts.locked && !(job.scheduledStart instanceof Date)) {
     throw routeError("Schedule the stop before locking it.");
   }
+  const beforeSchedule = snapshotWorkOrderFields(job);
   job.routeLocked = opts.locked;
   await job.save();
+  await recordWorkOrderScheduleChanges({
+    actor: opts.actor,
+    jobs: [
+      {
+        id: String(job._id),
+        before: beforeSchedule,
+        after: snapshotWorkOrderFields(job),
+      },
+    ],
+  });
   const [enriched] = await enrichScheduleWorkOrders([
     job.toObject() as unknown as Record<string, unknown>,
   ]);
@@ -3939,6 +3968,7 @@ async function placeSharedCrew(opts: {
   latestStart?: Date;
   estimatedMinutes?: number;
   requirePreferred?: boolean;
+  actor?: WorkOrderActivityActor | null;
 }): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
   if (!mongoose.Types.ObjectId.isValid(opts.workOrderId)) {
     throw Object.assign(new Error("Invalid workOrderId"), { status: 400 });
@@ -3986,6 +4016,7 @@ async function placeSharedCrew(opts: {
     .filter((user): user is NonNullable<typeof user> => Boolean(user));
   const prevStart = job.scheduledStart;
   const prevCrew = crewIdStrings(job).join(",");
+  const beforeSchedule = snapshotWorkOrderFields(job);
   applyCrewIds(job, opts.userIds);
   job.scheduledStart = slot.start;
   job.scheduledEnd = slot.end;
@@ -4002,6 +4033,16 @@ async function placeSharedCrew(opts: {
   await applyAssignmentSideEffects(job, ordered);
   writeTicketClock(job);
   await job.save();
+  await recordWorkOrderScheduleChanges({
+    actor: opts.actor,
+    jobs: [
+      {
+        id: String(job._id),
+        before: beforeSchedule,
+        after: snapshotWorkOrderFields(job),
+      },
+    ],
+  });
   const workOrders = await enrichScheduleWorkOrders([
     job.toObject() as unknown as Record<string, unknown>,
   ]);
@@ -4087,13 +4128,18 @@ export async function placeWorkOrder(opts: {
   insertIndex?: number;
   /** Dropped time must fit the whole crew. Do not slide to another gap. */
   requirePreferred?: boolean;
+  actor?: WorkOrderActivityActor | null;
 }): Promise<{ workOrders: EnrichedWorkOrder[]; warnings: string[] }> {
   const requestedCrew = (opts.assignedUserRefs?.length
     ? opts.assignedUserRefs
     : [opts.assignedUserRef]
   ).filter((id) => mongoose.Types.ObjectId.isValid(id));
   if (requestedCrew.length > 1) {
-    return placeSharedCrew({ ...opts, userIds: [...new Set(requestedCrew)] });
+    return placeSharedCrew({
+      ...opts,
+      userIds: [...new Set(requestedCrew)],
+      actor: opts.actor,
+    });
   }
   const useIndex =
     typeof opts.insertIndex === "number" && Number.isFinite(opts.insertIndex);
@@ -4241,6 +4287,9 @@ export async function placeWorkOrder(opts: {
 
   let previous: TimeBlock | null = null;
   const changed: DayJob[] = [];
+  const beforeSchedule = new Map(
+    dayJobs.map((job) => [String(job._id), snapshotWorkOrderFields(job)]),
+  );
   for (const job of movable) {
     const duration = estimatedMinutesForWorkOrder(job);
     const desired =
@@ -4325,6 +4374,14 @@ export async function placeWorkOrder(opts: {
   for (const job of changed) {
     await job.save();
   }
+  await recordWorkOrderScheduleChanges({
+    actor: opts.actor,
+    jobs: changed.map((job) => ({
+      id: String(job._id),
+      before: beforeSchedule.get(String(job._id)) ?? {},
+      after: snapshotWorkOrderFields(job),
+    })),
+  });
 
   const workOrders = await enrichScheduleWorkOrders(
     changed.map((job) => job.toObject() as unknown as Record<string, unknown>),
@@ -4839,6 +4896,7 @@ export type AssignAndOptimizeOpts = {
   date: string;
   objective?: RouteObjective;
   roundTrip?: boolean;
+  actor?: WorkOrderActivityActor | null;
 };
 
 export async function assignAndOptimizeTechnician(
@@ -4914,6 +4972,7 @@ export async function assignAndOptimizeTechnician(
       date: opts.date,
       orderedWorkOrderIds: plan.orderedWorkOrderIds,
       lockedStops,
+      actor: opts.actor,
     });
     warnings = [...plan.warnings, ...(applied.warnings ?? [])];
   } else {
@@ -4925,6 +4984,7 @@ export async function assignAndOptimizeTechnician(
         ? localDateToUtc(opts.date, job.desiredStartTime.trim())
         : undefined,
       estimatedMinutes: job.estimatedMinutes,
+      actor: opts.actor,
     });
     warnings = placed.warnings;
   }
@@ -4962,6 +5022,7 @@ export async function assignAndOptimizeTechnician(
           date: targetDateForPrev,
           orderedWorkOrderIds: prevPlan.orderedWorkOrderIds,
           lockedStops: prevLocks,
+          actor: opts.actor,
         });
       } catch {
         // Best effort re-optimization for previous tech
@@ -4978,6 +5039,7 @@ export async function assignAndOptimizeTechnician(
               ? localDateToUtc(targetDateForPrev, single.desiredStartTime.trim())
               : undefined,
           estimatedMinutes: single.estimatedMinutes,
+          actor: opts.actor,
         });
       } catch {
         // Best effort

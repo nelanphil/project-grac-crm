@@ -44,6 +44,10 @@ import {
   searchHubContacts,
 } from "../utils/messagingContacts";
 import {
+  isSmsEnabled,
+  partitionContactsBySmsOptOut,
+} from "../utils/smsPreferences";
+import {
   accountNameMap,
   toPublicCommunication,
 } from "../utils/communicationFormat";
@@ -377,6 +381,13 @@ export async function dispatchMessagingBatch(
         const phoneOverride =
           uniqueContactIds.length === 1 ? data.toOverride?.trim() : "";
         const toPhone = phoneOverride || built.contact.phone;
+        if (!(await isSmsEnabled(toPhone))) {
+          return {
+            contactId,
+            status: "skipped" as const,
+            error: "Recipient opted out of text messages",
+          };
+        }
         const toE164Number = toE164(toPhone);
         let paymentUrl: string | null = null;
         let paymentLabel = "";
@@ -622,10 +633,11 @@ export async function dispatchMessagingBatch(
 
     const sent = results.filter((r) => r.status === "sent").length;
     const failed = results.filter((r) => r.status === "failed").length;
+    const skipped = results.filter((r) => r.status === "skipped").length;
 
     return {
       results,
-      summary: { total: results.length, sent, failed },
+      summary: { total: results.length, sent, failed, skipped },
       fromNumber,
       twilioAccountId: String(account._id),
       accountSid: account.accountSid,
@@ -811,11 +823,21 @@ export async function scheduleMessages(
         ? data.offerContractTemplateId
         : templateOfferId;
     const userId = req.user?.id ? new Types.ObjectId(req.user.id) : null;
+    const { allowed, skipped } = await partitionContactsBySmsOptOut([
+      ...new Set(data.contactIds),
+    ]);
+    if (allowed.length === 0) {
+      res.status(400).json({
+        message: "Every selected recipient has opted out of text messages.",
+        skipped: skipped.length,
+      });
+      return;
+    }
 
     const row = await ScheduledMessageSend.create({
       invoiceRef: data.invoiceId ? new Types.ObjectId(data.invoiceId) : null,
       expectedAmountCents: data.expectedAmountCents,
-      contactIds: [...new Set(data.contactIds)],
+      contactIds: allowed,
       body: bodyTemplate,
       templateRef: data.templateId ? new Types.ObjectId(data.templateId) : null,
       twilioAccountRef: account._id,
@@ -845,6 +867,7 @@ export async function scheduleMessages(
         row.toObject(),
         account.friendlyName,
       ),
+      skipped: skipped.length,
     });
   } catch (err) {
     if (messagingErrorResponse(err, res)) return;

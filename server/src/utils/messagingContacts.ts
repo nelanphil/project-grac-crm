@@ -10,6 +10,9 @@ import {
   type RenewalScope,
 } from "./messagingContext";
 import { payableInvoiceCustomerIds } from "./paymentLinkForCustomer";
+import { emailOptedOut } from "./emailPreferences";
+import { normalizeAccountEmail } from "./provisionCustomerAccount";
+import { smsOptedOutDigits, smsPreferenceKey } from "./smsPreferences";
 
 export const HUB_CONTACT_PAGE_SIZES = new Set([25, 50, 100, 150, 200, 250]);
 
@@ -38,6 +41,8 @@ export interface HubContactItem {
   renewalDueDate: string | null;
   contractType: string | null;
   hasPayableInvoice?: boolean;
+  doNotNotify: boolean;
+  doNotNotifyReason: string;
 }
 
 export function keepHubContact(
@@ -50,6 +55,41 @@ export function keepHubContact(
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function notifyBlocks(
+  channel: HubContactChannel,
+  contacts: { email?: string | null; phone?: string | null }[],
+): Promise<
+  (contact: { email?: string | null; phone?: string | null }) => {
+    doNotNotify: boolean;
+    doNotNotifyReason: string;
+  }
+> {
+  if (channel === "email") {
+    const opted = await emailOptedOut(contacts.map((contact) => contact.email ?? ""));
+    return (contact) => {
+      const email = normalizeAccountEmail(contact.email ?? "");
+      if (email && opted.has(email)) {
+        return {
+          doNotNotify: true,
+          doNotNotifyReason: "Unsubscribed from email",
+        };
+      }
+      return { doNotNotify: false, doNotNotifyReason: "" };
+    };
+  }
+  const opted = await smsOptedOutDigits(contacts.map((contact) => contact.phone ?? ""));
+  return (contact) => {
+    const key = smsPreferenceKey(contact.phone ?? "");
+    if (key && opted.has(key)) {
+      return {
+        doNotNotify: true,
+        doNotNotifyReason: "Opted out of text messages",
+      };
+    }
+    return { doNotNotify: false, doNotNotifyReason: "" };
+  };
 }
 
 export function parseHubContactPaging(query: {
@@ -98,6 +138,7 @@ export async function searchHubContacts(options: {
 }): Promise<{
   contacts: HubContactItem[];
   total: number;
+  selectableTotal: number;
   page: number;
   pageSize: number;
 }> {
@@ -107,7 +148,7 @@ export async function searchHubContacts(options: {
   if (options.scope) {
     customerRefFilter = await customerRefsWithRenewalsInMonth(options.scope);
     if (customerRefFilter.length === 0) {
-      return { contacts: [], total: 0, page, pageSize };
+      return { contacts: [], total: 0, selectableTotal: 0, page, pageSize };
     }
   }
 
@@ -207,8 +248,17 @@ export async function searchHubContacts(options: {
   );
 
   const total = activeContacts.length;
+  const notifyBlock = await notifyBlocks(channel, activeContacts);
+  const orderedContacts = [...activeContacts].sort((left, right) => {
+    const leftBlocked = notifyBlock(left).doNotNotify ? 1 : 0;
+    const rightBlocked = notifyBlock(right).doNotNotify ? 1 : 0;
+    return leftBlocked - rightBlocked;
+  });
   const start = (page - 1) * pageSize;
-  const pageRows = activeContacts.slice(start, start + pageSize);
+  const pageRows = orderedContacts.slice(start, start + pageSize);
+  const selectableTotal = activeContacts.filter(
+    (contact) => !notifyBlock(contact).doNotNotify,
+  ).length;
 
   const renewalIds = pageRows
     .map((c) => c.customerRef)
@@ -269,8 +319,9 @@ export async function searchHubContacts(options: {
               : false,
           }
         : {}),
+      ...notifyBlock(c),
     };
   });
 
-  return { contacts, total, page, pageSize };
+  return { contacts, total, selectableTotal, page, pageSize };
 }

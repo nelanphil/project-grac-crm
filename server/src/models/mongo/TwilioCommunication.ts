@@ -64,6 +64,16 @@ export interface ITwilioCommunication extends Document {
   autoReply?: "missed-call" | "";
   /** Set for texts sent from Message Wizard. Empty for inbox and system texts. */
   sendSource?: "" | "wizard";
+  /**
+   * Inbound opt-out handling. `applied` already turned texts off, `suggested`
+   * is waiting for staff, `dismissed` was reviewed and left on.
+   */
+  optOut?: {
+    state: "" | "applied" | "suggested" | "dismissed";
+    matched: string;
+    resolvedByUserRef: Types.ObjectId | null;
+    resolvedAt: Date | null;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -199,6 +209,20 @@ const twilioCommunicationSchema = new Schema<ITwilioCommunication>(
       type: String,
       enum: ["", "wizard"],
       default: "",
+    },
+    optOut: {
+      state: {
+        type: String,
+        enum: ["", "applied", "suggested", "dismissed"],
+        default: "",
+      },
+      matched: { type: String, default: "" },
+      resolvedByUserRef: {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+      resolvedAt: { type: Date, default: null },
     },
   },
   { timestamps: true },

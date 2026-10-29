@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   ApiError,
@@ -8,24 +9,43 @@ import {
   updatePublicEmailPreferences,
 } from "@/lib/api";
 
+function ReenableNote() {
+  return (
+    <p className="mt-1 text-xs text-neutral-500">
+      <Link
+        href="/dashboard/settings?tab=notifications"
+        className="font-medium text-brand-orange hover:underline"
+      >
+        Log in to turn this back on
+      </Link>
+    </p>
+  );
+}
+
 function Switch({
   checked,
   onChange,
   highlight,
+  disabled,
 }: {
   checked: boolean;
   onChange: () => void;
   highlight?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-disabled={disabled || undefined}
+      disabled={disabled}
       onClick={onChange}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+      className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
         checked ? "bg-brand-orange" : "bg-neutral-200"
-      } ${highlight ? "ring-2 ring-brand-orange ring-offset-2" : ""}`}
+      } ${highlight ? "ring-2 ring-brand-orange ring-offset-2" : ""} ${
+        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+      }`}
     >
       <span
         className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
@@ -44,6 +64,8 @@ export default function UnsubscribeForm() {
   const [channel, setChannel] = useState<"general" | "billing" | null>(null);
   const [generalNotifications, setGeneralNotifications] = useState(true);
   const [billingAlerts, setBillingAlerts] = useState(true);
+  const [generalLocked, setGeneralLocked] = useState(false);
+  const [billingLocked, setBillingLocked] = useState(false);
   const [loading, setLoading] = useState(() => Boolean(token));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(() =>
@@ -63,6 +85,8 @@ export default function UnsubscribeForm() {
         setEmail(prefs.email);
         setGeneralNotifications(prefs.generalNotifications);
         setBillingAlerts(prefs.billingAlerts);
+        setGeneralLocked(!prefs.generalNotifications);
+        setBillingLocked(!prefs.billingAlerts);
         setChannel(prefs.channel ?? "general");
         setError(null);
       })
@@ -96,6 +120,8 @@ export default function UnsubscribeForm() {
       });
       setGeneralNotifications(prefs.generalNotifications);
       setBillingAlerts(prefs.billingAlerts);
+      setGeneralLocked(!prefs.generalNotifications);
+      setBillingLocked(!prefs.billingAlerts);
       setSaved(true);
     } catch (err) {
       setError(
@@ -148,12 +174,15 @@ export default function UnsubscribeForm() {
             <p className="mt-0.5 text-xs text-neutral-500">
               Service reminders, account updates, and other non-billing email.
             </p>
+            {generalLocked ? <ReenableNote /> : null}
           </div>
           <Switch
             checked={generalNotifications}
+            disabled={generalLocked}
             onChange={() => {
+              if (generalLocked) return;
               setSaved(false);
-              setGeneralNotifications((v) => !v);
+              setGeneralNotifications((value) => !value);
             }}
             highlight={channel === "general"}
           />
@@ -164,12 +193,15 @@ export default function UnsubscribeForm() {
             <p className="mt-0.5 text-xs text-neutral-500">
               Invoices, receipts, and payment reminders.
             </p>
+            {billingLocked ? <ReenableNote /> : null}
           </div>
           <Switch
             checked={billingAlerts}
+            disabled={billingLocked}
             onChange={() => {
+              if (billingLocked) return;
               setSaved(false);
-              setBillingAlerts((v) => !v);
+              setBillingAlerts((value) => !value);
             }}
             highlight={channel === "billing"}
           />

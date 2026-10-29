@@ -225,6 +225,7 @@ export default function ServiceTicketForm({
   invoiceAction,
   autoSave,
   hideStatusFields,
+  onNotesChanged,
 }: {
   variant: TicketVariant;
   initial?: TicketFormState;
@@ -253,6 +254,7 @@ export default function ServiceTicketForm({
   autoSave?: (payload: ReturnType<typeof ticketToPayload>) => Promise<TicketFormState>;
   /** Hides the paid and completed controls. The schedule work order uses its own completion flow. */
   hideStatusFields?: boolean;
+  onNotesChanged?: () => void;
 }) {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
@@ -1713,6 +1715,7 @@ export default function ServiceTicketForm({
                       : undefined
                   }
                   fallbackContent={variant === "work-order" ? form.descPerformed : undefined}
+                  onChanged={onNotesChanged}
                   visibilityLabel={
                     variant === "estimate"
                       ? "Show on estimate"

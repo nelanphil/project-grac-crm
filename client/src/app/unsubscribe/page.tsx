@@ -6,7 +6,7 @@ export default function UnsubscribePage() {
   return (
     <AuthCard
       title="Email preferences"
-      subtitle="Turn general notifications or billing alerts on or off. You do not need to be signed in."
+      subtitle="You can turn notifications off here. Turning them back on requires signing in."
       footerText="Have an account?"
       footerLinkText="Manage in Settings"
       footerLinkHref="/dashboard/settings"

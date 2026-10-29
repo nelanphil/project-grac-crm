@@ -26,6 +26,7 @@ import {
   rangeUtc,
 } from "../services/schedule.service";
 import { publishDashboardChanged } from "../services/dashboardLive";
+import { actorFromAuthUser } from "../services/workOrderActivity.service";
 import { WorkOrder } from "../models/mongo/WorkOrder";
 import {
   listScheduledTasks,
@@ -580,6 +581,7 @@ export async function postSchedulePlace(
       estimatedMinutes: parsed.data.estimatedMinutes,
       insertIndex: parsed.data.insertIndex,
       requirePreferred: parsed.data.requirePreferred,
+      actor: actorFromAuthUser(req.user),
     });
     publishDashboardChanged();
     res.json(result);
@@ -755,7 +757,10 @@ export async function postScheduleRouteApply(
       return;
     }
 
-    const result = await applyPlannedRoute(parsed.data);
+    const result = await applyPlannedRoute({
+      ...parsed.data,
+      actor: actorFromAuthUser(req.user),
+    });
     publishDashboardChanged();
     res.json(result);
   } catch (err) {
@@ -796,7 +801,10 @@ export async function postScheduleRouteLock(
       return;
     }
 
-    const workOrder = await setRouteStopLock(parsed.data);
+    const workOrder = await setRouteStopLock({
+      ...parsed.data,
+      actor: actorFromAuthUser(req.user),
+    });
     publishDashboardChanged();
     res.json(workOrder);
   } catch (err) {
@@ -886,7 +894,10 @@ export async function postScheduleAssignAndOptimize(
       return;
     }
 
-    const result = await assignAndOptimizeTechnician(parsed.data);
+    const result = await assignAndOptimizeTechnician({
+      ...parsed.data,
+      actor: actorFromAuthUser(req.user),
+    });
     const enriched = await enrichScheduleWorkOrders([
       result.workOrder.toObject() as unknown as Record<string, unknown>,
     ]);

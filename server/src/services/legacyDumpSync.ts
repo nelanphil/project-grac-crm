@@ -20,9 +20,18 @@ import { TAX_SETTINGS_SLUG, TaxSettings } from "../models/mongo/TaxSettings";
 import { IProduct, Product } from "../models/mongo/Product";
 import { IWorkOrder, WorkOrder } from "../models/mongo/WorkOrder";
 import {
+  IWorkOrderActivity,
+  WorkOrderActivity,
+} from "../models/mongo/WorkOrderActivity";
+import {
   syncAscContractsFromRecords,
   type AscContractSyncSummary,
 } from "./ascContractSync";
+import {
+  recordLegacyWorkOrderImport,
+  recordLegacyWorkOrderUpdate,
+  type WorkOrderFieldChange,
+} from "./workOrderActivity.service";
 import {
   ALLOWED_LEGACY_OWNER_USER_IDS,
   isAllowedLegacyOwner,
@@ -232,6 +241,7 @@ type BoundModels = {
   CustomerAddress: Model<ICustomerAddress>;
   Equipment: Model<IEquipment>;
   WorkOrder: Model<IWorkOrder>;
+  WorkOrderActivity: Model<IWorkOrderActivity>;
   Invoice: Model<IInvoice>;
   Product: Model<IProduct>;
   Contract: Model<IContract>;
@@ -964,6 +974,10 @@ function bindModels(conn: Connection): BoundModels {
     ),
     Equipment: conn.model<IEquipment>("Equipment", Equipment.schema),
     WorkOrder: conn.model<IWorkOrder>("WorkOrder", WorkOrder.schema),
+    WorkOrderActivity: conn.model<IWorkOrderActivity>(
+      "WorkOrderActivity",
+      WorkOrderActivity.schema,
+    ),
     Invoice: conn.model<IInvoice>("Invoice", Invoice.schema),
     Product: conn.model<IProduct>("Product", Product.schema),
     Contract: conn.model<IContract>("Contract", Contract.schema),
@@ -2470,7 +2484,24 @@ export async function runLegacyDumpSync(options: {
           log,
         );
         if (backfilled) backfilledWoRefs += 1;
-        if (existing.legacyLinkedAt) continue;
+        if (existing.legacyLinkedAt) {
+          if (!dryRun && backfilled) {
+            await recordLegacyWorkOrderUpdate(
+              {
+                workOrderRef: existing._id,
+                changes: [
+                  {
+                    field: "Customer",
+                    from: "",
+                    to: "Updated from the legacy import",
+                  },
+                ],
+              },
+              models.WorkOrderActivity,
+            );
+          }
+          continue;
+        }
         const mappedItems = await backfillExistingWorkOrderLineItems(
           models,
           existing,
@@ -2481,6 +2512,10 @@ export async function runLegacyDumpSync(options: {
         );
         if (mappedItems) backfilledWoLineItems += 1;
 
+        const beforePaid = Boolean(existing.paid);
+        const beforeCompleted = Boolean(existing.completed);
+        const beforeDate = existing.date ?? null;
+        const beforeTotal = existing.total;
         const statusPatch = legacyWorkOrderStatusPatch(existing, row);
         if (statusPatch) {
           statusUpdated += 1;
@@ -2513,6 +2548,55 @@ export async function runLegacyDumpSync(options: {
             row,
             invoiceByWorkOrder.get(String(existing._id)) ?? null,
           );
+          if (backfilled || mappedItems || statusPatch) {
+            const changes: WorkOrderFieldChange[] = [];
+            if (backfilled) {
+              changes.push({
+                field: "Customer",
+                from: "",
+                to: "Updated from the legacy import",
+              });
+            }
+            if (mappedItems) {
+              changes.push({
+                field: "Line items",
+                from: "",
+                to: "Rebuilt from the legacy import",
+              });
+            }
+            if (beforePaid !== row.paid) {
+              changes.push({
+                field: "Paid",
+                from: beforePaid ? "Yes" : "No",
+                to: row.paid ? "Yes" : "No",
+              });
+            }
+            if (beforeCompleted !== row.completed) {
+              changes.push({
+                field: "Completed",
+                from: beforeCompleted ? "Yes" : "No",
+                to: row.completed ? "Yes" : "No",
+              });
+            }
+            if (dateKey(beforeDate) !== dateKey(row.date)) {
+              changes.push({
+                field: "Date",
+                from: dateKey(beforeDate) || "—",
+                to: dateKey(row.date) || "—",
+              });
+            }
+            if (!sameDumpTotal(beforeTotal, row.total)) {
+              changes.push({
+                field: "Total",
+                from: `$${Number(beforeTotal ?? 0).toFixed(2)}`,
+                to: `$${row.total.toFixed(2)}`,
+              });
+            }
+            await recordLegacyWorkOrderUpdate(
+              { workOrderRef: existing._id, changes },
+              models.WorkOrderActivity,
+            );
+          }
         }
         continue;
       }
@@ -2606,6 +2690,7 @@ export async function runLegacyDumpSync(options: {
         total: tax.total,
         certify: row.certify,
         completed: row.completed,
+        origin: "legacy_import",
         customerName: displayName(customer),
         customerAddress: customer.address,
         customerCity: customer.city,
@@ -2617,6 +2702,10 @@ export async function runLegacyDumpSync(options: {
         exerciseDay: customer.exday,
         exerciseTime: customer.extime,
       });
+      await recordLegacyWorkOrderImport(
+        { workOrderRef: createdWo._id, legacyId: row.legacyId },
+        models.WorkOrderActivity,
+      );
       await upsertBoundWorkOrderInvoice(models, {
         _id: createdWo._id,
         customerId: customer.legacyId,

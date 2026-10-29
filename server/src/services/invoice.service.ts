@@ -13,6 +13,7 @@ import { promoteTemporaryContract } from "../utils/temporaryContractOffer";
 import { SCHEDULE_TIMEZONE } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
 import { recordCustomerActivityAsync } from "./customerActivity.service";
+import { recordWorkOrderActivity } from "./workOrderActivity.service";
 import {
   inferPaymentMethod,
   paymentSourceEventId,
@@ -267,9 +268,23 @@ export async function markInvoicePaid(params: {
   }
 
   if (invoice.sourceType === "work_order" && invoice.workOrderRef) {
-    await WorkOrder.findByIdAndUpdate(invoice.workOrderRef, {
-      $set: { paid: true },
-    });
+    const updated = await WorkOrder.findOneAndUpdate(
+      { _id: invoice.workOrderRef, paid: { $ne: true } },
+      { $set: { paid: true } },
+    );
+    if (updated && (paidByCustomer || actor?.actorUserId)) {
+      await recordWorkOrderActivity({
+        workOrderRef: invoice.workOrderRef,
+        action: "paid",
+        actor: {
+          actorKind: paidByCustomer ? "customer" : "staff",
+          actorUserId: paidByCustomer ? null : actor?.actorUserId ?? null,
+          actorName: paidByCustomer ? "Customer" : actor?.actorName ?? null,
+        },
+        summary: paidByCustomer ? "Customer paid this work order" : "Marked paid",
+        source: paidByCustomer ? "job" : "crm",
+      });
+    }
   }
 
   return invoice;
@@ -305,9 +320,23 @@ export async function reopenInvoice(params: {
   });
 
   if (invoice.sourceType === "work_order" && invoice.workOrderRef) {
-    await WorkOrder.findByIdAndUpdate(invoice.workOrderRef, {
-      $set: { paid: false },
-    });
+    const updated = await WorkOrder.findOneAndUpdate(
+      { _id: invoice.workOrderRef, paid: true },
+      { $set: { paid: false } },
+    );
+    if (updated) {
+      await recordWorkOrderActivity({
+        workOrderRef: invoice.workOrderRef,
+        action: "reopened",
+        actor: {
+          actorKind: actor?.actorUserId ? "staff" : "system",
+          actorUserId: actor?.actorUserId ?? null,
+          actorName: actor?.actorName ?? null,
+        },
+        summary: "Marked unpaid",
+        source: actor?.actorUserId ? "crm" : "job",
+      });
+    }
   }
 
   return invoice;

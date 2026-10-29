@@ -13,6 +13,7 @@ import ServiceTicketDocument from "@/components/billing/ServiceTicketDocument";
 import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
 import InvoiceWorkOrderButton from "@/components/billing/InvoiceWorkOrderButton";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
+import WorkOrderActivityPanel from "@/components/work-orders/WorkOrderActivityPanel";
 import PosChargeCheck from "@/components/billing/PosChargeCheck";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
@@ -59,6 +60,7 @@ function WorkOrderDetailContent() {
   const [relatedInvoice, setRelatedInvoice] = useState<InvoiceItem | null>(null);
   const viewInvoiceId = relatedInvoice?._id ?? null;
   const [invoiceListVersion, setInvoiceListVersion] = useState(0);
+  const [activityVersion, setActivityVersion] = useState(0);
 
   useEffect(() => {
     if (!token || !id) return;
@@ -169,6 +171,7 @@ function WorkOrderDetailContent() {
         canWrite={canWrite}
         userRole={user}
         fallbackContent={order.descPerformed}
+        onChanged={() => setActivityVersion((version) => version + 1)}
       />
     ) : null;
 
@@ -192,7 +195,10 @@ function WorkOrderDetailContent() {
       token,
       order._id,
       workOrderUpdateBody(payload, order, isDispatcherRole(user)),
-    );
+    ).then((updated) => {
+      setActivityVersion((version) => version + 1);
+      return updated;
+    });
   }
 
   const invoiceAction =
@@ -263,6 +269,7 @@ function WorkOrderDetailContent() {
           invoice={relatedInvoice}
           onUpdated={(next) => {
             setRelatedInvoice(next);
+            setActivityVersion((version) => version + 1);
             if (next.status === "paid") {
               void getWorkOrder(token, order._id)
                 .then(setOrder)
@@ -387,6 +394,7 @@ function WorkOrderDetailContent() {
               }
               return ticketFromRecord(updated);
             }}
+            onNotesChanged={() => setActivityVersion((version) => version + 1)}
             onSubmit={async (payload) => {
               if (!token) return;
               setSubmitting(true);
@@ -413,6 +421,14 @@ function WorkOrderDetailContent() {
           notesSlot={notesPanel}
         />
       )}
+
+      {token ? (
+        <WorkOrderActivityPanel
+          token={token}
+          workOrderId={order._id}
+          refreshKey={activityVersion}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1469,6 +1469,43 @@ export async function getCustomer(
   });
 }
 
+export interface CustomerNotificationChannelEmail {
+  address: string;
+  generalNotifications: boolean;
+  billingAlerts: boolean;
+  unsubscribedAt: string | null;
+  hasPortalLogin: boolean;
+}
+
+export interface CustomerNotificationChannelText {
+  phone: string;
+  textNotifications: boolean;
+  optedOutAt: string | null;
+  optOutSource: "" | "keyword" | "staff_confirmed" | "settings";
+}
+
+export interface CustomerNotificationRow {
+  id: string;
+  name: string;
+  label: string;
+  isPrimary: boolean;
+  email: CustomerNotificationChannelEmail | null;
+  text: CustomerNotificationChannelText | null;
+}
+
+export async function getCustomerNotifications(
+  token: string,
+  id: string,
+): Promise<{ contacts: CustomerNotificationRow[] }> {
+  return authRequest<{ contacts: CustomerNotificationRow[] }>(
+    `/customers/${id}/notifications`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export interface CustomerDuplicateMatch {
   _id: string;
   legacyId: number;
@@ -2595,6 +2632,41 @@ export async function getWorkOrder(
   id: string,
 ): Promise<WorkOrderListItem> {
   return authRequest<WorkOrderListItem>(`/work-orders/${id}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export type WorkOrderOrigin = "user" | "legacy_import" | "legacy_linked";
+
+export interface WorkOrderActivityChange {
+  field: string;
+  from: string;
+  to: string;
+}
+
+export interface WorkOrderActivityEntry {
+  id: string;
+  action: string;
+  actorKind: "staff" | "system" | "customer";
+  actorName: string;
+  summary: string;
+  changes: WorkOrderActivityChange[];
+  createdAt: string;
+}
+
+export interface WorkOrderActivityLog {
+  origin: WorkOrderOrigin;
+  createdByName: string | null;
+  createdAt: string;
+  entries: WorkOrderActivityEntry[];
+}
+
+export async function getWorkOrderActivity(
+  token: string,
+  id: string,
+): Promise<WorkOrderActivityLog> {
+  return authRequest<WorkOrderActivityLog>(`/work-orders/${id}/activity`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -6716,6 +6788,8 @@ export interface MessagingContactItem {
   renewalDueDate: string | null;
   contractType: string | null;
   hasPayableInvoice?: boolean;
+  doNotNotify?: boolean;
+  doNotNotifyReason?: string;
 }
 
 export interface MessagingPreviewResult {
@@ -6954,6 +7028,7 @@ export async function searchMessagingContacts(
 ): Promise<{
   contacts: MessagingContactItem[];
   total: number;
+  selectableTotal?: number;
   page: number;
   pageSize: number;
 }> {
@@ -6969,6 +7044,7 @@ export async function searchMessagingContacts(
   return authRequest<{
     contacts: MessagingContactItem[];
     total: number;
+    selectableTotal?: number;
     page: number;
     pageSize: number;
   }>(`/messaging/contacts${qs ? `?${qs}` : ""}`, {
@@ -7760,6 +7836,7 @@ export async function searchEmailContacts(
 ): Promise<{
   contacts: MessagingContactItem[];
   total: number;
+  selectableTotal?: number;
   page: number;
   pageSize: number;
 }> {
@@ -7775,6 +7852,7 @@ export async function searchEmailContacts(
   return authRequest<{
     contacts: MessagingContactItem[];
     total: number;
+    selectableTotal?: number;
     page: number;
     pageSize: number;
   }>(`/email-messages/contacts${qs ? `?${qs}` : ""}`, {
@@ -8532,6 +8610,10 @@ export interface InboxTimelineMessage {
   taskPromptDismissed?: boolean;
   emailAccountId: string | null;
   imapUid: number | null;
+  optOut?: {
+    state: "applied" | "suggested" | "dismissed";
+    matched: string;
+  } | null;
 }
 
 export interface InboxContext {
@@ -8643,6 +8725,7 @@ export async function getInboxTimeline(
   messages: InboxTimelineMessage[];
   hasMore: boolean;
   nextBefore: string | null;
+  smsOptedOut?: boolean;
 }> {
   return authRequest(
     `/inboxes/conversations/${id}/timeline${inboxQuery({
@@ -8651,6 +8734,31 @@ export async function getInboxTimeline(
     })}`,
     { method: "GET", headers: { Authorization: `Bearer ${token}` } },
   );
+}
+
+export async function confirmInboxMessageOptOut(
+  token: string,
+  messageId: string,
+): Promise<{
+  optOut: { state: "applied" | "suggested" | "dismissed"; matched: string } | null;
+  textNotifications: boolean;
+}> {
+  return authRequest(`/inboxes/messages/${messageId}/opt-out/confirm`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function dismissInboxMessageOptOut(
+  token: string,
+  messageId: string,
+): Promise<{
+  optOut: { state: "applied" | "suggested" | "dismissed"; matched: string } | null;
+}> {
+  return authRequest(`/inboxes/messages/${messageId}/opt-out/dismiss`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 export async function markInboxConversationRead(

@@ -32,6 +32,8 @@ type InboxSmsComposerProps = {
   token: string;
   body: string;
   sending: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
   onBodyChange: (value: string) => void;
   onSend: (mediaUrls: string[]) => Promise<void>;
   onSchedule: (input: { mediaUrls: string[]; scheduledAt: string }) => Promise<void>;
@@ -96,6 +98,8 @@ export default function InboxSmsComposer({
   token,
   body,
   sending,
+  disabled = false,
+  disabledReason,
   onBodyChange,
   onSend,
   onSchedule,
@@ -154,7 +158,10 @@ export default function InboxSmsComposer({
     (item) => item.status === "uploading" || item.status === "error",
   );
   const canSubmit =
-    !sending && !waitingOnFiles && (body.trim().length > 0 || readyUrls.length > 0);
+    !disabled &&
+    !sending &&
+    !waitingOnFiles &&
+    (body.trim().length > 0 || readyUrls.length > 0);
   const segments = segmentLabel(body);
   const uploadError = attachments.find((item) => item.error)?.error;
 
@@ -329,13 +336,20 @@ export default function InboxSmsComposer({
           ))}
         </div>
       ) : null}
+      {disabled ? (
+        <p className="mb-2 rounded-md bg-amber-50 px-2 py-1.5 text-[12px] text-amber-900">
+          {disabledReason ||
+            "This customer has opted out of text messages. They have to turn texts back on themselves."}
+        </p>
+      ) : null}
       <textarea
         ref={textRef}
         value={body}
         onChange={(event) => onBodyChange(event.target.value)}
         onKeyDown={onKeyDown}
         rows={2}
-        placeholder="Write a message…"
+        disabled={disabled}
+        placeholder={disabled ? "Texts are turned off" : "Write a message…"}
         className="min-h-[2.5rem] w-full resize-none bg-transparent px-0.5 py-1 text-sm text-[var(--staff-ink)] outline-none placeholder:text-[var(--staff-muted)]"
       />
       <div className="flex items-center justify-between gap-2">

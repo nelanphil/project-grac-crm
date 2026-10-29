@@ -327,6 +327,7 @@ export default function MessagingHub() {
 
   const [contacts, setContacts] = useState<MessagingContactItem[]>([]);
   const [contactsTotal, setContactsTotal] = useState(0);
+  const [selectableTotal, setSelectableTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(150);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() =>
@@ -348,6 +349,7 @@ export default function MessagingHub() {
     [],
   );
   const [emailContactsTotal, setEmailContactsTotal] = useState(0);
+  const [emailSelectableTotal, setEmailSelectableTotal] = useState(0);
   const [emailPage, setEmailPage] = useState(1);
   const [emailPageSize, setEmailPageSize] = useState(150);
   const [emailSelectedIds, setEmailSelectedIds] = useState<Set<string>>(
@@ -612,10 +614,29 @@ export default function MessagingHub() {
         if (cancelled) return;
         setContacts(res.contacts);
         setContactsTotal(res.total);
+        setSelectableTotal(res.selectableTotal ?? res.total);
+        const blocked = new Set(
+          res.contacts.filter((contact) => contact.doNotNotify).map((contact) => contact._id),
+        );
+        if (blocked.size > 0) {
+          setSelectedIds((prev) => {
+            if (![...prev].some((id) => blocked.has(id))) return prev;
+            const next = new Set(prev);
+            for (const id of blocked) next.delete(id);
+            return next;
+          });
+          setSelectedContactsById((prev) => {
+            if (!Object.keys(prev).some((id) => blocked.has(id))) return prev;
+            const next = { ...prev };
+            for (const id of blocked) delete next[id];
+            return next;
+          });
+        }
         setSelectedContactsById((prev) => {
           let changed = false;
           const next = { ...prev };
           for (const c of res.contacts) {
+            if (c.doNotNotify) continue;
             if (selectedIdsRef.current.has(c._id) && !next[c._id]) {
               next[c._id] = c;
               changed = true;
@@ -666,10 +687,29 @@ export default function MessagingHub() {
         if (cancelled) return;
         setEmailContacts(res.contacts);
         setEmailContactsTotal(res.total);
+        setEmailSelectableTotal(res.selectableTotal ?? res.total);
+        const blocked = new Set(
+          res.contacts.filter((contact) => contact.doNotNotify).map((contact) => contact._id),
+        );
+        if (blocked.size > 0) {
+          setEmailSelectedIds((prev) => {
+            if (![...prev].some((id) => blocked.has(id))) return prev;
+            const next = new Set(prev);
+            for (const id of blocked) next.delete(id);
+            return next;
+          });
+          setEmailSelectedContactsById((prev) => {
+            if (!Object.keys(prev).some((id) => blocked.has(id))) return prev;
+            const next = { ...prev };
+            for (const id of blocked) delete next[id];
+            return next;
+          });
+        }
         setEmailSelectedContactsById((prev) => {
           let changed = false;
           const next = { ...prev };
           for (const c of res.contacts) {
+            if (c.doNotNotify) continue;
             if (emailSelectedIdsRef.current.has(c._id) && !next[c._id]) {
               next[c._id] = c;
               changed = true;
@@ -1180,6 +1220,7 @@ export default function MessagingHub() {
     setById: (next: Record<string, MessagingContactItem>) => void,
   ) {
     const { _id: id } = contact;
+    if (contact.doNotNotify && !ids.has(id)) return;
     const next = new Set(ids);
     if (next.has(id)) next.delete(id);
     else {
@@ -1206,7 +1247,11 @@ export default function MessagingHub() {
     byId: Record<string, MessagingContactItem>,
     setById: (next: Record<string, MessagingContactItem>) => void,
   ): { selected: boolean; nextSize: number } {
-    const pageIds = pageContacts.map((c) => c._id);
+    const selectable = pageContacts.filter((contact) => !contact.doNotNotify);
+    const pageIds = selectable.map((c) => c._id);
+    if (pageIds.length === 0) {
+      return { selected: false, nextSize: ids.size };
+    }
     const allSelected = pageIds.every((id) => ids.has(id));
     const next = new Set(ids);
     const nextById = { ...byId };
@@ -1217,6 +1262,7 @@ export default function MessagingHub() {
       }
     } else {
       for (const c of pageContacts) {
+        if (c.doNotNotify) continue;
         if (next.size >= MAX_SEND) break;
         next.add(c._id);
         nextById[c._id] = c;
@@ -1319,6 +1365,7 @@ export default function MessagingHub() {
       const next = new Set(ids);
       const nextById = { ...byId };
       for (const c of res.contacts) {
+        if (c.doNotNotify) continue;
         if (next.size >= MAX_SEND) break;
         next.add(c._id);
         nextById[c._id] = c;
@@ -1635,6 +1682,7 @@ export default function MessagingHub() {
           }}
           contacts={contacts}
           contactsTotal={contactsTotal}
+          selectableTotal={selectableTotal}
           loadingContacts={loadingContacts}
           page={page}
           pageSize={pageSize}
@@ -1665,7 +1713,7 @@ export default function MessagingHub() {
             );
             setShowSelectAllPrompt(
               result.selected &&
-                contactsTotal > contacts.length &&
+                selectableTotal > contacts.filter((contact) => !contact.doNotNotify).length &&
                 result.nextSize < MAX_SEND,
             );
           }}
@@ -1789,6 +1837,7 @@ export default function MessagingHub() {
           }}
           contacts={emailContacts}
           contactsTotal={emailContactsTotal}
+          selectableTotal={emailSelectableTotal}
           loadingContacts={loadingEmailContacts}
           page={emailPage}
           pageSize={emailPageSize}
@@ -1819,7 +1868,8 @@ export default function MessagingHub() {
             );
             setEmailShowSelectAllPrompt(
               result.selected &&
-                emailContactsTotal > emailContacts.length &&
+                emailSelectableTotal >
+                  emailContacts.filter((contact) => !contact.doNotNotify).length &&
                 result.nextSize < MAX_SEND,
             );
           }}

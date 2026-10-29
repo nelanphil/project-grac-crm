@@ -94,13 +94,15 @@ import {
   assignCustomerOwner,
   buildOwnerCustomerFilter,
 } from "../utils/ownerTerritory";
-import { User } from "../models/mongo/User";
+import { User, activeUserFilter } from "../models/mongo/User";
 import { userHasCapability } from "../utils/jobRoles";
 import { isOrgAdminRole } from "../utils/roles";
 import { resolveGeocodedAddress } from "../utils/resolveGeocodedAddress";
 import { geocodeSitePoint } from "../utils/siteGeocode";
 import { mintCheckoutKey } from "../utils/checkoutKey";
 import { buildTokenSearchFilter } from "../utils/textSearch";
+import { getEmailPreferences } from "../utils/emailPreferences";
+import { getSmsPreference, smsPreferenceKey } from "../utils/smsPreferences";
 import {
   customerOwnedFilter,
   reassignCustomerOwnedRecords,
@@ -3592,5 +3594,127 @@ export async function mergeCustomers(
   } catch (err) {
     console.error("POST /customers/:id/merge error:", err);
     res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function getCustomerNotifications(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const customer = await findActiveCustomerOr404(
+      String(req.params.id),
+      res,
+      req.user,
+    );
+    if (!customer) return;
+    if (customer.mergedIntoRef) {
+      res.status(404).json({ message: "Customer was merged into another account" });
+      return;
+    }
+
+    const contacts = await CustomerContact.find({
+      customerRef: customer._id,
+      ...activeContactFilter,
+    })
+      .sort({ isPrimary: -1, last: 1, first: 1 })
+      .select("first last label isPrimary email phone")
+      .lean();
+
+    type Row = {
+      id: string;
+      name: string;
+      label: string;
+      isPrimary: boolean;
+      email: string;
+      phone: string;
+    };
+    const rows: Row[] = contacts.map((contact) => ({
+      id: String(contact._id),
+      name: `${contact.first ?? ""} ${contact.last ?? ""}`.trim(),
+      label: contact.label ?? "",
+      isPrimary: Boolean(contact.isPrimary),
+      email: (contact.email ?? "").trim(),
+      phone: (contact.phone ?? "").trim(),
+    }));
+
+    const seenEmails = new Set(
+      rows.map((row) => normalizeAccountEmail(row.email)).filter(Boolean),
+    );
+    const seenPhones = new Set(
+      rows
+        .map((row) => smsPreferenceKey(row.phone))
+        .filter((key): key is string => Boolean(key)),
+    );
+    const customerEmail = (customer.email ?? "").trim();
+    const customerPhone = (customer.phone ?? "").trim();
+    const customerEmailKey = normalizeAccountEmail(customerEmail);
+    const customerPhoneKey = smsPreferenceKey(customerPhone);
+    if (
+      (customerEmailKey && !seenEmails.has(customerEmailKey)) ||
+      (customerPhoneKey && !seenPhones.has(customerPhoneKey))
+    ) {
+      rows.push({
+        id: "account",
+        name: `${customer.first ?? ""} ${customer.last ?? ""}`.trim() || "Account",
+        label: "Account",
+        isPrimary: rows.length === 0,
+        email: customerEmailKey && !seenEmails.has(customerEmailKey) ? customerEmail : "",
+        phone: customerPhoneKey && !seenPhones.has(customerPhoneKey) ? customerPhone : "",
+      });
+    }
+
+    const emails = [
+      ...new Set(rows.map((row) => normalizeAccountEmail(row.email)).filter(Boolean)),
+    ];
+    const logins = emails.length
+      ? await User.find({ ...activeUserFilter, email: { $in: emails } })
+          .select("email")
+          .lean()
+      : [];
+    const loginEmails = new Set(
+      logins.map((user) => normalizeAccountEmail(user.email ?? "")).filter(Boolean),
+    );
+
+    const presented = await Promise.all(
+      rows.map(async (row) => {
+        const emailKey = normalizeAccountEmail(row.email);
+        const emailPrefs = emailKey ? await getEmailPreferences(emailKey) : null;
+        const textPrefs = row.phone ? await getSmsPreference(row.phone) : null;
+        const hasPhone = Boolean(row.phone.trim());
+        return {
+          id: row.id,
+          name: row.name || "Contact",
+          label: row.label,
+          isPrimary: row.isPrimary,
+          email: emailKey
+            ? {
+                address: emailKey,
+                generalNotifications: emailPrefs?.generalNotifications !== false,
+                billingAlerts: emailPrefs?.billingAlerts !== false,
+                unsubscribedAt: emailPrefs?.unsubscribedAt
+                  ? emailPrefs.unsubscribedAt.toISOString()
+                  : null,
+                hasPortalLogin: loginEmails.has(emailKey),
+              }
+            : null,
+          text: hasPhone
+            ? {
+                phone: row.phone,
+                textNotifications: textPrefs?.textNotifications !== false,
+                optedOutAt: textPrefs?.optedOutAt
+                  ? textPrefs.optedOutAt.toISOString()
+                  : null,
+                optOutSource: textPrefs?.optOutSource || "",
+              }
+            : null,
+        };
+      }),
+    );
+
+    res.json({ contacts: presented });
+  } catch (err) {
+    console.error("GET /customers/:id/notifications error:", err);
+    res.status(500).json({ message: "Failed to load notification status" });
   }
 }

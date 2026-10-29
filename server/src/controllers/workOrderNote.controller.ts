@@ -17,6 +17,10 @@ import {
 } from "../services/notification.service";
 import { publishDashboardChanged } from "../services/dashboardLive";
 import {
+  actorFromAuthUser,
+  recordWorkOrderActivity,
+} from "../services/workOrderActivity.service";
+import {
   createAudience,
   displayTicketNumber,
   editAudience,
@@ -384,6 +388,13 @@ export async function createWorkOrderNote(
       actorUserId: req.user!.id,
     });
 
+    await recordWorkOrderActivity({
+      workOrderRef: workOrder._id,
+      action: "note_added",
+      actor: actorFromAuthUser(req.user),
+      summary: "Added a note",
+      source: "crm",
+    });
     logNotificationAsync({
       entityType: "work_order_note",
       action: "created",
@@ -495,6 +506,13 @@ export async function updateWorkOrderNote(
       actorUserId: req.user!.id,
     });
 
+    await recordWorkOrderActivity({
+      workOrderRef: workOrder._id,
+      action: "note_updated",
+      actor: actorFromAuthUser(req.user),
+      summary: "Updated a note",
+      source: "crm",
+    });
     logNotificationAsync({
       entityType: "work_order_note",
       action: "updated",
@@ -547,6 +565,13 @@ export async function deleteWorkOrderNote(
     await syncDescPerformedPreview(workOrder._id);
     const warnings = await syncDesiredStartWindow(workOrder._id);
 
+    await recordWorkOrderActivity({
+      workOrderRef: workOrder._id,
+      action: "note_removed",
+      actor: actorFromAuthUser(req.user),
+      summary: "Removed a note",
+      source: "crm",
+    });
     logNotificationAsync({
       entityType: "work_order_note",
       action: "deleted",

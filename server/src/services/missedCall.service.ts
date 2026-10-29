@@ -6,6 +6,7 @@ import {
   touchFromTwilio,
 } from "./inboxConversation.service";
 import { sendSms } from "./twilio.service";
+import { isSmsEnabled } from "../utils/smsPreferences";
 import { appendVoiceActivity } from "./voiceIvr.service";
 import { toE164 } from "../utils/messagingContext";
 import {
@@ -44,6 +45,7 @@ export type MissedCallSkipReason =
   | "anonymous"
   | "no-sms"
   | "cooldown"
+  | "opted-out"
   | "send-failed";
 
 export function decideMissedCallText(input: {
@@ -166,6 +168,10 @@ export async function handleMissedInboundCall(input: {
       line: "Missed call.",
     });
     return { sent: false, reason: decision.send ? "no-sms" : decision.reason };
+  }
+
+  if (!(await isSmsEnabled(input.fromNumber || claimed.fromNumber || callerE164))) {
+    return { sent: false, reason: "opted-out" };
   }
 
   const from = line.phoneNumber;

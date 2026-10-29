@@ -11,6 +11,7 @@ import {
   Loader2,
   Square,
 } from "lucide-react";
+import DoNotNotifyBadge from "@/components/messaging/DoNotNotifyBadge";
 import {
   MergeFieldItem,
   MessageTemplateItem,
@@ -167,6 +168,7 @@ type CreatePanelProps = {
 
   contacts: MessagingContactItem[];
   contactsTotal: number;
+  selectableTotal?: number;
   loadingContacts: boolean;
   page: number;
   pageSize: number;
@@ -247,6 +249,7 @@ export default function CreatePanel({
   onShiftMonth,
   contacts,
   contactsTotal,
+  selectableTotal = contactsTotal,
   loadingContacts,
   page,
   pageSize,
@@ -324,8 +327,10 @@ export default function CreatePanel({
   }
 
   const totalPages = Math.max(1, Math.ceil(contactsTotal / pageSize));
+  const selectableContacts = contacts.filter((contact) => !contact.doNotNotify);
   const pageAllSelected =
-    contacts.length > 0 && contacts.every((c) => selectedIds.has(c._id));
+    selectableContacts.length > 0 &&
+    selectableContacts.every((c) => selectedIds.has(c._id));
 
   // Open-thread conflict check when exactly one recipient is selected
   useEffect(() => {
@@ -587,7 +592,7 @@ export default function CreatePanel({
                 {selectingAll ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : null}
-                Select all {Math.min(contactsTotal, maxSend)} matching contacts?
+                Select all {Math.min(selectableTotal, maxSend)} matching contacts?
               </button>
             ) : null}
           </div>
@@ -607,6 +612,7 @@ export default function CreatePanel({
                 className="p-2 md:p-0"
                 mobile={contacts.map((c) => {
                   const checked = selectedIds.has(c._id);
+                  const blocked = Boolean(c.doNotNotify);
                   const labelBits = [
                     c.label ? toProperCase(c.label) : null,
                     c.isPrimary ? "Primary" : null,
@@ -617,20 +623,25 @@ export default function CreatePanel({
                     <MobileDataCard
                       key={c._id}
                       title={
-                        <span className="inline-flex items-center gap-2">
-                          {checked ? (
+                        <span className="inline-flex flex-wrap items-center gap-2">
+                          {checked && !blocked ? (
                             <CheckSquare className="h-4 w-4 shrink-0 text-brand-orange" />
                           ) : (
                             <Square className="h-4 w-4 shrink-0 text-neutral-300" />
                           )}
                           {formatCustomerName(c.first, c.last) || "—"}
+                          {blocked ? (
+                            <DoNotNotifyBadge reason={c.doNotNotifyReason} />
+                          ) : null}
                         </span>
                       }
                       subtitle={labelBits || undefined}
                       className={
-                        checked
-                          ? "border-brand-orange/40 bg-orange-50/40"
-                          : ""
+                        blocked
+                          ? "cursor-not-allowed opacity-60"
+                          : checked
+                            ? "border-brand-orange/40 bg-orange-50/40"
+                            : ""
                       }
                       fields={
                         <>
@@ -681,7 +692,10 @@ export default function CreatePanel({
                           ) : null}
                         </>
                       }
-                      onClick={() => onToggleContact(c)}
+                      onClick={() => {
+                        if (blocked) return;
+                        onToggleContact(c);
+                      }}
                     />
                   );
                 })}
@@ -706,25 +720,34 @@ export default function CreatePanel({
                     <tbody>
                       {contacts.map((c) => {
                         const checked = selectedIds.has(c._id);
+                        const blocked = Boolean(c.doNotNotify);
                         return (
                           <tr
                             key={c._id}
                             className={`border-t border-neutral-100 ${
-                              checked
-                                ? "bg-orange-50/50"
-                                : "hover:bg-neutral-50"
+                              blocked
+                                ? "opacity-60"
+                                : checked
+                                  ? "bg-orange-50/50"
+                                  : "hover:bg-neutral-50"
                             }`}
                           >
                             <td className="px-2 py-2">
                               <input
                                 type="checkbox"
-                                checked={checked}
-                                onChange={() => onToggleContact(c)}
+                                checked={checked && !blocked}
+                                disabled={blocked}
+                                onChange={() => {
+                                  if (!blocked) onToggleContact(c);
+                                }}
                               />
                             </td>
                             <td className="px-2 py-2">
-                              <div className="font-medium text-brand-dark">
+                              <div className="flex flex-wrap items-center gap-2 font-medium text-brand-dark">
                                 {formatCustomerName(c.first, c.last) || "—"}
+                                {blocked ? (
+                                  <DoNotNotifyBadge reason={c.doNotNotifyReason} />
+                                ) : null}
                               </div>
                               {c.label ? (
                                 <div className="text-[11px] text-neutral-400">

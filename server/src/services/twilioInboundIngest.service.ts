@@ -18,6 +18,9 @@ import {
 } from "./customerActivity.service";
 import type { RecordActivityInput } from "./customerActivity.service";
 import { normalizePhoneDigits } from "../utils/customerSites";
+import { classifySmsOptOut } from "../utils/smsOptOut";
+import { clearSmsOptOut, setSmsOptOut } from "../utils/smsPreferences";
+import { recordSmsPreferenceActivity } from "../utils/notificationActivity";
 import { touchFromTwilio } from "./inboxConversation.service";
 import { listedPhoneNumbers } from "../utils/twilioPhoneLines";
 import {
@@ -26,19 +29,10 @@ import {
   voiceConversationPreview,
 } from "../utils/voiceActivity";
 
-const OPT_OUT_KEYWORDS = [
-  "STOP",
-  "STOPALL",
-  "UNSUBSCRIBE",
-  "CANCEL",
-  "END",
-  "QUIT",
-];
-
 const PREVIEW_LENGTH = 160;
 
 export function isSmsOptOutKeyword(body: string): boolean {
-  return OPT_OUT_KEYWORDS.includes(body.trim().toUpperCase());
+  return classifySmsOptOut(body)?.kind === "keyword";
 }
 
 function phonesMatch(a: string, b: string): boolean {
@@ -221,7 +215,8 @@ export async function ingestInboundMessage(opts: {
   const snapshot = normalizeThreadPhone(fromNumber);
   const contactRef = matched?.contactRef ?? null;
   const customerRef = matched?.customerRef ?? null;
-  const optOut = isSmsOptOutKeyword(body);
+  const classification = backfilled ? null : classifySmsOptOut(body);
+  const optOut = classification?.kind === "keyword";
 
   const thread = await resolveThreadForInbound({
     contactRef,
@@ -233,10 +228,24 @@ export async function ingestInboundMessage(opts: {
   });
   const threadRef = thread._id;
   const stamps = timestampWrite(opts.occurredAt);
-  const prior = await TwilioCommunication.exists({
+  const prior = await TwilioCommunication.findOne({
     accountSid: opts.account.accountSid,
     twilioSid: opts.twilioSid,
-  });
+  })
+    .select("optOut")
+    .lean();
+  const priorState = prior?.optOut?.state || "";
+  const keepPriorOptOut =
+    priorState === "applied" || priorState === "dismissed";
+  const optOutWrite =
+    classification && classification.kind !== "start" && !keepPriorOptOut
+      ? {
+          state: classification.kind === "keyword" ? "applied" : "suggested",
+          matched: classification.matched,
+          resolvedByUserRef: null,
+          resolvedAt: classification.kind === "keyword" ? new Date() : null,
+        }
+      : null;
 
   const doc = await TwilioCommunication.findOneAndUpdate(
     { accountSid: opts.account.accountSid, twilioSid: opts.twilioSid },
@@ -255,6 +264,7 @@ export async function ingestInboundMessage(opts: {
         contactRef,
         threadRef,
         rawStatus: opts.rawStatus || "received",
+        ...(optOutWrite ? { optOut: optOutWrite } : {}),
         ...stamps.set,
       },
       $setOnInsert: {
@@ -321,6 +331,31 @@ export async function ingestInboundMessage(opts: {
         },
         backfilled,
       );
+    }
+  }
+
+  if (!backfilled && classification?.kind === "keyword" && doc) {
+    await setSmsOptOut({
+      phone: fromNumber,
+      source: "keyword",
+      messageRef: doc._id,
+    });
+  }
+  if (!backfilled && classification?.kind === "start") {
+    const cleared = await clearSmsOptOut(fromNumber);
+    if (cleared) {
+      await recordSmsPreferenceActivity({
+        phone: fromNumber,
+        extraCustomerRefs: customerRef ? [String(customerRef)] : [],
+        action: "resubscribed",
+        summary: "Turned text notifications back on",
+        actorKind: "customer",
+        actorName: "Customer",
+        source: "webhook",
+        entityType: "twilio_communication",
+        entityId: doc ? String(doc._id) : null,
+        metadata: { matched: classification.matched },
+      });
     }
   }
 

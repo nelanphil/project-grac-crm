@@ -33,6 +33,8 @@ import {
   setInboxEmailFormat,
   rateCallTranscript,
   dismissCallTaskPrompt,
+  confirmInboxOptOut,
+  dismissInboxOptOut,
 } from "../controllers/inboxes.controller";
 
 const router = Router();
@@ -164,6 +166,16 @@ router.post(
   "/messages/:communicationId/task-prompt/dismiss",
   requirePermission("messages:write"),
   dismissCallTaskPrompt,
+);
+router.post(
+  "/messages/:id/opt-out/confirm",
+  requirePermission("messages:write"),
+  confirmInboxOptOut,
+);
+router.post(
+  "/messages/:id/opt-out/dismiss",
+  requirePermission("messages:write"),
+  dismissInboxOptOut,
 );
 
 export default router;

@@ -6,6 +6,7 @@ import { CustomerContact } from "../models/mongo/CustomerContact";
 import { recordCustomerActivityAsync } from "../services/customerActivity.service";
 import { submitSmsOptInSchema } from "../schemas/smsOptIn.schema";
 import { canonicalPhoneDigits } from "../utils/customerSites";
+import { clearSmsOptOut } from "../utils/smsPreferences";
 
 const GENERIC_ERROR =
   "Unable to save your opt-in right now. Please try again later or call us.";
@@ -59,6 +60,7 @@ export async function submitSmsOptIn(
       { ...activeUserFilter, phone: { $regex: digitPattern } },
       { $set: { smsOptIn: true, smsOptInAt: now } },
     );
+    await clearSmsOptOut(digits);
 
     const contacts = await CustomerContact.find({
       deletedAt: null,

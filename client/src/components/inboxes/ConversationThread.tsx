@@ -20,6 +20,8 @@ import {
   scheduleInboxSms,
   sendInboxEmail,
   sendInboxSms,
+  confirmInboxMessageOptOut,
+  dismissInboxMessageOptOut,
 } from "@/lib/api";
 import {
   crmPlaybackSrc,
@@ -137,6 +139,7 @@ export default function ConversationThread({
     setReplyTargetId("");
   }
   const [sendNotice, setSendNotice] = useState<string | null>(null);
+  const [smsOptedOut, setSmsOptedOut] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [contacts, setContacts] = useState<InboxContext["contacts"]>([]);
   const scroller = useRef<HTMLDivElement>(null);
@@ -153,6 +156,7 @@ export default function ConversationThread({
       .then((result) => {
         if (cancelled) return;
         setConversation(result.conversation);
+        setSmsOptedOut(Boolean(result.smsOptedOut));
         if (refreshing) {
           setMessages((current) => mergeNewestTimelinePage(current, result.messages));
         } else {
@@ -621,6 +625,7 @@ export default function ConversationThread({
                     current.map((item) => (item.id === message.id ? { ...item, ...patch } : item)),
                   )
                 }
+                onTextsDisabled={() => setSmsOptedOut(true)}
                 onReply={
                   message.channel === "email" ? () => openReplyTo(message.id) : undefined
                 }
@@ -790,6 +795,8 @@ export default function ConversationThread({
               token={token}
               body={body}
               sending={sending}
+              disabled={smsOptedOut}
+              disabledReason="This customer has opted out of text messages. They have to turn texts back on themselves."
               onBodyChange={setBody}
               onSend={onSendSms}
               onSchedule={onScheduleSms}
@@ -825,6 +832,94 @@ export default function ConversationThread({
   );
 }
 
+function SmsOptOutFlag({
+  message,
+  token,
+  canWrite,
+  onMessage,
+  onTextsDisabled,
+}: {
+  message: InboxTimelineMessage;
+  token: string;
+  canWrite: boolean;
+  onMessage: (patch: Partial<InboxTimelineMessage>) => void;
+  onTextsDisabled?: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [flagError, setFlagError] = useState<string | null>(null);
+  const optOut = message.optOut;
+  if (
+    !optOut ||
+    optOut.state === "dismissed" ||
+    message.direction !== "inbound" ||
+    (message.channel !== "sms" && message.channel !== "mms")
+  ) {
+    return null;
+  }
+
+  async function confirm() {
+    setBusy(true);
+    setFlagError(null);
+    try {
+      const result = await confirmInboxMessageOptOut(token, message.id);
+      if (result.optOut) onMessage({ optOut: result.optOut });
+      onTextsDisabled?.();
+    } catch (err) {
+      setFlagError(err instanceof ApiError ? err.message : "Could not turn off texts");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function dismiss() {
+    setBusy(true);
+    setFlagError(null);
+    try {
+      const result = await dismissInboxMessageOptOut(token, message.id);
+      if (result.optOut) onMessage({ optOut: result.optOut });
+    } catch (err) {
+      setFlagError(err instanceof ApiError ? err.message : "Could not dismiss this");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (optOut.state === "applied") {
+    return (
+      <p className="max-w-[80%] rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+        Opted out of texts
+      </p>
+    );
+  }
+
+  return (
+    <div className="max-w-[80%] rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900">
+      <p>Looks like an opt-out request</p>
+      {canWrite ? (
+        <div className="mt-1 flex gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void confirm()}
+            className="font-medium text-amber-950 underline disabled:opacity-60"
+          >
+            Turn off texts
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void dismiss()}
+            className="text-amber-800 disabled:opacity-60"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+      {flagError ? <p className="mt-1 text-red-600">{flagError}</p> : null}
+    </div>
+  );
+}
+
 function MessageCard({
   message,
   token,
@@ -834,6 +929,7 @@ function MessageCard({
   canWrite,
   canTasks,
   onMessage,
+  onTextsDisabled,
   onReply,
   expanded,
   onToggle,
@@ -846,6 +942,7 @@ function MessageCard({
   canWrite: boolean;
   canTasks: boolean;
   onMessage: (patch: Partial<InboxTimelineMessage>) => void;
+  onTextsDisabled?: () => void;
   onReply?: () => void;
   expanded: boolean;
   onToggle: () => void;
@@ -940,7 +1037,7 @@ function MessageCard({
     );
   }
   return (
-    <div className={`flex ${outbound ? "justify-end" : "justify-start"}`}>
+    <div className={`flex flex-col gap-1 ${outbound ? "items-end" : "items-start"}`}>
       <div
         className={`max-w-[80%] rounded-2xl px-3 py-2 text-[13px] leading-snug ${
           outbound
@@ -982,6 +1079,13 @@ function MessageCard({
           {message.status === "failed" ? " · Failed" : ""}
         </p>
       </div>
+      <SmsOptOutFlag
+        message={message}
+        token={token}
+        canWrite={canWrite}
+        onMessage={onMessage}
+        onTextsDisabled={onTextsDisabled}
+      />
     </div>
   );
 }

@@ -17,6 +17,7 @@ import {
   deleteEquipment,
   getCustomerAddresses,
   getCustomerById,
+  getCustomerNotifications,
   getCustomerContacts,
   getCustomerDuplicates,
   getMergePreview,
@@ -202,6 +203,7 @@ router.patch(
   promoteCustomer,
 );
 router.patch("/:id", requirePermission("customers:write"), updateCustomer);
+router.get("/:id/notifications", requirePermission("customers:read"), getCustomerNotifications);
 router.get("/:id", requirePermission("customers:read"), getCustomerById);
 
 export default router;

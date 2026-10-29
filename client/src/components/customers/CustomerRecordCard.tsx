@@ -15,10 +15,12 @@ import {
   CustomerAddress,
   CustomerDetail,
   getCustomerAttention,
+  getCustomerNotifications,
 } from "@/lib/api";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useCustomerHistoryStore } from "@/store/useCustomerHistoryStore";
 import CustomerHistoryPanel from "@/components/customers/CustomerHistoryPanel";
+import CustomerNotificationsPanel from "@/components/customers/CustomerNotificationsPanel";
 
 export type RecordTab =
   | "contacts"
@@ -26,7 +28,8 @@ export type RecordTab =
   | "notes"
   | "contracts"
   | "communications"
-  | "history";
+  | "history"
+  | "notifications";
 
 const TABS: RecordTab[] = [
   "contacts",
@@ -34,6 +37,7 @@ const TABS: RecordTab[] = [
   "notes",
   "contracts",
   "communications",
+  "notifications",
   "history",
 ];
 
@@ -114,6 +118,7 @@ export default function CustomerRecordCard({
   }
   const [notesAlert, setNotesAlert] = useState(false);
   const [commsAlert, setCommsAlert] = useState(false);
+  const [notificationsAlert, setNotificationsAlert] = useState(false);
   const historyUnseen = useCustomerHistoryStore(
     (state) => state.byCustomer[customer._id]?.unseenIds.length ?? 0,
   );
@@ -162,10 +167,36 @@ export default function CustomerRecordCard({
     };
   }, [loadAttention]);
 
+  useEffect(() => {
+    let cancelled = false;
+    getCustomerNotifications(token, customer._id)
+      .then((result) => {
+        if (cancelled) return;
+        setNotificationsAlert(
+          result.contacts.some(
+            (row) =>
+              (row.email &&
+                (!row.email.generalNotifications || !row.email.billingAlerts)) ||
+              (row.text && !row.text.textNotifications),
+          ),
+        );
+      })
+      .catch(() => {
+        // Leave the dot as it was.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, customer._id]);
+
   const handleUnviewedChange = useCallback((hasUnviewed: boolean) => {
     notesHold.current = hasUnviewed;
     notesRequest.current += 1;
     setNotesAlert(hasUnviewed);
+  }, []);
+
+  const handleNotificationsAlert = useCallback((anyOff: boolean) => {
+    setNotificationsAlert(anyOff);
   }, []);
 
   const tabs = useMemo(
@@ -186,13 +217,19 @@ export default function CustomerRecordCard({
         alertLabel: "Communications, unread message",
       },
       {
+        id: "notifications" as const,
+        label: "Notifications",
+        alert: activeTab !== "notifications" && notificationsAlert,
+        alertLabel: "Notifications, a channel is turned off",
+      },
+      {
         id: "history" as const,
         label: "History",
         alert: activeTab !== "history" && historyUnseen > 0,
         alertLabel: "History, new activity",
       },
     ],
-    [activeTab, historyUnseen, showNotesAlert, showCommsAlert],
+    [activeTab, historyUnseen, notificationsAlert, showNotesAlert, showCommsAlert],
   );
 
   function setTab(id: RecordTab) {
@@ -318,6 +355,16 @@ export default function CustomerRecordCard({
             customerId={customer._id}
             contacts={contacts}
             token={token}
+          />
+        </div>
+      ) : null}
+
+      {showPane("notifications") ? (
+        <div className={activeTab === "notifications" ? undefined : "hidden"}>
+          <CustomerNotificationsPanel
+            customerId={customer._id}
+            token={token}
+            onAlertChange={handleNotificationsAlert}
           />
         </div>
       ) : null}

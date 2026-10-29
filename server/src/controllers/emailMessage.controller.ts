@@ -29,6 +29,7 @@ import {
 } from "../utils/emailChrome";
 import { buildStaffOutboundEmail } from "../utils/emailTemplates";
 import { buildUnsubscribeUrl } from "../utils/unsubscribeToken";
+import { partitionContactsByEmailOptOut } from "../utils/emailPreferences";
 import {
   renderMessageTemplate,
   templateUsesInvoice,
@@ -444,14 +445,23 @@ export async function scheduleEmailMessages(
       });
     }
     const account = await loadActiveEmailAccount(data.emailAccountId);
-    const uniqueContactIds = [...new Set(data.contactIds)];
+    const { allowed, skipped } = await partitionContactsByEmailOptOut([
+      ...new Set(data.contactIds),
+    ]);
+    if (allowed.length === 0) {
+      res.status(400).json({
+        message: "Every selected recipient has unsubscribed from email.",
+        skipped: skipped.length,
+      });
+      return;
+    }
     const userId = req.user?.id
       ? new Types.ObjectId(req.user.id)
       : null;
 
     const row = await ScheduledEmailSend.create({
       expectedAmountCents: data.expectedAmountCents,
-      contactIds: uniqueContactIds,
+      contactIds: allowed,
       subject: content.subject,
       body: content.body,
       emailChrome: content.chrome,
@@ -493,6 +503,7 @@ export async function scheduleEmailMessages(
         row.toObject(),
         account.friendlyName,
       ),
+      skipped: skipped.length,
     });
   } catch (err) {
     if (staffEmailErrorResponse(err, res)) return;

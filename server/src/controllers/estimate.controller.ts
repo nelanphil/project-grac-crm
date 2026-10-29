@@ -26,6 +26,10 @@ import { estimatedMinutesForWorkOrder } from "../services/schedule.service";
 import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
 import { syncWorkOrderInvoice } from "../services/invoice.service";
+import {
+  actorFromAuthUser,
+  recordWorkOrderActivity,
+} from "../services/workOrderActivity.service";
 import { resolveTicketWorkOrderType } from "../services/ticketWorkOrderType";
 
 const ESTIMATE_STATUS_GROUPS = {
@@ -356,6 +360,7 @@ export async function convertEstimate(
       contractRef: estimate.contractRef ?? null,
       contractDiscount: estimate.contractDiscount ?? null,
       number: await nextPrefixedNumber(WorkOrder, "WO"),
+      origin: "user",
       descPerform: estimate.descPerform,
       descPerformed: "",
       date: estimate.date ?? new Date(),
@@ -409,6 +414,14 @@ export async function convertEstimate(
     estimate.status = "converted";
     estimate.workOrderRef = workOrder._id as mongoose.Types.ObjectId;
     await estimate.save();
+
+    await recordWorkOrderActivity({
+      workOrderRef: workOrder._id,
+      action: "created",
+      actor: actorFromAuthUser(req.user),
+      summary: `Created work order ${workOrder.number} from an estimate`,
+      source: "crm",
+    });
 
     logNotificationAsync({
       entityType: "estimate",

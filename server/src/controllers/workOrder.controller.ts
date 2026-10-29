@@ -58,6 +58,13 @@ import { nextPrefixedNumber } from "../services/serviceTicket";
 import { resolveTicketWorkOrderType } from "../services/ticketWorkOrderType";
 import { syncWorkOrderInvoice } from "../services/invoice.service";
 import {
+  actorFromAuthUser,
+  buildWorkOrderActivityLog,
+  recordWorkOrderActivity,
+  recordWorkOrderFieldUpdate,
+  snapshotWorkOrderFields,
+} from "../services/workOrderActivity.service";
+import {
   checkWorkOrderCompletion,
   completeWorkOrder,
   resendWorkOrderInvoice,
@@ -383,6 +390,33 @@ export async function getWorkOrderById(
   }
 }
 
+export async function getWorkOrderActivity(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(String(req.params.id))) {
+      res.status(400).json({ message: "Invalid work order id" });
+      return;
+    }
+    const workOrder = await includingDeletedWorkOrders(
+      WorkOrder.findById(req.params.id),
+    ).lean();
+    if (!workOrder) {
+      res.status(404).json({ message: "Work order not found" });
+      return;
+    }
+    if (workOrder.deletedAt && !(await canViewDeletedWorkOrders(req))) {
+      res.status(404).json({ message: "Work order not found" });
+      return;
+    }
+    res.json(await buildWorkOrderActivityLog(workOrder));
+  } catch (err) {
+    console.error("GET /work-orders/:id/activity error:", err);
+    res.status(500).json({ message: "Failed to load work order activity" });
+  }
+}
+
 export async function getWorkOrdersByCustomer(
   req: AuthRequest,
   res: Response,
@@ -480,6 +514,7 @@ export async function createWorkOrder(
       addressRef: addressRef || null,
       userId: req.user ? parseInt(req.user.id, 10) : undefined,
       number: await nextPrefixedNumber(WorkOrder, "WO"),
+      origin: "user",
       estimatedMinutes,
       estimateRef:
         data.estimateRef && mongoose.Types.ObjectId.isValid(data.estimateRef)
@@ -657,6 +692,13 @@ export async function createWorkOrder(
     }
 
     const custName = customerDisplayName(customer);
+    await recordWorkOrderActivity({
+      workOrderRef: workOrder._id,
+      action: "created",
+      actor: actorFromAuthUser(req.user),
+      summary: `Created work order ${workOrder.number}`,
+      source: "crm",
+    });
     logNotificationAsync({
       entityType: "work_order",
       action: "created",
@@ -759,6 +801,7 @@ export async function updateWorkOrder(
       }
     }
 
+    const activityBefore = snapshotWorkOrderFields(workOrder);
     const prevCrew = currentCrew;
     const prevStartTime = workOrder.startTime ?? "";
     const prevScheduledStart = workOrder.scheduledStart
@@ -1073,6 +1116,12 @@ export async function updateWorkOrder(
       }
     }
 
+    await recordWorkOrderFieldUpdate({
+      workOrderRef: workOrder._id,
+      before: activityBefore,
+      after: snapshotWorkOrderFields(workOrder),
+      actor: actorFromAuthUser(req.user),
+    });
     logNotificationThrottledAsync(
       {
         entityType: "work_order",
@@ -1143,6 +1192,13 @@ export async function cancelWorkOrderAppointment(
 
     await workOrder.save();
 
+    await recordWorkOrderActivity({
+      workOrderRef: workOrder._id,
+      action: "appointment_canceled",
+      actor: actorFromAuthUser(req.user),
+      summary: "Canceled the appointment",
+      source: "crm",
+    });
     logNotificationAsync({
       entityType: "work_order",
       action: "updated",
@@ -1189,6 +1245,13 @@ export async function deleteWorkOrder(
       : null;
     await workOrder.save();
 
+    await recordWorkOrderActivity({
+      workOrderRef: workOrder._id,
+      action: "deleted",
+      actor: actorFromAuthUser(req.user),
+      summary: "Deleted the work order",
+      source: "crm",
+    });
     logNotificationAsync({
       entityType: "work_order",
       action: "deleted",
@@ -1241,6 +1304,13 @@ export async function restoreWorkOrder(
     workOrder.deletedBy = null;
     await workOrder.save();
 
+    await recordWorkOrderActivity({
+      workOrderRef: workOrder._id,
+      action: "restored",
+      actor: actorFromAuthUser(req.user),
+      summary: "Restored the work order",
+      source: "crm",
+    });
     logNotificationAsync({
       entityType: "work_order",
       action: "updated",
@@ -1493,6 +1563,13 @@ export async function postWorkOrderSendReceipt(
         to: classified.to,
       });
       if (email.status === "sent") {
+        await recordWorkOrderActivity({
+          workOrderRef: workOrder._id,
+          action: "receipt_sent",
+          actor: actorFromAuthUser(req.user),
+          summary: `Emailed the receipt to ${email.to}`,
+          source: "crm",
+        });
         logNotificationAsync({
           entityType: "work_order",
           action: "updated",
@@ -1517,6 +1594,13 @@ export async function postWorkOrderSendReceipt(
       return;
     }
     if (text.status === "sent") {
+      await recordWorkOrderActivity({
+        workOrderRef: workOrder._id,
+        action: "receipt_sent",
+        actor: actorFromAuthUser(req.user),
+        summary: `Texted the receipt to ${text.to}`,
+        source: "crm",
+      });
       logNotificationAsync({
         entityType: "work_order",
         action: "updated",
@@ -1628,6 +1712,24 @@ export async function postWorkOrderComplete(
             : workOrder.number
               ? `Work order ${workOrder.number} marked complete`
               : "Work order marked complete";
+    if (!wasComplete && parsed.data.mode !== "resend" && !result.reverted) {
+      await recordWorkOrderActivity({
+        workOrderRef: workOrder._id,
+        action: "completed",
+        actor: actorFromAuthUser(req.user),
+        summary: "Marked complete",
+        source: "crm",
+      });
+    }
+    if (parsed.data.mode === "resend") {
+      await recordWorkOrderActivity({
+        workOrderRef: workOrder._id,
+        action: "receipt_sent",
+        actor: actorFromAuthUser(req.user),
+        summary: "Resent the invoice",
+        source: "crm",
+      });
+    }
     logNotificationAsync({
       entityType: "work_order",
       action: "updated",

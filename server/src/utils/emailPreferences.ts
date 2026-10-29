@@ -1,4 +1,9 @@
-import { EmailPreference } from "../models/mongo/EmailPreference";
+import { Types } from "mongoose";
+import {
+  EmailPreference,
+  type EmailUnsubscribeSource,
+} from "../models/mongo/EmailPreference";
+import { CustomerContact } from "../models/mongo/CustomerContact";
 import { normalizeAccountEmail } from "./provisionCustomerAccount";
 import type { EmailPrefChannel } from "./unsubscribeToken";
 
@@ -6,11 +11,15 @@ export interface EmailPreferenceValues {
   email: string;
   generalNotifications: boolean;
   billingAlerts: boolean;
+  unsubscribedAt: Date | null;
+  unsubscribeSource: EmailUnsubscribeSource | "";
 }
 
 export const DEFAULT_EMAIL_PREFERENCES = {
   generalNotifications: true,
   billingAlerts: true,
+  unsubscribedAt: null,
+  unsubscribeSource: "",
 } as const;
 
 export async function getEmailPreferences(
@@ -28,6 +37,8 @@ export async function getEmailPreferences(
     email: normalized,
     generalNotifications: row.generalNotifications !== false,
     billingAlerts: row.billingAlerts !== false,
+    unsubscribedAt: row.unsubscribedAt ?? null,
+    unsubscribeSource: row.unsubscribeSource || "",
   };
 }
 
@@ -37,6 +48,7 @@ export async function setEmailPreferences(
     generalNotifications?: boolean;
     billingAlerts?: boolean;
   },
+  meta?: { source?: EmailUnsubscribeSource },
 ): Promise<EmailPreferenceValues> {
   const normalized = normalizeAccountEmail(email);
   if (!normalized) {
@@ -49,10 +61,25 @@ export async function setEmailPreferences(
       patch.generalNotifications ?? current.generalNotifications,
     billingAlerts: patch.billingAlerts ?? current.billingAlerts,
   };
+  const turnedOff =
+    (current.generalNotifications && !next.generalNotifications) ||
+    (current.billingAlerts && !next.billingAlerts);
+  const bothOn = next.generalNotifications && next.billingAlerts;
+  const update: Record<string, unknown> = {
+    email: normalized,
+    ...next,
+  };
+  if (turnedOff) {
+    update.unsubscribedAt = new Date();
+    update.unsubscribeSource = meta?.source || "";
+  } else if (bothOn) {
+    update.unsubscribedAt = null;
+    update.unsubscribeSource = "";
+  }
 
   const row = await EmailPreference.findOneAndUpdate(
     { email: normalized },
-    { $set: { email: normalized, ...next } },
+    { $set: update },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   ).lean();
 
@@ -60,7 +87,47 @@ export async function setEmailPreferences(
     email: normalized,
     generalNotifications: row?.generalNotifications !== false,
     billingAlerts: row?.billingAlerts !== false,
+    unsubscribedAt: row?.unsubscribedAt ?? null,
+    unsubscribeSource: row?.unsubscribeSource || "",
   };
+}
+
+/** Addresses whose general (non-billing) notifications are off. */
+export async function emailOptedOut(emails: string[]): Promise<Set<string>> {
+  const normalized = [
+    ...new Set(emails.map((email) => normalizeAccountEmail(email)).filter(Boolean)),
+  ];
+  if (normalized.length === 0) return new Set();
+  const rows = await EmailPreference.find({
+    email: { $in: normalized },
+    generalNotifications: false,
+  })
+    .select("email")
+    .lean();
+  return new Set(rows.map((row) => row.email));
+}
+
+export async function partitionContactsByEmailOptOut(
+  contactIds: string[],
+): Promise<{ allowed: string[]; skipped: string[] }> {
+  const valid = contactIds.filter((id) => Types.ObjectId.isValid(id));
+  const contacts = valid.length
+    ? await CustomerContact.find({ _id: { $in: valid } })
+        .select("_id email")
+        .lean()
+    : [];
+  const emailById = new Map(
+    contacts.map((contact) => [String(contact._id), contact.email ?? ""]),
+  );
+  const opted = await emailOptedOut([...emailById.values()]);
+  const allowed: string[] = [];
+  const skipped: string[] = [];
+  for (const id of contactIds) {
+    const email = normalizeAccountEmail(emailById.get(id) ?? "");
+    if (email && opted.has(email)) skipped.push(id);
+    else allowed.push(id);
+  }
+  return { allowed, skipped };
 }
 
 export async function isEmailChannelEnabled(
@@ -119,6 +186,14 @@ export async function renameEmailPreferences(
     conflict.billingAlerts =
       conflict.billingAlerts !== false && existing.billingAlerts !== false;
     conflict.simpleFormat = Boolean(conflict.simpleFormat || existing.simpleFormat);
+    const bothOn = conflict.generalNotifications && conflict.billingAlerts;
+    if (bothOn) {
+      conflict.unsubscribedAt = null;
+      conflict.unsubscribeSource = "";
+    } else if (!conflict.unsubscribedAt && existing.unsubscribedAt) {
+      conflict.unsubscribedAt = existing.unsubscribedAt;
+      conflict.unsubscribeSource = existing.unsubscribeSource || "";
+    }
     await conflict.save();
     await existing.deleteOne();
     return;

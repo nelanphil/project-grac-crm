@@ -18,6 +18,8 @@ import { ScheduledMessageSend } from "../models/mongo/ScheduledMessageSend";
 import { MessageThread } from "../models/mongo/MessageThread";
 import { TwilioAccount } from "../models/mongo/TwilioAccount";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
+import { recordSmsPreferenceActivity } from "../utils/notificationActivity";
+import { isSmsEnabled, setSmsOptOut } from "../utils/smsPreferences";
 import { parseTranscriptRating } from "../utils/transcriptRating";
 import { User } from "../models/mongo/User";
 import { WorkOrder, activeWorkOrderFilter } from "../models/mongo/WorkOrder";
@@ -106,6 +108,16 @@ function escapeRegex(value: string): string {
 function personName(user: { first_name?: string; last_name?: string } | null | undefined): string {
   if (!user) return "";
   return `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim();
+}
+
+function timelineOptOut(doc: {
+  optOut?: { state?: string; matched?: string } | null;
+}): { state: "applied" | "suggested" | "dismissed"; matched: string } | null {
+  const state = doc.optOut?.state;
+  if (state !== "applied" && state !== "suggested" && state !== "dismissed") {
+    return null;
+  }
+  return { state, matched: doc.optOut?.matched || "" };
 }
 
 function apiBase(req: AuthRequest): string {
@@ -461,6 +473,7 @@ export async function getInboxTimeline(
       emailAccountId: string | null;
       imapUid: number | null;
       actorId: string | null;
+      optOut: { state: "applied" | "suggested" | "dismissed"; matched: string } | null;
     };
     const followUpIds = twilio.flatMap((doc) =>
       doc.followUpTaskRef ? [doc.followUpTaskRef] : [],
@@ -514,6 +527,7 @@ export async function getInboxTimeline(
         emailAccountId: null,
         imapUid: null,
         actorId: doc.createdByUserRef ? String(doc.createdByUserRef) : null,
+        optOut: timelineOptOut(doc),
       })),
       ...emails.map((doc) => {
         const at = doc.receivedAt ? new Date(doc.receivedAt) : new Date(doc.createdAt);
@@ -548,6 +562,7 @@ export async function getInboxTimeline(
           emailAccountId: doc.emailAccountRef ? String(doc.emailAccountRef) : null,
           imapUid: doc.imapUid ?? null,
           actorId: doc.createdByUserRef ? String(doc.createdByUserRef) : null,
+          optOut: null,
         };
       }),
     ];
@@ -564,6 +579,8 @@ export async function getInboxTimeline(
       .populate("readByUserRef", "first_name last_name")
       .lean();
     const counts = populated ? await openTaskCounts([populated._id as Types.ObjectId]) : new Map();
+    const smsOptedOut =
+      convo.handleKind === "phone" ? !(await isSmsEnabled(convo.handle)) : false;
     res.json({
       conversation: populated
         ? publicConversation(populated as never, counts.get(String(populated._id)) || 0)
@@ -576,6 +593,7 @@ export async function getInboxTimeline(
       })),
       hasMore,
       nextBefore: page[0]?.at ?? null,
+      smsOptedOut,
     });
   } catch (err) {
     console.error("GET /inboxes/conversations/:id/timeline error:", err);
@@ -907,7 +925,9 @@ export async function sendInboxSmsCore(
       },
       { userId: actor.userId, apiBase: actor.apiBase },
     );
-    const failed = result.results.find((item) => item.status === "failed");
+    const failed = result.results.find(
+      (item) => item.status === "failed" || item.status === "skipped",
+    );
     return {
       summary: result.summary,
       errorMessage: failed && "error" in failed ? failed.error : null,
@@ -920,6 +940,12 @@ export async function sendInboxSmsCore(
   const to = toE164(rawTo);
   if (!to) {
     throw new InboxSmsInputError("This conversation has no phone number.");
+  }
+  if (!(await isSmsEnabled(rawTo))) {
+    throw new MessagingDispatchError(
+      409,
+      "This customer has opted out of text messages. They have to turn texts back on themselves.",
+    );
   }
   const account = await getTwilioAccountForSend(twilioAccountId);
   const from = resolveFromNumber(account, fromNumber || convo.ourNumber || undefined);
@@ -1008,6 +1034,13 @@ export async function scheduleInboxSms(req: AuthRequest, res: Response): Promise
     const convo = await loadConversation(String(req.params.id));
     if (!convo) {
       res.status(404).json({ message: "Conversation not found" });
+      return;
+    }
+    if (convo.handleKind === "phone" && !(await isSmsEnabled(convo.handle))) {
+      res.status(409).json({
+        message:
+          "This customer has opted out of text messages. They have to turn texts back on themselves.",
+      });
       return;
     }
     const body = typeof req.body?.body === "string" ? req.body.body : "";
@@ -1839,4 +1872,99 @@ export async function dismissCallTaskPrompt(req: AuthRequest, res: Response): Pr
     return;
   }
   res.json({ dismissed: true });
+}
+
+async function staffActor(req: AuthRequest): Promise<{ id: Types.ObjectId | null; name: string }> {
+  const id = actorId(req);
+  if (!id) return { id: null, name: "Staff" };
+  const user = await User.findById(id).select("first_name last_name").lean();
+  return { id, name: personName(user) || "Staff" };
+}
+
+export async function confirmInboxOptOut(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!Types.ObjectId.isValid(String(req.params.id || ""))) {
+      res.status(404).json({ message: "Message not found" });
+      return;
+    }
+    const doc = await TwilioCommunication.findOne({
+      _id: req.params.id,
+      channel: { $in: ["sms", "mms"] },
+      direction: "inbound",
+    });
+    if (!doc) {
+      res.status(404).json({ message: "Message not found" });
+      return;
+    }
+    const actor = await staffActor(req);
+    const applied = await setSmsOptOut({
+      phone: doc.fromNumber,
+      source: "staff_confirmed",
+      messageRef: doc._id,
+      userRef: actor.id,
+    });
+    doc.optOut = {
+      state: "applied",
+      matched: doc.optOut?.matched || doc.body || "",
+      resolvedByUserRef: actor.id,
+      resolvedAt: new Date(),
+    };
+    await doc.save();
+    if (applied.changed) {
+      await recordSmsPreferenceActivity({
+        phone: doc.fromNumber,
+        extraCustomerRefs: doc.customerRef ? [String(doc.customerRef)] : [],
+        action: "opted_out",
+        summary: "Opted out of text messages",
+        actorKind: "staff",
+        actorName: actor.name,
+        actorUserId: actor.id ? String(actor.id) : null,
+        source: "crm",
+        entityType: "twilio_communication",
+        entityId: String(doc._id),
+        metadata: { source: "staff_confirmed", matched: doc.optOut.matched },
+      });
+    }
+    res.json({
+      optOut: timelineOptOut(doc),
+      textNotifications: false,
+    });
+  } catch (err) {
+    console.error("POST /inboxes/messages/:id/opt-out/confirm error:", err);
+    res.status(500).json({ message: "Failed to turn off text notifications" });
+  }
+}
+
+export async function dismissInboxOptOut(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    if (!Types.ObjectId.isValid(String(req.params.id || ""))) {
+      res.status(404).json({ message: "Message not found" });
+      return;
+    }
+    const doc = await TwilioCommunication.findOne({
+      _id: req.params.id,
+      channel: { $in: ["sms", "mms"] },
+      direction: "inbound",
+    });
+    if (!doc) {
+      res.status(404).json({ message: "Message not found" });
+      return;
+    }
+    if (doc.optOut?.state === "applied") {
+      res.status(409).json({ message: "This opt-out is already applied." });
+      return;
+    }
+    const actor = await staffActor(req);
+    doc.optOut = {
+      state: "dismissed",
+      matched: doc.optOut?.matched || "",
+      resolvedByUserRef: actor.id,
+      resolvedAt: new Date(),
+    };
+    await doc.save();
+    res.json({ optOut: timelineOptOut(doc) });
+  } catch (err) {
+    console.error("POST /inboxes/messages/:id/opt-out/dismiss error:", err);
+    res.status(500).json({ message: "Failed to dismiss the opt-out flag" });
+  }
 }

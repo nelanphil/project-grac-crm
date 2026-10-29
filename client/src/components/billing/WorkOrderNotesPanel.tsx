@@ -76,6 +76,7 @@ export default function WorkOrderNotesPanel({
   onDesiredWindowChange,
   draftNotes,
   onDraftNotesChange,
+  onChanged,
 }: {
   token: string;
   recordId?: string;
@@ -91,6 +92,7 @@ export default function WorkOrderNotesPanel({
   }) => void;
   draftNotes?: WorkOrderNote[];
   onDraftNotesChange?: (notes: WorkOrderNote[]) => void;
+  onChanged?: () => void;
 }) {
   const isAdmin = isAdminRole(userRole);
   const [notes, setNotes] = useState<WorkOrderNote[]>(draftNotes ?? []);
@@ -258,6 +260,7 @@ export default function WorkOrderNotesPanel({
       setShowSaveTemplate(false);
       setTemplateName("");
       showWarnings(warnings);
+      onChanged?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to add note.");
     } finally {
@@ -369,6 +372,7 @@ export default function WorkOrderNotesPanel({
       setNotes((prev) => prev.map((item) => (item._id === noteId ? note : item)));
       setEditingNoteId(null);
       showWarnings(warnings);
+      onChanged?.();
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : "Failed to update note.",
@@ -395,6 +399,7 @@ export default function WorkOrderNotesPanel({
       const { warnings } = await deleteWorkOrderNote(token, recordId, noteId, source);
       setNotes((prev) => prev.filter((item) => item._id !== noteId));
       showWarnings(warnings);
+      onChanged?.();
       if (editingNoteId === noteId) setEditingNoteId(null);
       setConfirmingDeleteId(null);
     } catch (err) {

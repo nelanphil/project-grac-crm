@@ -23,6 +23,7 @@ import {
 } from "./twilio.service";
 import { isTenDigitUsPhone } from "./workOrderCompletion.service";
 import { isEmailChannelEnabled } from "../utils/emailPreferences";
+import { isSmsEnabled } from "../utils/smsPreferences";
 import { contactHasValidEmail, toE164 } from "../utils/messagingContext";
 import { renderInvoiceTemplateEmail } from "../utils/invoiceTemplateEmail";
 import { normalizePhoneLines } from "../utils/twilioPhoneLines";
@@ -213,6 +214,12 @@ export async function textInvoiceReceipt(input: {
 
     const to = toE164(phone.phone);
     if (!to) return { status: "invalid" };
+    if (!(await isSmsEnabled(phone.phone))) {
+      return {
+        status: "failed",
+        error: "Recipient opted out of text messages",
+      };
+    }
     await sendSms({
       account: line.account,
       from: line.from,
