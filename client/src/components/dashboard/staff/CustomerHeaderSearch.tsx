@@ -32,6 +32,13 @@ function formatSecondaryLine(customer: CustomerListItem): string {
   return [phone, place].filter(Boolean).join(" · ");
 }
 
+function formatOwnerLine(customer: CustomerListItem): string {
+  const name = customer.owner
+    ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
+    : "";
+  return `Owner: ${name || "Unassigned"}`;
+}
+
 type CustomerHeaderSearchProps = {
   className?: string;
   inputClassName?: string;
@@ -269,6 +276,9 @@ export default function CustomerHeaderSearch({
                       {secondary}
                     </span>
                   ) : null}
+                  <span className="truncate text-xs text-[var(--staff-muted)]">
+                    {formatOwnerLine(customer)}
+                  </span>
                 </button>
               );
             })}

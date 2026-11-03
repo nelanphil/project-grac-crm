@@ -653,11 +653,15 @@ function CustomerDetailContent() {
             ) : (
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="font-medium text-neutral-500">Owner:</span>
-                <span className="font-medium text-neutral-800">
-                  {customer.owner
-                    ? `${customer.owner.first_name} ${customer.owner.last_name}`.trim()
-                    : "Unassigned"}
-                </span>
+                {customer.owner ? (
+                  <span className="inline-flex items-center rounded-full bg-brand-orange/10 px-2 py-0.5 text-xs font-semibold text-brand-orange">
+                    {`${customer.owner.first_name} ${customer.owner.last_name}`.trim()}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-semibold text-neutral-600">
+                    Unassigned
+                  </span>
+                )}
                 {customer.ownerManual ? (
                   <span
                     className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 border border-amber-200"
