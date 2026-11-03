@@ -42,8 +42,8 @@ describe("formatScheduleSms", () => {
       body,
       [
         header,
-        "8:00 AM\nSmith\n(386) 555-0100\n123 Main St, Springfield",
-        "10:30 AM\nJones\n(386) 555-3434\n45 Oak Ave, Springfield",
+        "1. Smith\n(386) 555-0100\n123 Main St, Springfield",
+        "2. Jones\n(386) 555-3434\n45 Oak Ave, Springfield",
         footer,
       ].join("\n\n"),
     );
@@ -69,7 +69,7 @@ describe("formatScheduleSms", () => {
       body,
       [
         header,
-        "8:00 AM\nSmith\n123 Main St, Springfield",
+        "1. Smith\n123 Main St, Springfield",
         footer,
       ].join("\n\n"),
     );
@@ -96,7 +96,7 @@ describe("formatScheduleSms", () => {
       body,
       [
         header,
-        "8:00 AM\nSmith\n(386) 555-0100\n123 Main St, Springfield\nNote: Gate code 1234",
+        "1. Smith\n(386) 555-0100\n123 Main St, Springfield\nNote: Gate code 1234",
         footer,
       ].join("\n\n"),
     );
@@ -124,8 +124,7 @@ describe("formatScheduleSms", () => {
       [
         header,
         [
-          "8:00 AM",
-          "Smith",
+          "1. Smith",
           "(386) 555-0100",
           "123 Main St, Springfield",
           "Note: Gate code 1234",
@@ -160,6 +159,77 @@ describe("formatScheduleSms", () => {
     assert.match(noteLine ?? "", /^Note: Bring ladder /);
   });
 
+  it("numbers a task between appointments and prints its description", () => {
+    const body = formatScheduleSms({
+      date,
+      technicianName,
+      appUrl,
+      jobs: [
+        {
+          scheduledStart: at("10:30"),
+          contactName: "Jones",
+          phone: "(386) 555-3434",
+          street: "45 Oak Ave",
+          city: "Springfield",
+        },
+        {
+          kind: "task",
+          scheduledStart: at("09:00"),
+          title: "Pick up key",
+          description: "Go to Eddie's\nafter the 3 phase job",
+        },
+        {
+          scheduledStart: at("08:00"),
+          contactName: "Smith",
+          phone: "(386) 555-0100",
+          street: "123 Main St",
+          city: "Springfield",
+        },
+        {
+          kind: "task",
+          scheduledStart: at("10:30"),
+          title: "  ",
+          description: "",
+        },
+      ],
+    });
+
+    assert.equal(
+      body,
+      [
+        header,
+        "1. Smith\n(386) 555-0100\n123 Main St, Springfield",
+        "2. Task: Pick up key\nGo to Eddie's after the 3 phase job",
+        "3. Jones\n(386) 555-3434\n45 Oak Ave, Springfield",
+        "4. Task",
+        footer,
+      ].join("\n\n"),
+    );
+  });
+
+  it("caps a long task description", () => {
+    const body = formatScheduleSms({
+      date,
+      technicianName,
+      appUrl,
+      jobs: [
+        {
+          kind: "task",
+          scheduledStart: at("08:00"),
+          title: "Parts",
+          description: `Bring ladder ${"A".repeat(200)}`,
+        },
+      ],
+    });
+
+    const description = body
+      .split("\n")
+      .find((line) => line.startsWith("Bring ladder "));
+    assert.ok(description);
+    assert.equal(description?.length, 160);
+    assert.equal(description?.endsWith("…"), true);
+  });
+
   it("says there are no appointments and still includes the app link", () => {
     assert.equal(
       formatScheduleSms({ date, technicianName, appUrl, jobs: [] }),
@@ -183,7 +253,7 @@ describe("formatScheduleSms", () => {
     );
     const omitted = Number(omittedLine?.match(/^…and (\d+) more$/)?.[1]);
     const shownJobs = sections.filter((section) =>
-      section.startsWith("8:"),
+      /^\d+\. Customer /.test(section),
     ).length;
 
     assert.ok(body.length <= SMS_BODY_MAX);

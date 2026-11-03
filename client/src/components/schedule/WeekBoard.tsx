@@ -454,6 +454,17 @@ function UnscheduledCardShell({
             <div className="truncate text-[13px] font-semibold text-brand-dark">
               {order.customerName || "Customer"}
             </div>
+            {windowLabel ? (
+              <span className="group relative mt-0.5 block min-w-0">
+                <span className="block truncate text-neutral-600">{windowLabel}</span>
+                <span
+                  role="tooltip"
+                  className="pointer-events-none absolute top-full left-0 z-30 mt-1 hidden w-max max-w-[14rem] rounded-md border border-[var(--staff-border)] bg-[var(--staff-cream)] px-2 py-1 text-left text-[11px] font-normal leading-snug text-[var(--staff-ink)] shadow-lg group-hover:block"
+                >
+                  Desired time set in the notes
+                </span>
+              </span>
+            ) : null}
             <div className="mt-0.5 truncate text-neutral-500">
               {[
                 cityLabel || "—",
@@ -469,12 +480,7 @@ function UnscheduledCardShell({
               </div>
             ) : null}
             <div className="mt-1 text-neutral-400">
-              {[
-                order.date ? formatMonthDayYear(order.date.slice(0, 10)) : "No date",
-                windowLabel,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+              {order.date ? formatMonthDayYear(order.date.slice(0, 10)) : "No date"}
             </div>
             {assignedName ? (
               <div className="mt-1 truncate text-neutral-500">

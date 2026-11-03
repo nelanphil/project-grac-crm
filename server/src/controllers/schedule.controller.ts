@@ -1228,6 +1228,12 @@ export async function postScheduleText(
       .map((part) => part.trim())
       .filter(Boolean)
       .join(" ");
+    const tasks = (
+      await listScheduledTasks([viewed.person._id], start, end)
+    ).filter((task) => {
+      if (!task.scheduledStart) return false;
+      return formatLocalDate(new Date(task.scheduledStart)) === parsed.data.date;
+    });
     const scheduleJobs = enriched.map((job) => {
       const scheduledStart = job.scheduledStart;
       const contact = contacts.get(textField(job.customerRef));
@@ -1261,7 +1267,15 @@ export async function postScheduleText(
       date: parsed.data.date,
       technicianName,
       appUrl,
-      jobs: scheduleJobs.map((job) => job.sms),
+      jobs: [
+        ...scheduleJobs.map((job) => job.sms),
+        ...tasks.map((task) => ({
+          kind: "task" as const,
+          scheduledStart: task.scheduledStart ?? "",
+          title: task.title,
+          description: task.description,
+        })),
+      ],
     });
     const payload = {
       body,

@@ -7,11 +7,15 @@ const NOTE_MAX = 160;
 
 export type ScheduleSmsJob = {
   scheduledStart: Date | string;
+  /** Omitted stops are appointments. */
+  kind?: "task";
   contactName?: string | null;
   phone?: string | null;
   street?: string | null;
   city?: string | null;
   notes?: string[] | null;
+  title?: string | null;
+  description?: string | null;
 };
 
 export function formatScheduleClock(date: Date | string): string {
@@ -51,15 +55,26 @@ function jobInstant(job: ScheduleSmsJob): Date | null {
   return Number.isNaN(value.getTime()) ? null : value;
 }
 
-function smsNoteLine(note: string): string | null {
-  const flat = note.replace(/\s+/g, " ").trim();
+function capSmsText(text: string): string | null {
+  const flat = text.replace(/\s+/g, " ").trim();
   if (!flat) return null;
-  const body =
-    flat.length > NOTE_MAX ? `${flat.slice(0, NOTE_MAX - 1)}…` : flat;
-  return `Note: ${body}`;
+  return flat.length > NOTE_MAX ? `${flat.slice(0, NOTE_MAX - 1)}…` : flat;
 }
 
-function formatJobBlock(job: ScheduleSmsJob, when: Date): string {
+function smsNoteLine(note: string): string | null {
+  const body = capSmsText(note);
+  return body ? `Note: ${body}` : null;
+}
+
+function formatStopBlock(job: ScheduleSmsJob, index: number): string {
+  const number = index + 1;
+  if (job.kind === "task") {
+    const title = job.title?.replace(/\s+/g, " ").trim() ?? "";
+    const heading = title ? `${number}. Task: ${title}` : `${number}. Task`;
+    const description = capSmsText(job.description ?? "");
+    return description ? `${heading}\n${description}` : heading;
+  }
+
   const place = [job.street, job.city]
     .map((part) => part?.trim() ?? "")
     .filter(Boolean)
@@ -67,9 +82,9 @@ function formatJobBlock(job: ScheduleSmsJob, when: Date): string {
   const noteLines = (job.notes ?? [])
     .map((note) => smsNoteLine(note))
     .filter((line): line is string => line !== null);
+  const name = job.contactName?.trim() ?? "";
   const lines = [
-    formatClock(when),
-    job.contactName?.trim() ?? "",
+    name ? `${number}. ${name}` : `${number}.`,
     job.phone?.trim() ?? "",
     place,
     ...noteLines,
@@ -114,11 +129,16 @@ export function formatScheduleSms(opts: {
   const blocks = opts.jobs
     .map((job) => {
       const when = jobInstant(job);
-      return when ? { when, block: formatJobBlock(job, when) } : null;
+      return when ? { when, job } : null;
     })
-    .filter((job): job is { when: Date; block: string } => job !== null)
-    .sort((a, b) => a.when.getTime() - b.when.getTime())
-    .map((job) => job.block);
+    .filter((job): job is { when: Date; job: ScheduleSmsJob } => job !== null)
+    .sort((a, b) => {
+      const delta = a.when.getTime() - b.when.getTime();
+      if (delta !== 0) return delta;
+      const rank = (job: ScheduleSmsJob) => (job.kind === "task" ? 1 : 0);
+      return rank(a.job) - rank(b.job);
+    })
+    .map((job, index) => formatStopBlock(job.job, index));
 
   if (blocks.length === 0) {
     return assemble(header, [], null, footer);

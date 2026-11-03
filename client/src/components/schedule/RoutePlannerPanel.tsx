@@ -407,14 +407,22 @@ export function TechnicianRoutePane({
                     {index + 1}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-neutral-800">
-                      {job.label}
+                    <span className="flex min-w-0 items-baseline gap-2 text-neutral-800">
+                      <span className="truncate">{job.label}</span>
+                      {preferredWindow ? (
+                        <span className="group relative shrink-0">
+                          <span className="text-xs text-neutral-600">
+                            {preferredWindow}
+                          </span>
+                          <span
+                            role="tooltip"
+                            className="pointer-events-none absolute top-full left-0 z-30 mt-1 hidden w-max max-w-[14rem] rounded-md border border-[var(--staff-border)] bg-[var(--staff-cream)] px-2 py-1 text-left text-[11px] font-normal leading-snug text-[var(--staff-ink)] shadow-lg group-hover:block"
+                          >
+                            Desired time set in the notes
+                          </span>
+                        </span>
+                      ) : null}
                     </span>
-                    {preferredWindow ? (
-                      <span className="block truncate text-xs text-neutral-600">
-                        {preferredWindow}
-                      </span>
-                    ) : null}
                     {(windowLabel || leg || !onRoute) && (
                       <span className="block truncate text-xs text-neutral-500">
                         {windowLabel}
