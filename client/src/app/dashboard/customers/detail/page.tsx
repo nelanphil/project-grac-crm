@@ -7,6 +7,7 @@ import {
   Check,
   ClipboardList,
   GitMerge,
+  Link as LinkIcon,
   Loader2,
   Pencil,
   Plus,
@@ -21,6 +22,7 @@ import CustomerRecordCard from "@/components/customers/CustomerRecordCard";
 import CustomerReputationControl from "@/components/customers/CustomerReputationControl";
 import MergeCustomersDialog from "@/components/customers/MergeCustomersDialog";
 import NewOwnerDialog from "@/components/customers/NewOwnerDialog";
+import ActionsMenu, { type ActionsMenuItem } from "@/components/ui/ActionsMenu";
 import MobileSectionNav from "@/components/ui/MobileSectionNav";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
@@ -387,6 +389,37 @@ function CustomerDetailContent() {
     }
   }
 
+  async function handleCopyCheckout() {
+    if (!token || !customer) return;
+    setCopyingCheckout(true);
+    setCheckoutLinkMessage(null);
+    try {
+      const { checkoutUrl, totalCents } = await getCustomerCheckoutLink(
+        token,
+        customer._id,
+      );
+      await navigator.clipboard?.writeText(checkoutUrl);
+      const total =
+        typeof totalCents === "number"
+          ? new Intl.NumberFormat("en-US", {
+              style: "currency",
+              currency: "USD",
+            }).format(totalCents / 100)
+          : null;
+      setCheckoutLinkMessage(
+        total ? `Checkout link copied for ${total}` : "Checkout link copied",
+      );
+    } catch (err) {
+      setCheckoutLinkMessage(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to copy checkout link.",
+      );
+    } finally {
+      setCopyingCheckout(false);
+    }
+  }
+
   async function handleSoftDelete() {
     if (!token || !customer) return;
     const name = formatCustomerRecordName(customer) || "this customer";
@@ -475,6 +508,55 @@ function CustomerDetailContent() {
     { id: "customer-record", label: "Details" },
     { id: "customer-work-orders", label: "Work orders" },
   ];
+
+  const customerActions: ActionsMenuItem[] = [];
+  if (canWriteContracts) {
+    customerActions.push({
+      key: "copy-checkout",
+      group: "customer",
+      label: "Copy checkout link",
+      icon: LinkIcon,
+      disabled: copyingCheckout,
+      onSelect: () => void handleCopyCheckout(),
+    });
+  }
+  if (canWrite) {
+    customerActions.push(
+      {
+        key: "new-owner",
+        group: "customer",
+        label: "New Owner",
+        icon: UserRound,
+        onSelect: () => {
+          setNewOwnerToast(null);
+          setNewOwnerOpen(true);
+        },
+      },
+      {
+        key: "merge",
+        group: "customer",
+        label: "Merge customer",
+        icon: GitMerge,
+        onSelect: () => setMergeOpen(true),
+      },
+    );
+  }
+  if (canManageCustomers) {
+    customerActions.push({
+      key: "delete",
+      group: "danger",
+      label: "Delete customer",
+      icon: Trash2,
+      tone: "danger",
+      disabled: deleting,
+      onSelect: () => void handleSoftDelete(),
+    });
+  }
+  const customerActionsBusy = copyingCheckout
+    ? "Copying checkout link…"
+    : deleting
+      ? "Deleting…"
+      : null;
 
   return (
     <div className="space-y-6">
@@ -740,88 +822,11 @@ function CustomerDetailContent() {
               Promote to full customer
             </button>
           ) : null}
-          {canWriteContracts ? (
-            <button
-              type="button"
-              disabled={copyingCheckout}
-              onClick={async () => {
-                if (!token || !customer) return;
-                setCopyingCheckout(true);
-                setCheckoutLinkMessage(null);
-                try {
-                  const { checkoutUrl, totalCents } = await getCustomerCheckoutLink(
-                    token,
-                    customer._id,
-                  );
-                  await navigator.clipboard?.writeText(checkoutUrl);
-                  const total =
-                    typeof totalCents === "number"
-                      ? new Intl.NumberFormat("en-US", {
-                          style: "currency",
-                          currency: "USD",
-                        }).format(totalCents / 100)
-                      : null;
-                  setCheckoutLinkMessage(
-                    total
-                      ? `Checkout link copied for ${total}`
-                      : "Checkout link copied",
-                  );
-                } catch (err) {
-                  setCheckoutLinkMessage(
-                    err instanceof ApiError
-                      ? err.message
-                      : "Failed to copy checkout link.",
-                  );
-                } finally {
-                  setCopyingCheckout(false);
-                }
-              }}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange disabled:opacity-60 sm:w-auto"
-            >
-              {copyingCheckout ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : null}
-              Copy checkout link
-            </button>
-          ) : null}
-          {canWrite ? (
-            <button
-              type="button"
-              onClick={() => {
-                setNewOwnerToast(null);
-                setNewOwnerOpen(true);
-              }}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange sm:w-auto"
-            >
-              <UserRound className="h-4 w-4" />
-              New Owner
-            </button>
-          ) : null}
-          {canWrite ? (
-            <button
-              type="button"
-              onClick={() => setMergeOpen(true)}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-brand-dark hover:border-brand-orange hover:text-brand-orange sm:w-auto"
-            >
-              <GitMerge className="h-4 w-4" />
-              Merge customer
-            </button>
-          ) : null}
-          {canManageCustomers ? (
-            <button
-              type="button"
-              disabled={deleting}
-              onClick={() => void handleSoftDelete()}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:border-red-200 hover:bg-red-50 disabled:opacity-60 sm:w-auto"
-            >
-              {deleting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              Delete customer
-            </button>
-          ) : null}
+          <ActionsMenu
+            items={customerActions}
+            busyLabel={customerActionsBusy}
+            className="w-full sm:w-auto"
+          />
         </div>
       </div>
 

@@ -48,6 +48,7 @@ import {
   recordInvoiceEventAsync,
 } from "../services/invoiceEvent.service";
 import { loadInvoiceActivity } from "../services/invoiceActivity.service";
+import { customerInvoiceMessageDraft } from "../services/automatedMessage.service";
 import { sendRenewalScheduleEmail } from "../services/renewalScheduleEmail.service";
 import {
   dismissPaidRenewal,
@@ -823,6 +824,40 @@ export async function getInvoiceById(
     });
   } catch {
     res.status(500).json({ message: "Failed to load invoice" });
+  }
+}
+
+export async function getInvoiceCustomerMessage(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const id = String(req.params.id ?? "");
+    if (!Types.ObjectId.isValid(id)) {
+      res.status(400).json({ message: "Invalid invoice id" });
+      return;
+    }
+    const invoice = await Invoice.findById(id);
+    if (!invoice) {
+      res.status(404).json({ message: "Invoice not found" });
+      return;
+    }
+
+    if (!isStaff(req.user)) {
+      const refs = await resolveCustomerRefsForAuthUser(req.user?.id ?? "");
+      if (
+        !invoice.customerRef ||
+        !refs.some((r) => String(r) === String(invoice.customerRef))
+      ) {
+        res.status(403).json({ message: "Forbidden" });
+        return;
+      }
+    }
+
+    res.json(await customerInvoiceMessageDraft(invoice));
+  } catch (err) {
+    console.error("GET /invoices/:id/customer-message error:", err);
+    res.status(500).json({ message: "Failed to load the invoice message" });
   }
 }
 

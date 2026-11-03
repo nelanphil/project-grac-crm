@@ -14,6 +14,8 @@ export type ActionsMenuItem = {
   /** Items with the same group are listed together, separated by a divider. */
   group?: string;
   active?: boolean;
+  /** Destructive actions, such as delete, render in red. */
+  tone?: "danger";
 };
 
 type Props = {
@@ -112,6 +114,7 @@ export default function ActionsMenu({
         >
           {items.map((item, index) => {
             const Icon = item.icon;
+            const danger = item.tone === "danger";
             const newGroup = index > 0 && items[index - 1]?.group !== item.group;
             return (
               <div key={item.key}>
@@ -127,12 +130,19 @@ export default function ActionsMenu({
                     close(false);
                     item.onSelect();
                   }}
-                  className={`flex w-full items-start gap-2.5 px-3 py-2 text-left text-sm outline-none hover:bg-neutral-50 focus-visible:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent ${
-                    item.active ? "bg-orange-50" : ""
-                  }`}
+                  className={`flex w-full items-start gap-2.5 px-3 py-2 text-left text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent ${
+                    danger
+                      ? "text-red-600 hover:bg-red-50 focus-visible:bg-red-50"
+                      : "hover:bg-neutral-50 focus-visible:bg-neutral-100"
+                  } ${item.active ? "bg-orange-50" : ""}`}
                 >
                   {Icon ? (
-                    <Icon className="mt-0.5 h-4 w-4 shrink-0 text-neutral-500" aria-hidden />
+                    <Icon
+                      className={`mt-0.5 h-4 w-4 shrink-0 ${
+                        danger ? "text-red-600" : "text-neutral-500"
+                      }`}
+                      aria-hidden
+                    />
                   ) : null}
                   <span className="min-w-0">
                     <span className="block font-medium">{item.label}</span>

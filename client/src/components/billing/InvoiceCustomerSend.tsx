@@ -12,18 +12,17 @@ import {
   CustomerContact,
   EmailPreviewResult,
   EmailSendAccountItem,
+  CustomerInvoiceMessageDraft,
   getCustomerContacts,
+  getCustomerInvoiceMessage,
   getEmailSendAccounts,
-  getInvoiceMessageDefaults,
   getMessageTemplates,
   getTwilioAccounts,
   InvoiceItem,
-  InvoiceMessageDefaults,
   MessageTemplateItem,
   MessagingPreviewResult,
   previewEmailMessage,
   previewMessagingMessage,
-  saveInvoiceMessageDefaults,
   sendEmailMessages,
   sendMessagingMessages,
   TwilioAccountItem,
@@ -31,9 +30,7 @@ import {
 import { formatUsPhoneInput, isValidUsPhone } from "@/lib/formatPhone";
 import {
   hasValidContactEmail,
-  invoiceEmailBodyHtml,
   invoiceEmailSubject,
-  invoiceSmsBody,
   isInvoicePayable,
   pickInvoiceEmailContact,
   pickInvoicePhoneContact,
@@ -49,10 +46,6 @@ type SmsFromOption = {
 };
 
 const SMS_BODY_MAX = 1600;
-const EMPTY_DEFAULTS: InvoiceMessageDefaults = {
-  emailTemplateId: null,
-  smsTemplateId: null,
-};
 
 const fieldClass =
   "mt-1 w-full rounded-md border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-800 outline-none focus:border-brand-orange";
@@ -88,15 +81,7 @@ function templateKind(template: MessageTemplateItem): Channel {
   return template.templateType === "email" ? "email" : "text";
 }
 
-function emailDraft(invoice: InvoiceItem, template: MessageTemplateItem | null) {
-  if (!template) {
-    return {
-      templateId: "",
-      subject: invoiceEmailSubject(invoice),
-      body: invoiceEmailBodyHtml(invoice),
-      chrome: null as EmailChrome | null,
-    };
-  }
+function emailDraft(invoice: InvoiceItem, template: MessageTemplateItem) {
   return {
     templateId: template._id,
     subject: template.subject.trim()
@@ -107,10 +92,7 @@ function emailDraft(invoice: InvoiceItem, template: MessageTemplateItem | null) 
   };
 }
 
-function smsDraft(invoice: InvoiceItem, template: MessageTemplateItem | null) {
-  if (!template) {
-    return { templateId: "", body: invoiceSmsBody(invoice) };
-  }
+function smsDraft(template: MessageTemplateItem) {
   return { templateId: template._id, body: template.body };
 }
 
@@ -131,8 +113,12 @@ export function useInvoiceCustomerSend(
   const [emailSetupError, setEmailSetupError] = useState<string | null>(null);
   const [textSetupError, setTextSetupError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<MessageTemplateItem[]>([]);
-  const [templatesReady, setTemplatesReady] = useState(false);
-  const [defaults, setDefaults] = useState<InvoiceMessageDefaults>(EMPTY_DEFAULTS);
+  const [messageDraft, setMessageDraft] =
+    useState<CustomerInvoiceMessageDraft | null>(null);
+  const [draftInvoiceId, setDraftInvoiceId] = useState("");
+  const [draftGeneration, setDraftGeneration] = useState(0);
+  const [loadedGeneration, setLoadedGeneration] = useState(-1);
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [seededFor, setSeededFor] = useState("");
   const [draftAmountCents, setDraftAmountCents] = useState<number>();
   const [channel, setChannel] = useState<Channel | null>(null);
@@ -155,8 +141,6 @@ export function useInvoiceCustomerSend(
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
-  const [defaultSaving, setDefaultSaving] = useState(false);
-  const [defaultError, setDefaultError] = useState<string | null>(null);
   const [emailToEdit, setEmailToEdit] = useState<string | null>(null);
   const [phoneToEdit, setPhoneToEdit] = useState<string | null>(null);
 
@@ -171,38 +155,40 @@ export function useInvoiceCustomerSend(
     setPreviewError(null);
     setPreviewKey("");
     setSeededFor("");
+    setMessageDraft(null);
+    setDraftInvoiceId("");
+    setLoadedGeneration(-1);
+    setDraftError(null);
     setEmailToEdit(null);
     setPhoneToEdit(null);
   }
-  if (invoice && templatesReady && seededFor !== invoice._id) {
-    const emailTemplate =
-      templates.find(
-        (template) =>
-          template._id === defaults.emailTemplateId &&
-          templateKind(template) === "email",
-      ) ?? null;
-    const smsTemplate =
-      templates.find(
-        (template) =>
-          template._id === defaults.smsTemplateId &&
-          templateKind(template) === "text",
-      ) ?? null;
-    const email = emailDraft(invoice, emailTemplate);
-    const sms = smsDraft(invoice, smsTemplate);
+  if (
+    invoice &&
+    messageDraft &&
+    draftInvoiceId === invoice._id &&
+    loadedGeneration === draftGeneration &&
+    seededFor !== invoice._id
+  ) {
     setSeededFor(invoice._id);
     setDraftAmountCents(invoice.amountCents);
-    setEmailTemplateId(email.templateId);
-    setEmailSubject(email.subject);
-    setEmailBody(email.body);
-    setEmailChrome(email.chrome);
-    setSmsTemplateId(sms.templateId);
-    setSmsBody(sms.body);
+    setEmailTemplateId("");
+    setEmailSubject(messageDraft.email.subject);
+    setEmailBody(messageDraft.email.body);
+    setEmailChrome(messageDraft.email.emailChrome);
+    setSmsTemplateId("");
+    setSmsBody(messageDraft.sms.body);
     setIncludePaymentLink(isInvoicePayable(invoice));
   }
 
   const payable = invoice ? isInvoicePayable(invoice) : false;
+  const draftLoading = Boolean(
+    enabled && token && invoiceId && draftInvoiceId !== invoiceId && !draftError,
+  );
   const setupLoading = Boolean(
-    enabled && token && customerRef && readyCustomerRef !== customerRef,
+    enabled &&
+      token &&
+      customerRef &&
+      (readyCustomerRef !== customerRef || draftLoading),
   );
   const emailContact = pickInvoiceEmailContact(contacts);
   const phoneContact = pickInvoicePhoneContact(contacts);
@@ -242,15 +228,16 @@ export function useInvoiceCustomerSend(
   });
 
   useEffect(() => {
-    if (!enabled || !token || !customerRef) return;
+    if (!enabled || !token || !customerRef || !invoiceId) return;
     let cancelled = false;
+    const generation = draftGeneration;
     Promise.allSettled([
       getCustomerContacts(token, customerRef),
       getEmailSendAccounts(token),
       getTwilioAccounts(token),
       getMessageTemplates(token),
-      getInvoiceMessageDefaults(token),
-    ]).then(([contactsRes, emailRes, twilioRes, templateRes, defaultRes]) => {
+      getCustomerInvoiceMessage(token, invoiceId),
+    ]).then(([contactsRes, emailRes, twilioRes, templateRes, draftRes]) => {
       if (cancelled) return;
       if (contactsRes.status === "fulfilled") {
         setContacts(contactsRes.value.contacts);
@@ -300,16 +287,24 @@ export function useInvoiceCustomerSend(
       setTemplates(
         templateRes.status === "fulfilled" ? templateRes.value.templates : [],
       );
-      setDefaults(
-        defaultRes.status === "fulfilled" ? defaultRes.value : EMPTY_DEFAULTS,
-      );
-      setTemplatesReady(true);
+      if (draftRes.status === "fulfilled") {
+        setMessageDraft(draftRes.value);
+        setDraftInvoiceId(invoiceId);
+        setLoadedGeneration(generation);
+        setDraftError(null);
+      } else {
+        setMessageDraft(null);
+        setDraftInvoiceId("");
+        setDraftError(
+          setupFailure(draftRes.reason, "Failed to load the invoice message."),
+        );
+      }
       setReadyCustomerRef(customerRef);
     });
     return () => {
       cancelled = true;
     };
-  }, [enabled, token, customerRef]);
+  }, [enabled, token, customerRef, invoiceId, draftGeneration]);
 
   useEffect(() => {
     if (!channel || !token || !invoice) return;
@@ -383,12 +378,21 @@ export function useInvoiceCustomerSend(
     requestKey,
   ]);
 
+  function applyAutomatedDraft() {
+    if (!messageDraft) return;
+    setEmailTemplateId("");
+    setEmailSubject(messageDraft.email.subject);
+    setEmailBody(messageDraft.email.body);
+    setEmailChrome(messageDraft.email.emailChrome);
+    setSmsTemplateId("");
+    setSmsBody(messageDraft.sms.body);
+  }
+
   function close() {
     setChannel(null);
     setSent(false);
     setSendError(null);
     setPreviewError(null);
-    setDefaultError(null);
   }
 
   function openChannel(next: Channel) {
@@ -400,17 +404,18 @@ export function useInvoiceCustomerSend(
     setSent(false);
     setSendError(null);
     setPreviewError(null);
-    setDefaultError(null);
   }
 
   function applyTemplate(id: string) {
     if (!invoice || !channel) return;
     setSent(false);
-    setDefaultError(null);
+    if (!id) {
+      applyAutomatedDraft();
+      return;
+    }
+    const template = templates.find((item) => item._id === id);
+    if (!template) return;
     if (channel === "email") {
-      const template = id
-        ? (templates.find((item) => item._id === id) ?? null)
-        : null;
       const draft = emailDraft(invoice, template);
       setEmailTemplateId(draft.templateId);
       setEmailSubject(draft.subject);
@@ -418,60 +423,9 @@ export function useInvoiceCustomerSend(
       setEmailChrome(draft.chrome);
       return;
     }
-    const template = id
-      ? (templates.find((item) => item._id === id) ?? null)
-      : null;
-    const draft = smsDraft(invoice, template);
+    const draft = smsDraft(template);
     setSmsTemplateId(draft.templateId);
     setSmsBody(draft.body);
-  }
-
-  async function setAsDefault() {
-    if (!token || !channel || defaultSaving) return;
-    const selectedId = channel === "email" ? emailTemplateId : smsTemplateId;
-    if (!selectedId) return;
-    setDefaultSaving(true);
-    setDefaultError(null);
-    try {
-      const saved = await saveInvoiceMessageDefaults(
-        token,
-        channel === "email"
-          ? { emailTemplateId: selectedId }
-          : { smsTemplateId: selectedId },
-      );
-      setDefaults(saved);
-    } catch (err) {
-      setDefaultError(
-        err instanceof ApiError
-          ? err.message
-          : "Failed to save the default template.",
-      );
-    } finally {
-      setDefaultSaving(false);
-    }
-  }
-
-  async function clearDefault() {
-    if (!token || !channel || defaultSaving) return;
-    setDefaultSaving(true);
-    setDefaultError(null);
-    try {
-      const saved = await saveInvoiceMessageDefaults(
-        token,
-        channel === "email"
-          ? { emailTemplateId: null }
-          : { smsTemplateId: null },
-      );
-      setDefaults(saved);
-    } catch (err) {
-      setDefaultError(
-        err instanceof ApiError
-          ? err.message
-          : "Failed to clear the default template.",
-      );
-    } finally {
-      setDefaultSaving(false);
-    }
   }
 
   async function send() {
@@ -539,6 +493,7 @@ export function useInvoiceCustomerSend(
   }
 
   function disabledReason(next: Channel): string | null {
+    if (draftError) return draftError;
     if (!invoice?.customerRef) {
       return next === "email"
         ? "This invoice has no customer to email."
@@ -600,7 +555,6 @@ export function useInvoiceCustomerSend(
     smsOptionKey,
     setSmsOptionKey,
     templates,
-    defaults,
     emailTemplateId,
     smsTemplateId,
     emailSubject,
@@ -625,14 +579,14 @@ export function useInvoiceCustomerSend(
       setSent(false);
       setSendError(null);
       setSeededFor("");
+      setDraftError(null);
+      setDraftGeneration((current) => current + 1);
     },
     emailPreview,
     smsPreview,
     sending,
     sendError,
     sent,
-    defaultSaving,
-    defaultError,
     recipientLabel,
     recipientTo,
     recipientError,
@@ -664,8 +618,6 @@ export function useInvoiceCustomerSend(
     textDisabledReason: disabledReason("text"),
     openChannel,
     applyTemplate,
-    setAsDefault,
-    clearDefault,
     close,
     send,
   };
@@ -689,10 +641,6 @@ export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
       : templateKind(template) === "text",
   );
   const selectedId = isEmail ? send.emailTemplateId : send.smsTemplateId;
-  const defaultId = isEmail
-    ? send.defaults.emailTemplateId
-    : send.defaults.smsTemplateId;
-  const isDefault = Boolean(selectedId) && selectedId === defaultId;
   const showEmailPicker = isEmail && send.emailAccounts.length > 1;
   const showSmsPicker = !isEmail && send.smsOptions.length > 1;
   const fromLabel = isEmail
@@ -843,45 +791,18 @@ export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
           onChange={(event) => send.applyTemplate(event.target.value)}
           className={fieldClass}
         >
-          <option value="">Invoice details</option>
+          <option value="">Automated message</option>
           {templates.map((template) => (
             <option key={template._id} value={template._id}>
               {template.name}
-              {template._id === defaultId ? " (default)" : ""}
             </option>
           ))}
         </select>
       </label>
-      <div className="mt-2 flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={!selectedId || isDefault || send.defaultSaving}
-          onClick={() => void send.setAsDefault()}
-          className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
-        >
-          {send.defaultSaving ? "Saving…" : "Set as default"}
-        </button>
-        {defaultId ? (
-          <button
-            type="button"
-            disabled={send.defaultSaving}
-            onClick={() => void send.clearDefault()}
-            className="rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
-          >
-            Clear default
-          </button>
-        ) : null}
-      </div>
       <p className="mt-1 text-xs text-neutral-500">
-        {isDefault
-          ? `This template is the default for invoice ${isEmail ? "emails" : "texts"}.`
-          : defaultId
-            ? "Clearing the default makes the next invoice message start from the invoice details."
-            : "Set a template as the default for every invoice message of this type."}
+        Starts from the automated message in the Admin Panel. A template
+        applies to this send only.
       </p>
-      {send.defaultError ? (
-        <p className="mt-2 text-sm text-red-700">{send.defaultError}</p>
-      ) : null}
 
       {isEmail ? (
         <label className="mt-4 block">

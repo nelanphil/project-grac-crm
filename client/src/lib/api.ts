@@ -4103,6 +4103,28 @@ export async function getInvoice(
   });
 }
 
+export interface CustomerInvoiceMessageDraft {
+  sms: { body: string };
+  email: {
+    subject: string;
+    body: string;
+    emailChrome: EmailChrome | null;
+  };
+}
+
+export async function getCustomerInvoiceMessage(
+  token: string,
+  invoiceId: string,
+): Promise<CustomerInvoiceMessageDraft> {
+  return authRequest<CustomerInvoiceMessageDraft>(
+    `/invoices/${invoiceId}/customer-message`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
 export type InvoiceContactKind =
   | "email"
   | "sms"

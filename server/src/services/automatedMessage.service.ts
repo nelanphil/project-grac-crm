@@ -472,6 +472,64 @@ export async function resolveAutomatedMessage(
   };
 }
 
+const INVOICE_DOCUMENT_SEED = [
+  "<p>Hi {{first_name}},</p>",
+  "<p>Please find invoice <strong>{{invoice_number}}</strong> below.</p>",
+  "<p>{{invoice}}</p>",
+].join("");
+
+export type CustomerInvoiceMessageDraft = {
+  sms: { body: string };
+  email: {
+    subject: string;
+    body: string;
+    emailChrome: EmailChrome | null;
+  };
+};
+
+/**
+ * Wording for the invoice send dialog. Paid invoices use the receipt
+ * channels. Every other status uses the work-order channels, which cover
+ * the bill the customer still owes. Receipt emails in custom mode keep the
+ * Billing invoice document, so the editable body is that layout.
+ */
+export async function customerInvoiceMessageDraft(
+  invoice: IInvoice,
+): Promise<CustomerInvoiceMessageDraft> {
+  const paid = invoice.status === "paid";
+  const source: InvoiceMessageSource = {
+    number: invoice.number,
+    amountCents: invoice.amountCents,
+    dueDate: invoice.dueDate,
+    record: invoice,
+  };
+  const [sms, email] = await Promise.all([
+    resolveAutomatedMessage(
+      paid ? "paidInvoiceReceiptSms" : "workOrderCompleteSms",
+      source,
+    ),
+    resolveAutomatedMessage(
+      paid ? "paidInvoiceReceiptEmail" : "workOrderCompleteEmail",
+      source,
+    ),
+  ]);
+  const emailBody = email.useInvoiceDocument
+    ? applyInvoiceTokens(INVOICE_DOCUMENT_SEED, {
+        number: invoice.number,
+        amountCents: invoice.amountCents,
+        dueDate: invoice.dueDate,
+      })
+    : email.body;
+  return {
+    sms: { body: sms.body },
+    email: {
+      subject: email.subject,
+      body: emailBody,
+      emailChrome: email.emailChrome ?? null,
+    },
+  };
+}
+
 export async function resolveMailboxReplyHtml(): Promise<string> {
   const copy = await resolveAutomatedMessage("mailboxReply");
   const rendered = stripInvoiceToken(renderMessageTemplate(copy.body, {}));

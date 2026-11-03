@@ -10,6 +10,7 @@ import {
   createInvoicePayLink,
   getInvoiceActivity,
   getInvoiceById,
+  getInvoiceCustomerMessage,
   getInvoiceVisit,
   getInvoiceVisitSnapshot,
   getInvoices,
@@ -42,6 +43,7 @@ router.post(
   bulkCreateRenewalWorkOrders,
 );
 router.get("/:id/activity", getInvoiceActivity);
+router.get("/:id/customer-message", getInvoiceCustomerMessage);
 router.get("/:id/visits/:sessionId", getInvoiceVisit);
 router.get("/:id/visits/:sessionId/snapshots/:snapshotId", getInvoiceVisitSnapshot);
 router.get("/:id", getInvoiceById);
