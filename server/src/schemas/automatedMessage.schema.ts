@@ -69,6 +69,8 @@ function channelSchema(kind: AutomatedMessageKind) {
 export const saveAutomatedMessageSettingsSchema = z.object({
   workOrderCompleteEmail: channelSchema("email"),
   workOrderCompleteSms: channelSchema("sms"),
+  invoiceSendEmail: channelSchema("email"),
+  invoiceSendSms: channelSchema("sms"),
   paymentReceivedEmail: channelSchema("receipt-email"),
   paidInvoiceReceiptEmail: channelSchema("receipt-email"),
   paidInvoiceReceiptSms: channelSchema("sms"),

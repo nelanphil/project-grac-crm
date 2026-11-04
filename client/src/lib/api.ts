@@ -2549,10 +2549,12 @@ export interface WorkOrderPart {
   kind?: ProductKind;
   partNumber: string;
   description: string;
+  catalogDescription?: string;
   quantity: number;
   unitPrice: number;
   listPrice?: number;
   priceOverridden?: boolean;
+  zeroBill?: boolean;
   amount: number;
 }
 
@@ -3826,6 +3828,7 @@ export type InvoiceStatus = "draft" | "open" | "paid" | "void" | "failed";
 export interface InvoiceLineItem {
   description: string;
   amountCents: number;
+  detail?: string;
 }
 
 export interface InvoiceCustomerSummary {
@@ -6863,6 +6866,8 @@ export interface AutomatedMessageSettings {
   saved: boolean;
   workOrderCompleteEmail: AutomatedMessageChannel;
   workOrderCompleteSms: AutomatedMessageChannel;
+  invoiceSendEmail: AutomatedMessageChannel;
+  invoiceSendSms: AutomatedMessageChannel;
   paymentReceivedEmail: AutomatedMessageChannel;
   paidInvoiceReceiptEmail: AutomatedMessageChannel;
   paidInvoiceReceiptSms: AutomatedMessageChannel;
@@ -6896,6 +6901,8 @@ export async function saveAutomatedMessageSettings(
   const body = {
     workOrderCompleteEmail: channel(settings.workOrderCompleteEmail),
     workOrderCompleteSms: channel(settings.workOrderCompleteSms),
+    invoiceSendEmail: channel(settings.invoiceSendEmail),
+    invoiceSendSms: channel(settings.invoiceSendSms),
     paymentReceivedEmail: channel(settings.paymentReceivedEmail),
     paidInvoiceReceiptEmail: channel(settings.paidInvoiceReceiptEmail),
     paidInvoiceReceiptSms: channel(settings.paidInvoiceReceiptSms),

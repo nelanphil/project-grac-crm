@@ -33,6 +33,7 @@ import {
   updateWorkOrderSchema,
 } from "../schemas/workOrder.schema";
 import { applyTicketFields } from "../services/applyTicketFields";
+import { hydrateRecordParts } from "../services/catalogDescription";
 import {
   actorFromRequest,
   customerDisplayName,
@@ -143,7 +144,8 @@ async function loadSchedulableAssignee(id: string): Promise<
 async function enrichWithAddress(
   workOrders: Array<Record<string, unknown>>,
 ): Promise<Array<Record<string, unknown>>> {
-  return enrichScheduleWorkOrders(workOrders);
+  const enriched = await enrichScheduleWorkOrders(workOrders);
+  return hydrateRecordParts(enriched);
 }
 
 function hasJobsPermission(req: AuthRequest, permission: string): boolean {
@@ -457,7 +459,7 @@ export async function getWorkOrdersByCustomer(
       deletedOnly ? includingDeletedWorkOrders(listQuery) : listQuery
     ).lean();
 
-    res.json({ customer, workOrders });
+    res.json({ customer, workOrders: await hydrateRecordParts(workOrders) });
   } catch {
     res
       .status(500)

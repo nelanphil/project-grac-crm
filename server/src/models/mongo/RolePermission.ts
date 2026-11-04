@@ -22,7 +22,7 @@ export const RolePermission = mongoose.model<IRolePermission>(
 const ALL_PERMISSIONS = [
   "leads:read", "leads:write", "leads:delete",
   "accounts:read", "accounts:write", "accounts:delete",
-  "customers:read", "customers:write", "customers:delete",
+  "customers:read", "customers:write", "customers:addresses", "customers:delete",
   "contracts:read", "contracts:write", "contracts:delete",
   "users:read", "users:write", "users:delete",
   "permissions:manage",
@@ -50,6 +50,7 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["admin", "accounts:delete"],
   ["admin", "customers:read"],
   ["admin", "customers:write"],
+  ["admin", "customers:addresses"],
   ["admin", "customers:delete"],
   ["admin", "contracts:read"],
   ["admin", "contracts:write"],
@@ -87,6 +88,7 @@ const DEFAULT_PERMISSIONS: [UserRole, string][] = [
   ["manager", "accounts:write"],
   ["manager", "customers:read"],
   ["manager", "customers:write"],
+  ["manager", "customers:addresses"],
   ["manager", "contracts:read"],
   ["manager", "contracts:write"],
   ["manager", "users:read"],
@@ -278,6 +280,23 @@ const DISCOUNT_PERMISSIONS: [UserRole, string][] = [
 
 export async function ensureDiscountPermissions(): Promise<void> {
   for (const [role, permission] of DISCOUNT_PERMISSIONS) {
+    await RolePermission.updateOne(
+      { role, permission },
+      { $setOnInsert: { role, permission } },
+      { upsert: true },
+    );
+  }
+}
+
+const ADDRESS_PERMISSIONS: [UserRole, string][] = [
+  ["super-admin", "customers:addresses"],
+  ["admin", "customers:addresses"],
+  ["manager", "customers:addresses"],
+];
+
+/** Insert customer address editing for existing deployments (idempotent). */
+export async function ensureAddressPermissions(): Promise<void> {
+  for (const [role, permission] of ADDRESS_PERMISSIONS) {
     await RolePermission.updateOne(
       { role, permission },
       { $setOnInsert: { role, permission } },

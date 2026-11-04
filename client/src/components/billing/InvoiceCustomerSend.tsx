@@ -612,6 +612,7 @@ export function useInvoiceCustomerSend(
       if (channel === "text") setPhoneToEdit(null);
       else if (channel === "email") setEmailToEdit(null);
     },
+    invoicePaid: invoice?.status === "paid",
     composerOpen: channel !== null,
     canSend: previewReady && !messageEmpty && !sending && !recipientError && !amountChanged,
     emailDisabledReason: disabledReason("email"),
@@ -800,8 +801,10 @@ export function InvoiceSendEditor({ send }: { send: InvoiceSendController }) {
         </select>
       </label>
       <p className="mt-1 text-xs text-neutral-500">
-        Starts from the automated message in the Admin Panel. A template
-        applies to this send only.
+        {send.invoicePaid
+          ? "Starts from Paid invoice receipt in Admin → Automated messages."
+          : "Starts from Invoices in Admin → Automated messages."}{" "}
+        A template applies to this send only.
       </p>
 
       {isEmail ? (

@@ -17,6 +17,7 @@ import {
   invoiceBlocksSchema,
   sanitizeInvoiceBlocks,
 } from "../schemas/invoiceTemplate.schema";
+import { invoiceLinesWithCatalogDetail } from "./invoice.service";
 import { sendRoleEmail } from "./email.service";
 import {
   automatedEmailPauseReasonFor,
@@ -136,6 +137,7 @@ export async function loadInvoiceEmailContext(invoice: IInvoice): Promise<{
         content: note.content,
       }))
     : [];
+  const lineItems = await invoiceLinesWithCatalogDetail(invoice);
 
   return {
     recipient,
@@ -148,9 +150,10 @@ export async function loadInvoiceEmailContext(invoice: IInvoice): Promise<{
       dueDate: invoice.dueDate,
       paidAt: invoice.paidAt,
       paymentProvider: invoice.paymentProvider ?? null,
-      lineItems: invoice.lineItems.map((item) => ({
+      lineItems: lineItems.map((item) => ({
         description: item.description,
         amountCents: item.amountCents,
+        ...(item.detail?.trim() ? { detail: item.detail.trim() } : {}),
       })),
       amountCents: invoice.amountCents,
       originalAmountCents: invoice.originalAmountCents ?? null,

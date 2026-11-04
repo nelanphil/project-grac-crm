@@ -444,6 +444,11 @@ function LeafBody({
                     style={invoiceTextCss(block.valueStyle)}
                   >
                     {item.description}
+                    {item.detail?.trim() ? (
+                      <p className="mt-1 whitespace-pre-wrap text-neutral-500">
+                        {item.detail}
+                      </p>
+                    ) : null}
                   </td>
                   <td className="py-3 text-right" style={invoiceTextCss(block.valueStyle)}>
                     {formatMoney(item.amountCents)}

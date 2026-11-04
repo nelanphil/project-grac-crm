@@ -5,6 +5,8 @@ import { RECEIPT_REPLY_HTML } from "./mailboxReply";
 export const AUTOMATED_MESSAGE_CHANNELS = [
   "workOrderCompleteEmail",
   "workOrderCompleteSms",
+  "invoiceSendEmail",
+  "invoiceSendSms",
   "paymentReceivedEmail",
   "paidInvoiceReceiptEmail",
   "paidInvoiceReceiptSms",
@@ -32,6 +34,8 @@ export const AUTOMATED_MESSAGE_KIND: Record<
 > = {
   workOrderCompleteEmail: "email",
   workOrderCompleteSms: "sms",
+  invoiceSendEmail: "email",
+  invoiceSendSms: "sms",
   paymentReceivedEmail: "receipt-email",
   paidInvoiceReceiptEmail: "receipt-email",
   paidInvoiceReceiptSms: "sms",
@@ -49,6 +53,14 @@ export const AUTOMATED_MESSAGE_DEFAULTS = {
     "<p>{{invoice}}</p>",
   ].join(""),
   workOrderCompleteSms:
+    "Hi {{first_name}}, invoice {{invoice_number}} is ready. Total due: {{invoice_total}}. Due {{due_date}}.",
+  invoiceSendEmailSubject: "Invoice {{invoice_number}}",
+  invoiceSendEmailBody: [
+    "<p>Hi {{first_name}},</p>",
+    "<p>Please find invoice <strong>{{invoice_number}}</strong> below.</p>",
+    "<p>{{invoice}}</p>",
+  ].join(""),
+  invoiceSendSms:
     "Hi {{first_name}}, invoice {{invoice_number}} is ready. Total due: {{invoice_total}}. Due {{due_date}}.",
   paymentReceivedSubject: "Payment received for invoice {{invoice_number}}",
   paidInvoiceReceiptSubject: "Invoice {{invoice_number}}",
@@ -85,6 +97,14 @@ export const AUTOMATED_MESSAGE_FALLBACK: Record<
   workOrderCompleteSms: {
     subject: "",
     body: AUTOMATED_MESSAGE_DEFAULTS.workOrderCompleteSms,
+  },
+  invoiceSendEmail: {
+    subject: AUTOMATED_MESSAGE_DEFAULTS.invoiceSendEmailSubject,
+    body: AUTOMATED_MESSAGE_DEFAULTS.invoiceSendEmailBody,
+  },
+  invoiceSendSms: {
+    subject: "",
+    body: AUTOMATED_MESSAGE_DEFAULTS.invoiceSendSms,
   },
   paymentReceivedEmail: {
     subject: AUTOMATED_MESSAGE_DEFAULTS.paymentReceivedSubject,
@@ -308,7 +328,7 @@ function fromFallback(
 /**
  * Saved admin choice wins. A missing template falls back to that channel's
  * custom wording, then the original hardcoded copy. Until a channel is saved,
- * work-order messages can still use the invoice default template.
+ * work-order and invoice messages can still use the invoice default template.
  */
 export function resolveChannelCopy(input: {
   kind: AutomatedMessageKind;

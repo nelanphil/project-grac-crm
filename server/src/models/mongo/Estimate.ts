@@ -19,10 +19,14 @@ export interface IEstimatePart {
   kind: "part" | "labor" | "equipment";
   partNumber: string;
   description: string;
+  /** Product catalog Description, snapshotted onto the line. */
+  catalogDescription: string;
   quantity: number;
   unitPrice: number;
   listPrice: number;
   priceOverridden: boolean;
+  /** Keep the entered price, but exclude this line from the billed total. */
+  zeroBill: boolean;
   amount: number;
 }
 
@@ -97,10 +101,12 @@ const estimatePartSchema = new Schema<IEstimatePart>(
     kind: { type: String, enum: ["part", "labor", "equipment"], default: "part" },
     partNumber: { type: String, default: "" },
     description: { type: String, default: "" },
+    catalogDescription: { type: String, default: "" },
     quantity: { type: Number, default: 0 },
     unitPrice: { type: Number, default: 0 },
     listPrice: { type: Number, default: 0 },
     priceOverridden: { type: Boolean, default: false },
+    zeroBill: { type: Boolean, default: false },
     amount: { type: Number, default: 0 },
   },
   { _id: false },

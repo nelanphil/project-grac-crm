@@ -306,10 +306,12 @@ function lineFromDetection(
     kind: item.kind,
     partNumber: item.partNumber,
     description: item.description,
+    catalogDescription: "",
     quantity: qty,
     unitPrice,
     listPrice: item.listPrice > 0 ? item.listPrice : unitPrice,
     priceOverridden: item.listPrice <= 0 || item.listPrice !== unitPrice,
+    zeroBill: false,
     amount: unitPrice,
   };
 }
@@ -329,10 +331,12 @@ function genericLine(
     kind,
     partNumber,
     description,
+    catalogDescription: "",
     quantity: 1,
     unitPrice,
     listPrice: unitPrice,
     priceOverridden: true,
+    zeroBill: false,
     amount: unitPrice,
   };
 }
@@ -346,10 +350,12 @@ function noteLine(description: string): NormalizedTicketPart {
     kind: "part",
     partNumber: "",
     description,
+    catalogDescription: "",
     quantity: 0,
     unitPrice: 0,
     listPrice: 0,
     priceOverridden: false,
+    zeroBill: false,
     amount: 0,
   };
 }
@@ -620,10 +626,12 @@ export function partsForMongo(parts: NormalizedTicketPart[]) {
     kind: part.kind,
     partNumber: part.partNumber,
     description: part.description,
+    catalogDescription: part.catalogDescription,
     quantity: part.quantity,
     unitPrice: part.unitPrice,
     listPrice: part.listPrice,
     priceOverridden: part.priceOverridden,
+    zeroBill: part.zeroBill,
     amount: part.amount,
   }));
 }

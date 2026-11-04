@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { withInvoiceTotal } from "@/components/billing/InvoiceWorkOrderButton";
 import { COMPANY } from "@/lib/constants";
 import {
   formatDiscountSummary,
@@ -54,10 +55,12 @@ export type ServiceTicketView = {
     quantity: number;
     partNumber: string;
     description?: string;
+    catalogDescription?: string;
     unitPrice?: number;
     amount: number;
     lineType?: "product" | "note" | "agreement";
     kind?: "part" | "labor" | "contract" | "equipment";
+    zeroBill?: boolean;
   }>;
   totalParts: number;
   totalLabor: number;
@@ -72,6 +75,34 @@ export type ServiceTicketView = {
   signedByName?: string;
   contractDiscount?: TicketContractDiscount | null;
 };
+
+function keptLinePrice(part: {
+  quantity: number;
+  unitPrice?: number;
+}): number {
+  const qty = part.quantity > 0 ? part.quantity : 1;
+  return Math.round((part.unitPrice ?? 0) * qty * 100) / 100;
+}
+
+function lineAmountCell(part: {
+  quantity: number;
+  unitPrice?: number;
+  amount: number;
+  zeroBill?: boolean;
+}): ReactNode {
+  if (!part.zeroBill) return part.amount ? formatMoney(part.amount) : "";
+  const kept = keptLinePrice(part);
+  return (
+    <span>
+      {kept > 0 ? (
+        <span className="text-neutral-500">{formatMoney(kept)}</span>
+      ) : null}
+      <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+        Zero bill
+      </span>
+    </span>
+  );
+}
 
 function TicketTotals({
   ticket,
@@ -133,7 +164,9 @@ function TicketTotals({
         <span>{formatMoney(ticket.total)}</span>
       </p>
       {!isEstimate && invoiceAction ? (
-        <div className="pt-2 print:hidden">{invoiceAction}</div>
+        <div className="pt-2 print:hidden">
+          {withInvoiceTotal(invoiceAction, ticket.total)}
+        </div>
       ) : null}
     </div>
   );
@@ -262,10 +295,13 @@ export default function ServiceTicketDocument({
                   <td className="py-2">{part.quantity || ""}</td>
                   <td className="py-2">
                     Agreement · {part.description || "Agreement"}
+                    {part.catalogDescription?.trim() ? (
+                      <p className="mt-0.5 whitespace-pre-wrap text-xs text-neutral-500">
+                        {part.catalogDescription}
+                      </p>
+                    ) : null}
                   </td>
-                  <td className="py-2 text-right">
-                    {part.amount ? formatMoney(part.amount) : ""}
-                  </td>
+                  <td className="py-2 text-right">{lineAmountCell(part)}</td>
                 </tr>
               ) : (
                 <tr key={index} className="border-b border-neutral-100">
@@ -278,10 +314,13 @@ export default function ServiceTicketDocument({
                         {part.description}
                       </span>
                     ) : null}
+                    {part.catalogDescription?.trim() ? (
+                      <p className="mt-0.5 whitespace-pre-wrap text-xs text-neutral-500">
+                        {part.catalogDescription}
+                      </p>
+                    ) : null}
                   </td>
-                  <td className="py-2 text-right">
-                    {part.amount ? formatMoney(part.amount) : ""}
-                  </td>
+                  <td className="py-2 text-right">{lineAmountCell(part)}</td>
                 </tr>
               ),
             )}

@@ -63,7 +63,7 @@ export type InvoiceTemplateEmailDocument = {
   dueDate: Date | string | null;
   paidAt: Date | string | null;
   paymentProvider: string | null;
-  lineItems: { description: string; amountCents: number }[];
+  lineItems: { description: string; amountCents: number; detail?: string }[];
   amountCents: number;
   originalAmountCents?: number | null;
   discountCode?: string | null;
@@ -390,6 +390,20 @@ function renderServiceAddress(
   };
 }
 
+function lineItemLabel(item: { description?: string; detail?: string }): {
+  html: string;
+  text: string;
+} {
+  const description = item.description || "";
+  const detail = (item.detail ?? "").trim();
+  if (!detail) return { html: escapeHtml(description), text: description };
+  const detailHtml = escapeHtml(detail).replace(/\n/g, "<br />");
+  return {
+    html: `${escapeHtml(description)}<br /><span style="color:#737373;">${detailHtml}</span>`,
+    text: `${description}\n${detail}`,
+  };
+}
+
 function renderLineItems(
   block: Extract<InvoiceLeafBlock, { type: "lineItems" }>,
   invoice: InvoiceTemplateEmailDocument,
@@ -400,8 +414,8 @@ function renderLineItems(
       ? `<tr><td colspan="2" style="padding:16px 0;${cssFont(block.valueStyle)}">No line items.</td></tr>`
       : invoice.lineItems
           .map((item) => {
-            const description = item.description || "";
-            return `<tr><td style="padding:12px 12px 12px 0;border-bottom:1px solid #f5f5f5;${cssFont(block.valueStyle)}">${escapeHtml(description)}</td><td align="right" style="padding:12px 0;border-bottom:1px solid #f5f5f5;${cssFont(block.valueStyle)}">${escapeHtml(formatMoney(item.amountCents))}</td></tr>`;
+            const label = lineItemLabel(item);
+            return `<tr><td style="padding:12px 12px 12px 0;border-bottom:1px solid #f5f5f5;${cssFont(block.valueStyle)}">${label.html}</td><td align="right" style="padding:12px 0;border-bottom:1px solid #f5f5f5;${cssFont(block.valueStyle)}">${escapeHtml(formatMoney(item.amountCents))}</td></tr>`;
           })
           .join("");
   const textLines = [`${block.descriptionLabel}  ${block.amountLabel}`];
@@ -409,7 +423,9 @@ function renderLineItems(
     textLines.push("No line items.");
   } else {
     for (const item of invoice.lineItems) {
-      textLines.push(`${item.description || ""}  ${formatMoney(item.amountCents)}`);
+      textLines.push(
+        `${lineItemLabel(item).text}  ${formatMoney(item.amountCents)}`,
+      );
     }
   }
   return {

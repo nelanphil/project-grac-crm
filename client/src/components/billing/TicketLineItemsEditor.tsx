@@ -261,11 +261,13 @@ function ticketFieldsForProduct(
       enrolledContractRef: "",
       partNumber: "",
       description: product.name,
+      catalogDescription: product.notes?.trim() ?? "",
       kind: "part",
       quantity: qty,
       listPrice: String(listPrice),
       unitPrice: String(listPrice),
       priceOverridden: false,
+      zeroBill: false,
     };
   }
   const kind =
@@ -281,6 +283,7 @@ function ticketFieldsForProduct(
     enrolledContractRef: "",
     partNumber: catalogCode(product),
     description: product.name,
+    catalogDescription: product.notes?.trim() ?? "",
     kind,
     quantity: qty,
     listPrice: String(listPrice),
@@ -288,7 +291,41 @@ function ticketFieldsForProduct(
       discountedUnitPrice(listPrice, kind === "labor" ? "labor" : "part", discounts),
     ),
     priceOverridden: false,
+    zeroBill: false,
   };
+}
+
+function LineAmountFields({
+  row,
+  onChange,
+}: {
+  row: TicketPartRow;
+  onChange: (updates: Partial<TicketPartRow>) => void;
+}) {
+  return (
+    <>
+      <input
+        value={row.unitPrice}
+        onChange={(e) =>
+          onChange({ unitPrice: e.target.value, priceOverridden: true })
+        }
+        className={inputClass}
+      />
+      <p className="mt-0.5 text-[10px] text-neutral-400">
+        Line {formatMoney(partAmount(row))}
+        {row.zeroBill ? " · zero bill" : ""}
+        {row.priceOverridden ? " · override" : ""}
+      </p>
+      <label className="mt-1 flex items-center gap-1 text-[10px] font-medium text-neutral-600">
+        <input
+          type="checkbox"
+          checked={row.zeroBill}
+          onChange={(e) => onChange({ zeroBill: e.target.checked })}
+        />
+        Zero bill
+      </label>
+    </>
+  );
 }
 
 function patchRow(
@@ -1009,6 +1046,7 @@ function SortableLineRow({
                     description: e.target.value,
                     contractTemplateRef: "",
                     enrolledContractRef: "",
+                    catalogDescription: "",
                   },
                   e.target.value,
                 )
@@ -1018,6 +1056,11 @@ function SortableLineRow({
             />
             {row.contractTemplateRef ? (
               <p className="mt-0.5 text-[11px] text-neutral-500">Agreement</p>
+            ) : null}
+            {row.catalogDescription.trim() ? (
+              <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-neutral-500">
+                {row.catalogDescription}
+              </p>
             ) : null}
             {isActiveSearch ? (
               <AgreementSuggestMenu
@@ -1031,6 +1074,7 @@ function SortableLineRow({
                       description: query,
                       contractTemplateRef: "",
                       enrolledContractRef: "",
+                      catalogDescription: "",
                     },
                     query,
                   )
@@ -1042,6 +1086,7 @@ function SortableLineRow({
                     contractTemplateRef: template._id,
                     enrolledContractRef: "",
                     description: template.label,
+                    catalogDescription: "",
                     partNumber: "",
                     productRef: "",
                     kind: "part",
@@ -1049,23 +1094,14 @@ function SortableLineRow({
                     listPrice: String(cost),
                     unitPrice: String(cost),
                     priceOverridden: false,
+                    zeroBill: false,
                   });
                 }}
               />
             ) : null}
           </td>
           <td className="w-28 px-2 py-1">
-            <input
-              value={row.unitPrice}
-              onChange={(e) =>
-                onChange({ unitPrice: e.target.value, priceOverridden: true })
-              }
-              className={inputClass}
-            />
-            <p className="mt-0.5 text-[10px] text-neutral-400">
-              Line {formatMoney(partAmount(row))}
-              {row.priceOverridden ? " · override" : ""}
-            </p>
+            <LineAmountFields row={row} onChange={onChange} />
           </td>
           <td className="px-1 py-1 text-right">
             <button
@@ -1115,6 +1151,7 @@ function SortableLineRow({
                 {
                   partNumber: e.target.value,
                   productRef: "",
+                  catalogDescription: "",
                 },
                 e.target.value,
               )
@@ -1128,6 +1165,11 @@ function SortableLineRow({
               {row.description}
             </p>
           ) : null}
+          {row.catalogDescription.trim() ? (
+            <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-neutral-500">
+              {row.catalogDescription}
+            </p>
+          ) : null}
           {isActiveSearch ? (
             <ProductSuggestMenu
               anchor={menuAnchor}
@@ -1137,7 +1179,10 @@ function SortableLineRow({
               canCreate={canCreate}
               loading={productLoading}
               onQueryChange={(query) =>
-                onChange({ partNumber: query, productRef: "" }, query)
+                onChange(
+                  { partNumber: query, productRef: "", catalogDescription: "" },
+                  query,
+                )
               }
               onClose={onCloseSearch}
               onCreate={onCreateProduct}
@@ -1148,17 +1193,7 @@ function SortableLineRow({
           ) : null}
         </td>
         <td className="w-28 px-2 py-1">
-          <input
-            value={row.unitPrice}
-            onChange={(e) =>
-              onChange({ unitPrice: e.target.value, priceOverridden: true })
-            }
-            className={inputClass}
-          />
-          <p className="mt-0.5 text-[10px] text-neutral-400">
-            Line {formatMoney(partAmount(row))}
-            {row.priceOverridden ? " · override" : ""}
-          </p>
+          <LineAmountFields row={row} onChange={onChange} />
         </td>
         <td className="px-1 py-1 text-right">
           <button

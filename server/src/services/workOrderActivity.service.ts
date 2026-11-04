@@ -667,6 +667,7 @@ function plainParts(value: unknown): Array<Record<string, unknown>> {
       quantity: row.quantity ?? 0,
       unitPrice: row.unitPrice ?? 0,
       amount: row.amount ?? 0,
+      zeroBill: Boolean(row.zeroBill),
     };
   });
 }

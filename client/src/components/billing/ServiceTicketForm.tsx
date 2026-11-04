@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { withInvoiceTotal } from "@/components/billing/InvoiceWorkOrderButton";
 import {
   CustomerDetail,
   CustomerListItem,
@@ -2233,7 +2234,7 @@ export default function ServiceTicketForm({
               <span>{formatMoney(totals.total)}</span>
             </div>
             {variant === "work-order" && invoiceAction ? (
-              <div className="pt-2">{invoiceAction}</div>
+              <div className="pt-2">{withInvoiceTotal(invoiceAction, totals.total)}</div>
             ) : null}
           </div>
         </div>

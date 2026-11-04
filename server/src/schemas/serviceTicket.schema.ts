@@ -9,10 +9,12 @@ export const ticketPartSchema = z.object({
   kind: z.enum(["part", "labor", "equipment"]).optional().default("part"),
   partNumber: z.string().trim().max(80).optional().default(""),
   description: z.string().trim().max(2000).optional().default(""),
+  catalogDescription: z.string().trim().max(2000).optional().default(""),
   quantity: z.number().min(0).optional().default(0),
   unitPrice: z.number().min(0).optional().default(0),
   listPrice: z.number().min(0).optional().default(0),
   priceOverridden: z.boolean().optional().default(false),
+  zeroBill: z.boolean().optional().default(false),
   amount: z.number().min(0).optional(),
 });
 

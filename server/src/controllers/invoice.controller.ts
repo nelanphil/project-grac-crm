@@ -29,6 +29,7 @@ import {
 import {
   dollarsToCents,
   ensureOpenInvoiceForWorkOrder,
+  invoiceLinesWithCatalogDetail,
   findPendingCompletedWorkOrderInvoices,
   InvoiceAmountError,
   invoiceTaxFromCurrentRate,
@@ -804,8 +805,10 @@ export async function getInvoiceById(
     }
 
     const enrichment = await enrichInvoiceDetail(invoice);
+    const lineItems = await invoiceLinesWithCatalogDetail(invoice);
     const pub = {
       ...toPublicInvoice(invoice),
+      lineItems,
       ...enrichment,
     };
     const renewalVisit =
@@ -977,6 +980,7 @@ export async function getInvoiceByViewToken(
       throttleMs: INVOICE_OPEN_THROTTLE_MS,
     });
     const enrichment = await enrichInvoiceDetail(invoice);
+    const lineItems = await invoiceLinesWithCatalogDetail(invoice);
     const template = await ensureDefaultInvoiceTemplate();
     const parsed = invoiceBlocksSchema.safeParse(template.blocks);
     const blocks = parsed.success
@@ -985,6 +989,7 @@ export async function getInvoiceByViewToken(
     res.json({
       invoice: hideOfflineProof({
         ...toPublicInvoice(invoice),
+        lineItems,
         ...enrichment,
       }),
       blocks,
@@ -1919,7 +1924,12 @@ export async function getInvoiceByPayToken(
         const workOrderNotes = invoice.workOrderRef
           ? await listVisibleWorkOrderNotes(invoice.workOrderRef)
           : [];
-        return hideOfflineProof({ ...toPublicInvoice(invoice), workOrderNotes });
+        const lineItems = await invoiceLinesWithCatalogDetail(invoice);
+        return hideOfflineProof({
+          ...toPublicInvoice(invoice),
+          lineItems,
+          workOrderNotes,
+        });
       }),
     );
     const totalCents = invoices.reduce(

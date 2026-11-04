@@ -101,4 +101,124 @@ describe("agreement line totals", () => {
     assert.equal(items[0]?.description, "Agreement");
     assert.equal(items[0]?.amountCents, 5000);
   });
+
+  it("keeps a zero-bill price off the total and the invoice", () => {
+    const parts = normalizeParts([
+      {
+        lineType: "product",
+        kind: "part",
+        partNumber: "BAT",
+        description: "Battery",
+        quantity: 2,
+        unitPrice: 40,
+        amount: 80,
+        zeroBill: true,
+      },
+      {
+        lineType: "product",
+        kind: "labor",
+        partNumber: "LAB",
+        description: "Labor",
+        quantity: 1,
+        unitPrice: 75,
+        zeroBill: true,
+      },
+      {
+        lineType: "agreement",
+        contractTemplateRef: "64b0f2c2a1b2c3d4e5f60711",
+        description: "Service Contract",
+        quantity: 1,
+        unitPrice: 100,
+        zeroBill: true,
+      },
+      {
+        lineType: "product",
+        kind: "part",
+        partNumber: "FLT",
+        description: "Filter",
+        quantity: 1,
+        unitPrice: 15,
+      },
+    ]);
+
+    assert.equal(parts[0]?.zeroBill, true);
+    assert.equal(parts[0]?.unitPrice, 40);
+    assert.equal(parts[0]?.amount, 0);
+    assert.equal(parts[1]?.unitPrice, 75);
+    assert.equal(parts[1]?.amount, 0);
+    assert.equal(parts[2]?.unitPrice, 100);
+    assert.equal(parts[2]?.amount, 0);
+
+    const totals = computeTicketTotals({
+      parts,
+      laborHours: 2,
+      laborOverridden: false,
+    });
+    assert.equal(totals.totalParts, 15);
+    assert.equal(totals.totalLabor, 0);
+    assert.equal(totals.totalAgreements, 0);
+    assert.equal(totals.total, 15);
+
+    const items = workOrderInvoiceLineItems({
+      parts,
+      totalLabor: totals.totalLabor,
+    });
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.description, "Filter (FLT)");
+    assert.equal(items[0]?.amountCents, 1500);
+
+    const restored = normalizeParts([
+      {
+        lineType: "product",
+        kind: "part",
+        partNumber: "BAT",
+        description: "Battery",
+        quantity: 2,
+        unitPrice: 40,
+        zeroBill: false,
+      },
+    ]);
+    assert.equal(restored[0]?.zeroBill, false);
+    assert.equal(restored[0]?.unitPrice, 40);
+    assert.equal(restored[0]?.amount, 80);
+  });
+});
+
+describe("invoice line product descriptions", () => {
+  it("keeps the product name and puts the catalog description on detail", () => {
+    const items = workOrderInvoiceLineItems({
+      parts: [
+        {
+          lineType: "product",
+          description: "OIL FILTER",
+          partNumber: "OF1",
+          quantity: 1,
+          amount: 12,
+          catalogDescription: "FULL FLOW",
+        },
+      ],
+    });
+
+    assert.equal(items[0]?.description, "OIL FILTER (OF1)");
+    assert.equal(items[0]?.detail, "FULL FLOW");
+    assert.equal(items[0]?.amountCents, 1200);
+  });
+
+  it("omits detail when the product description is blank", () => {
+    const items = workOrderInvoiceLineItems({
+      parts: [
+        {
+          lineType: "product",
+          description: "OIL FILTER",
+          partNumber: "OF1",
+          quantity: 1,
+          amount: 12,
+          catalogDescription: "  ",
+        },
+      ],
+    });
+
+    assert.equal(items[0]?.description, "OIL FILTER (OF1)");
+    assert.equal(items[0]?.detail, undefined);
+  });
 });

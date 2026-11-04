@@ -7,11 +7,22 @@ import {
   setEstimateTemplateDefaultSchema,
   updateEstimateTemplateSchema,
 } from "../schemas/estimateTemplate.schema";
+import { hydrateCatalogDescriptions } from "../services/catalogDescription";
 import {
   partsForTemplate,
   toPublicEstimateTemplate,
 } from "../services/estimateTemplate";
 import { isAdminRole } from "../utils/roles";
+
+async function publishTemplate(
+  doc: Parameters<typeof toPublicEstimateTemplate>[0],
+) {
+  const published = toPublicEstimateTemplate(doc);
+  return {
+    ...published,
+    parts: await hydrateCatalogDescriptions(published.parts),
+  };
+}
 
 async function findActiveTemplate(id: string) {
   if (!mongoose.Types.ObjectId.isValid(id)) return null;
@@ -27,8 +38,10 @@ export async function getEstimateTemplates(
       .sort({ isDefault: -1, name: 1 })
       .lean();
     res.json({
-      templates: templates.map((template) =>
-        toPublicEstimateTemplate(template as Record<string, unknown>),
+      templates: await Promise.all(
+        templates.map((template) =>
+          publishTemplate(template as Record<string, unknown>),
+        ),
       ),
     });
   } catch (err) {
@@ -47,7 +60,7 @@ export async function getEstimateTemplateById(
       res.status(404).json({ message: "Template not found" });
       return;
     }
-    res.json({ template: toPublicEstimateTemplate(template) });
+    res.json({ template: await publishTemplate(template) });
   } catch (err) {
     console.error("GET /estimate-templates/:id error:", err);
     res.status(500).json({ message: "Failed to fetch estimate template" });
@@ -81,7 +94,7 @@ export async function createEstimateTemplate(
       createdBy: req.user.id,
     });
 
-    res.status(201).json({ template: toPublicEstimateTemplate(template) });
+    res.status(201).json({ template: await publishTemplate(template) });
   } catch (err) {
     console.error("POST /estimate-templates error:", err);
     res.status(500).json({ message: "Failed to create estimate template" });
@@ -120,7 +133,7 @@ export async function updateEstimateTemplate(
     }
     await template.save();
 
-    res.json({ template: toPublicEstimateTemplate(template) });
+    res.json({ template: await publishTemplate(template) });
   } catch (err) {
     console.error("PATCH /estimate-templates/:id error:", err);
     res.status(500).json({ message: "Failed to update estimate template" });
@@ -169,7 +182,7 @@ export async function setEstimateTemplateDefault(
     }
     await template.save();
 
-    res.json({ template: toPublicEstimateTemplate(template) });
+    res.json({ template: await publishTemplate(template) });
   } catch (err) {
     console.error("POST /estimate-templates/:id/default error:", err);
     res.status(500).json({ message: "Failed to update default template" });

@@ -35,10 +35,12 @@ export interface TicketPartRow {
   enrolledContractRef: string;
   partNumber: string;
   description: string;
+  catalogDescription: string;
   quantity: string;
   listPrice: string;
   unitPrice: string;
   priceOverridden: boolean;
+  zeroBill: boolean;
 }
 
 export interface TicketFormState {
@@ -109,10 +111,12 @@ export function emptyPartRow(): TicketPartRow {
     enrolledContractRef: "",
     partNumber: "",
     description: "",
+    catalogDescription: "",
     quantity: "",
     listPrice: "",
     unitPrice: "",
     priceOverridden: false,
+    zeroBill: false,
   };
 }
 
@@ -167,10 +171,12 @@ export function emptyNoteRow(): TicketPartRow {
     enrolledContractRef: "",
     partNumber: "",
     description: "",
+    catalogDescription: "",
     quantity: "",
     listPrice: "",
     unitPrice: "",
     priceOverridden: false,
+    zeroBill: false,
   };
 }
 
@@ -259,7 +265,7 @@ export function applyDiscountsToParts(
 }
 
 export function partAmount(row: TicketPartRow): number {
-  if (row.lineType === "note") return 0;
+  if (row.lineType === "note" || row.zeroBill) return 0;
   return Math.round(parseMoney(row.quantity) * parseMoney(row.unitPrice) * 100) / 100;
 }
 
@@ -581,10 +587,12 @@ export function ticketToPayload(form: TicketFormState) {
               kind: "part" as const,
               partNumber: "",
               description: row.description.trim(),
+              catalogDescription: "",
               quantity: 0,
               unitPrice: 0,
               listPrice: 0,
               priceOverridden: false,
+              zeroBill: false,
               amount: 0,
             }
           : row.lineType === "agreement"
@@ -596,10 +604,12 @@ export function ticketToPayload(form: TicketFormState) {
                 kind: "part" as const,
                 partNumber: "",
                 description: row.description.trim(),
+                catalogDescription: row.catalogDescription.trim(),
                 quantity: parseMoney(row.quantity),
                 unitPrice: parseMoney(row.unitPrice),
                 listPrice: parseMoney(row.listPrice),
                 priceOverridden: row.priceOverridden,
+                zeroBill: row.zeroBill,
                 amount: partAmount(row),
               }
             : {
@@ -610,10 +620,12 @@ export function ticketToPayload(form: TicketFormState) {
                 kind: row.kind,
                 partNumber: row.partNumber.trim(),
                 description: row.description.trim(),
+                catalogDescription: row.catalogDescription.trim(),
                 quantity: parseMoney(row.quantity),
                 unitPrice: parseMoney(row.unitPrice),
                 listPrice: parseMoney(row.listPrice),
                 priceOverridden: row.priceOverridden,
+                zeroBill: row.zeroBill,
                 amount: partAmount(row),
               },
       ),
@@ -741,11 +753,13 @@ export function ticketFromRecord(record: {
     kind?: TicketProductKind | "contract";
     partNumber?: string;
     description?: string;
+    catalogDescription?: string;
     quantity?: number;
     unitPrice?: number;
     listPrice?: number;
     amount?: number;
     priceOverridden?: boolean;
+    zeroBill?: boolean;
   }>;
   miscExp?: number | null;
   shipping?: number | null;
@@ -781,6 +795,7 @@ export function ticketFromRecord(record: {
     enrolledContractRef: part.enrolledContractRef ?? "",
     partNumber: part.partNumber ?? "",
     description: part.description ?? "",
+    catalogDescription: part.catalogDescription ?? "",
     quantity: part.quantity
       ? String(part.quantity)
       : part.amount
@@ -799,6 +814,7 @@ export function ticketFromRecord(record: {
         ? String(part.amount)
         : "",
     priceOverridden: Boolean(part.priceOverridden),
+    zeroBill: Boolean(part.zeroBill),
   }));
   return {
     ...base,

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   authenticate,
+  requireAnyPermission,
   requirePermission,
   requireRole,
 } from "../middleware/auth.middleware";
@@ -52,6 +53,10 @@ import {
 const router = Router();
 
 const adminRoles = requireRole("admin", "super-admin");
+const canEditAddresses = requireAnyPermission(
+  "customers:write",
+  "customers:addresses",
+);
 
 router.use(authenticate);
 
@@ -59,7 +64,7 @@ router.use(authenticate);
 router.get("/", requirePermission("customers:read"), listCustomers);
 router.get("/contacts", requirePermission("customers:read"), listContacts);
 router.post("/", adminRoles, createCustomer);
-router.post("/validate-address", adminRoles, validateCustomerAddress);
+router.post("/validate-address", canEditAddresses, validateCustomerAddress);
 router.get(
   "/duplicates",
   requirePermission("customers:read"),
@@ -123,17 +128,17 @@ router.get(
 );
 router.post(
   "/:id/addresses",
-  requirePermission("customers:write"),
+  canEditAddresses,
   createCustomerAddress,
 );
 router.patch(
   "/:id/addresses/:addressId",
-  requirePermission("customers:write"),
+  canEditAddresses,
   updateCustomerAddress,
 );
 router.delete(
   "/:id/addresses/:addressId",
-  requirePermission("customers:write"),
+  canEditAddresses,
   deleteCustomerAddress,
 );
 

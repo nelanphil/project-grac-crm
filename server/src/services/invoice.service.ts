@@ -3,7 +3,12 @@ import { PipelineStage, Types } from "mongoose";
 import { Contract, IContract } from "../models/mongo/Contract";
 import { Customer } from "../models/mongo/Customer";
 import { Invoice, IInvoice } from "../models/mongo/Invoice";
-import { WorkOrder, IWorkOrder } from "../models/mongo/WorkOrder";
+import {
+  includingDeletedWorkOrders,
+  WorkOrder,
+  IWorkOrder,
+} from "../models/mongo/WorkOrder";
+import { hydrateCatalogDescriptions } from "./catalogDescription";
 import {
   computeRenewalDueDateAfterRenewal,
   parseDateOnly,
@@ -543,12 +548,21 @@ async function persistResolvedCustomerRef(
   await WorkOrder.updateOne({ _id: wo._id }, { $set: { customerRef } });
 }
 
-function invoiceLineItemsForWorkOrder(
+async function invoiceLineItemsForWorkOrder(
   wo: WorkOrderInvoiceSource,
   amountCents: number,
   description?: string,
-): { description: string; amountCents: number }[] {
-  const builtItems = workOrderInvoiceLineItems(wo);
+): Promise<{ description: string; amountCents: number; detail?: string }[]> {
+  const parts = await hydrateCatalogDescriptions(wo.parts ?? []);
+  const builtItems = workOrderInvoiceLineItems({
+    parts,
+    totalLabor: wo.totalLabor,
+    miscExp: wo.miscExp,
+    shipping: wo.shipping,
+    total: wo.total,
+    descPerform: wo.descPerform,
+    number: wo.number,
+  });
   const lineItems =
     builtItems.length > 0
       ? builtItems
@@ -566,15 +580,20 @@ function invoiceLineItemsForWorkOrder(
   return lineItems;
 }
 
+function lineDetail(item: { detail?: string | null }): string {
+  return (item.detail ?? "").trim();
+}
+
 function lineItemsChanged(
-  current: Array<{ description?: string; amountCents?: number }>,
-  next: Array<{ description: string; amountCents: number }>,
+  current: Array<{ description?: string; amountCents?: number; detail?: string | null }>,
+  next: Array<{ description: string; amountCents: number; detail?: string }>,
 ): boolean {
   if (current.length !== next.length) return true;
   return current.some(
     (item, i) =>
       (item.description ?? "") !== next[i].description ||
-      (item.amountCents ?? 0) !== next[i].amountCents,
+      (item.amountCents ?? 0) !== next[i].amountCents ||
+      lineDetail(item) !== lineDetail(next[i]),
   );
 }
 
@@ -582,10 +601,12 @@ export function workOrderInvoiceLineItems(wo: {
   parts?: Array<{
     partNumber?: string;
     description?: string;
+    catalogDescription?: string | null;
     quantity?: number;
     amount?: number;
     lineType?: string;
     kind?: string;
+    zeroBill?: boolean;
   }>;
   totalLabor?: number;
   miscExp?: number;
@@ -593,8 +614,8 @@ export function workOrderInvoiceLineItems(wo: {
   total?: number;
   descPerform?: string;
   number?: string;
-}): { description: string; amountCents: number }[] {
-  const items: { description: string; amountCents: number }[] = [];
+}): { description: string; amountCents: number; detail?: string }[] {
+  const items: { description: string; amountCents: number; detail?: string }[] = [];
   const parts = wo.parts ?? [];
   let hasLaborProductLines = false;
   for (const part of parts) {
@@ -602,6 +623,7 @@ export function workOrderInvoiceLineItems(wo: {
     if (part.lineType !== "agreement" && part.kind === "labor") {
       hasLaborProductLines = true;
     }
+    if (part.zeroBill) continue;
     const cents = dollarsToCents(part.amount || 0);
     if (cents <= 0) continue;
     const qty = part.quantity && part.quantity !== 1 ? `${part.quantity} × ` : "";
@@ -619,9 +641,11 @@ export function workOrderInvoiceLineItems(wo: {
       part.lineType !== "agreement" && part.kind === "equipment" && part.description?.trim()
         ? "Equipment · "
         : "";
+    const detail = (part.catalogDescription ?? "").trim();
     items.push({
       description: `${qty}${kindPrefix}${label}${part.partNumber && part.description ? ` (${part.partNumber})` : ""}`,
       amountCents: cents,
+      ...(detail ? { detail } : {}),
     });
   }
   const laborCents = dollarsToCents(wo.totalLabor || 0);
@@ -648,6 +672,43 @@ export function workOrderInvoiceLineItems(wo: {
     ];
   }
   return [];
+}
+
+/** Copy product descriptions onto stored invoice lines when amounts still match. */
+export async function invoiceLinesWithCatalogDetail<
+  T extends { description: string; amountCents: number; detail?: string | null },
+>(invoice: {
+  workOrderRef?: Types.ObjectId | string | null;
+  lineItems?: T[] | null;
+}): Promise<T[]> {
+  const stored = invoice.lineItems ?? [];
+  if (!invoice.workOrderRef || stored.length === 0) return stored;
+  const wo = await includingDeletedWorkOrders(
+    WorkOrder.findById(invoice.workOrderRef).select(
+      "parts totalLabor miscExp shipping total descPerform number",
+    ),
+  ).lean();
+  if (!wo) return stored;
+  const parts = await hydrateCatalogDescriptions(wo.parts ?? []);
+  const built = workOrderInvoiceLineItems({
+    parts,
+    totalLabor: wo.totalLabor,
+    miscExp: wo.miscExp,
+    shipping: wo.shipping,
+    total: wo.total,
+    descPerform: wo.descPerform,
+    number: wo.number,
+  });
+  if (built.length !== stored.length) return stored;
+  if (built.some((item, index) => item.amountCents !== (stored[index]?.amountCents ?? 0))) {
+    return stored;
+  }
+  return stored.map((item, index) => {
+    const existing = (item.detail ?? "").trim();
+    const next = existing || (built[index]?.detail ?? "").trim();
+    if (!next || next === existing) return item;
+    return { ...item, detail: next };
+  });
 }
 
 const OPEN_INVOICE_STATUSES = ["open", "draft", "failed"] as const;
@@ -778,7 +839,7 @@ export async function ensureOpenInvoiceForWorkOrder(
     }
     if (customerRef) reopened.customerRef = customerRef;
     reopened.status = "open";
-    reopened.lineItems = invoiceLineItemsForWorkOrder(
+    reopened.lineItems = await invoiceLineItemsForWorkOrder(
       wo,
       nextAmount,
       options?.description,
@@ -819,7 +880,7 @@ export async function ensureOpenInvoiceForWorkOrder(
     throw new Error("Work order has no resolvable customer for invoicing");
   }
 
-  const lineItems = invoiceLineItemsForWorkOrder(
+  const lineItems = await invoiceLineItemsForWorkOrder(
     wo,
     amountCents,
     options?.description,
@@ -879,7 +940,7 @@ export async function createPaidInvoiceForWorkOrder(
     );
   }
 
-  const lineItems = invoiceLineItemsForWorkOrder(wo, amountCents);
+  const lineItems = await invoiceLineItemsForWorkOrder(wo, amountCents);
   const tax = invoiceTaxFromWorkOrder(wo);
   const issuedAt =
     wo.date instanceof Date
@@ -996,7 +1057,7 @@ export async function syncWorkOrderInvoice(
     const { invoice, created } = await ensureOpenInvoiceForWorkOrder(wo);
     if (created) return { action: "created", invoice };
 
-    const lineItems = invoiceLineItemsForWorkOrder(wo, amountCents);
+    const lineItems = await invoiceLineItemsForWorkOrder(wo, amountCents);
     const tax = invoiceTaxFromWorkOrder(wo);
     const customerRef = await resolveCustomerRefForWorkOrder(wo);
     const keepInvoiceTax = Boolean(invoice.taxOverridden);

@@ -6,7 +6,9 @@ import { formatInvoiceDueDate } from "../utils/automatedMessageCopy";
 import { customerInvoiceMessageDraft } from "./automatedMessage.service";
 
 const WORK_ORDER_SMS =
-  "Hi {{first_name}}, invoice {{invoice_number}} is ready. Total due: {{invoice_total}}. Due {{due_date}}.";
+  "WORK-ORDER-ONLY {{first_name}} invoice {{invoice_number}} total {{invoice_total}}.";
+const INVOICE_SMS =
+  "Hi {{first_name}}, invoice {{invoice_number}} is due. Total due: {{invoice_total}}. Due {{due_date}}.";
 const RECEIPT_SMS =
   "Thanks {{first_name}}. Receipt {{invoice_number}} for {{invoice_total}}.";
 
@@ -19,6 +21,11 @@ function savedSettings() {
     configured: true,
     workOrderCompleteSms: channel(WORK_ORDER_SMS),
     workOrderCompleteEmail: channel(
+      "<p>WORK-ORDER-ONLY {{invoice_number}}</p>",
+      "Work order {{invoice_number}}",
+    ),
+    invoiceSendSms: channel(INVOICE_SMS),
+    invoiceSendEmail: channel(
       "<p>Hi {{first_name}},</p><p>Invoice {{invoice_number}}</p>",
       "Bill {{invoice_number}}",
     ),
@@ -49,7 +56,7 @@ describe("customerInvoiceMessageDraft", () => {
     mock.restoreAll();
   });
 
-  it("returns the saved work-order text for an open invoice with invoice tokens filled", async () => {
+  it("returns the saved invoice text for an open invoice with invoice tokens filled", async () => {
     mock.method(AutomatedMessageSettings, "findOne", () => ({
       lean: async () => savedSettings(),
     }));
@@ -58,7 +65,8 @@ describe("customerInvoiceMessageDraft", () => {
 
     tokensFilled(draft.sms.body);
     assert.equal(draft.sms.body.includes("{{due_date}}"), false);
-    assert.equal(draft.sms.body.includes("ready"), true);
+    assert.equal(draft.sms.body.includes("is due"), true);
+    assert.equal(draft.sms.body.includes("WORK-ORDER-ONLY"), false);
     assert.equal(
       draft.sms.body.includes(formatInvoiceDueDate(source.dueDate)),
       true,
@@ -66,6 +74,7 @@ describe("customerInvoiceMessageDraft", () => {
     assert.equal(draft.email.subject, "Bill GMOF10262652584");
     assert.equal(draft.email.body.includes("{{first_name}}"), true);
     assert.equal(draft.email.body.includes("{{invoice_number}}"), false);
+    assert.equal(draft.email.body.includes("WORK-ORDER-ONLY"), false);
     assert.equal(draft.email.emailChrome, null);
   });
 
@@ -77,7 +86,8 @@ describe("customerInvoiceMessageDraft", () => {
 
     tokensFilled(draft.sms.body);
     assert.equal(draft.sms.body.startsWith("Thanks {{first_name}}"), true);
-    assert.equal(draft.sms.body.includes("ready"), false);
+    assert.equal(draft.sms.body.includes("is due"), false);
+    assert.equal(draft.sms.body.includes("WORK-ORDER-ONLY"), false);
     assert.equal(draft.email.subject, "Paid GMOF10262652584");
     assert.equal(draft.email.body.includes("{{invoice}}"), true);
     assert.equal(draft.email.body.includes("{{first_name}}"), true);
@@ -85,14 +95,34 @@ describe("customerInvoiceMessageDraft", () => {
     assert.equal(draft.email.emailChrome, null);
   });
 
-  it("keeps draft, void, and failed invoices on the work-order message", async () => {
+  it("keeps draft, void, and failed invoices on the invoice message", async () => {
     mock.method(AutomatedMessageSettings, "findOne", () => ({
       lean: async () => savedSettings(),
     }));
     for (const status of ["draft", "void", "failed"] as const) {
       const draft = await customerInvoiceMessageDraft(invoice(status));
-      assert.equal(draft.sms.body.includes("ready"), true);
+      assert.equal(draft.sms.body.includes("is due"), true);
+      assert.equal(draft.sms.body.includes("WORK-ORDER-ONLY"), false);
       assert.equal(draft.email.subject, "Bill GMOF10262652584");
     }
+  });
+
+  it("uses the invoice default when invoice channels have not been saved", async () => {
+    mock.method(AutomatedMessageSettings, "findOne", () => ({
+      lean: async () => ({
+        configured: true,
+        workOrderCompleteSms: channel(WORK_ORDER_SMS),
+        workOrderCompleteEmail: channel(
+          "<p>WORK-ORDER-ONLY {{invoice_number}}</p>",
+          "Work order {{invoice_number}}",
+        ),
+      }),
+    }));
+    const draft = await customerInvoiceMessageDraft(invoice("open"));
+    assert.equal(draft.sms.body.includes("WORK-ORDER-ONLY"), false);
+    assert.equal(draft.sms.body.includes("is ready"), true);
+    assert.equal(draft.email.subject, "Invoice GMOF10262652584");
+    assert.equal(draft.email.body.includes("WORK-ORDER-ONLY"), false);
+    assert.equal(draft.email.body.includes("{{invoice}}"), true);
   });
 });

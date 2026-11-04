@@ -16,6 +16,8 @@ export interface IAutomatedMessageSettings extends Document {
   configured: boolean;
   workOrderCompleteEmail: IAutomatedMessageChannel;
   workOrderCompleteSms: IAutomatedMessageChannel;
+  invoiceSendEmail: IAutomatedMessageChannel;
+  invoiceSendSms: IAutomatedMessageChannel;
   paymentReceivedEmail: IAutomatedMessageChannel;
   paidInvoiceReceiptEmail: IAutomatedMessageChannel;
   paidInvoiceReceiptSms: IAutomatedMessageChannel;
@@ -85,6 +87,8 @@ const automatedMessageSettingsSchema = new Schema<IAutomatedMessageSettings>(
     configured: { type: Boolean, default: false },
     workOrderCompleteEmail: { type: channelSchema, default: () => ({}) },
     workOrderCompleteSms: { type: channelSchema, default: () => ({}) },
+    invoiceSendEmail: { type: channelSchema, default: () => ({}) },
+    invoiceSendSms: { type: channelSchema, default: () => ({}) },
     paymentReceivedEmail: { type: channelSchema, default: () => ({}) },
     paidInvoiceReceiptEmail: { type: channelSchema, default: () => ({}) },
     paidInvoiceReceiptSms: { type: channelSchema, default: () => ({}) },

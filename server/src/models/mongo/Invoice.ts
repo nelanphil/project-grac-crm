@@ -89,6 +89,8 @@ export interface IPosCharge {
 export interface IInvoiceLineItem {
   description: string;
   amountCents: number;
+  /** Product catalog Description shown under the line label. */
+  detail?: string;
 }
 
 export interface IInvoice extends Document {
@@ -146,6 +148,7 @@ const lineItemSchema = new Schema<IInvoiceLineItem>(
   {
     description: { type: String, required: true },
     amountCents: { type: Number, required: true, min: 0 },
+    detail: { type: String, default: "" },
   },
   { _id: false },
 );

@@ -7,6 +7,7 @@ import {
   computeTaxAmount,
   normalizeTaxRatePercent,
 } from "./taxSettings";
+import { catalogDescriptionText } from "./catalogDescription";
 
 export const LABOR_INCLUDED_MINUTES = 30;
 export const LABOR_BLOCK_MINUTES = 30;
@@ -35,10 +36,12 @@ export interface TicketPartInput {
   kind?: TicketProductKind | string;
   partNumber?: string;
   description?: string;
+  catalogDescription?: string;
   quantity?: number;
   unitPrice?: number;
   listPrice?: number;
   priceOverridden?: boolean;
+  zeroBill?: boolean;
   amount?: number;
 }
 
@@ -50,10 +53,12 @@ export interface NormalizedTicketPart {
   kind: TicketProductKind;
   partNumber: string;
   description: string;
+  catalogDescription: string;
   quantity: number;
   unitPrice: number;
   listPrice: number;
   priceOverridden: boolean;
+  zeroBill: boolean;
   amount: number;
 }
 
@@ -90,10 +95,12 @@ export function normalizeParts(
           kind: "part" as const,
           partNumber: "",
           description: (part.description ?? "").trim(),
+          catalogDescription: "",
           quantity: 0,
           unitPrice: 0,
           listPrice: 0,
           priceOverridden: false,
+          zeroBill: false,
           amount: 0,
         };
       }
@@ -102,8 +109,10 @@ export function normalizeParts(
       const listPrice = roundMoney(
         Number(part.listPrice ?? part.unitPrice) || 0,
       );
-      const amount =
-        part.amount != null && Number.isFinite(Number(part.amount))
+      const zeroBill = Boolean(part.zeroBill);
+      const amount = zeroBill
+        ? 0
+        : part.amount != null && Number.isFinite(Number(part.amount))
           ? roundMoney(Number(part.amount))
           : roundMoney(quantity * unitPrice);
       if (lineType === "agreement") {
@@ -115,10 +124,12 @@ export function normalizeParts(
           kind: "part" as const,
           partNumber: "",
           description: (part.description ?? "").trim(),
+          catalogDescription: catalogDescriptionText(part.catalogDescription),
           quantity,
           unitPrice,
           listPrice,
           priceOverridden: Boolean(part.priceOverridden),
+          zeroBill,
           amount,
         };
       }
@@ -130,10 +141,12 @@ export function normalizeParts(
         kind,
         partNumber: (part.partNumber ?? "").trim(),
         description: (part.description ?? "").trim(),
+        catalogDescription: catalogDescriptionText(part.catalogDescription),
         quantity,
         unitPrice,
         listPrice,
         priceOverridden: Boolean(part.priceOverridden),
+        zeroBill,
         amount,
       };
     })

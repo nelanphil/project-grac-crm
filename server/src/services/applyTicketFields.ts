@@ -78,10 +78,12 @@ function partsForDoc(parts: NormalizedTicketPart[]) {
     kind: part.kind,
     partNumber: part.partNumber,
     description: part.description,
+    catalogDescription: part.catalogDescription,
     quantity: part.quantity,
     unitPrice: part.unitPrice,
     listPrice: part.listPrice,
     priceOverridden: part.priceOverridden,
+    zeroBill: part.zeroBill,
     amount: part.amount,
   }));
 }

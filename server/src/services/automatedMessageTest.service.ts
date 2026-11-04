@@ -228,7 +228,9 @@ export async function composeAutomatedMessageTest(
   }
 
   if (kind === "sms") {
-    const includePaymentLink = input.channel === "workOrderCompleteSms";
+    const includePaymentLink =
+      input.channel === "workOrderCompleteSms" ||
+      input.channel === "invoiceSendSms";
     const paymentUrl = includePaymentLink ? automatedTestPayUrl() : null;
     const composed = composeSmsPaymentBody({
       bodyTemplate: applyInvoiceTokens(input.resolved.body, {
@@ -299,7 +301,10 @@ export async function composeAutomatedMessageTest(
   }
 
   const paymentUrl =
-    input.channel === "workOrderCompleteEmail" ? automatedTestPayUrl() : null;
+    input.channel === "workOrderCompleteEmail" ||
+    input.channel === "invoiceSendEmail"
+      ? automatedTestPayUrl()
+      : null;
   const context = sampleContext(paymentUrl);
   const body = renderMessageTemplate(
     applyInvoiceTokens(input.resolved.body, tokens),

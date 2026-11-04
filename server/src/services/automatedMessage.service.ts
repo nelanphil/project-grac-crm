@@ -243,6 +243,16 @@ export async function getAutomatedMessageForm(): Promise<AutomatedMessageForm> {
         legacy.sms ? "template" : "custom",
         legacy.sms?.id ?? null,
       ),
+      invoiceSendEmail: blankChannel(
+        "invoiceSendEmail",
+        legacy.email ? "template" : "custom",
+        legacy.email?.id ?? null,
+      ),
+      invoiceSendSms: blankChannel(
+        "invoiceSendSms",
+        legacy.sms ? "template" : "custom",
+        legacy.sms?.id ?? null,
+      ),
       paymentReceivedEmail: blankChannel("paymentReceivedEmail"),
       paidInvoiceReceiptEmail: blankChannel("paidInvoiceReceiptEmail"),
       paidInvoiceReceiptSms: blankChannel("paidInvoiceReceiptSms"),
@@ -318,6 +328,8 @@ async function templateRefFor(
 const CHANNEL_LABEL: Record<AutomatedMessageChannelKey, string> = {
   workOrderCompleteEmail: "the work order email",
   workOrderCompleteSms: "the work order text",
+  invoiceSendEmail: "the invoice email",
+  invoiceSendSms: "the invoice text",
   paymentReceivedEmail: "the payment received email",
   paidInvoiceReceiptEmail: "the paid invoice email",
   paidInvoiceReceiptSms: "the paid invoice text",
@@ -443,9 +455,18 @@ export async function resolveAutomatedMessage(
     selected && selected.templateType === TEMPLATE_KIND[kind] ? selected : null;
 
   let legacy: LiveTemplate | null = null;
-  if (!configured && (key === "workOrderCompleteEmail" || key === "workOrderCompleteSms")) {
+  if (
+    !configured &&
+    (key === "workOrderCompleteEmail" ||
+      key === "workOrderCompleteSms" ||
+      key === "invoiceSendEmail" ||
+      key === "invoiceSendSms")
+  ) {
     const templates = await loadLegacyTemplates();
-    legacy = key === "workOrderCompleteEmail" ? templates.email : templates.sms;
+    legacy =
+      key === "workOrderCompleteEmail" || key === "invoiceSendEmail"
+        ? templates.email
+        : templates.sms;
   }
 
   const saved: AutomatedSavedChannel | null = stored
@@ -489,7 +510,7 @@ export type CustomerInvoiceMessageDraft = {
 
 /**
  * Wording for the invoice send dialog. Paid invoices use the receipt
- * channels. Every other status uses the work-order channels, which cover
+ * channels. Every other status uses the invoice channels, which cover
  * the bill the customer still owes. Receipt emails in custom mode keep the
  * Billing invoice document, so the editable body is that layout.
  */
@@ -505,11 +526,11 @@ export async function customerInvoiceMessageDraft(
   };
   const [sms, email] = await Promise.all([
     resolveAutomatedMessage(
-      paid ? "paidInvoiceReceiptSms" : "workOrderCompleteSms",
+      paid ? "paidInvoiceReceiptSms" : "invoiceSendSms",
       source,
     ),
     resolveAutomatedMessage(
-      paid ? "paidInvoiceReceiptEmail" : "workOrderCompleteEmail",
+      paid ? "paidInvoiceReceiptEmail" : "invoiceSendEmail",
       source,
     ),
   ]);

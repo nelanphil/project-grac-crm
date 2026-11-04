@@ -28,10 +28,12 @@ export function partsForTemplate(
     kind: part.kind,
     partNumber: part.partNumber,
     description: part.description,
+    catalogDescription: part.catalogDescription,
     quantity: part.quantity,
     unitPrice: part.unitPrice,
     listPrice: part.listPrice,
     priceOverridden: part.priceOverridden,
+    zeroBill: part.zeroBill,
     amount: part.amount,
   }));
 }
@@ -63,10 +65,12 @@ export function toPublicEstimateTemplate(
     kind: part.kind,
     partNumber: part.partNumber,
     description: part.description,
+    catalogDescription: part.catalogDescription ?? "",
     quantity: part.quantity,
     unitPrice: part.unitPrice,
     listPrice: part.listPrice,
     priceOverridden: part.priceOverridden,
+    zeroBill: Boolean(part.zeroBill),
     amount: part.amount,
   }));
 

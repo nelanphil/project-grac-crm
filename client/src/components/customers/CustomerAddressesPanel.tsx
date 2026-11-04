@@ -77,6 +77,7 @@ interface CustomerAddressesPanelProps {
   token: string;
   addresses: CustomerAddress[];
   canWrite?: boolean;
+  canEditAddresses?: boolean;
   onAddressesChange: (addresses: CustomerAddress[]) => void;
 }
 
@@ -85,6 +86,7 @@ export default function CustomerAddressesPanel({
   token,
   addresses,
   canWrite = false,
+  canEditAddresses = false,
   onAddressesChange,
 }: CustomerAddressesPanelProps) {
   const [addingAddress, setAddingAddress] = useState(false);
@@ -319,7 +321,7 @@ export default function CustomerAddressesPanel({
           <p className="mt-1 text-xs text-neutral-400">
             Add an address to attach equipment for this customer.
           </p>
-          {canWrite ? (
+          {canEditAddresses ? (
             <button
               type="button"
               onClick={startAddAddress}
@@ -375,9 +377,9 @@ export default function CustomerAddressesPanel({
                 {formatAddressLine(addr)}
               </p>
             </div>
-            {canWrite ? (
+            {canEditAddresses || canWrite ? (
               <div className="flex flex-wrap gap-3 text-xs">
-                {!addr.isPrimary ? (
+                {canEditAddresses && !addr.isPrimary ? (
                   <button
                     type="button"
                     disabled={saving}
@@ -387,31 +389,35 @@ export default function CustomerAddressesPanel({
                     Set primary
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() =>
-                    editingId === addr._id
-                      ? cancelAddressForm()
-                      : startEditAddress(addr)
-                  }
-                  className="font-medium text-neutral-600 hover:underline disabled:opacity-50"
-                >
-                  {editingId === addr._id ? "Cancel" : "Edit"}
-                </button>
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() =>
-                    openEquipmentForm(
-                      addingEquipmentFor === addr._id ? null : addr._id,
-                    )
-                  }
-                  className="inline-flex items-center gap-1 font-medium text-brand-orange hover:underline disabled:opacity-50"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add equipment
-                </button>
+                {canEditAddresses ? (
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() =>
+                      editingId === addr._id
+                        ? cancelAddressForm()
+                        : startEditAddress(addr)
+                    }
+                    className="font-medium text-neutral-600 hover:underline disabled:opacity-50"
+                  >
+                    {editingId === addr._id ? "Cancel" : "Edit"}
+                  </button>
+                ) : null}
+                {canWrite ? (
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() =>
+                      openEquipmentForm(
+                        addingEquipmentFor === addr._id ? null : addr._id,
+                      )
+                    }
+                    className="inline-flex items-center gap-1 font-medium text-brand-orange hover:underline disabled:opacity-50"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add equipment
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -559,7 +565,7 @@ export default function CustomerAddressesPanel({
           submitLabel="Save address"
           className="rounded-lg border border-neutral-200 p-4"
         />
-      ) : canWrite && !editingId ? (
+      ) : canEditAddresses && !editingId ? (
         <button
           type="button"
           onClick={startAddAddress}

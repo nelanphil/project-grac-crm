@@ -38,6 +38,7 @@ const ALL_PERMISSIONS = [
   "accounts:delete",
   "customers:read",
   "customers:write",
+  "customers:addresses",
   "customers:delete",
   "users:read",
   "users:write",
@@ -61,11 +62,19 @@ const ALL_PERMISSIONS = [
   "job-roles:manage",
 ].sort();
 
-const ACTION_ORDER = ["read", "write", "delete", "manage"];
+const ACTION_ORDER = ["read", "write", "addresses", "delete", "manage"];
 const NAV_PERMISSIONS = listNavPermissions();
 
+const PERMISSION_LABELS: Record<string, string> = {
+  "customers:addresses": "edit addresses",
+};
+
 function permissionChipLabel(permission: string): string {
-  return navPermissionLabel(permission) ?? permission.split(":").slice(1).join(":");
+  return (
+    PERMISSION_LABELS[permission] ??
+    navPermissionLabel(permission) ??
+    permission.split(":").slice(1).join(":")
+  );
 }
 
 function groupPermissions(permissions: string[]): Record<string, string[]> {
@@ -712,7 +721,11 @@ export default function RolesTab() {
       <DragOverlay dropAnimation={null}>
         {activePermission ? (
           <StaticChip
-            label={navPermissionLabel(activePermission) ?? activePermission}
+            label={
+              PERMISSION_LABELS[activePermission] ??
+              navPermissionLabel(activePermission) ??
+              activePermission
+            }
           />
         ) : null}
       </DragOverlay>

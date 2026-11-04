@@ -1,19 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { cloneElement, isValidElement, useState, type ReactElement, type ReactNode } from "react";
 import { ApiError, createInvoice } from "@/lib/api";
 
 const WORK_ORDER_ALREADY_PAID = "Work order is already paid";
+const TOTAL_REQUIRED = "Total must be above $0 to generate an invoice.";
+
+export function withInvoiceTotal(action: ReactNode, total: number): ReactNode {
+  if (!isValidElement(action)) return action;
+  return cloneElement(action as ReactElement<{ total?: number }>, { total });
+}
 
 export default function InvoiceWorkOrderButton({
   token,
   workOrderRef,
   sourcePaid = false,
+  total,
   onCreated,
 }: {
   token: string;
   workOrderRef: string;
   sourcePaid?: boolean;
+  /** Displayed work-order total. Invoice stays disabled until this is above $0. */
+  total?: number;
   onCreated?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -49,7 +58,10 @@ export default function InvoiceWorkOrderButton({
     }
   }
 
+  const totalBlocked = total != null && !(total > 0);
+
   function handleCreate() {
+    if (totalBlocked) return;
     if (sourcePaid && !confirmPaid) {
       setConfirmPaid(true);
       setError(null);
@@ -62,12 +74,15 @@ export default function InvoiceWorkOrderButton({
     <div className="space-y-2">
       <button
         type="button"
-        disabled={busy}
+        disabled={busy || totalBlocked}
         onClick={handleCreate}
         className="w-full rounded-lg bg-brand-dark px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
       >
         Invoice work order
       </button>
+      {totalBlocked ? (
+        <p className="text-xs text-neutral-600">{TOTAL_REQUIRED}</p>
+      ) : null}
 
       {confirmPaid ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">

@@ -17,6 +17,7 @@ import {
   updateEstimateSchema,
 } from "../schemas/estimate.schema";
 import { applyTicketFields } from "../services/applyTicketFields";
+import { hydrateRecordParts } from "../services/catalogDescription";
 import {
   actorFromRequest,
   customerDisplayName,
@@ -39,6 +40,16 @@ const ESTIMATE_STATUS_GROUPS = {
 } as const;
 
 type EstimateStatusGroup = keyof typeof ESTIMATE_STATUS_GROUPS;
+
+async function publishEstimate(doc: Record<string, unknown>) {
+  const [hydrated] = await hydrateRecordParts([doc]);
+  return toPublic(hydrated ?? doc);
+}
+
+async function publishEstimates(docs: Array<Record<string, unknown>>) {
+  const hydrated = await hydrateRecordParts(docs);
+  return hydrated.map((doc) => toPublic(doc));
+}
 
 function toPublic(doc: Record<string, unknown>) {
   return {
@@ -132,7 +143,7 @@ export async function getEstimates(
       ]);
 
     res.json({
-      estimates: estimates.map((e) => toPublic(e as Record<string, unknown>)),
+      estimates: await publishEstimates(estimates as Array<Record<string, unknown>>),
       total,
       page,
       pageSize,
@@ -159,7 +170,7 @@ export async function getEstimateById(
       res.status(404).json({ message: "Estimate not found" });
       return;
     }
-    res.json({ estimate: toPublic(estimate as Record<string, unknown>) });
+    res.json({ estimate: await publishEstimate(estimate as Record<string, unknown>) });
   } catch (err) {
     console.error("GET /estimates/:id error:", err);
     res.status(500).json({ message: "Failed to fetch estimate" });
@@ -239,7 +250,7 @@ export async function createEstimate(
     });
 
     res.status(201).json({
-      estimate: toPublic(estimate.toObject() as unknown as Record<string, unknown>),
+      estimate: await publishEstimate(estimate.toObject() as unknown as Record<string, unknown>),
     });
   } catch (err) {
     console.error("POST /estimates error:", err);
@@ -314,7 +325,7 @@ export async function updateEstimate(
     });
 
     res.json({
-      estimate: toPublic(estimate.toObject() as unknown as Record<string, unknown>),
+      estimate: await publishEstimate(estimate.toObject() as unknown as Record<string, unknown>),
     });
   } catch (err) {
     console.error("PATCH /estimates/:id error:", err);
@@ -337,7 +348,7 @@ export async function convertEstimate(
         WorkOrder.findById(estimate.workOrderRef),
       ).lean();
       res.json({
-        estimate: toPublic(estimate.toObject() as unknown as Record<string, unknown>),
+        estimate: await publishEstimate(estimate.toObject() as unknown as Record<string, unknown>),
         workOrder: existing,
       });
       return;
@@ -434,7 +445,7 @@ export async function convertEstimate(
     });
 
     res.status(201).json({
-      estimate: toPublic(estimate.toObject() as unknown as Record<string, unknown>),
+      estimate: await publishEstimate(estimate.toObject() as unknown as Record<string, unknown>),
       workOrder: workOrder.toObject(),
     });
   } catch (err) {

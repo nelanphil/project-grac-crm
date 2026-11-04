@@ -14,6 +14,7 @@ import {
   ensureProductPermissions,
   ensureDiscountPermissions,
   ensureJobRolePermissions,
+  ensureAddressPermissions,
   ensureNavPermissions,
 } from "./models/mongo/RolePermission";
 import { seedDefaultRoles } from "./models/mongo/Role";
@@ -67,6 +68,7 @@ async function bootstrap(): Promise<void> {
   await ensureProductPermissions();
   await ensureDiscountPermissions();
   await ensureJobRolePermissions();
+  await ensureAddressPermissions();
   await ensureNavPermissions();
   await seedDefaultManufacturers();
   await seedContractTemplates();

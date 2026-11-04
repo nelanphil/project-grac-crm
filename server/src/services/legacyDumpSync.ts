@@ -1149,6 +1149,7 @@ type ExistingWorkOrder = {
     unitPrice?: number;
     amount?: number;
     kind?: string;
+    zeroBill?: boolean;
   }>;
   subtotal?: number;
   shipping?: number;
@@ -1400,10 +1401,12 @@ async function backfillExistingWorkOrderLineItems(
     kind: part.kind === "labor" ? "labor" as const : "part" as const,
     partNumber: part.partNumber ?? "",
     description: part.description ?? "",
+    catalogDescription: "",
     quantity: part.quantity ?? 0,
     unitPrice: part.unitPrice ?? 0,
     listPrice: part.unitPrice ?? 0,
     priceOverridden: false,
+    zeroBill: Boolean(part.zeroBill),
     amount: part.amount ?? 0,
   }));
   if (!linkCatalogProductRefs(linked, catalog)) return false;
@@ -1930,10 +1933,12 @@ export async function backfillStoredWorkOrderLineItems(options: {
           kind: part.kind === "labor" ? "labor" as const : part.kind === "equipment" ? "equipment" as const : "part" as const,
           partNumber: part.partNumber ?? "",
           description: part.description ?? "",
+          catalogDescription: part.catalogDescription ?? "",
           quantity: part.quantity ?? 0,
           unitPrice: part.unitPrice ?? 0,
           listPrice: part.listPrice ?? part.unitPrice ?? 0,
           priceOverridden: Boolean(part.priceOverridden),
+          zeroBill: Boolean(part.zeroBill),
           amount: part.amount ?? 0,
         }));
         if (!linkCatalogProductRefs(linked, catalog)) {

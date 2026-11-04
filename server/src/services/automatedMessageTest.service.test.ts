@@ -181,6 +181,57 @@ describe("composeAutomatedMessageTest", () => {
     );
   });
 
+  it("renders an invoice email from the open invoice and a sample pay link", async () => {
+    const fake = renderers();
+    const resolved = resolveChannelCopy({
+      kind: "email",
+      saved: {
+        mode: "custom",
+        subject: "Invoice {{invoice_number}}",
+        body: "<p>Hi {{first_name}},</p><p>{{invoice}}</p>",
+      },
+      selectedTemplate: null,
+      legacyTemplate: null,
+      fallback,
+    });
+    const composed = await composeAutomatedMessageTest(
+      {
+        channel: "invoiceSendEmail",
+        resolved,
+        recipient: "ada@example.com",
+      },
+      fake,
+    );
+    assert.equal(composed.invoiceStatus, "open");
+    assert.equal(composed.paymentUrl, automatedTestPayUrl());
+    assert.equal(composed.html.includes(automatedTestPayUrl()), true);
+    assert.equal(composed.subject, "[Test] Invoice INV-1042");
+  });
+
+  it("appends a sample pay link to an invoice text that omits the token", async () => {
+    const resolved = resolveChannelCopy({
+      kind: "sms",
+      saved: {
+        mode: "custom",
+        subject: "",
+        body: "Hi {{first_name}}, invoice {{invoice_number}} is ready.",
+      },
+      selectedTemplate: null,
+      legacyTemplate: null,
+      fallback,
+    });
+    const composed = await composeAutomatedMessageTest({
+      channel: "invoiceSendSms",
+      resolved,
+      recipient: "8135550100",
+    });
+    assert.equal(composed.paymentUrl, automatedTestPayUrl());
+    assert.equal(
+      composed.smsBody.includes(`Pay: ${automatedTestPayUrl()}`),
+      true,
+    );
+  });
+
   it("sends the paid-invoice text without a payment link", async () => {
     const resolved = resolveChannelCopy({
       kind: "sms",

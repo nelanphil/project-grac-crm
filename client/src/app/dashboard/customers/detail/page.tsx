@@ -111,6 +111,11 @@ function CustomerDetailContent() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const canWrite = useAuthStore((s) => s.hasPermission("customers:write"));
+  const canEditAddresses = useAuthStore(
+    (s) =>
+      s.hasPermission("customers:write") ||
+      s.hasPermission("customers:addresses"),
+  );
   const canWriteJobs = useAuthStore((s) => s.hasPermission("jobs:write"));
   const canWriteContracts = useAuthStore((s) =>
     s.hasPermission("contracts:write"),
@@ -861,6 +866,7 @@ function CustomerDetailContent() {
         token={token!}
         userId={user.id}
         canWrite={canWrite}
+        canEditAddresses={canEditAddresses}
         contactsRevision={contactsRevision}
         onCustomerChange={(next) => setCustomer(next)}
         filteredContracts={filteredContracts}

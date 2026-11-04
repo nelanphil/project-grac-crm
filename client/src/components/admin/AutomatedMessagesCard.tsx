@@ -117,6 +117,22 @@ const CHANNELS: Record<
     bodyTokens: INVOICE_TEXT_TOKENS,
     hint: "If the text does not include {{payment_link}}, the payment link is added at the end.",
   },
+  invoiceSendEmail: {
+    label: "Email",
+    kind: "email",
+    templateKind: "email",
+    subjectTokens: INVOICE_SUBJECT_TOKENS,
+    bodyTokens: [...INVOICE_TEXT_TOKENS, INVOICE],
+    hint: "Include {{invoice}} where the invoice should appear. The payment button is added when the message can be paid.",
+  },
+  invoiceSendSms: {
+    label: "Text",
+    kind: "sms",
+    templateKind: "sms",
+    subjectTokens: [],
+    bodyTokens: INVOICE_TEXT_TOKENS,
+    hint: "If the text does not include {{payment_link}}, the payment link is added at the end.",
+  },
   paymentReceivedEmail: {
     label: "Email",
     kind: "receipt-email",
@@ -189,6 +205,7 @@ const CHANNELS: Record<
 
 type MessageTabId =
   | "work-orders"
+  | "invoices"
   | "payment-received"
   | "paid-invoice-receipt"
   | "mailbox-reply"
@@ -205,8 +222,15 @@ const SECTIONS: {
     id: "work-orders",
     title: "Work orders",
     description:
-      "Sent when a work order is marked complete and the invoice is emailed or texted, and again when that invoice is resent. This is the bill they still need to pay. The email can include the invoice and a pay button. The text gets a payment link at the end if {{payment_link}} is not already in the message.",
+      "Sent when a work order is marked complete and that invoice is emailed or texted, and again when it is resent from the work order. This is the bill they still need to pay. The email can include the invoice and a pay button. The text gets a payment link at the end if {{payment_link}} is not already in the message.",
     keys: ["workOrderCompleteEmail", "workOrderCompleteSms"],
+  },
+  {
+    id: "invoices",
+    title: "Invoices",
+    description:
+      "Starting wording for Email invoice and Text invoice on an invoice that is not paid. Paid invoices start from Paid invoice receipt. The email can include the invoice and a pay button. The text gets a payment link at the end when {{payment_link}} is not already in the message.",
+    keys: ["invoiceSendEmail", "invoiceSendSms"],
   },
   {
     id: "payment-received",
@@ -595,7 +619,9 @@ function previewNote(
       : "This uses sample invoice INV-1042.";
   const extra =
     channelKey === "workOrderCompleteEmail" ||
-    channelKey === "workOrderCompleteSms"
+    channelKey === "workOrderCompleteSms" ||
+    channelKey === "invoiceSendEmail" ||
+    channelKey === "invoiceSendSms"
       ? " The payment link is a sample and cannot be paid."
       : channelKey === "renewalScheduleEmail"
         ? offerRecommendedDates
@@ -750,9 +776,11 @@ function TestSendDialog({
 }) {
   const spec = CHANNELS[channelKey];
   const sms = spec.kind === "sms";
-  const workOrder =
+  const payableSample =
     channelKey === "workOrderCompleteEmail" ||
-    channelKey === "workOrderCompleteSms";
+    channelKey === "workOrderCompleteSms" ||
+    channelKey === "invoiceSendEmail" ||
+    channelKey === "invoiceSendSms";
   const [to, setTo] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -811,7 +839,9 @@ function TestSendDialog({
         <p className="mt-1 text-sm text-neutral-500">
           Sends the wording on this screen, filled with sample invoice INV-1042.
           It does not go to a customer and does not mark any invoice sent.
-          {workOrder ? " The payment link is a sample and cannot be paid." : ""}
+          {payableSample
+            ? " The payment link is a sample and cannot be paid."
+            : ""}
           {channelKey === "renewalScheduleEmail"
             ? " Recommended dates in this test are samples and cannot be booked."
             : ""}
