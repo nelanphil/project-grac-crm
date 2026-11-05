@@ -8,7 +8,9 @@ import {
   parseDateOnly,
   startOfDay,
 } from "../utils/contractDates";
+import { standingContractQuery } from "../utils/standingContract";
 import { promoteTemporaryContract } from "../utils/temporaryContractOffer";
+import { voidSiblingContractInvoices } from "./contractInvoiceSiblings";
 
 /** Stored on a renewal invoice that a paid offer replaced. */
 export const OFFER_RENEWAL_VOID_REASON = "superseded_by_paid_offer";
@@ -108,16 +110,17 @@ async function earlierContracts(
   offer: IContract,
 ): Promise<IContract[]> {
   const templateId = offer.templateId ?? invoice.templateRef ?? null;
-  if (!templateId) return [];
-  const customerId = invoice.customerId || offer.customerId;
-  const candidates = await Contract.find({
-    _id: { $ne: offer._id },
+  const contractType = offer.contractType ?? null;
+  const filter = standingContractQuery({
+    customerRef: invoice.customerRef ?? offer.customerRef,
+    customerId: invoice.customerId || offer.customerId,
     templateId,
-    temporary: { $ne: true },
-    $or: [
-      ...(invoice.customerRef ? [{ customerRef: invoice.customerRef }] : []),
-      { customerId },
-    ],
+    contractType,
+  });
+  if (!filter) return [];
+  const candidates = await Contract.find({
+    ...filter,
+    _id: { $ne: offer._id },
   });
   const offerCreated = offer.createdAt?.getTime() ?? Date.now();
   const earlier = candidates.filter(
@@ -169,14 +172,18 @@ export async function foldOfferIntoExistingContract(
   }
 
   const target = await pickFoldTarget(targets);
-  const openRenewals = await Invoice.find({
-    _id: { $ne: invoice._id },
-    contractRef: target._id,
-    sourceType: "contract_renewal",
-    status: { $in: OPEN_RENEWAL_STATUSES },
-  });
-  const voidedInvoiceNumbers = openRenewals.map((row) => row.number);
   const dryRun = Boolean(options?.dryRun);
+  const siblingPreview = await voidSiblingContractInvoices({
+    keepInvoiceId: invoice._id as Types.ObjectId,
+    customerRef: invoice.customerRef ?? offer.customerRef,
+    customerId: invoice.customerId || offer.customerId,
+    templateId: offer.templateId ?? invoice.templateRef ?? target.templateId,
+    contractType: offer.contractType ?? target.contractType,
+    paidInvoiceNumber: invoice.number,
+    reason: OFFER_RENEWAL_VOID_REASON,
+    dryRun: true,
+  });
+  const voidedInvoiceNumbers = siblingPreview.voidedInvoiceNumbers;
   if (!target.renewalDueDate) {
     console.warn(
       `[offer-renewal] Contract ${String(target._id)} has no renewal due date; invoice ${invoice.number} stays on its offer contract`,
@@ -236,16 +243,15 @@ export async function foldOfferIntoExistingContract(
     }
   }
 
-  for (const open of openRenewals) {
-    open.status = "void";
-    open.metadata = {
-      ...invoiceMetadata(open),
-      voidReason: OFFER_RENEWAL_VOID_REASON,
-      supersededByInvoiceNumber: invoice.number,
-    };
-    open.markModified("metadata");
-    await open.save();
-  }
+  await voidSiblingContractInvoices({
+    keepInvoiceId: invoice._id as Types.ObjectId,
+    customerRef: invoice.customerRef ?? offer.customerRef,
+    customerId: invoice.customerId || offer.customerId,
+    templateId: offer.templateId ?? invoice.templateRef ?? target.templateId,
+    contractType: offer.contractType ?? target.contractType,
+    paidInvoiceNumber: invoice.number,
+    reason: OFFER_RENEWAL_VOID_REASON,
+  });
 
   invoice.contractRef = target._id as Types.ObjectId;
   invoice.sourceType = "contract_renewal";

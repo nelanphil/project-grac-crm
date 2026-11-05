@@ -291,6 +291,17 @@ const invoiceSchema = new Schema<IInvoice>(
 invoiceSchema.index({ customerRef: 1, status: 1, createdAt: -1 });
 invoiceSchema.index({ contractRef: 1, sourceType: 1, status: 1 });
 invoiceSchema.index(
+  { contractRef: 1, sourceType: 1 },
+  {
+    unique: true,
+    name: "uniq_open_contract_renewal",
+    partialFilterExpression: {
+      sourceType: "contract_renewal",
+      status: "open",
+    },
+  },
+);
+invoiceSchema.index(
   { "posCharge.status": 1, "posCharge.startedAt": -1 },
   { partialFilterExpression: { "posCharge.status": { $exists: true } } },
 );

@@ -18,6 +18,8 @@ import {
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import { formatAddressLabel } from "@/components/customers/CustomerAddressesPanel";
+import PastDueBadge from "@/components/billing/PastDueBadge";
+import CustomerInvoicesTab from "@/components/customers/CustomerInvoicesTab";
 import CustomerRecordCard from "@/components/customers/CustomerRecordCard";
 import CustomerReputationControl from "@/components/customers/CustomerReputationControl";
 import MergeCustomersDialog from "@/components/customers/MergeCustomersDialog";
@@ -169,6 +171,10 @@ function CustomerDetailContent() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [statusSaving, setStatusSaving] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [recordsTab, setRecordsTab] = useState<"work-orders" | "invoices">(
+    "work-orders",
+  );
+  const [invoiceCount, setInvoiceCount] = useState(0);
   const [workOrderListView, setWorkOrderListView] = useState<
     "all" | "active" | "deleted"
   >("all");
@@ -280,14 +286,24 @@ function CustomerDetailContent() {
       setWorkOrders((prev) => {
         const nextOrders = prev.map((wo) =>
           wo._id === order._id
-            ? { ...wo, paid: updated.paid, completed: updated.completed }
-            : wo,
+            ? {
+                ...wo,
+                paid: updated.paid,
+                completed: updated.completed,
+                customerPastDue: updated.customerPastDue,
+              }
+            : { ...wo, customerPastDue: updated.customerPastDue },
         );
         if (workOrderListView === "active" && updated.paid) {
           return nextOrders.filter((wo) => wo._id !== order._id);
         }
         return nextOrders;
       });
+      setCustomer((current) =>
+        current
+          ? { ...current, pastDue: updated.customerPastDue ?? null }
+          : current,
+      );
     } catch (err) {
       setWorkOrders((prev) =>
         prev.map((wo) =>
@@ -366,6 +382,7 @@ function CustomerDetailContent() {
               : undefined
           }
         />
+        <PastDueBadge pastDue={order.customerPastDue} />
       </div>
     );
   }
@@ -668,6 +685,7 @@ function CustomerDetailContent() {
             showLabel
             onChange={(next) => void saveReputation(next)}
           />
+          <PastDueBadge pastDue={customer.pastDue} />
           </div>
           {nameError ? (
             <p className="mt-1 text-sm text-red-600">{nameError}</p>
@@ -877,6 +895,9 @@ function CustomerDetailContent() {
             prev.map((c) => (c._id === updated._id ? updated : c)),
           )
         }
+        onContractDeleted={(id) =>
+          setContracts((prev) => prev.filter((c) => c._id !== id))
+        }
       />
 
       {addresses.length > 1 ? (
@@ -909,41 +930,69 @@ function CustomerDetailContent() {
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-lg font-semibold text-brand-dark">
-              Work Orders ({filteredWorkOrders.length})
-            </h2>
             <div className="inline-flex shrink-0 rounded-lg border border-neutral-200 bg-white p-0.5 text-sm">
               {(
                 [
-                  { id: "all" as const, label: "All" },
-                  { id: "active" as const, label: "Active" },
-                  ...(canViewDeletedWorkOrders
-                    ? [{ id: "deleted" as const, label: "Deleted" }]
-                    : []),
+                  {
+                    id: "work-orders" as const,
+                    label: `Work Orders (${filteredWorkOrders.length})`,
+                  },
+                  {
+                    id: "invoices" as const,
+                    label: `Invoices (${invoiceCount})`,
+                  },
                 ]
-              ).map((view) => (
+              ).map((tab) => (
                 <button
-                  key={view.id}
+                  key={tab.id}
                   type="button"
-                  onClick={() => {
-                    if (workOrderListView === view.id) return;
-                    setWorkOrderListView(view.id);
-                    setWorkOrdersLoading(true);
-                    setConfirmingDeleteId(null);
-                    setStatusError(null);
-                  }}
+                  onClick={() => setRecordsTab(tab.id)}
                   className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
-                    workOrderListView === view.id
+                    recordsTab === tab.id
                       ? "bg-brand-dark text-white"
                       : "text-neutral-600 hover:text-brand-dark"
                   }`}
                 >
-                  {view.label}
+                  {tab.label}
                 </button>
               ))}
             </div>
+            {recordsTab === "work-orders" ? (
+              <div className="inline-flex shrink-0 rounded-lg border border-neutral-200 bg-white p-0.5 text-sm">
+                {(
+                  [
+                    { id: "all" as const, label: "All" },
+                    { id: "active" as const, label: "Active" },
+                    ...(canViewDeletedWorkOrders
+                      ? [{ id: "deleted" as const, label: "Deleted" }]
+                      : []),
+                  ]
+                ).map((view) => (
+                  <button
+                    key={view.id}
+                    type="button"
+                    onClick={() => {
+                      if (workOrderListView === view.id) return;
+                      setWorkOrderListView(view.id);
+                      setWorkOrdersLoading(true);
+                      setConfirmingDeleteId(null);
+                      setStatusError(null);
+                    }}
+                    className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+                      workOrderListView === view.id
+                        ? "bg-brand-dark text-white"
+                        : "text-neutral-600 hover:text-brand-dark"
+                    }`}
+                  >
+                    {view.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
-          {canWriteJobs && !showingDeletedWorkOrders ? (
+          {recordsTab === "work-orders" &&
+          canWriteJobs &&
+          !showingDeletedWorkOrders ? (
             <Link
               href={`/dashboard/work-orders/create?customerId=${customer._id}`}
               className="inline-flex min-h-11 items-center gap-1 rounded-lg bg-brand-dark px-3 py-2 text-xs font-medium text-white hover:opacity-90"
@@ -954,6 +1003,16 @@ function CustomerDetailContent() {
           ) : null}
         </div>
 
+        <div className={recordsTab === "invoices" ? "" : "hidden"}>
+          <CustomerInvoicesTab
+            token={token!}
+            customerRef={customer._id}
+            customerId={customer.legacyId}
+            onCountChange={setInvoiceCount}
+          />
+        </div>
+        {recordsTab === "work-orders" ? (
+          <>
         {statusError ? (
           <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {statusError}
@@ -1187,6 +1246,8 @@ function CustomerDetailContent() {
             }
           />
         )}
+          </>
+        ) : null}
       </section>
 
       <NewOwnerDialog

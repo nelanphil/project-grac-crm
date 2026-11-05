@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ClipboardList, Search } from "lucide-react";
+import PastDueBadge from "@/components/billing/PastDueBadge";
 import AuthGuard from "@/components/auth/AuthGuard";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
@@ -276,6 +277,7 @@ function WorkOrdersContent() {
                   key={order._id}
                   title={displayNumber(order)}
                   subtitle={order.customerName || "—"}
+                  badges={<PastDueBadge pastDue={order.customerPastDue} />}
                   onClick={() =>
                     router.push(`/dashboard/work-orders/detail?id=${order._id}`)
                   }
@@ -355,7 +357,10 @@ function WorkOrdersContent() {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-neutral-600">
-                        {order.customerName || "—"}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span>{order.customerName || "—"}</span>
+                          <PastDueBadge pastDue={order.customerPastDue} />
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-neutral-600">{order.tech || "—"}</td>
                       <td className="px-6 py-4 text-neutral-600">{desiredStartLabel(order)}</td>

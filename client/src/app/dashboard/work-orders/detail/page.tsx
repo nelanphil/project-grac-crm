@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Download } from "lucide-react";
+import PastDueBadge from "@/components/billing/PastDueBadge";
 import SoftDeleteWarning from "@/components/work-orders/SoftDeleteWarning";
 import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink, {
@@ -215,7 +216,10 @@ function WorkOrderDetailContent() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        {backLink}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {backLink}
+          <PastDueBadge pastDue={order.customerPastDue} />
+        </div>
         <div className="flex flex-wrap gap-2">
           {viewInvoiceId ? (
             <Link

@@ -70,6 +70,32 @@ export function differenceInCalendarDays(later: Date, earlier: Date): number {
   return Math.round((laterStart - earlierStart) / (24 * 60 * 60 * 1000));
 }
 
+/**
+ * Admin override of the current period. End must be strictly after start.
+ * Both values are calendar dates.
+ */
+export function parseContractPeriod(
+  startInput: unknown,
+  endInput: unknown,
+):
+  | { ok: true; startDate: Date; endDate: Date }
+  | { ok: false; message: string } {
+  const startDate = parseDateOnly(asDateInput(startInput));
+  const endDate = parseDateOnly(asDateInput(endInput));
+  if (!startDate || !endDate) {
+    return { ok: false, message: "Start date and end date are required" };
+  }
+  if (endDate.getTime() <= startDate.getTime()) {
+    return { ok: false, message: "End date must be after the start date" };
+  }
+  return { ok: true, startDate, endDate };
+}
+
+function asDateInput(value: unknown): string | Date | null {
+  if (value instanceof Date || typeof value === "string") return value;
+  return null;
+}
+
 export function computeInitialRenewalDueDate(
   contractDate: Date | null,
   durationMonths: number,
@@ -160,17 +186,40 @@ export function renewalCohortFilterForMonth(
   const nextYear = renewalMonthWindow(year + 1, month);
   return {
     $or: [
-      { renewalDueDate: { $gte: gte, $lt: lt } },
-      {
-        renewalDueDate: { $lt: gte, $ne: null },
-        $expr: { $eq: [{ $month: "$renewalDueDate" }, month] },
-      },
+      ...renewalOutreachClauses(month, gte, lt),
       {
         renewalDueDate: { $gte: nextYear.gte, $lt: nextYear.lt },
         lastRenewalDate: { $exists: true, $ne: null },
       },
     ],
   };
+}
+
+/**
+ * Wizard audience for a calendar month: still due that month, or overdue
+ * from an earlier year with the same anniversary month. Already-renewed
+ * contracts are left out.
+ */
+export function renewalOutreachFilterForMonth(
+  year: number,
+  month: number,
+): Record<string, unknown> {
+  const { gte, lt } = renewalMonthWindow(year, month);
+  return { $or: renewalOutreachClauses(month, gte, lt) };
+}
+
+function renewalOutreachClauses(
+  month: number,
+  gte: Date,
+  lt: Date,
+): Array<Record<string, unknown>> {
+  return [
+    { renewalDueDate: { $gte: gte, $lt: lt } },
+    {
+      renewalDueDate: { $lt: gte, $ne: null },
+      $expr: { $eq: [{ $month: "$renewalDueDate" }, month] },
+    },
+  ];
 }
 
 /** Status of one contract inside a selected renewal month. */
@@ -190,5 +239,26 @@ export function renewalCohortStatus(
     return "renewed";
   }
   if (differenceInCalendarDays(renewalDueDate, today) < 0) return "overdue";
+  return "due";
+}
+
+/**
+ * Status on the wizard contact list when no month is selected.
+ * A past date is overdue. A recorded renewal whose next date is in a later
+ * month is renewed. Anything else still ahead, including a first term with
+ * no renewal on file, is due.
+ */
+export function listRenewalStatus(
+  renewalDueDate: Date,
+  lastRenewalDate: Date | null | undefined,
+  today: Date = new Date(),
+): RenewalCohortStatus {
+  const due = startOfDay(renewalDueDate);
+  const now = startOfDay(today);
+  if (differenceInCalendarDays(due, now) < 0) return "overdue";
+  if (!lastRenewalDate) return "due";
+  const dueMonth = due.getUTCFullYear() * 12 + due.getUTCMonth();
+  const todayMonth = now.getUTCFullYear() * 12 + now.getUTCMonth();
+  if (dueMonth > todayMonth) return "renewed";
   return "due";
 }

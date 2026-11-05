@@ -10,7 +10,16 @@ import {
   type RenewalScope,
 } from "./messagingContext";
 import { lastOutboundContactForCustomers } from "./lastContact";
-import { payableInvoiceCustomerIds } from "./paymentLinkForCustomer";
+import { pickAvailableInvoicesForCustomers } from "../services/paymentLinkCart";
+import {
+  offerCatalogCheckoutAmounts,
+  savedOfferInvoiceAmounts,
+} from "../services/checkoutLink.service";
+import { loadUnpaidAscWorkOrders } from "../services/priorAscUnpaid";
+import {
+  checkoutAmountBesidePriorAsc,
+  priorUnpaidAscForCustomer,
+} from "./ascUnpaidRenewals";
 import { emailOptedOut } from "./emailPreferences";
 import { normalizeAccountEmail } from "./provisionCustomerAccount";
 import { smsOptedOutDigits, smsPreferenceKey } from "./smsPreferences";
@@ -43,6 +52,9 @@ export interface HubContactItem {
   lastRenewalDate: string | null;
   renewalStatus: "due" | "overdue" | "renewed" | null;
   contractType: string | null;
+  paymentLinkAmountCents: number | null;
+  priorAscUnpaid: { count: number; totalCents: number } | null;
+  offerInvoiceAmounts: { templateId: string; amountCents: number }[];
   lastContact: {
     at: string;
     method: "text" | "email" | "call";
@@ -149,6 +161,7 @@ export async function searchHubContacts(options: {
   selectableTotal: number;
   page: number;
   pageSize: number;
+  offerCheckoutAmountCents: Record<string, number>;
 }> {
   const { channel, page, pageSize } = options;
 
@@ -156,7 +169,14 @@ export async function searchHubContacts(options: {
   if (options.scope) {
     customerRefFilter = await customerRefsWithRenewalsInMonth(options.scope);
     if (customerRefFilter.length === 0) {
-      return { contacts: [], total: 0, selectableTotal: 0, page, pageSize };
+      return {
+        contacts: [],
+        total: 0,
+        selectableTotal: 0,
+        page,
+        pageSize,
+        offerCheckoutAmountCents: {},
+      };
     }
   }
 
@@ -271,15 +291,26 @@ export async function searchHubContacts(options: {
   const renewalIds = pageRows
     .map((c) => c.customerRef)
     .filter((id): id is Types.ObjectId => Boolean(id));
-  const renewalMap = options.scope
-    ? await resolveRenewalsForCustomers(renewalIds, options.scope)
-    : new Map();
-  const lastContactMap = await lastOutboundContactForCustomers(renewalIds);
-
-  const payableIds =
-    channel === "email" || channel === "sms"
-      ? await payableInvoiceCustomerIds(renewalIds.map((id) => String(id)))
-      : null;
+  const renewalIdStrings = renewalIds.map((id) => String(id));
+  const [
+    renewalMap,
+    lastContactMap,
+    payableInvoices,
+    unpaidAscTickets,
+    offerCheckoutAmountCents,
+    savedOffers,
+  ] = await Promise.all([
+    resolveRenewalsForCustomers(
+      renewalIds,
+      options.scope,
+      options.scope ? undefined : { listDisplay: true },
+    ),
+    lastOutboundContactForCustomers(renewalIds),
+    pickAvailableInvoicesForCustomers(renewalIdStrings),
+    loadUnpaidAscWorkOrders(renewalIdStrings),
+    offerCatalogCheckoutAmounts(),
+    savedOfferInvoiceAmounts(renewalIdStrings),
+  ]);
 
   const contacts = pageRows.map((c) => {
     const customer = c.customerRef
@@ -301,6 +332,19 @@ export async function searchHubContacts(options: {
     const lastContact = c.customerRef
       ? lastContactMap.get(String(c.customerRef))
       : undefined;
+    const customerId = c.customerRef ? String(c.customerRef) : "";
+    const invoice = customerId ? payableInvoices.get(customerId) : undefined;
+    const prior = customerId
+      ? priorUnpaidAscForCustomer(
+          unpaidAscTickets,
+          customerId,
+          renewalInfo.renewalDueDate,
+        )
+      : null;
+    const checkout = checkoutAmountBesidePriorAsc(
+      invoice ? Math.round(Number(invoice.amountCents) || 0) : null,
+      prior,
+    );
 
     return {
       _id: String(c._id),
@@ -332,6 +376,9 @@ export async function searchHubContacts(options: {
         : null,
       renewalStatus: renewalInfo.renewalStatus,
       contractType: renewalInfo.contractType,
+      paymentLinkAmountCents: checkout.paymentLinkAmountCents,
+      priorAscUnpaid: checkout.priorAscUnpaid,
+      offerInvoiceAmounts: customerId ? (savedOffers.get(customerId) ?? []) : [],
       lastContact: lastContact
         ? {
             at: lastContact.at.toISOString(),
@@ -339,16 +386,17 @@ export async function searchHubContacts(options: {
             status: lastContact.status,
           }
         : null,
-      ...(payableIds
-        ? {
-            hasPayableInvoice: c.customerRef
-              ? payableIds.has(String(c.customerRef))
-              : false,
-          }
-        : {}),
+      hasPayableInvoice: Boolean(invoice),
       ...notifyBlock(c),
     };
   });
 
-  return { contacts, total, selectableTotal, page, pageSize };
+  return {
+    contacts,
+    total,
+    selectableTotal,
+    page,
+    pageSize,
+    offerCheckoutAmountCents,
+  };
 }

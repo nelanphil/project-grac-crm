@@ -10,7 +10,10 @@ import {
   getContract,
   getCustomer,
   updateContract,
+  updateContractPeriod,
   renewContract,
+  deleteContract,
+  restoreContract,
   ContractListItem,
   CustomerAddress,
   ApiError,
@@ -81,8 +84,17 @@ function EditContractContent() {
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [renewError, setRenewError] = useState<string | null>(null);
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
+  const [periodNotes, setPeriodNotes] = useState("");
+  const [periodSaving, setPeriodSaving] = useState(false);
+  const [periodError, setPeriodError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const hasRenewals = (contract?.renewals?.length ?? 0) > 0;
+  const isDeleted = Boolean(contract?.deletedAt);
 
   const equipmentOptions = useMemo(() => {
     if (!addressRef) return [];
@@ -126,6 +138,9 @@ function EditContractContent() {
         setContract(c);
         setOriginalContractDate(toInputDate(c.originalContractDate));
         setContractDate(toInputDate(c.contractDate));
+        setPeriodStart(toInputDate(c.contractDate));
+        setPeriodEnd(toInputDate(c.renewalDueDate));
+        setPeriodNotes("");
         setDurationMonths(String(c.durationMonths ?? 12));
         setDescription(c.description);
         setRenewDurationMonths(String(c.durationMonths ?? 12));
@@ -159,7 +174,7 @@ function EditContractContent() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!token || !contract) return;
+    if (!token || !contract || isDeleted) return;
 
     setSaving(true);
     setSaveError(null);
@@ -218,9 +233,85 @@ function EditContractContent() {
     }
   }
 
+  async function handleUpdatePeriod(e: FormEvent) {
+    e.preventDefault();
+    if (!token || !contract || isDeleted) return;
+
+    if (!periodStart || !periodEnd || periodEnd <= periodStart) {
+      setPeriodError("End date must be after the start date.");
+      return;
+    }
+
+    setPeriodSaving(true);
+    setPeriodError(null);
+
+    try {
+      const { contract: updated } = await updateContractPeriod(
+        token,
+        contract._id,
+        {
+          startDate: periodStart,
+          endDate: periodEnd,
+          notes: periodNotes || undefined,
+        },
+      );
+      setContract(updated);
+      setContractDate(toInputDate(updated.contractDate));
+      setPeriodStart(toInputDate(updated.contractDate));
+      setPeriodEnd(toInputDate(updated.renewalDueDate));
+      setPeriodNotes("");
+    } catch (err) {
+      setPeriodError(
+        err instanceof ApiError ? err.message : "Failed to update the period.",
+      );
+    } finally {
+      setPeriodSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!token || !contract || isDeleted) return;
+    const confirmed = window.confirm(
+      "Delete this contract? It will be hidden from lists and can be restored later. Open invoices for it will be voided.",
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteContract(token, contract._id);
+      router.push(returnTo);
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiError ? err.message : "Failed to delete contract.",
+      );
+      setDeleting(false);
+    }
+  }
+
+  async function handleRestore() {
+    if (!token || !contract) return;
+
+    setRestoring(true);
+    setDeleteError(null);
+    try {
+      const { contract: updated } = await restoreContract(token, contract._id);
+      setContract(updated);
+      setContractDate(toInputDate(updated.contractDate));
+      setPeriodStart(toInputDate(updated.contractDate));
+      setPeriodEnd(toInputDate(updated.renewalDueDate));
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiError ? err.message : "Failed to restore contract.",
+      );
+    } finally {
+      setRestoring(false);
+    }
+  }
+
   async function handleRenew(e: FormEvent) {
     e.preventDefault();
-    if (!token || !contract) return;
+    if (!token || !contract || isDeleted) return;
 
     setRenewing(true);
     setRenewError(null);
@@ -305,6 +396,27 @@ function EditContractContent() {
         </p>
       </div>
 
+      {isDeleted && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <p>Deleted on {formatDateOnly(contract.deletedAt)}.</p>
+          {canEditOriginalDate && (
+            <button
+              type="button"
+              onClick={() => void handleRestore()}
+              disabled={restoring}
+              className="rounded-lg bg-brand-dark px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              {restoring ? "Restoring…" : "Restore"}
+            </button>
+          )}
+        </div>
+      )}
+      {deleteError && (
+        <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          {deleteError}
+        </div>
+      )}
+
       <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           <span
@@ -348,6 +460,7 @@ function EditContractContent() {
         onSubmit={handleSubmit}
         className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-5"
       >
+        <fieldset disabled={isDeleted} className="space-y-5 disabled:opacity-60">
         <h2 className="text-lg font-semibold text-brand-dark">
           Contract Details
         </h2>
@@ -360,8 +473,9 @@ function EditContractContent() {
 
         {hasRenewals && (
           <p className="text-sm text-neutral-500">
-            Term start and duration are locked after renewals. Use Record
-            Renewal below to update the term.
+            {canEditOriginalDate
+              ? "Term start and duration stay locked after renewals. Use Current Period below to set this term's start and end dates, or Record Renewal to start a new term."
+              : "Term start and duration are locked after renewals. Use Record Renewal below to update the term."}
           </p>
         )}
 
@@ -547,12 +661,96 @@ function EditContractContent() {
             Cancel
           </Link>
         </div>
+        </fieldset>
       </form>
+
+      {canEditOriginalDate && (
+        <form
+          onSubmit={handleUpdatePeriod}
+          className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-5"
+        >
+          <fieldset disabled={isDeleted} className="space-y-5 disabled:opacity-60">
+            <div>
+              <h2 className="text-lg font-semibold text-brand-dark">
+                Current Period
+              </h2>
+              <p className="mt-1 text-sm text-neutral-500">
+                Set the start and end of the term this contract is in now.
+                Renewal history is left unchanged.
+              </p>
+            </div>
+
+            {periodError && (
+              <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                {periodError}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="periodStart"
+                  className="block text-xs font-medium uppercase tracking-wide text-neutral-400 mb-1.5"
+                >
+                  Period start
+                </label>
+                <input
+                  id="periodStart"
+                  type="date"
+                  value={periodStart}
+                  onChange={(e) => setPeriodStart(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="periodEnd"
+                  className="block text-xs font-medium uppercase tracking-wide text-neutral-400 mb-1.5"
+                >
+                  Period end
+                </label>
+                <input
+                  id="periodEnd"
+                  type="date"
+                  value={periodEnd}
+                  onChange={(e) => setPeriodEnd(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label
+                htmlFor="periodNotes"
+                className="block text-xs font-medium uppercase tracking-wide text-neutral-400 mb-1.5"
+              >
+                Notes
+              </label>
+              <textarea
+                id="periodNotes"
+                value={periodNotes}
+                onChange={(e) => setPeriodNotes(e.target.value)}
+                rows={3}
+                className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm text-brand-dark outline-none focus:border-brand-orange resize-y"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={periodSaving}
+              className="rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              {periodSaving ? "Updating…" : "Update Period"}
+            </button>
+          </fieldset>
+        </form>
+      )}
 
       <form
         onSubmit={handleRenew}
         className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm space-y-5"
       >
+        <fieldset disabled={isDeleted} className="space-y-5 disabled:opacity-60">
         <h2 className="text-lg font-semibold text-brand-dark">
           Record Renewal
         </h2>
@@ -631,6 +829,7 @@ function EditContractContent() {
         >
           {renewing ? "Recording…" : "Record Renewal"}
         </button>
+        </fieldset>
       </form>
 
       {contract && token ? (
@@ -674,6 +873,26 @@ function EditContractContent() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {canEditOriginalDate && !isDeleted && (
+        <div className="rounded-xl border border-red-200 bg-white p-6 shadow-sm space-y-3">
+          <h2 className="text-lg font-semibold text-brand-dark">
+            Delete contract
+          </h2>
+          <p className="text-sm text-neutral-500">
+            Hides this contract from lists and renewal runs. Open invoices are
+            voided. You can restore it later from Show deleted.
+          </p>
+          <button
+            type="button"
+            onClick={() => void handleDelete()}
+            disabled={deleting}
+            className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 disabled:opacity-60"
+          >
+            {deleting ? "Deleting…" : "Delete contract"}
+          </button>
         </div>
       )}
     </div>

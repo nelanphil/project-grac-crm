@@ -10,6 +10,13 @@ import {
 const EMPTY = "—";
 const TEXT_COLUMNS = new Set(["Phone", "Zip"]);
 
+function formatCents(cents: number): string {
+  return (cents / 100).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+  });
+}
+
 function formatPhone(phone: string | undefined | null): string {
   if (!phone) return EMPTY;
   const digits = phone.replace(/\D/g, "");
@@ -46,6 +53,10 @@ export function mapUpcomingRenewalsToExcelRows(contracts: ContractListItem[]) {
       ? new Date(contract.renewalDueDate).toLocaleDateString()
       : EMPTY,
     Status: STANDING_LABELS[contract.standing ?? "expired"],
+    "Unpaid prior ASC":
+      contract.ascUnpaid && contract.ascUnpaid.count > 0
+        ? `${contract.ascUnpaid.count} · ${formatCents(contract.ascUnpaid.totalCents)}`
+        : EMPTY,
   }));
 }
 
@@ -89,6 +100,7 @@ export async function exportUpcomingRenewalsExcel(
     { wch: 22 },
     { wch: 14 },
     { wch: 12 },
+    { wch: 22 },
   ];
 
   const workbook = XLSX.utils.book_new();

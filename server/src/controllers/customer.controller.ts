@@ -26,6 +26,10 @@ import {
   WorkOrder,
 } from "../models/mongo/WorkOrder";
 import {
+  loadPastDueByCustomer,
+  pastDueForCustomer,
+} from "../services/customerPastDue.service";
+import {
   createCustomerAddressSchema,
   createCustomerContactSchema,
   createEquipmentSchema,
@@ -112,6 +116,7 @@ import {
   customerOwnedFilter,
   reassignCustomerOwnedRecords,
 } from "../utils/reassignCustomerRecords";
+import { foldDuplicateServiceContracts } from "../services/foldServiceContracts";
 
 function parseLastSvc(value: unknown): Date | null | undefined {
   if (value === undefined) return undefined;
@@ -1937,7 +1942,7 @@ export async function getCustomerById(
             $or: [{ addressRef: null }, { addressRef: { $exists: false } }],
           },
           { $set: { addressRef: addressId, customerRef: customer._id } },
-        );
+        ).setOptions({ includeDeleted: true });
       }
     }
 
@@ -1966,10 +1971,24 @@ export async function getCustomerById(
       }
     }
 
-    const [addresses, contacts] = await Promise.all([
+    const [addresses, contacts, pastDueMap] = await Promise.all([
       loadSitesForCustomer(customer._id),
       loadContactsForCustomer(customer._id),
+      loadPastDueByCustomer({
+        customerRefs: [customer._id],
+        legacyIds:
+          typeof customer.legacyId === "number" ? [customer.legacyId] : [],
+        legacyByRef:
+          typeof customer.legacyId === "number"
+            ? new Map([[customer._id.toString(), customer.legacyId]])
+            : undefined,
+      }),
     ]);
+    const pastDue = pastDueForCustomer(
+      pastDueMap,
+      customer._id.toString(),
+      typeof customer.legacyId === "number" ? customer.legacyId : null,
+    );
 
     let owner: {
       _id: string;
@@ -2004,6 +2023,7 @@ export async function getCustomerById(
         mergedIntoRef: null,
         addresses,
         contacts,
+        pastDue,
       },
     });
   } catch (err) {
@@ -3592,7 +3612,7 @@ export async function mergeCustomers(
           $and: [...untaggedOnSource.$and, { temporary: { $ne: true } }],
         },
         { $set: tagFields },
-      );
+      ).setOptions({ includeDeleted: true });
     }
 
     // Source addresses become non-primary on survivor (survivor keeps its primary)
@@ -3611,6 +3631,10 @@ export async function mergeCustomers(
       sourceLegacyId: source.legacyId,
       survivorId: survivor._id as mongoose.Types.ObjectId,
       survivorLegacyId: survivor.legacyId,
+    });
+
+    await foldDuplicateServiceContracts({
+      customerRef: survivor._id as mongoose.Types.ObjectId,
     });
 
     await CustomerNote.updateMany(

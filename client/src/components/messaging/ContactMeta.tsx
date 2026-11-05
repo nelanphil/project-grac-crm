@@ -1,5 +1,54 @@
 import type { MessagingContactItem } from "@/lib/api";
 
+export function formatMoney(cents: number): string {
+  return (cents / 100).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+  });
+}
+
+export function priorAscLabel(
+  prior: MessagingContactItem["priorAscUnpaid"],
+): string | null {
+  if (!prior || prior.count <= 0) return null;
+  const money = formatMoney(prior.totalCents);
+  if (prior.count === 1) return `Prior ASC not on this link: ${money}`;
+  return `${prior.count} prior ASC not on this link: ${money}`;
+}
+
+export function PriorAscNote({
+  prior,
+}: {
+  prior: MessagingContactItem["priorAscUnpaid"];
+}) {
+  const label = priorAscLabel(prior);
+  if (!label) return null;
+  return (
+    <span className="text-[10px] font-medium leading-snug text-amber-800">
+      {label}
+    </span>
+  );
+}
+
+export function checkoutAmountCents(
+  contact: Pick<
+    MessagingContactItem,
+    "hasPayableInvoice" | "paymentLinkAmountCents" | "offerInvoiceAmounts"
+  >,
+  offerTemplateId: string | null,
+  catalog: Record<string, number>,
+): number | null {
+  if (contact.hasPayableInvoice) {
+    return contact.paymentLinkAmountCents ?? null;
+  }
+  if (!offerTemplateId) return null;
+  const saved = contact.offerInvoiceAmounts?.find(
+    (row) => row.templateId === offerTemplateId,
+  );
+  if (saved) return saved.amountCents;
+  return catalog[offerTemplateId] ?? null;
+}
+
 function formatDate(iso: string | null | undefined, timeZone?: "UTC"): string {
   if (!iso) return "";
   const d = new Date(iso);

@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import type { ScheduleRecommendation, TaskItem, WorkOrderListItem } from "@/lib/api";
+import PastDueBadge from "@/components/billing/PastDueBadge";
 import { DuplicateBadge } from "@/components/schedule/WeekBoard";
 import { compareWithinDay } from "@/lib/scheduleDuplicates";
 import {
@@ -1293,6 +1294,7 @@ export default function MonthCalendar({
                                     Unscheduled
                                   </span>
                                   {duplicateIds?.has(job._id) ? <DuplicateBadge /> : null}
+                                  <PastDueBadge pastDue={job.customerPastDue} compact />
                                   {recInitials && (
                                     <span
                                       className="mt-0.5 text-xs font-bold"
@@ -1428,6 +1430,7 @@ export default function MonthCalendar({
                                         {time}
                                       </span>
                                       {duplicateIds?.has(job._id) ? <DuplicateBadge /> : null}
+                                      <PastDueBadge pastDue={job.customerPastDue} compact />
                                     </span>
                                   </div>
 

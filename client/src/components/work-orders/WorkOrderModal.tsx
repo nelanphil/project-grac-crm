@@ -23,6 +23,7 @@ import ServiceTicketDocument, {
 } from "@/components/billing/ServiceTicketDocument";
 import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
 import InvoiceWorkOrderButton from "@/components/billing/InvoiceWorkOrderButton";
+import PastDueBadge from "@/components/billing/PastDueBadge";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 import SoftDeleteWarning from "@/components/work-orders/SoftDeleteWarning";
 import WorkOrderInvoiceSend from "@/components/dashboard/staff/WorkOrderInvoiceSend";
@@ -507,6 +508,7 @@ export default function WorkOrderModal({
               <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-brand-dark uppercase truncate">
                 {order?.customerName || "Work Order"}
               </h2>
+              <PastDueBadge pastDue={order?.customerPastDue} />
               {order?.tech && (
                 <span className="hidden sm:inline-block text-xs font-semibold text-neutral-500">
                   Tech: <span className="font-bold text-neutral-700">{order.tech}</span>

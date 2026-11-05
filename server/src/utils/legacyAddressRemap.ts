@@ -169,7 +169,7 @@ export async function remapAddressRefsFromLegacyDump(opts: {
           $or: [{ customerId: legacyCustomerId }, { addressRef: addr._id }],
         },
         { $set: setFields }
-      );
+      ).setOptions({ includeDeleted: true });
       contractModified = contractResult.modifiedCount;
 
       if (verbose.has(legacyCustomerId)) {

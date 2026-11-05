@@ -10,10 +10,12 @@ import {
   ArrowUpDown,
   FileSpreadsheet,
   GitMerge,
+  Receipt,
 } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import { getContracts, ContractListItem, ApiError } from "@/lib/api";
 import {
+  formatDateOnly,
   STANDING_LABELS,
   STANDING_STYLES,
   type ContractStanding,
@@ -153,6 +155,58 @@ function StandingBadge({ standing }: { standing: ContractStanding }) {
       className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold ${STANDING_STYLES[standing]}`}
     >
       {STANDING_LABELS[standing]}
+    </span>
+  );
+}
+
+function formatCents(cents: number): string {
+  return (cents / 100).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+  });
+}
+
+function ascOwedDetail(unpaid: NonNullable<ContractListItem["ascUnpaid"]>): string {
+  const visits = unpaid.workOrders
+    .map((workOrder) => {
+      const when = formatDateOnly(workOrder.date);
+      return `Unpaid ASC WO ${workOrder.number} on ${when === "—" ? "an unknown date" : when}, ${formatCents(workOrder.totalCents)}`;
+    })
+    .join(". ");
+  const closing =
+    unpaid.count === 1
+      ? "Plus this renewal. Both must be paid for an active ASC."
+      : "Plus this renewal. All must be paid for an active ASC.";
+  return `${visits}. ${closing}`;
+}
+
+function AscOwedBadge({
+  unpaid,
+}: {
+  unpaid: NonNullable<ContractListItem["ascUnpaid"]>;
+}) {
+  const detail = ascOwedDetail(unpaid);
+  return (
+    <span
+      title={detail}
+      aria-label={detail}
+      className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800"
+    >
+      <Receipt className="h-3.5 w-3.5" aria-hidden="true" />
+      Owes {unpaid.count + 1} ASC
+    </span>
+  );
+}
+
+function renewalStatusBadges(contract: ContractListItem) {
+  const unpaid =
+    contract.ascUnpaid && contract.ascUnpaid.count > 0
+      ? contract.ascUnpaid
+      : null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <StandingBadge standing={contract.standing ?? "expired"} />
+      {unpaid ? <AscOwedBadge unpaid={unpaid} /> : null}
     </span>
   );
 }
@@ -413,9 +467,7 @@ export default function UpcomingRenewalsTable() {
                     </span>
                   }
                   subtitle={formatPhone(contract.customer?.phone)}
-                  badges={
-                    <StandingBadge standing={contract.standing ?? "expired"} />
-                  }
+                  badges={renewalStatusBadges(contract)}
                   fields={
                     <>
                       <DataField
@@ -605,9 +657,7 @@ export default function UpcomingRenewalsTable() {
                             : "—"}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <StandingBadge
-                            standing={contract.standing ?? "expired"}
-                          />
+                          {renewalStatusBadges(contract)}
                         </td>
                       </tr>
                     ))}

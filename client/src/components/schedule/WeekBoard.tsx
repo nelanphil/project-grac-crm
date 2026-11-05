@@ -20,6 +20,7 @@ import {
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { Check, GripVertical, MapPin } from "lucide-react";
+import PastDueBadge from "@/components/billing/PastDueBadge";
 import { ScheduleNoteComposer } from "@/components/schedule/ScheduleNoteComposer";
 import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 import {
@@ -513,6 +514,7 @@ function UnscheduledCardShell({
               {order.scheduledStart ? "Scheduled" : "Unscheduled"}
             </span>
             {duplicate ? <DuplicateBadge /> : null}
+            <PastDueBadge pastDue={order.customerPastDue} />
             {order.scheduledStart && !narrow && onUnschedule ? (
               <button
                 type="button"
@@ -915,6 +917,7 @@ function JobBlock({
         timeLabel,
         detail,
         duplicate ? "Possible duplicate" : "",
+        order.customerPastDue ? "Past due" : "",
       ]
         .filter(Boolean)
         .join(" · ")}
@@ -922,7 +925,10 @@ function JobBlock({
         duplicate ? "ring-2 ring-inset ring-amber-500" : ""
       } ${isDragging ? "z-20 opacity-30 pointer-events-none" : ""}`}
     >
-      <div className="truncate font-semibold">{customerName}</div>
+      <div className="flex min-w-0 items-center gap-1">
+        <div className="truncate font-semibold">{customerName}</div>
+        <PastDueBadge pastDue={order.customerPastDue} compact />
+      </div>
       <div className="truncate text-neutral-500">{timeLabel}</div>
       {detail ? (
         <div className="mt-0.5 truncate text-neutral-600">{detail}</div>

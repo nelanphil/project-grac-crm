@@ -70,6 +70,7 @@ function ContractsContent() {
   const [view, setView] = useState<ContractsView>("customer");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [showDeleted, setShowDeleted] = useState(false);
 
   const isAdmin = useAuthStore((s) =>
     s.hasRole("admin", "super-admin"),
@@ -89,13 +90,19 @@ function ContractsContent() {
     [contracts, search, typeFilter],
   );
 
-  const [prevFilters, setPrevFilters] = useState({ search, typeFilter, standingFilter });
+  const [prevFilters, setPrevFilters] = useState({
+    search,
+    typeFilter,
+    standingFilter,
+    showDeleted,
+  });
   if (
     prevFilters.search !== search ||
     prevFilters.typeFilter !== typeFilter ||
-    prevFilters.standingFilter !== standingFilter
+    prevFilters.standingFilter !== standingFilter ||
+    prevFilters.showDeleted !== showDeleted
   ) {
-    setPrevFilters({ search, typeFilter, standingFilter });
+    setPrevFilters({ search, typeFilter, standingFilter, showDeleted });
     setPage(1);
   }
 
@@ -134,7 +141,11 @@ function ContractsContent() {
     setError(null);
 
     Promise.all([
-      getContracts(token, standingFilter),
+      getContracts(
+        token,
+        standingFilter,
+        showDeleted ? { deleted: true } : undefined,
+      ),
       getContractTemplates(token),
     ])
       .then(([{ contracts: list }, { templates: catalog }]) => {
@@ -147,7 +158,7 @@ function ContractsContent() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [token, standingFilter]);
+  }, [token, standingFilter, showDeleted]);
 
   useEffect(() => {
     if (!token) return;
@@ -257,6 +268,17 @@ function ContractsContent() {
                   {tab.label}
                 </button>
               ))}
+              {isAdmin && (
+                <label className="ml-auto inline-flex items-center gap-2 text-sm text-neutral-600">
+                  <input
+                    type="checkbox"
+                    checked={showDeleted}
+                    onChange={(e) => setShowDeleted(e.target.checked)}
+                    className="rounded border-neutral-300"
+                  />
+                  Show deleted
+                </label>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -290,8 +312,22 @@ function ContractsContent() {
             emptyMessage={
               search.trim() || typeFilter !== "all"
                 ? "No contracts match your filters."
-                : "No contracts yet."
+                : showDeleted
+                  ? "No deleted contracts."
+                  : "No contracts yet."
             }
+            onDeleted={(id) => {
+              setContracts((prev) => prev.filter((c) => c._id !== id));
+              setStatsContracts((prev) => prev.filter((c) => c._id !== id));
+            }}
+            onRestored={(updated) => {
+              setContracts((prev) => prev.filter((c) => c._id !== updated._id));
+              setStatsContracts((prev) =>
+                prev.some((c) => c._id === updated._id)
+                  ? prev.map((c) => (c._id === updated._id ? updated : c))
+                  : [...prev, updated],
+              );
+            }}
             onUpdated={(updated) => {
               setContracts((prev) => {
                 const next = prev.map((c) =>

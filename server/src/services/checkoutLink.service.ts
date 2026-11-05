@@ -92,6 +92,85 @@ async function offerPreviewAmountCents(
   return priced.amountCents;
 }
 
+/** Taxed catalog price for a new offer, keyed by template id. */
+export async function offerCatalogCheckoutAmounts(): Promise<
+  Record<string, number>
+> {
+  const [templates, rate] = await Promise.all([
+    ContractTemplate.find({ deletedAt: null, cost: { $gt: 0 } })
+      .select("_id cost")
+      .lean(),
+    getTaxRatePercent(),
+  ]);
+  const amounts: Record<string, number> = {};
+  for (const template of templates) {
+    const cost = Number(template.cost);
+    if (!Number.isFinite(cost) || cost <= 0) continue;
+    amounts[String(template._id)] = contractChargeFromPreTaxCents(
+      dollarsToCents(cost),
+      rate,
+    ).amountCents;
+  }
+  return amounts;
+}
+
+/** Open temporary-offer invoices already priced for these customers. */
+export async function savedOfferInvoiceAmounts(
+  customerIds: string[],
+): Promise<Map<string, { templateId: string; amountCents: number }[]>> {
+  const result = new Map<string, { templateId: string; amountCents: number }[]>();
+  const objectIds = [
+    ...new Set(customerIds.filter((id) => Types.ObjectId.isValid(id))),
+  ].map((id) => new Types.ObjectId(id));
+  if (objectIds.length === 0) return result;
+
+  const contracts = await Contract.find({
+    customerRef: { $in: objectIds },
+    temporary: true,
+    templateId: { $ne: null },
+  })
+    .select("_id customerRef templateId")
+    .lean();
+  if (contracts.length === 0) return result;
+
+  const invoices = await Invoice.find({
+    contractRef: { $in: contracts.map((contract) => contract._id) },
+    sourceType: "contract_initial",
+    status: { $in: ["open", "draft"] },
+  })
+    .select("contractRef amountCents status sourceType")
+    .lean();
+
+  const byContract = new Map<string, typeof invoices>();
+  for (const invoice of invoices) {
+    const key = invoice.contractRef ? String(invoice.contractRef) : "";
+    if (!key) continue;
+    const group = byContract.get(key) ?? [];
+    group.push(invoice);
+    byContract.set(key, group);
+  }
+
+  for (const contract of contracts) {
+    const open = reusableOfferInvoice(byContract.get(String(contract._id)) ?? []);
+    if (
+      !open ||
+      typeof open.amountCents !== "number" ||
+      !contract.templateId ||
+      !contract.customerRef
+    ) {
+      continue;
+    }
+    const customerId = String(contract.customerRef);
+    const rows = result.get(customerId) ?? [];
+    rows.push({
+      templateId: String(contract.templateId),
+      amountCents: Math.round(open.amountCents),
+    });
+    result.set(customerId, rows);
+  }
+  return result;
+}
+
 export async function previewPaymentSummary(
   customerId: string,
   invoiceId?: string,

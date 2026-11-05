@@ -93,6 +93,7 @@ type CustomerRecordCardProps = {
   addressFilter: string;
   onAddressFilterChange: (value: string) => void;
   onContractUpdated: (contract: ContractListItem) => void;
+  onContractDeleted?: (id: string) => void;
 };
 
 export default function CustomerRecordCard({
@@ -107,6 +108,7 @@ export default function CustomerRecordCard({
   addressFilter,
   onAddressFilterChange,
   onContractUpdated,
+  onContractDeleted,
 }: CustomerRecordCardProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -350,6 +352,7 @@ export default function CustomerRecordCard({
               contracts={filteredContracts}
               returnTo={`/dashboard/customers/detail?id=${customer._id}`}
               onUpdated={onContractUpdated}
+              onDeleted={onContractDeleted}
             />
           )}
         </div>

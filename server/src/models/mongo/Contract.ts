@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document, Types } from "mongoose";
+import mongoose, { Query, Schema, Document, Types } from "mongoose";
 import { ContractProductDiscountOverride } from "../../utils/productDiscounts";
 import { contractProductDiscountsSchema } from "./productDiscounts";
 
@@ -37,6 +37,8 @@ export interface IContract extends Document {
   userId?: number;
   /** Hidden offer created so an email can include a payment link. Cleared when paid. */
   temporary: boolean;
+  deletedAt: Date | null;
+  deletedBy?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -92,9 +94,55 @@ const contractSchema = new Schema<IContract>(
     sourceWorkOrderRef: { type: Schema.Types.ObjectId, ref: "WorkOrder" },
     userId: { type: Number },
     temporary: { type: Boolean, default: false },
+    deletedAt: { type: Date, default: null, index: true },
+    deletedBy: { type: String, default: null },
   },
   { timestamps: true },
 );
+
+/** Active (non–soft-deleted) contracts. `{ deletedAt: null }` also matches missing fields. */
+export const activeContractFilter = { deletedAt: null } as const;
+
+/** True when a query filter already names deletedAt, including inside $and / $or / $nor. */
+export function filterMentionsDeletedAt(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some((entry) => filterMentionsDeletedAt(entry));
+  const record = value as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(record, "deletedAt")) return true;
+  return ["$and", "$or", "$nor"].some((key) => filterMentionsDeletedAt(record[key]));
+}
+
+/**
+ * Soft-deleted contracts stay hidden unless the caller opts in with
+ * `includeDeleted` or already filters on `deletedAt`.
+ */
+export function shouldExcludeDeletedContracts(
+  options: { includeDeleted?: boolean } | undefined,
+  filter: unknown,
+): boolean {
+  if (options?.includeDeleted) return false;
+  if (filterMentionsDeletedAt(filter)) return false;
+  return true;
+}
+
+function hideSoftDeletedContracts(this: Query<unknown, IContract>) {
+  if (!shouldExcludeDeletedContracts(this.getOptions(), this.getFilter())) return;
+  this.where(activeContractFilter);
+}
+
+contractSchema.pre("find", hideSoftDeletedContracts);
+contractSchema.pre("findOne", hideSoftDeletedContracts);
+contractSchema.pre("countDocuments", hideSoftDeletedContracts);
+contractSchema.pre("updateOne", hideSoftDeletedContracts);
+contractSchema.pre("updateMany", hideSoftDeletedContracts);
+contractSchema.pre("findOneAndUpdate", hideSoftDeletedContracts);
+
+export function includingDeletedContracts<Q extends Query<unknown, IContract>>(
+  query: Q,
+): Q {
+  query.setOptions({ includeDeleted: true });
+  return query;
+}
 
 contractSchema.index({ customerId: 1, contractDate: -1 });
 contractSchema.index({ customerRef: 1 });

@@ -2,6 +2,7 @@ import { Response } from "express";
 import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { Contract } from "../models/mongo/Contract";
+import { Invoice } from "../models/mongo/Invoice";
 import {
   activeCustomerFilter,
   Customer,
@@ -20,6 +21,7 @@ import {
   computeInitialRenewalDueDate,
   getContractStanding,
   isInGoodStanding,
+  parseContractPeriod,
   parseDateOnly,
   renewalDueDateFilterForMonth,
 } from "../utils/contractDates";
@@ -42,6 +44,8 @@ import {
   ProductDiscounts,
 } from "../utils/productDiscounts";
 import { contractProductDiscountsSchema } from "../schemas/contractTemplate.schema";
+import { loadUnpaidAscWorkOrders } from "../services/priorAscUnpaid";
+import { priorUnpaidAscForCustomer } from "../utils/ascUnpaidRenewals";
 
 
 async function enrichWithCustomer(
@@ -371,6 +375,35 @@ function filterByStanding(
   return contracts.filter((c) => c.standing === standing);
 }
 
+async function enrichWithAscUnpaid(
+  contracts: Array<Record<string, unknown>>,
+): Promise<Array<Record<string, unknown>>> {
+  const customerRefs = [
+    ...new Set(
+      contracts
+        .map((contract) =>
+          contract.customerRef ? String(contract.customerRef) : "",
+        )
+        .filter((id) => Types.ObjectId.isValid(id)),
+    ),
+  ];
+
+  if (customerRefs.length === 0) {
+    return contracts.map((contract) => ({ ...contract, ascUnpaid: null }));
+  }
+
+  const unpaid = await loadUnpaidAscWorkOrders(customerRefs);
+
+  return contracts.map((contract) => ({
+    ...contract,
+    ascUnpaid: priorUnpaidAscForCustomer(
+      unpaid,
+      contract.customerRef ? String(contract.customerRef) : "",
+      (contract.renewalDueDate as string | Date | null | undefined) ?? null,
+    ),
+  }));
+}
+
 function parseDurationMonths(value: unknown): number | null {
   if (value === undefined || value === null) return DEFAULT_DURATION_MONTHS;
   const parsed = typeof value === "number" ? value : parseInt(String(value), 10);
@@ -462,8 +495,15 @@ export async function getContracts(
       filter.equipmentRef = equipmentId;
     }
 
+    const wantDeleted =
+      req.query.deleted === "true" && isOrgAdminRole(req.user);
+    if (wantDeleted) {
+      filter.deletedAt = { $ne: null };
+    }
+
     const yearRaw = req.query.year as string | undefined;
     const monthRaw = req.query.month as string | undefined;
+    let scopedToMonth = false;
     if (yearRaw !== undefined || monthRaw !== undefined) {
       if (yearRaw === undefined || monthRaw === undefined) {
         res.status(400).json({
@@ -485,6 +525,7 @@ export async function getContracts(
         return;
       }
       Object.assign(filter, renewalDueDateFilterForMonth(year, month));
+      scopedToMonth = true;
     }
 
     const contracts = await Contract.find(filter)
@@ -506,8 +547,11 @@ export async function getContracts(
     const withStanding = enrichWithStanding(withTemplate);
     const standingFilter = req.query.standing as string | undefined;
     const filtered = filterByStanding(withStanding, standingFilter);
+    const withAscUnpaid = scopedToMonth
+      ? await enrichWithAscUnpaid(filtered)
+      : filtered;
 
-    res.json({ contracts: filtered });
+    res.json({ contracts: withAscUnpaid });
   } catch {
     res.status(500).json({ message: "Failed to fetch contracts" });
   }
@@ -519,8 +563,14 @@ export async function getContractById(
   res: Response,
 ): Promise<void> {
   try {
-    const contract = await Contract.findById(req.params.id).lean();
+    const contract = await Contract.findById(req.params.id)
+      .setOptions({ includeDeleted: true })
+      .lean();
     if (!contract) {
+      res.status(404).json({ message: "Contract not found" });
+      return;
+    }
+    if (contract.deletedAt && !isOrgAdminRole(req.user)) {
       res.status(404).json({ message: "Contract not found" });
       return;
     }
@@ -824,6 +874,64 @@ export async function updateContract(
   }
 }
 
+// PATCH /contracts/:id/period
+export async function updateContractPeriod(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isOrgAdminRole(req.user)) {
+      res.status(403).json({
+        message: "Only admins can change the current period",
+      });
+      return;
+    }
+
+    const { startDate: rawStart, endDate: rawEnd, notes } = req.body ?? {};
+    const period = parseContractPeriod(rawStart, rawEnd);
+    if (!period.ok) {
+      res.status(400).json({ message: period.message });
+      return;
+    }
+
+    const existing = await Contract.findById(req.params.id);
+    if (!existing) {
+      res.status(404).json({ message: "Contract not found" });
+      return;
+    }
+
+    const previousStart = existing.contractDate;
+    const previousEnd = existing.renewalDueDate;
+    existing.contractDate = period.startDate;
+    existing.renewalDueDate = period.endDate;
+    await existing.save();
+
+    const enriched = await enrichContract(
+      existing.toObject() as unknown as Record<string, unknown>,
+    );
+
+    logNotificationAsync({
+      entityType: "contract",
+      action: "period_adjusted",
+      entityId: String(existing._id),
+      customerRef: existing.customerRef ?? null,
+      summary: "Contract period adjusted",
+      metadata: {
+        previousStart: previousStart ? previousStart.toISOString() : null,
+        previousEnd: previousEnd ? previousEnd.toISOString() : null,
+        startDate: period.startDate.toISOString(),
+        endDate: period.endDate.toISOString(),
+        notes: typeof notes === "string" ? notes : "",
+      },
+      ...actorFromRequest(req.user),
+    });
+
+    res.json({ contract: enriched });
+  } catch {
+    res.status(500).json({ message: "Failed to update contract period" });
+  }
+}
+
 // POST /contracts/:id/renew
 export async function renewContract(
   req: AuthRequest,
@@ -899,11 +1007,28 @@ export async function deleteContract(
   res: Response,
 ): Promise<void> {
   try {
-    const contract = await Contract.findByIdAndDelete(req.params.id).lean();
+    if (!isOrgAdminRole(req.user)) {
+      res.status(403).json({ message: "Only admins can delete contracts" });
+      return;
+    }
+
+    const contract = await Contract.findById(req.params.id);
     if (!contract) {
       res.status(404).json({ message: "Contract not found" });
       return;
     }
+
+    contract.deletedAt = new Date();
+    contract.deletedBy = req.user?.id ?? null;
+    await contract.save();
+
+    await Invoice.updateMany(
+      {
+        contractRef: contract._id,
+        status: { $in: ["draft", "open"] },
+      },
+      { $set: { status: "void" } },
+    );
 
     logNotificationAsync({
       entityType: "contract",
@@ -917,5 +1042,47 @@ export async function deleteContract(
     res.status(204).send();
   } catch {
     res.status(500).json({ message: "Failed to delete contract" });
+  }
+}
+
+// POST /contracts/:id/restore
+export async function restoreContract(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    if (!isOrgAdminRole(req.user)) {
+      res.status(403).json({ message: "Only admins can restore contracts" });
+      return;
+    }
+
+    const contract = await Contract.findById(req.params.id).setOptions({
+      includeDeleted: true,
+    });
+    if (!contract?.deletedAt) {
+      res.status(404).json({ message: "Contract not found" });
+      return;
+    }
+
+    contract.deletedAt = null;
+    contract.deletedBy = null;
+    await contract.save();
+
+    const enriched = await enrichContract(
+      contract.toObject() as unknown as Record<string, unknown>,
+    );
+
+    logNotificationAsync({
+      entityType: "contract",
+      action: "restored",
+      entityId: String(contract._id),
+      customerRef: contract.customerRef ?? null,
+      summary: "Contract restored",
+      ...actorFromRequest(req.user),
+    });
+
+    res.json({ contract: enriched });
+  } catch {
+    res.status(500).json({ message: "Failed to restore contract" });
   }
 }

@@ -9,7 +9,9 @@ import {
   ApiError,
   ContractEquipmentSummary,
   ContractListItem,
+  deleteContract,
   renewContract,
+  restoreContract,
 } from "@/lib/api";
 import {
   STANDING_LABELS,
@@ -49,6 +51,8 @@ interface ContractRowProps {
   canEdit: boolean;
   returnTo: string;
   onUpdated?: (contract: ContractListItem) => void;
+  onDeleted?: (id: string) => void;
+  onRestored?: (contract: ContractListItem) => void;
 }
 
 function StandingBadge({ contract }: { contract: ContractListItem }) {
@@ -81,14 +85,20 @@ function ContractActionsMenu({
   contract,
   returnTo,
   onUpdated,
+  onDeleted,
+  onRestored,
 }: {
   contract: ContractListItem;
   returnTo: string;
   onUpdated?: (contract: ContractListItem) => void;
+  onDeleted?: (id: string) => void;
+  onRestored?: (contract: ContractListItem) => void;
 }) {
   const token = useAuthStore((s) => s.token);
+  const isAdmin = useAuthStore((s) => s.hasRole("admin", "super-admin"));
+  const isDeleted = Boolean(contract.deletedAt);
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"menu" | "paid">("menu");
+  const [mode, setMode] = useState<"menu" | "paid" | "delete">("menu");
   const [renewedAt, setRenewedAt] = useState(todayInputDate);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -164,6 +174,40 @@ function ContractActionsMenu({
     }
   }
 
+  async function handleDelete() {
+    if (!token || !isAdmin || isDeleted) return;
+
+    setSaving(true);
+    setError(null);
+    try {
+      await deleteContract(token, contract._id);
+      closeMenu();
+      onDeleted?.(contract._id);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to delete contract.",
+      );
+      setSaving(false);
+    }
+  }
+
+  async function handleRestore() {
+    if (!token || !isAdmin || !isDeleted) return;
+
+    setSaving(true);
+    setError(null);
+    try {
+      const { contract: updated } = await restoreContract(token, contract._id);
+      closeMenu();
+      onRestored?.(updated);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Failed to restore contract.",
+      );
+      setSaving(false);
+    }
+  }
+
   return (
     <>
       <button
@@ -196,26 +240,86 @@ function ContractActionsMenu({
             >
               {mode === "menu" ? (
                 <div className="py-1">
-                  <Link
-                    href={editHref}
-                    role="menuitem"
-                    className="block px-3 py-2 text-sm hover:bg-neutral-50"
-                    onClick={closeMenu}
-                  >
-                    Edit
-                  </Link>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
-                    onClick={() => {
-                      setRenewedAt(todayInputDate());
-                      setError(null);
-                      setMode("paid");
-                    }}
-                  >
-                    Mark as paid
-                  </button>
+                  {isDeleted ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={saving}
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50 disabled:opacity-60"
+                      onClick={() => void handleRestore()}
+                    >
+                      {saving ? "Restoring…" : "Restore"}
+                    </button>
+                  ) : (
+                    <>
+                      <Link
+                        href={editHref}
+                        role="menuitem"
+                        className="block px-3 py-2 text-sm hover:bg-neutral-50"
+                        onClick={closeMenu}
+                      >
+                        Edit
+                      </Link>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-neutral-50"
+                        onClick={() => {
+                          setRenewedAt(todayInputDate());
+                          setError(null);
+                          setMode("paid");
+                        }}
+                      >
+                        Mark as paid
+                      </button>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"
+                          onClick={() => {
+                            setError(null);
+                            setMode("delete");
+                          }}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </>
+                  )}
+                  {isDeleted && error ? (
+                    <p className="px-3 pb-2 text-xs text-red-600">{error}</p>
+                  ) : null}
+                </div>
+              ) : mode === "delete" ? (
+                <div className="space-y-3 p-3">
+                  <p className="text-sm text-neutral-600">
+                    Hide this contract? Open invoices will be voided. You can
+                    restore it later.
+                  </p>
+                  {error ? (
+                    <p className="text-xs text-red-600">{error}</p>
+                  ) : null}
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode("menu");
+                        setError(null);
+                      }}
+                      className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void handleDelete()}
+                      className="rounded-lg bg-red-600 px-2.5 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+                    >
+                      {saving ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-3 p-3">
@@ -276,6 +380,8 @@ function ContractRow({
   canEdit,
   returnTo,
   onUpdated,
+  onDeleted,
+  onRestored,
 }: ContractRowProps) {
   return (
     <tr className="hover:bg-neutral-50 transition-colors">
@@ -314,6 +420,8 @@ function ContractRow({
             contract={contract}
             returnTo={returnTo}
             onUpdated={onUpdated}
+            onDeleted={onDeleted}
+            onRestored={onRestored}
           />
         </td>
       )}
@@ -327,6 +435,8 @@ function ContractMobileCard({
   canEdit,
   returnTo,
   onUpdated,
+  onDeleted,
+  onRestored,
 }: ContractRowProps) {
   const title = showCustomer
     ? contract.customer
@@ -367,6 +477,8 @@ function ContractMobileCard({
             contract={contract}
             returnTo={returnTo}
             onUpdated={onUpdated}
+            onDeleted={onDeleted}
+            onRestored={onRestored}
           />
         ) : null
       }
@@ -380,6 +492,8 @@ interface ServiceContractsTableProps {
   returnTo?: string;
   emptyMessage?: string;
   onUpdated?: (contract: ContractListItem) => void;
+  onDeleted?: (id: string) => void;
+  onRestored?: (contract: ContractListItem) => void;
 }
 
 export default function ServiceContractsTable({
@@ -388,6 +502,8 @@ export default function ServiceContractsTable({
   returnTo = "/dashboard/contracts",
   emptyMessage = "No contracts yet.",
   onUpdated,
+  onDeleted,
+  onRestored,
 }: ServiceContractsTableProps) {
   const canEdit = useAuthStore((s) => s.hasPermission("contracts:write"));
   const colCount = (showCustomer ? 6 : 5) + (canEdit ? 1 : 0);
@@ -410,6 +526,8 @@ export default function ServiceContractsTable({
           canEdit={canEdit}
           returnTo={returnTo}
           onUpdated={onUpdated}
+          onDeleted={onDeleted}
+          onRestored={onRestored}
         />
       ))}
       desktop={
@@ -454,6 +572,8 @@ export default function ServiceContractsTable({
                     canEdit={canEdit}
                     returnTo={returnTo}
                     onUpdated={onUpdated}
+                    onDeleted={onDeleted}
+                    onRestored={onRestored}
                   />
                 ))}
                 {contracts.length === 0 ? (

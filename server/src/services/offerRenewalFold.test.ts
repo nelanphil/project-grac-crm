@@ -145,6 +145,16 @@ describe("foldOfferIntoExistingContract", () => {
       return Promise.resolve(found ?? null);
     });
     mock.method(Contract, "find", () => query(standing));
+    mock.method(Contract, "findOneAndUpdate", async (_filter: unknown, update: {
+      $set?: Record<string, unknown>;
+      $push?: { renewals?: unknown };
+    }) => {
+      if (update.$set) Object.assign(existing, update.$set);
+      if (update.$push?.renewals) {
+        existing.renewals.push(update.$push.renewals as never);
+      }
+      return existing;
+    });
     mock.method(Contract, "deleteOne", async (filter: { _id: unknown }) => {
       deleted.push(String(filter._id));
       return { deletedCount: 1 };
@@ -249,6 +259,18 @@ describe("foldOfferIntoExistingContract", () => {
     assert.equal(existing.renewals.length, 0);
     assert.equal(openRenewal.status, "void");
     assert.deepEqual(deleted, [String(offer._id)]);
+  });
+
+  it("folds into a standing service contract that has no matching templateId", async () => {
+    existing.templateId = new Types.ObjectId();
+    existing.contractType = "service";
+    offer.templateId = templateId;
+    offer.contractType = "service";
+    const result = await foldOfferIntoExistingContract(invoice);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(result.folded, true);
+    assert.equal(result.contractId, String(existing._id));
+    assert.equal(existing.renewals.length, 1);
   });
 
   it("leaves an already promoted contract when there is no earlier one", async () => {

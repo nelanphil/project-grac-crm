@@ -12,7 +12,10 @@ import {
   Square,
 } from "lucide-react";
 import {
+  checkoutAmountCents,
+  formatMoney,
   LastContactValue,
+  PriorAscNote,
   RenewalStatusBadge,
 } from "@/components/messaging/ContactMeta";
 import DoNotNotifyBadge from "@/components/messaging/DoNotNotifyBadge";
@@ -95,9 +98,13 @@ function overrideSelectValue(
 function PaymentLinkStatus({
   available,
   viaTemporary,
+  amountCents,
+  priorAscUnpaid,
 }: {
   available?: boolean;
   viaTemporary?: boolean;
+  amountCents?: number | null;
+  priorAscUnpaid?: MessagingContactItem["priorAscUnpaid"];
 }) {
   if (available) {
     return (
@@ -105,11 +112,17 @@ function PaymentLinkStatus({
         <span className="rounded bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-700">
           Will send
         </span>
+        {amountCents != null ? (
+          <span className="text-[11px] font-medium text-neutral-700">
+            {formatMoney(amountCents)}
+          </span>
+        ) : null}
         {viaTemporary ? (
           <span className="text-[10px] text-neutral-500">
             Temporary contract
           </span>
         ) : null}
+        <PriorAscNote prior={priorAscUnpaid} />
       </span>
     );
   }
@@ -235,6 +248,7 @@ type CreatePanelProps = {
   includePaymentLink?: boolean;
   onIncludePaymentLinkChange?: (value: boolean) => void;
   contractTemplates?: { _id: string; label: string; cost: number }[];
+  offerCheckoutAmountCents?: Record<string, number>;
   offerContractTemplateId?: string | null;
   offerOverrides?: Record<string, string | null>;
   onOfferContractTemplateIdChange?: (value: string | null) => void;
@@ -306,6 +320,7 @@ export default function CreatePanel({
   includePaymentLink = false,
   onIncludePaymentLinkChange,
   contractTemplates = [],
+  offerCheckoutAmountCents = {},
   offerContractTemplateId = null,
   offerOverrides = {},
   onOfferContractTemplateIdChange,
@@ -327,6 +342,11 @@ export default function CreatePanel({
     return {
       available: Boolean(contact.hasPayableInvoice) || viaTemporary,
       viaTemporary,
+      amountCents: checkoutAmountCents(
+        contact,
+        offered,
+        offerCheckoutAmountCents,
+      ),
     };
   }
 
@@ -669,18 +689,17 @@ export default function CreatePanel({
                               formatCustomerRecordName(c.customer) || "—"
                             }
                           />
-                          {useRenewalsFilter ? (
-                            <DataField
-                              label="Renewal"
-                              value={
-                                <span className="inline-flex flex-col items-start gap-1">
-                                  <span>{formatRenewalDate(c.renewalDueDate)}</span>
-                                  <RenewalStatusBadge contact={c} />
-                                </span>
-                              }
-                              className="col-span-2"
-                            />
-                          ) : null}
+                          <DataField
+                            label="Renewal"
+                            value={
+                              <span className="inline-flex flex-col items-start gap-1">
+                                <span>{formatRenewalDate(c.renewalDueDate)}</span>
+                                <RenewalStatusBadge contact={c} />
+                                <PriorAscNote prior={c.priorAscUnpaid} />
+                              </span>
+                            }
+                            className="col-span-2"
+                          />
                           <DataField
                             label="Last contact"
                             value={<LastContactValue contact={c} />}
@@ -696,6 +715,10 @@ export default function CreatePanel({
                                     viaTemporary={
                                       paymentForContact(c).viaTemporary
                                     }
+                                    amountCents={
+                                      paymentForContact(c).amountCents
+                                    }
+                                    priorAscUnpaid={c.priorAscUnpaid}
                                   />
                                   {onOfferOverrideChange ? (
                                     <OfferContractSelect
@@ -731,9 +754,7 @@ export default function CreatePanel({
                         <th className="px-2 py-2 font-medium">Contact</th>
                         <th className="px-2 py-2 font-medium">Phone</th>
                         <th className="px-2 py-2 font-medium">Customer</th>
-                        {useRenewalsFilter ? (
-                          <th className="px-2 py-2 font-medium">Renewal</th>
-                        ) : null}
+                        <th className="px-2 py-2 font-medium">Renewal</th>
                         <th className="px-2 py-2 font-medium">Last contact</th>
                         {showPaymentLinkColumn ? (
                           <th className="px-2 py-2 font-medium">
@@ -787,14 +808,13 @@ export default function CreatePanel({
                             <td className="px-2 py-2 text-neutral-600">
                               {formatCustomerRecordName(c.customer) || "—"}
                             </td>
-                            {useRenewalsFilter ? (
-                              <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
-                                <span className="inline-flex flex-col items-start gap-1">
-                                  <span>{formatRenewalDate(c.renewalDueDate)}</span>
-                                  <RenewalStatusBadge contact={c} />
-                                </span>
-                              </td>
-                            ) : null}
+                            <td className="px-2 py-2 text-neutral-600">
+                              <span className="inline-flex flex-col items-start gap-1">
+                                <span>{formatRenewalDate(c.renewalDueDate)}</span>
+                                <RenewalStatusBadge contact={c} />
+                                <PriorAscNote prior={c.priorAscUnpaid} />
+                              </span>
+                            </td>
                             <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
                               <LastContactValue contact={c} />
                             </td>
@@ -806,6 +826,10 @@ export default function CreatePanel({
                                     viaTemporary={
                                       paymentForContact(c).viaTemporary
                                     }
+                                    amountCents={
+                                      paymentForContact(c).amountCents
+                                    }
+                                    priorAscUnpaid={c.priorAscUnpaid}
                                   />
                                   {onOfferOverrideChange ? (
                                     <OfferContractSelect
@@ -1185,6 +1209,7 @@ export default function CreatePanel({
                                 <span className="inline-flex flex-col items-start gap-1">
                                   <span>{formatRenewalDate(c.renewalDueDate)}</span>
                                   <RenewalStatusBadge contact={c} />
+                                  <PriorAscNote prior={c.priorAscUnpaid} />
                                 </span>
                               }
                               className="col-span-2"
@@ -1203,6 +1228,10 @@ export default function CreatePanel({
                                     viaTemporary={
                                       paymentForContact(c).viaTemporary
                                     }
+                                    amountCents={
+                                      paymentForContact(c).amountCents
+                                    }
+                                    priorAscUnpaid={c.priorAscUnpaid}
                                   />
                                 }
                                 className="col-span-2"
@@ -1252,10 +1281,11 @@ export default function CreatePanel({
                             <td className="px-2 py-2 text-neutral-600">
                               {formatCustomerRecordName(c.customer) || "—"}
                             </td>
-                            <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
+                            <td className="px-2 py-2 text-neutral-600">
                               <span className="inline-flex flex-col items-start gap-1">
                                 <span>{formatRenewalDate(c.renewalDueDate)}</span>
                                 <RenewalStatusBadge contact={c} />
+                                <PriorAscNote prior={c.priorAscUnpaid} />
                               </span>
                             </td>
                             <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
@@ -1266,6 +1296,8 @@ export default function CreatePanel({
                                 <PaymentLinkStatus
                                   available={paymentForContact(c).available}
                                   viaTemporary={paymentForContact(c).viaTemporary}
+                                  amountCents={paymentForContact(c).amountCents}
+                                  priorAscUnpaid={c.priorAscUnpaid}
                                 />
                               </td>
                             ) : null}

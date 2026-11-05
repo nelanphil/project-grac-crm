@@ -51,6 +51,8 @@ export const NOTIFICATION_ACTIONS = [
   "renewed",
   "assigned",
   "mentioned",
+  "restored",
+  "period_adjusted",
 ] as const;
 
 export type NotificationAction = (typeof NOTIFICATION_ACTIONS)[number];

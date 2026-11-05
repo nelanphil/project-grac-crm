@@ -22,9 +22,23 @@ export function InvoiceStatusPill({
 }: {
   invoice: { status: string };
   disabled?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
 }) {
   const paid = invoice.status === "paid";
+  const className = `inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${
+    paid
+      ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+      : "bg-sky-50 text-sky-800 ring-1 ring-sky-200"
+  } ${
+    onClick
+      ? "transition hover:bg-opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+      : ""
+  }`;
+
+  if (!onClick) {
+    return <span className={className}>{invoice.status}</span>;
+  }
+
   return (
     <button
       type="button"
@@ -34,11 +48,9 @@ export function InvoiceStatusPill({
         onClick();
       }}
       onKeyDown={(event) => event.stopPropagation()}
-      className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize transition ${
-        paid
-          ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-100"
-          : "bg-sky-50 text-sky-800 ring-1 ring-sky-200 hover:bg-sky-100"
-      } disabled:cursor-not-allowed disabled:opacity-60`}
+      className={`${className} ${
+        paid ? "hover:bg-emerald-100" : "hover:bg-sky-100"
+      }`}
     >
       {invoice.status}
     </button>

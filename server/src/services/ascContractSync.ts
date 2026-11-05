@@ -18,8 +18,10 @@ import {
 import {
   DEFAULT_DURATION_MONTHS,
   computeInitialRenewalDueDate,
+  endOfDay,
   getContractStanding,
   parseDateOnly,
+  startOfDay,
 } from "../utils/contractDates";
 import { inferContractType } from "../utils/contractTypes";
 
@@ -54,6 +56,8 @@ export type ExistingAscContract = {
   renewalDueDate?: Date | null;
   durationMonths?: number | null;
   sourceWorkOrderRef?: { toString(): string } | string | null;
+  paidRenewalDueDate?: Date | null;
+  renewals?: Array<{ newDueDate?: Date | null }>;
 };
 
 export type DerivedAscContractDates = {
@@ -110,6 +114,17 @@ export function pickLatestAscOccurrence(
   return dated[0].item;
 }
 
+export function latestPaidRenewalDueDate(
+  renewals?: Array<{ newDueDate?: Date | null }>,
+): Date | null {
+  let latest: Date | null = null;
+  for (const renewal of renewals ?? []) {
+    const due = parseDateOnly(renewal.newDueDate);
+    if (due && (!latest || due.getTime() > latest.getTime())) latest = due;
+  }
+  return latest;
+}
+
 export function deriveAscContractDates(
   existing: ExistingAscContract | null,
   latestAscDate: Date,
@@ -132,8 +147,15 @@ export function deriveAscContractDates(
   const existingContract = parseDateOnly(existing?.contractDate);
   const contractDate = existingContract ?? sourceDate;
   const lastRenewalDate = sourceDate;
-  const renewalDueDate = computeInitialRenewalDueDate(sourceDate, months);
-  if (!renewalDueDate) return null;
+  const computedDue = computeInitialRenewalDueDate(sourceDate, months);
+  if (!computedDue) return null;
+  const paidDue =
+    parseDateOnly(existing?.paidRenewalDueDate) ??
+    latestPaidRenewalDueDate(existing?.renewals);
+  const renewalDueDate =
+    paidDue && paidDue.getTime() > computedDue.getTime()
+      ? paidDue
+      : computedDue;
 
   const changed =
     !existing ||
@@ -163,8 +185,12 @@ export function standingFromLatestAscDate(
   return getContractStanding(derived?.renewalDueDate ?? null, today);
 }
 
-async function loadAscProductIds(models: AscSyncModels): Promise<Set<string>> {
-  const products = await models.Product.find({
+const ASC_CODES = ["ASC", "ACS"];
+
+export async function findAscProductIds(
+  ProductModel: AscSyncModels["Product"],
+): Promise<Set<string>> {
+  const products = await ProductModel.find({
     $or: [
       { productCode: { $in: [...ASC_CODES] } },
       { partNumber: { $in: [...ASC_CODES] } },
@@ -185,37 +211,56 @@ async function loadAscProductIds(models: AscSyncModels): Promise<Set<string>> {
   return ids;
 }
 
-const ASC_CODES = ["ASC", "ACS"];
+async function loadAscProductIds(models: AscSyncModels): Promise<Set<string>> {
+  return findAscProductIds(models.Product);
+}
 
-/** Incomplete visits are scheduled work, not a completed renewal. */
-export function ascWorkOrderQuery(
+/** Clauses that match an ASC line or an ASC mention on the ticket. */
+export function ascWorkOrderMatchClauses(
   ascProductIds: Set<string>,
-): Record<string, unknown> {
+): Array<Record<string, unknown>> {
   const productRefFilter =
     ascProductIds.size > 0
       ? [{ "parts.productRef": { $in: [...ascProductIds] } }]
       : [];
 
+  return [
+    { "parts.partNumber": { $in: [...ASC_CODES] } },
+    { "parts.productCode": { $in: [...ASC_CODES] } },
+    ...productRefFilter,
+    {
+      "parts.description": {
+        $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i,
+      },
+    },
+    {
+      descPerform: {
+        $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i,
+      },
+    },
+    {
+      descPerformed: {
+        $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i,
+      },
+    },
+  ];
+}
+
+/** Incomplete visits are scheduled work, not a completed renewal. */
+export function ascWorkOrderQuery(
+  ascProductIds: Set<string>,
+  now = new Date(),
+): Record<string, unknown> {
   return {
     completed: true,
-    $or: [
-      { "parts.partNumber": { $in: ASC_CODES } },
-      { "parts.productCode": { $in: ASC_CODES } },
-      ...productRefFilter,
+    date: { $lte: endOfDay(startOfDay(now)) },
+    $and: [
+      { $or: ascWorkOrderMatchClauses(ascProductIds) },
       {
-        "parts.description": {
-          $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i,
-        },
-      },
-      {
-        descPerform: {
-          $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i,
-        },
-      },
-      {
-        descPerformed: {
-          $regex: /\b(?:asc|acs|annual\s+service(?:\s+contract)?)\b/i,
-        },
+        $or: [
+          { renewalInvoiceRef: { $exists: false } },
+          { renewalInvoiceRef: null },
+        ],
       },
     ],
   };
@@ -335,6 +380,7 @@ export async function syncAscContractsFromRecords(
 
   const invoices = await models.Invoice.find({
     status: { $nin: IGNORED_INVOICE_STATUSES },
+    sourceType: { $nin: ["contract_renewal", "contract_initial"] },
     $or: [
       {
         "lineItems.description": {
@@ -457,7 +503,9 @@ export async function syncAscContractsFromRecords(
         },
       },
     ],
-  }).lean();
+  })
+    .setOptions({ includeDeleted: true })
+    .lean();
 
   const serviceTemplate = dryRun
     ? await models.ContractTemplate.findOne({ slug: SERVICE_TEMPLATE.slug })
@@ -488,11 +536,23 @@ export async function syncAscContractsFromRecords(
       continue;
     }
 
+    const matches = contractsByCustomer.get(key) ?? [];
+    const liveMatches = matches.filter((contract) => !contract.deletedAt);
     const existing = pickContractForSource(
-      contractsByCustomer.get(key) ?? [],
+      liveMatches.length > 0 ? liveMatches : matches,
       source,
     );
-    const derived = deriveAscContractDates(existing, sourceDate);
+    // A soft-deleted contract still occupies this customer. Do not recreate it.
+    if (existing?.deletedAt) continue;
+    const derived = deriveAscContractDates(
+      existing
+        ? {
+            ...existing,
+            paidRenewalDueDate: latestPaidRenewalDueDate(existing.renewals),
+          }
+        : null,
+      sourceDate,
+    );
     if (!derived) continue;
 
     const workOrderRef =

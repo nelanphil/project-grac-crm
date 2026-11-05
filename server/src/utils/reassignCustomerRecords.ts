@@ -92,7 +92,9 @@ export async function reassignCustomerOwnedRecords(opts: {
     remappedCount(Invoice, owned, { $set: ticketSet }),
     remappedCount(Estimate, owned, { $set: ticketSet }),
     remappedCount(WorkOrder, owned, { $set: ticketSet }),
-    remappedCount(Contract, owned, { $set: ticketSet }),
+    Contract.updateMany(owned, { $set: ticketSet })
+      .setOptions({ includeDeleted: true })
+      .then((result) => result.modifiedCount ?? 0),
     remappedCount(Lead, byRef, { $set: refSet }),
     remappedCount(MessageThread, byRef, { $set: refSet }),
     remappedCount(EmailCommunication, byRef, { $set: refSet }),

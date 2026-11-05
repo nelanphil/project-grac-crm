@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { WorkOrderListItem } from "@/lib/api";
+import PastDueBadge from "@/components/billing/PastDueBadge";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
 import {
@@ -80,6 +81,7 @@ export default function MonthTable({
               key={job._id}
               title={job.customerName || "Customer"}
               subtitle={formatAddressLine(job.address)}
+              badges={<PastDueBadge pastDue={job.customerPastDue} />}
               onClick={() => onJobClick(job)}
               fields={
                 <>
@@ -157,7 +159,10 @@ export default function MonthTable({
                         : "Unscheduled"}
                   </td>
                   <td className="px-4 py-3 font-medium text-brand-dark">
-                    {job.customerName || "—"}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span>{job.customerName || "—"}</span>
+                      <PastDueBadge pastDue={job.customerPastDue} compact />
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-neutral-600">
                     {formatAddressLine(job.address)}

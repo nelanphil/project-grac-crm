@@ -430,6 +430,11 @@ export async function updateCrashReport(
 
 export type CustomerReputation = "do_not_contact" | "past_due" | "good";
 
+export interface CustomerPastDue {
+  count: number;
+  totalCents: number;
+}
+
 export interface CustomerNameRow {
   id: string;
   accountName: string;
@@ -1504,6 +1509,7 @@ export interface CustomerDetail {
   reputation?: CustomerReputation | null;
   addresses: CustomerAddress[];
   contacts: CustomerContact[];
+  pastDue?: CustomerPastDue | null;
 }
 
 export async function getCustomer(
@@ -2643,6 +2649,8 @@ export interface WorkOrderListItem {
   scheduleNotes?: string[];
   deletedAt?: string | null;
   offlinePayment?: OfflinePayment | null;
+  /** Customer has completed work orders that were never paid. */
+  customerPastDue?: CustomerPastDue | null;
 }
 
 export type ServiceTicketPayload = {
@@ -3683,6 +3691,7 @@ export interface ContractListItem {
   lastRenewalDate: string | null;
   description: string;
   contractType: string | null;
+  deletedAt?: string | null;
   standing: ContractStanding;
   inGoodStanding: boolean;
   productDiscounts?: ContractProductDiscountOverride;
@@ -3690,6 +3699,20 @@ export interface ContractListItem {
   template?: ContractTemplateSummary | null;
   address?: CustomerAddressSummary | null;
   equipment?: ContractEquipmentSummary | null;
+  /**
+   * Completed unpaid ASC visits dated before this renewal.
+   * Present on the Upcoming Renewals month query. Null when none are owed.
+   */
+  ascUnpaid?: {
+    count: number;
+    totalCents: number;
+    workOrders: Array<{
+      _id: string;
+      number: string;
+      date: string | null;
+      totalCents: number;
+    }>;
+  } | null;
   customer: {
     _id: string;
     accountName?: string;
@@ -3708,12 +3731,13 @@ export interface ContractListItem {
 export async function getContracts(
   token: string,
   standing?: ContractStanding | "all",
-  opts?: { year?: number; month?: number },
+  opts?: { year?: number; month?: number; deleted?: boolean },
 ): Promise<{ contracts: ContractListItem[] }> {
   const params = new URLSearchParams();
   if (standing && standing !== "all") params.set("standing", standing);
   if (opts?.year !== undefined) params.set("year", String(opts.year));
   if (opts?.month !== undefined) params.set("month", String(opts.month));
+  if (opts?.deleted) params.set("deleted", "true");
   const qs = params.toString();
   return authRequest<{ contracts: ContractListItem[] }>(
     `/contracts${qs ? `?${qs}` : ""}`,
@@ -3812,6 +3836,34 @@ export async function deleteContract(token: string, id: string): Promise<void> {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+export async function restoreContract(
+  token: string,
+  id: string,
+): Promise<{ contract: ContractListItem }> {
+  return authRequest<{ contract: ContractListItem }>(
+    `/contracts/${id}/restore`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function updateContractPeriod(
+  token: string,
+  id: string,
+  data: { startDate: string; endDate: string; notes?: string },
+): Promise<{ contract: ContractListItem }> {
+  return authRequest<{ contract: ContractListItem }>(
+    `/contracts/${id}/period`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -4064,6 +4116,7 @@ export async function getInvoices(
   params?: {
     status?: string;
     customerRef?: string;
+    customerId?: number;
     contractRef?: string;
     workOrderRef?: string;
     search?: string;
@@ -4079,6 +4132,7 @@ export async function getInvoices(
   const qs = new URLSearchParams();
   if (params?.status) qs.set("status", params.status);
   if (params?.customerRef) qs.set("customerRef", params.customerRef);
+  if (params?.customerId != null) qs.set("customerId", String(params.customerId));
   if (params?.contractRef) qs.set("contractRef", params.contractRef);
   if (params?.workOrderRef) qs.set("workOrderRef", params.workOrderRef);
   if (params?.search) qs.set("search", params.search);
@@ -7177,6 +7231,9 @@ export interface MessagingContactItem {
   lastRenewalDate: string | null;
   renewalStatus: "due" | "overdue" | "renewed" | null;
   contractType: string | null;
+  paymentLinkAmountCents?: number | null;
+  priorAscUnpaid?: { count: number; totalCents: number } | null;
+  offerInvoiceAmounts?: { templateId: string; amountCents: number }[];
   lastContact: {
     at: string;
     method: "text" | "email" | "call";
@@ -7427,6 +7484,7 @@ export async function searchMessagingContacts(
   selectableTotal?: number;
   page: number;
   pageSize: number;
+  offerCheckoutAmountCents?: Record<string, number>;
 }> {
   const params = new URLSearchParams();
   if (options?.search) params.set("search", options.search);
@@ -7443,6 +7501,7 @@ export async function searchMessagingContacts(
     selectableTotal?: number;
     page: number;
     pageSize: number;
+    offerCheckoutAmountCents?: Record<string, number>;
   }>(`/messaging/contacts${qs ? `?${qs}` : ""}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
@@ -8092,7 +8151,9 @@ export type NotificationAction =
   | "merged"
   | "renewed"
   | "assigned"
-  | "mentioned";
+  | "mentioned"
+  | "restored"
+  | "period_adjusted";
 
 export interface NotificationItem {
   id: string;
@@ -8238,6 +8299,7 @@ export async function searchEmailContacts(
   selectableTotal?: number;
   page: number;
   pageSize: number;
+  offerCheckoutAmountCents?: Record<string, number>;
 }> {
   const params = new URLSearchParams();
   if (options?.search) params.set("search", options.search);
@@ -8254,6 +8316,7 @@ export async function searchEmailContacts(
     selectableTotal?: number;
     page: number;
     pageSize: number;
+    offerCheckoutAmountCents?: Record<string, number>;
   }>(`/email-messages/contacts${qs ? `?${qs}` : ""}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },

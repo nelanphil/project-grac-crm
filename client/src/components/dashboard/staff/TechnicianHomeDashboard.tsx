@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Phone } from "lucide-react";
+import PastDueBadge from "@/components/billing/PastDueBadge";
 import { TextScheduleButton } from "@/components/schedule/TextScheduleDialog";
 import {
   ApiError,
@@ -183,6 +184,7 @@ function AppointmentCard({
         <h3 className="min-w-0 break-words text-base font-semibold text-[var(--staff-ink)]">
           {job.customerName?.trim() || "Customer"}
         </h3>
+        <PastDueBadge pastDue={job.customerPastDue} />
         {phone ? (
           <a
             href={`tel:${phone.tel}`}

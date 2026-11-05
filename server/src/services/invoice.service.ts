@@ -17,6 +17,7 @@ import {
 import { SCHEDULE_TIMEZONE } from "../utils/scheduleTime";
 import { logNotificationAsync } from "./notification.service";
 import { recordCustomerActivityAsync } from "./customerActivity.service";
+import { voidSiblingContractInvoices } from "./contractInvoiceSiblings";
 import { foldOfferIntoExistingContract } from "./offerRenewalFold";
 import { recordWorkOrderActivity } from "./workOrderActivity.service";
 import {
@@ -60,6 +61,59 @@ export class DeletedCustomerRenewalError extends Error {
   }
 }
 
+const STAFF_RENEW_DEDUPE_MS = 2 * 60 * 1000;
+
+export function alreadyAppliedRenewal(
+  contract: { renewals?: Array<{ invoiceRef?: unknown; providerPaymentId?: string }> },
+  input: { invoiceRef?: Types.ObjectId; providerPaymentId?: string | null },
+): boolean {
+  const renewals = contract.renewals ?? [];
+  if (
+    input.invoiceRef &&
+    renewals.some(
+      (renewal) =>
+        renewal.invoiceRef &&
+        String(renewal.invoiceRef) === String(input.invoiceRef),
+    )
+  ) {
+    return true;
+  }
+  if (
+    input.providerPaymentId &&
+    renewals.some(
+      (renewal) => renewal.providerPaymentId === input.providerPaymentId,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function recentStaffRenewal(
+  contract: { renewals?: Array<{ invoiceRef?: unknown; renewedAt?: Date; createdAt?: Date }> },
+  renewedAtDate: Date,
+): boolean {
+  const cutoff = Date.now() - STAFF_RENEW_DEDUPE_MS;
+  return (contract.renewals ?? []).some((renewal) => {
+    if (renewal.invoiceRef) return false;
+    const sameDay =
+      parseDateOnly(renewal.renewedAt)?.getTime() === renewedAtDate.getTime();
+    const created = renewal.createdAt?.getTime() ?? 0;
+    return sameDay && created >= cutoff;
+  });
+}
+
+function copyRenewalFields(target: IContract, source: IContract): void {
+  target.lastRenewalDate = source.lastRenewalDate;
+  target.durationMonths = source.durationMonths;
+  target.renewalDueDate = source.renewalDueDate;
+  target.contractDate = source.contractDate;
+  target.renewals = source.renewals;
+  if (typeof target.markModified === "function") {
+    target.markModified("renewals");
+  }
+}
+
 export async function applyContractRenewal(
   input: ApplyRenewalInput,
 ): Promise<IContract> {
@@ -90,12 +144,20 @@ export async function applyContractRenewal(
     );
   }
 
+  if (alreadyAppliedRenewal(contract, { invoiceRef, providerPaymentId })) {
+    return contract;
+  }
+
   const previousDueDate = parseDateOnly(contract.renewalDueDate);
   if (!previousDueDate) {
     throw new Error("Invalid renewal due date on contract");
   }
 
   const renewedAtDate = parseDateOnly(renewedAt) ?? startOfDay(renewedAt);
+  if (!invoiceRef && recentStaffRenewal(contract, renewedAtDate)) {
+    return contract;
+  }
+
   const { newDueDate, wasLate } = computeRenewalDueDateAfterRenewal(
     renewedAtDate,
     previousDueDate,
@@ -117,14 +179,47 @@ export async function applyContractRenewal(
     createdAt: new Date(),
   };
 
-  contract.lastRenewalDate = renewedAtDate;
-  contract.durationMonths = durationMonths;
-  contract.renewalDueDate = newDueDate;
-  if (wasLate) {
-    contract.contractDate = renewedAtDate;
+  const filter: Record<string, unknown> = { _id: contract._id };
+  if (invoiceRef) {
+    filter["renewals.invoiceRef"] = { $ne: invoiceRef };
   }
-  contract.renewals.push(renewalEvent);
-  await contract.save();
+  if (providerPaymentId) {
+    filter["renewals.providerPaymentId"] = { $ne: providerPaymentId };
+  }
+  if (!invoiceRef) {
+    filter.$nor = [
+      {
+        renewals: {
+          $elemMatch: {
+            invoiceRef: { $exists: false },
+            renewedAt: renewedAtDate,
+            createdAt: { $gte: new Date(Date.now() - STAFF_RENEW_DEDUPE_MS) },
+          },
+        },
+      },
+    ];
+  }
+
+  const $set: Record<string, unknown> = {
+    lastRenewalDate: renewedAtDate,
+    durationMonths,
+    renewalDueDate: newDueDate,
+  };
+  if (wasLate) $set.contractDate = renewedAtDate;
+
+  const updated = await Contract.findOneAndUpdate(
+    filter,
+    { $set, $push: { renewals: renewalEvent } },
+    { new: true },
+  );
+
+  if (!updated) {
+    const latest = await Contract.findById(contract._id);
+    if (latest) copyRenewalFields(contract, latest);
+    return contract;
+  }
+
+  copyRenewalFields(contract, updated);
 
   logNotificationAsync({
     entityType: "contract",
@@ -146,6 +241,56 @@ type InvoiceActor = {
   actorName?: string | null;
 };
 
+async function applyPaidContractRenewal(invoice: IInvoice): Promise<void> {
+  if (!invoice.contractRef) return;
+  const contract = await Contract.findById(invoice.contractRef);
+  if (!contract) return;
+  const durationMonths =
+    typeof invoice.metadata?.durationMonths === "number"
+      ? invoice.metadata.durationMonths
+      : contract.durationMonths || 12;
+  try {
+    await applyContractRenewal({
+      contract,
+      renewedAt: invoice.paidAt ?? new Date(),
+      durationMonths,
+      notes: `Paid via invoice ${invoice.number}`,
+      invoiceRef: invoice._id as Types.ObjectId,
+      amountCents: invoice.amountCents,
+      paymentProvider: invoice.paymentProvider,
+      providerPaymentId: invoice.providerPaymentId,
+    });
+  } catch (err) {
+    if (!(err instanceof DeletedCustomerRenewalError)) throw err;
+  }
+}
+
+async function voidSiblingsForPaidContractInvoice(
+  invoice: IInvoice,
+): Promise<void> {
+  if (
+    invoice.sourceType !== "contract_initial" &&
+    invoice.sourceType !== "contract_renewal"
+  ) {
+    return;
+  }
+  let contractType: string | null = null;
+  if (invoice.contractRef) {
+    const contract = await Contract.findById(invoice.contractRef)
+      .select("contractType templateId")
+      .lean();
+    contractType = contract?.contractType ?? null;
+  }
+  await voidSiblingContractInvoices({
+    keepInvoiceId: invoice._id as Types.ObjectId,
+    customerRef: invoice.customerRef,
+    customerId: invoice.customerId,
+    templateId: invoice.templateRef,
+    contractType,
+    paidInvoiceNumber: invoice.number,
+  });
+}
+
 export async function markInvoicePaid(params: {
   invoice: IInvoice;
   providerPaymentId?: string | null;
@@ -161,7 +306,10 @@ export async function markInvoicePaid(params: {
   if (invoice.status === "paid") {
     if (invoice.sourceType === "contract_initial" && invoice.contractRef) {
       await foldOfferIntoExistingContract(invoice);
+    } else if (invoice.sourceType === "contract_renewal" && invoice.contractRef) {
+      await applyPaidContractRenewal(invoice);
     }
+    await voidSiblingsForPaidContractInvoice(invoice);
     if (isContractServiceInvoice(invoice.sourceType) && !invoice.serviceWorkOrderRef) {
       await runRenewalWorkOrderSideEffect(() =>
         ensureRenewalWorkOrder(invoice, {
@@ -252,35 +400,10 @@ export async function markInvoicePaid(params: {
 
   if (invoice.sourceType === "contract_initial" && invoice.contractRef) {
     await foldOfferIntoExistingContract(invoice);
+    await voidSiblingsForPaidContractInvoice(invoice);
   } else if (invoice.sourceType === "contract_renewal" && invoice.contractRef) {
-    const contract = await Contract.findById(invoice.contractRef);
-    if (contract) {
-      const durationMonths =
-        typeof invoice.metadata?.durationMonths === "number"
-          ? invoice.metadata.durationMonths
-          : contract.durationMonths || 12;
-
-      // Avoid double-renewing if already linked to this invoice
-      const already = contract.renewals.some(
-        (r) => r.invoiceRef && String(r.invoiceRef) === String(invoice._id),
-      );
-      if (!already) {
-        try {
-          await applyContractRenewal({
-            contract,
-            renewedAt: new Date(),
-            durationMonths,
-            notes: `Paid via invoice ${invoice.number}`,
-            invoiceRef: invoice._id as Types.ObjectId,
-            amountCents: invoice.amountCents,
-            paymentProvider: invoice.paymentProvider,
-            providerPaymentId: invoice.providerPaymentId,
-          });
-        } catch (err) {
-          if (!(err instanceof DeletedCustomerRenewalError)) throw err;
-        }
-      }
-    }
+    await applyPaidContractRenewal(invoice);
+    await voidSiblingsForPaidContractInvoice(invoice);
   }
 
   if (isContractServiceInvoice(invoice.sourceType)) {

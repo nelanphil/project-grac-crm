@@ -6,8 +6,10 @@ import { ContractTemplate } from "../models/mongo/ContractTemplate";
 import {
   DUE_SOON_DAYS,
   differenceInCalendarDays,
+  listRenewalStatus,
   renewalCohortFilterForMonth,
   renewalCohortStatus,
+  renewalOutreachFilterForMonth,
   type RenewalCohortStatus,
 } from "./contractDates";
 import {
@@ -48,12 +50,12 @@ function renewalStatusRank(status: RenewalCohortStatus | null): number {
   return 2;
 }
 
-/** Customer refs in the renewal group for the given UTC month. */
+/** Customers with a due or overdue contract in the given UTC month. */
 export async function customerRefsWithRenewalsInMonth(
   scope: RenewalScope,
 ): Promise<Types.ObjectId[]> {
   const rows = await Contract.find({
-    ...renewalCohortFilterForMonth(scope.year, scope.month),
+    ...renewalOutreachFilterForMonth(scope.year, scope.month),
     customerRef: { $exists: true, $ne: null },
     temporary: { $ne: true },
   })
@@ -85,6 +87,7 @@ export async function resolveRenewalForCustomer(
 export async function resolveRenewalsForCustomers(
   customerIds: Array<Types.ObjectId | string>,
   scope?: RenewalScope,
+  options?: { listDisplay?: boolean },
 ): Promise<Map<string, ContactRenewalInfo>> {
   const result = new Map<string, ContactRenewalInfo>();
   const unique = [
@@ -98,11 +101,22 @@ export async function resolveRenewalsForCustomers(
     temporary: { $ne: true },
   };
 
+  const listDisplay = Boolean(options?.listDisplay) && !scope;
   if (scope) {
     Object.assign(filter, renewalCohortFilterForMonth(scope.year, scope.month));
+  } else if (listDisplay) {
+    filter.renewalDueDate = { $ne: null };
   } else {
     // Prefer soonest upcoming renewal
     filter.renewalDueDate = { $ne: null, $gte: new Date() };
+  }
+
+  function statusRank(status: RenewalCohortStatus | null): number {
+    if (!listDisplay) return renewalStatusRank(status);
+    if (status === "overdue") return 0;
+    if (status === "due") return 1;
+    if (status === "renewed") return 2;
+    return 3;
   }
 
   const contracts = await Contract.find(filter)
@@ -153,9 +167,11 @@ export async function resolveRenewalsForCustomers(
       renewalStatus: renewalDueDate
         ? scope
           ? renewalCohortStatus(renewalDueDate, lastRenewalDate, scope)
-          : differenceInCalendarDays(renewalDueDate, new Date()) < 0
-            ? "overdue"
-            : "due"
+          : listDisplay
+            ? listRenewalStatus(renewalDueDate, lastRenewalDate)
+            : differenceInCalendarDays(renewalDueDate, new Date()) < 0
+              ? "overdue"
+              : "due"
         : null,
     };
   }
@@ -168,15 +184,16 @@ export async function resolveRenewalsForCustomers(
     // is still due or overdue and the one we kept was already renewed.
     if (
       current &&
-      renewalStatusRank(current.renewalStatus) <= renewalStatusRank(next.renewalStatus)
+      statusRank(current.renewalStatus) <= statusRank(next.renewalStatus)
     ) {
       continue;
     }
     result.set(key, next);
   }
 
-  // When no month scope, fill missing with soonest renewal overall (including past)
-  if (!scope) {
+  // When no month scope, fill missing with soonest renewal overall (including past).
+  // The contact list already loaded every dated contract.
+  if (!scope && !listDisplay) {
     const missing = unique.filter((id) => !result.has(id));
     if (missing.length > 0) {
       const fallback = await Contract.find({

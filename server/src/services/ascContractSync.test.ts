@@ -10,6 +10,7 @@ import {
 import {
   ascWorkOrderQuery,
   deriveAscContractDates,
+  latestPaidRenewalDueDate,
   pickLatestAscOccurrence,
   standingFromLatestAscDate,
   syncAscContractsFromRecords,
@@ -197,6 +198,30 @@ describe("ASC contract dates", () => {
     assert.equal(derived.changed, false);
   });
 
+  it("does not move a paid due date earlier than the latest renewal event", () => {
+    const derived = deriveAscContractDates(
+      {
+        originalContractDate: new Date("2024-10-13"),
+        contractDate: new Date("2024-10-13"),
+        lastRenewalDate: new Date("2026-10-13"),
+        renewalDueDate: new Date("2027-10-13"),
+        durationMonths: 12,
+        paidRenewalDueDate: new Date("2027-10-13"),
+        renewals: [{ newDueDate: new Date("2027-10-13") }],
+      },
+      new Date("2025-10-01"),
+    );
+    assert.ok(derived);
+    assert.equal(derived.lastRenewalDate.toISOString().slice(0, 10), "2025-10-01");
+    assert.equal(derived.renewalDueDate.toISOString().slice(0, 10), "2027-10-13");
+    assert.equal(
+      latestPaidRenewalDueDate([{ newDueDate: new Date("2027-10-13") }])
+        ?.toISOString()
+        .slice(0, 10),
+      "2027-10-13",
+    );
+  });
+
   it("marks a customer active when the latest ASC is within the last year", () => {
     assert.equal(
       standingFromLatestAscDate(
@@ -226,14 +251,26 @@ describe("ASC work order query", () => {
   it("only counts completed work orders as renewals", () => {
     const query = ascWorkOrderQuery(new Set(["prod-asc"]));
     assert.equal(query.completed, true);
-    const or = query.$or as Array<Record<string, unknown>>;
+    assert.ok(query.date);
+    const and = query.$and as Array<Record<string, unknown>>;
+    const match = and.find((clause) => Array.isArray(clause.$or));
+    const or = (match?.$or ?? []) as Array<Record<string, unknown>>;
     assert.ok(or.some((clause) => "parts.productRef" in clause));
+    assert.ok(
+      and.some((clause) => {
+        const inner = clause.$or as Array<Record<string, unknown>> | undefined;
+        return inner?.some((entry) => "renewalInvoiceRef" in entry);
+      }),
+    );
   });
 
   it("asks the work-order model for completed jobs only", async () => {
     let captured: Record<string, unknown> | undefined;
     const chain = {
       select() {
+        return chain;
+      },
+      setOptions() {
         return chain;
       },
       lean: async () => [],

@@ -12,6 +12,10 @@ import { CustomerAddress } from "../models/mongo/CustomerAddress";
 import { CustomerContact, activeContactFilter } from "../models/mongo/CustomerContact";
 import { customerDisplayName } from "./notification.service";
 import {
+  loadPastDueByCustomer,
+  pastDueForCustomer,
+} from "./customerPastDue.service";
+import {
   recordWorkOrderScheduleChanges,
   snapshotWorkOrderFields,
   type WorkOrderActivityActor,
@@ -342,6 +346,8 @@ export type EnrichedWorkOrder = Record<string, unknown> & {
   scheduleNote: string | null;
   /** Notes flagged to appear on the technician schedule, oldest first. */
   scheduleNotes: string[];
+  /** Customer has completed work orders that were never paid. */
+  customerPastDue: { count: number; totalCents: number } | null;
 };
 
 async function latestScheduleNotes(
@@ -447,7 +453,7 @@ export async function enrichScheduleWorkOrders(
       : [],
     customerIds.length
       ? Customer.find({ _id: { $in: customerIds } })
-          .select("_id accountName first last phone")
+          .select("_id legacyId accountName first last phone")
           .lean()
       : [],
     missingLegacyIds.length
@@ -542,10 +548,37 @@ export async function enrichScheduleWorkOrders(
   const workOrderIds = workOrders
     .map((wo) => wo._id?.toString() ?? "")
     .filter(Boolean);
-  const [noteByWorkOrder, flaggedByWorkOrder] = await Promise.all([
-    latestScheduleNotes(workOrderIds),
-    scheduleNotesByWorkOrder(workOrderIds),
-  ]);
+  const legacyByRef = new Map<string, number>();
+  for (const customer of [...customers, ...fallbackCustomers]) {
+    if (typeof customer.legacyId === "number") {
+      legacyByRef.set(customer._id.toString(), customer.legacyId);
+    }
+  }
+  const pastDueRefs = [
+    ...new Set([
+      ...customerIds,
+      ...fallbackCustomers.map((customer) => customer._id.toString()),
+    ]),
+  ];
+  const pastDueLegacyIds = [
+    ...new Set([
+      ...missingLegacyIds,
+      ...workOrders
+        .map((wo) => wo.customerId)
+        .filter((id): id is number => typeof id === "number"),
+      ...legacyByRef.values(),
+    ]),
+  ];
+  const [noteByWorkOrder, flaggedByWorkOrder, pastDueByCustomer] =
+    await Promise.all([
+      latestScheduleNotes(workOrderIds),
+      scheduleNotesByWorkOrder(workOrderIds),
+      loadPastDueByCustomer({
+        customerRefs: pastDueRefs,
+        legacyIds: pastDueLegacyIds,
+        legacyByRef,
+      }),
+    ]);
 
   return workOrders.map((wo) => {
     const resolvedRef =
@@ -589,6 +622,11 @@ export async function enrichScheduleWorkOrders(
       assignee: userById.get(crew[0] ?? "") ?? null,
       scheduleNotes: flagged,
       scheduleNote: flagged.join("\n") || note || description || null,
+      customerPastDue: pastDueForCustomer(
+        pastDueByCustomer,
+        resolvedRef,
+        typeof wo.customerId === "number" ? wo.customerId : null,
+      ),
     };
   });
 }

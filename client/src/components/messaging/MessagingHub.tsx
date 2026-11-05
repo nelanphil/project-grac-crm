@@ -152,7 +152,7 @@ function messagingTabFromQuery(
   ) {
     return tab;
   }
-  return "contact-form";
+  return "communications-log";
 }
 
 function messageSubTabFromQuery(
@@ -331,6 +331,9 @@ export default function MessagingHub() {
   const [contractTemplates, setContractTemplates] = useState<
     ContractTemplateItem[]
   >([]);
+  const [offerCheckoutAmountCents, setOfferCheckoutAmountCents] = useState<
+    Record<string, number>
+  >({});
 
   const [previewText, setPreviewText] = useState("");
   const [previewSample, setPreviewSample] = useState(true);
@@ -647,6 +650,9 @@ export default function MessagingHub() {
         setContacts(res.contacts);
         setContactsTotal(res.total);
         setSelectableTotal(res.selectableTotal ?? res.total);
+        if (res.offerCheckoutAmountCents) {
+          setOfferCheckoutAmountCents(res.offerCheckoutAmountCents);
+        }
         const blocked = new Set(
           res.contacts.filter((contact) => contact.doNotNotify).map((contact) => contact._id),
         );
@@ -720,6 +726,9 @@ export default function MessagingHub() {
         setEmailContacts(res.contacts);
         setEmailContactsTotal(res.total);
         setEmailSelectableTotal(res.selectableTotal ?? res.total);
+        if (res.offerCheckoutAmountCents) {
+          setOfferCheckoutAmountCents(res.offerCheckoutAmountCents);
+        }
         const blocked = new Set(
           res.contacts.filter((contact) => contact.doNotNotify).map((contact) => contact._id),
         );
@@ -1438,6 +1447,9 @@ export default function MessagingHub() {
             page: 1,
             pageSize: MAX_SEND,
           });
+      if (res.offerCheckoutAmountCents) {
+        setOfferCheckoutAmountCents(res.offerCheckoutAmountCents);
+      }
       const ids = isEmail ? emailSelectedIds : selectedIds;
       const byId = isEmail ? emailSelectedContactsById : selectedContactsById;
       const next = new Set(ids);
@@ -1616,11 +1628,11 @@ export default function MessagingHub() {
       <MobileTabBar className="border-b border-neutral-200">
         {(
           [
+            ["communications-log", "Communications Log"],
             ["contact-form", "Contact Form"],
             ["templates", "Templates"],
             ["create", "Message Wizard"],
             ["email", "Email Wizard"],
-            ["communications-log", "Communications Log"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -1860,6 +1872,7 @@ export default function MessagingHub() {
           includePaymentLink={smsIncludePaymentLink}
           onIncludePaymentLinkChange={setSmsIncludePaymentLink}
           contractTemplates={contractTemplates}
+          offerCheckoutAmountCents={offerCheckoutAmountCents}
           offerContractTemplateId={smsOfferContractTemplateId}
           offerOverrides={smsOfferContractOverrides}
           onOfferContractTemplateIdChange={setSmsOfferContractTemplateId}
@@ -2026,6 +2039,7 @@ export default function MessagingHub() {
           includePaymentLink={includePaymentLink}
           onIncludePaymentLinkChange={setIncludePaymentLink}
           contractTemplates={contractTemplates}
+          offerCheckoutAmountCents={offerCheckoutAmountCents}
           offerContractTemplateId={offerContractTemplateId}
           offerOverrides={offerContractOverrides}
           onOfferContractTemplateIdChange={setOfferContractTemplateId}
