@@ -310,6 +310,22 @@ async function loadConversationPage(filter: Record<string, unknown>, limit: numb
     .lean();
 }
 
+/** True when the Inboxes Unread chip would list at least one chat. */
+export async function getInboxUnreadCount(
+  _req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const match = await InboxConversation.exists({
+      $and: inboxListFilter({ status: "open", filter: "unread" }),
+    });
+    res.json({ hasUnread: Boolean(match) });
+  } catch (err) {
+    console.error("GET /inboxes/unread-count error:", err);
+    res.status(500).json({ message: "Failed to check unread conversations" });
+  }
+}
+
 export async function listInboxConversations(
   req: AuthRequest,
   res: Response,

@@ -12,6 +12,7 @@ import {
   getInboxContext,
   getInboxTimeline,
   linkInboxCustomer,
+  getInboxUnreadCount,
   listInboxChannels,
   listInboxConversations,
   listInboxScheduled,
@@ -62,6 +63,7 @@ router.post(
   requirePermission("messages:write"),
   openInboxCustomerConversation,
 );
+router.get("/unread-count", requirePermission("messages:read"), getInboxUnreadCount);
 router.get("/conversations", requirePermission("messages:read"), listInboxConversations);
 router.get(
   "/conversations/:id/timeline",

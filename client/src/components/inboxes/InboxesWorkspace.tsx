@@ -24,6 +24,7 @@ import {
   unpinInboxConversation,
 } from "@/lib/api";
 import { subscribeDashboardLive } from "@/lib/dashboardLive";
+import { refreshInboxUnread } from "@/hooks/useInboxUnread";
 import { useAuthStore } from "@/store/useAuthStore";
 import TaskDialog from "@/components/tasks/TaskDialog";
 import ConversationList, {
@@ -159,7 +160,9 @@ export default function InboxesWorkspace() {
     let cancelled = false;
     markInboxConversationRead(token, selectedId)
       .then((result) => {
-        if (cancelled || ignoreRead.current === result.conversation.id) return;
+        if (ignoreRead.current === result.conversation.id) return;
+        refreshInboxUnread();
+        if (cancelled) return;
         setConversations((current) =>
           current.map((item) => (item.id === result.conversation.id ? result.conversation : item)),
         );
@@ -271,6 +274,7 @@ export default function InboxesWorkspace() {
     if (selectedId === item.id) select(null);
     const result = await markInboxConversationUnread(token, item.id);
     remember(result.conversation);
+    refreshInboxUnread();
   }
 
   async function togglePin(item: InboxConversationItem) {

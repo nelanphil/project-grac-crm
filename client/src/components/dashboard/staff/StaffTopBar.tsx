@@ -37,6 +37,7 @@ import { updateNavOrder } from "@/lib/api";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import ThemeToggle from "@/components/theme/ThemeToggle";
 import NavItemGroup from "@/components/dashboard/NavItemGroup";
+import { useInboxUnread } from "@/hooks/useInboxUnread";
 import { RootDropZone } from "@/components/dashboard/NavDropTargets";
 import CustomerHeaderSearch from "@/components/dashboard/staff/CustomerHeaderSearch";
 import TaskDialog from "@/components/tasks/TaskDialog";
@@ -63,6 +64,7 @@ export default function StaffTopBar() {
     s.hasPermission("estimates:write"),
   );
   const canWriteTasks = useAuthStore((s) => s.hasPermission("tasks:write"));
+  const inboxUnread = useInboxUnread();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
@@ -459,6 +461,7 @@ export default function StaffTopBar() {
                               onRemove={handleHideItem}
                               onNudge={handleNudge}
                               navTree={visibleItems}
+                              inboxUnread={inboxUnread}
                             />
                           ))}
                         </SortableContext>

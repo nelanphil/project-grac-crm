@@ -33,6 +33,8 @@ type NavItemGroupProps = {
   onNudge?: (href: string, direction: NavNudge) => void;
   /** Full visible tree, used to enable and disable the arrow controls. */
   navTree?: NavItem[];
+  /** Unread Inboxes chats. The dot is drawn only on the Inboxes row. */
+  inboxUnread?: boolean;
 };
 
 export default function NavItemGroup({
@@ -46,6 +48,7 @@ export default function NavItemGroup({
   onRemove,
   onNudge,
   navTree,
+  inboxUnread = false,
 }: NavItemGroupProps) {
   const { href, label, icon: Icon, children } = item;
   const hasChildren = Boolean(children && children.length > 0);
@@ -68,6 +71,7 @@ export default function NavItemGroup({
     (hasChildren || (editable && editMode && canNestInside)) && listOpen;
 
   const isSidebar = variant === "sidebar";
+  const showUnread = inboxUnread && href === "/dashboard/inboxes";
 
   const parentClass = isSidebar
     ? active
@@ -133,6 +137,7 @@ export default function NavItemGroup({
           <div className="flex items-center gap-0.5">
             <Link
               href={href}
+              aria-label={showUnread ? `${label}, unread messages` : undefined}
               onClick={(e) => {
                 if (editable && editMode) {
                   e.preventDefault();
@@ -145,7 +150,15 @@ export default function NavItemGroup({
               <Icon
                 className={`${depth === 0 ? "h-4 w-4" : "h-3.5 w-3.5"} shrink-0`}
               />
-              <span className="truncate">{label}</span>
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {showUnread ? (
+                <span
+                  aria-hidden
+                  className={`block h-2 w-2 shrink-0 rounded-full bg-[#2f6fed] ${
+                    active ? "ring-2 ring-white" : ""
+                  }`}
+                />
+              ) : null}
             </Link>
             {showChevron ? (
               <button
@@ -224,6 +237,7 @@ export default function NavItemGroup({
                   onRemove={onRemove}
                   onNudge={onNudge}
                   navTree={navTree}
+                  inboxUnread={inboxUnread}
                 />
               ))}
             </SortableContext>
@@ -236,6 +250,7 @@ export default function NavItemGroup({
                 variant={variant}
                 onNavigate={onNavigate}
                 depth={depth + 1}
+                inboxUnread={inboxUnread}
               />
             ))
           )}

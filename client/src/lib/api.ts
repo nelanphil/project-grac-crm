@@ -9157,6 +9157,15 @@ function inboxQuery(params: Record<string, string | undefined>): string {
   return qs ? `?${qs}` : "";
 }
 
+export async function getInboxUnreadAlert(
+  token: string,
+): Promise<{ hasUnread: boolean }> {
+  return authRequest("/inboxes/unread-count", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
 export async function getInboxConversations(
   token: string,
   options: {

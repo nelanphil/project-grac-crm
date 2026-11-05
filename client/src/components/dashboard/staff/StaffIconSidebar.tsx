@@ -62,6 +62,31 @@ import {
   RootDropZone,
 } from "@/components/dashboard/NavDropTargets";
 import NavReorderControls from "@/components/dashboard/NavReorderControls";
+import { useInboxUnread } from "@/hooks/useInboxUnread";
+
+const INBOXES_HREF = "/dashboard/inboxes";
+
+function containsInboxes(item: NavItem): boolean {
+  if (item.href === INBOXES_HREF) return true;
+  return item.children?.some(containsInboxes) ?? false;
+}
+
+function UnreadDot({
+  active,
+  className = "",
+}: {
+  active: boolean;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden
+      className={`block h-2 w-2 shrink-0 rounded-full bg-[#2f6fed] ${
+        active ? "ring-2 ring-white" : ""
+      } ${className}`}
+    />
+  );
+}
 
 /** Press and hold ~500ms (dnd-kit's own activation delay) starts both the wiggle and the drag. */
 const LONG_PRESS_ACTIVATION = { delay: 500, tolerance: 8 };
@@ -100,6 +125,7 @@ function NavLink({
   popupOpen,
   onShowHover,
   onHideHover,
+  alert,
   children,
 }: {
   href: string;
@@ -111,6 +137,7 @@ function NavLink({
   popupOpen?: boolean;
   onShowHover: (el: HTMLElement) => void;
   onHideHover: () => void;
+  alert?: boolean;
   children: ReactNode;
 }) {
   const handleEnter = (e: MouseEvent<HTMLAnchorElement>) => {
@@ -124,11 +151,13 @@ function NavLink({
     if (editMode) e.preventDefault();
   };
 
+  const accessibleLabel = alert ? `${label}, unread messages` : label;
+
   return (
     <Link
       href={href}
-      title={expanded || hasPopup ? undefined : label}
-      aria-label={label}
+      title={expanded || hasPopup ? undefined : accessibleLabel}
+      aria-label={accessibleLabel}
       aria-current={active ? "page" : undefined}
       aria-haspopup={hasPopup ? "menu" : undefined}
       aria-expanded={hasPopup ? popupOpen : undefined}
@@ -145,12 +174,16 @@ function NavLink({
           : "text-white/70 hover:bg-white/10 hover:text-white"
       }`}
     >
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+      <span className="relative flex h-5 w-5 shrink-0 items-center justify-center">
         {children}
+        {alert && !expanded ? (
+          <UnreadDot active={active} className="absolute -right-1.5 -top-1.5" />
+        ) : null}
       </span>
       {expanded ? (
-        <span className="truncate text-sm font-medium">{label}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
       ) : null}
+      {alert && expanded ? <UnreadDot active={active} /> : null}
     </Link>
   );
 }
@@ -197,6 +230,7 @@ function ChildNavLink({
   popupOpen,
   onShowHover,
   onHideHover,
+  alert,
 }: {
   href: string;
   label: string;
@@ -208,10 +242,12 @@ function ChildNavLink({
   popupOpen?: boolean;
   onShowHover?: (el: HTMLElement) => void;
   onHideHover?: () => void;
+  alert?: boolean;
 }) {
   return (
     <Link
       href={href}
+      aria-label={alert ? `${label}, unread messages` : undefined}
       aria-current={active ? "page" : undefined}
       aria-haspopup={hasPopup ? "menu" : undefined}
       aria-expanded={hasPopup ? popupOpen : undefined}
@@ -239,7 +275,8 @@ function ChildNavLink({
       }`}
     >
       {Icon ? <Icon className="h-3.5 w-3.5 shrink-0" /> : null}
-      <span className="truncate font-medium">{label}</span>
+      <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+      {alert ? <UnreadDot active={active} /> : null}
     </Link>
   );
 }
@@ -249,11 +286,13 @@ function FlyoutChildLinks({
   pathname,
   depth,
   onNavigate,
+  inboxUnread,
 }: {
   items: NavItem[];
   pathname: string;
   depth: number;
   onNavigate: () => void;
+  inboxUnread: boolean;
 }) {
   return (
     <div
@@ -269,11 +308,13 @@ function FlyoutChildLinks({
         const active =
           isNavItemActive(pathname, child.href, hasChildren) || descendantActive;
         const Icon = child.icon;
+        const alert = inboxUnread && child.href === INBOXES_HREF;
         return (
           <div key={child.href} className="flex flex-col gap-0.5">
             <Link
               href={child.href}
               role="menuitem"
+              aria-label={alert ? `${child.label}, unread messages` : undefined}
               aria-current={active ? "page" : undefined}
               onClick={onNavigate}
               className={`flex h-9 items-center gap-2 rounded-lg px-3 text-sm transition-colors ${
@@ -283,7 +324,8 @@ function FlyoutChildLinks({
               }`}
             >
               <Icon className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate font-medium">{child.label}</span>
+              <span className="min-w-0 flex-1 truncate font-medium">{child.label}</span>
+              {alert ? <UnreadDot active={active} /> : null}
             </Link>
             {hasChildren ? (
               <FlyoutChildLinks
@@ -291,6 +333,7 @@ function FlyoutChildLinks({
                 pathname={pathname}
                 depth={depth + 1}
                 onNavigate={onNavigate}
+                inboxUnread={inboxUnread}
               />
             ) : null}
           </div>
@@ -311,6 +354,7 @@ function StaffNavItem({
   onHideHover,
   onRemove,
   onNudge,
+  inboxUnread,
   depth = 0,
 }: {
   item: NavItem;
@@ -323,9 +367,21 @@ function StaffNavItem({
   onHideHover: () => void;
   onRemove?: (href: string) => void;
   onNudge?: (href: string, direction: NavNudge) => void;
+  inboxUnread: boolean;
   depth?: number;
 }) {
   const flyoutOpen = openFlyoutHref === item.href;
+  const inboxAlert = inboxUnread && item.href === INBOXES_HREF;
+  const railAlert =
+    inboxUnread &&
+    !sidebarExpanded &&
+    depth === 0 &&
+    item.href !== INBOXES_HREF &&
+    containsInboxes(item);
+  const showAlert = inboxAlert || railAlert;
+  const accessibleLabel = showAlert
+    ? `${item.label}, unread messages`
+    : item.label;
   const hasChildren = Boolean(item.children?.length);
   const descendantActive = isNavSubtreeActive(pathname, item);
   const parentActive = isNavItemActive(pathname, item.href, hasChildren);
@@ -395,6 +451,7 @@ function StaffNavItem({
                         : undefined
                     }
                     onHideHover={hasChildren ? onHideHover : undefined}
+                    alert={inboxAlert}
                   />
                 </div>
                 <RemoveNavButton
@@ -418,6 +475,7 @@ function StaffNavItem({
                     : undefined
                 }
                 onHideHover={hasChildren ? onHideHover : undefined}
+                alert={inboxAlert}
               />
             )}
           </div>
@@ -442,6 +500,7 @@ function StaffNavItem({
                   onHideHover={onHideHover}
                   onRemove={onRemove}
                   onNudge={onNudge}
+                  inboxUnread={inboxUnread}
                   depth={depth + 1}
                 />
               ))}
@@ -493,10 +552,11 @@ function StaffNavItem({
                       el,
                       hasChildren
                         ? { kind: "flyout", item }
-                        : { kind: "tooltip", label: item.label },
+                        : { kind: "tooltip", label: accessibleLabel },
                     )
                   }
                   onHideHover={onHideHover}
+                  alert={showAlert}
                 >
                   <Icon className="h-5 w-5" />
                 </NavLink>
@@ -520,10 +580,11 @@ function StaffNavItem({
                   el,
                   hasChildren
                     ? { kind: "flyout", item }
-                    : { kind: "tooltip", label: item.label },
+                    : { kind: "tooltip", label: accessibleLabel },
                 )
               }
               onHideHover={onHideHover}
+              alert={showAlert}
             >
               <Icon className="h-5 w-5" />
             </NavLink>
@@ -550,6 +611,7 @@ function StaffNavItem({
                 onHideHover={onHideHover}
                 onRemove={onRemove}
                 onNudge={onNudge}
+                inboxUnread={inboxUnread}
                 depth={1}
               />
             ))}
@@ -569,6 +631,7 @@ function StaffNavItem({
 
 export default function StaffIconSidebar() {
   const pathname = usePathname();
+  const inboxUnread = useInboxUnread();
   const user = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
   const navOrder = useAuthStore((s) => s.user?.uiPreferences?.navOrder);
@@ -875,6 +938,7 @@ export default function StaffIconSidebar() {
                 onHideHover={scheduleHideHover}
                 onRemove={handleHideItem}
                 onNudge={handleNudge}
+                inboxUnread={inboxUnread}
               />
             ))}
           </SortableContext>
@@ -976,6 +1040,7 @@ export default function StaffIconSidebar() {
             pathname={pathname}
             depth={0}
             onNavigate={clearHoverChrome}
+            inboxUnread={inboxUnread}
           />
         </div>
       ) : null}
