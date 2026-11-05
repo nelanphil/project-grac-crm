@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FileText } from "lucide-react";
 import { InvoiceStatusPill } from "@/components/billing/InvoiceStatusActions";
@@ -45,16 +46,98 @@ function isOpenInvoicePastDue(invoice: InvoiceItem): boolean {
   return due.getTime() < startOfToday.getTime();
 }
 
+/** Invoices billed from the work order, plus the renewal that created the visit. */
+export function invoicesForWorkOrder(
+  order: { _id: string; renewalInvoiceRef?: string | null },
+  invoices: InvoiceItem[],
+): InvoiceItem[] {
+  const seen = new Set<string>();
+  const matched: InvoiceItem[] = [];
+  for (const invoice of invoices) {
+    const linkedByWorkOrder = invoice.workOrderRef === order._id;
+    const linkedByRenewal =
+      Boolean(order.renewalInvoiceRef) &&
+      invoice._id === order.renewalInvoiceRef;
+    if ((!linkedByWorkOrder && !linkedByRenewal) || seen.has(invoice._id)) {
+      continue;
+    }
+    seen.add(invoice._id);
+    matched.push(invoice);
+  }
+  return matched;
+}
+
+export function WorkOrderInvoiceList({
+  invoices,
+  loading = false,
+}: {
+  invoices: InvoiceItem[];
+  loading?: boolean;
+}) {
+  return (
+    <div
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+        Invoices
+      </p>
+      {loading ? (
+        <p className="mt-1 text-xs text-neutral-500">Loading invoices…</p>
+      ) : invoices.length === 0 ? (
+        <p className="mt-1 text-xs text-neutral-400">No invoices</p>
+      ) : (
+        <ul className="mt-1 space-y-0.5">
+          {invoices.map((invoice) => {
+            const pastDue = isOpenInvoicePastDue(invoice);
+            return (
+              <li key={invoice._id}>
+                <Link
+                  href={`/dashboard/orders/detail?id=${invoice._id}`}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 text-sm hover:bg-neutral-100"
+                >
+                  <span className="font-medium text-brand-dark">
+                    {invoice.number}
+                  </span>
+                  <span className="text-neutral-600">
+                    {formatDate(invoice.issuedAt)}
+                  </span>
+                  <span className="text-neutral-600">
+                    {formatMoney(invoice.amountCents)}
+                  </span>
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    <InvoiceStatusPill invoice={invoice} />
+                    {pastDue ? (
+                      <PastDueBadge
+                        pastDue={{
+                          count: 1,
+                          totalCents: invoice.amountCents,
+                        }}
+                      />
+                    ) : null}
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function CustomerInvoicesTab({
   token,
   customerRef,
   customerId,
   onCountChange,
+  onLoaded,
 }: {
   token: string;
   customerRef: string;
   customerId: number;
   onCountChange?: (count: number) => void;
+  onLoaded?: (invoices: InvoiceItem[], customerRef: string) => void;
 }) {
   const router = useRouter();
   const [invoices, setInvoices] = useState<InvoiceItem[]>([]);
@@ -72,6 +155,7 @@ export default function CustomerInvoicesTab({
         setError(null);
         setLoadedKey(`${customerRef}:${customerId}`);
         onCountChange?.(rows.length);
+        onLoaded?.(rows, customerRef);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -81,11 +165,12 @@ export default function CustomerInvoicesTab({
         );
         setLoadedKey(`${customerRef}:${customerId}`);
         onCountChange?.(0);
+        onLoaded?.([], customerRef);
       });
     return () => {
       cancelled = true;
     };
-  }, [token, customerRef, customerId, onCountChange]);
+  }, [token, customerRef, customerId, onCountChange, onLoaded]);
 
   if (loading) {
     return <p className="text-sm text-neutral-500">Loading invoices…</p>;

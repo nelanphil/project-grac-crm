@@ -7229,6 +7229,7 @@ export interface MessagingContactItem {
     zip: string;
     phone: string;
   };
+  owner?: CustomerOwnerSummary | null;
   renewalDueDate: string | null;
   lastRenewalDate: string | null;
   renewalStatus: "due" | "overdue" | "renewed" | null;

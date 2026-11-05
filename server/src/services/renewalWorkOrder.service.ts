@@ -13,7 +13,9 @@ import {
 } from "../models/mongo/CustomerContact";
 import { Equipment } from "../models/mongo/Equipment";
 import { Invoice, type IInvoice } from "../models/mongo/Invoice";
+import { Product } from "../models/mongo/Product";
 import { WorkOrder, type IWorkOrder } from "../models/mongo/WorkOrder";
+import { ascWorkOrderMatchClauses, findAscProductIds } from "./ascContractSync";
 import { logNotificationAsync } from "./notification.service";
 import { nextPrefixedNumber } from "./serviceTicket";
 import { resolveTicketWorkOrderType } from "./ticketWorkOrderType";
@@ -21,6 +23,93 @@ import { recordWorkOrderActivity } from "./workOrderActivity.service";
 import { formatLocalDate, storedTicketDateKey } from "../utils/scheduleTime";
 
 const RENEWAL_VISIT_MINUTES = 30;
+
+/**
+ * GRAC often does the ASC visit before the customer pays the renewal link, so
+ * a visit this many days before the invoice was issued still covers it.
+ */
+export const COVERING_VISIT_LOOKBACK_DAYS = 90;
+const COVERING_VISIT_LOOKBACK_MS = COVERING_VISIT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+
+export function coveringVisitSince(invoice: {
+  issuedAt?: Date | null;
+  paidAt?: Date | null;
+  createdAt?: Date | null;
+}): Date | null {
+  const reference = invoice.issuedAt ?? invoice.paidAt ?? invoice.createdAt ?? null;
+  if (!reference) return null;
+  return new Date(new Date(reference).getTime() - COVERING_VISIT_LOOKBACK_MS);
+}
+
+/** Visit time used for the lookback: ticket date, then dispatch time, then when it was entered. */
+const visitAtExpr = {
+  $ifNull: ["$date", { $ifNull: ["$scheduledStart", "$createdAt"] }],
+};
+
+/**
+ * Work orders that already cover a paid contract invoice: an ASC visit for the
+ * same customer that no other renewal has claimed and that falls within the
+ * lookback window. Pass `$$`-prefixed names inside a `$lookup` pipeline.
+ */
+export function coveringVisitStages(input: {
+  ascProductIds: Set<string>;
+  since: Date | string;
+  contractRef: Types.ObjectId | string | null;
+  excludeWorkOrderRef?: Types.ObjectId | string | null;
+}): PipelineStage.Match[] {
+  const and: Record<string, unknown>[] = [
+    { $gte: [visitAtExpr, input.since] },
+    {
+      $or: [
+        { $eq: [{ $ifNull: ["$contractRef", null] }, null] },
+        { $eq: ["$contractRef", input.contractRef] },
+      ],
+    },
+  ];
+  if (input.excludeWorkOrderRef != null) {
+    and.push({ $ne: ["$_id", input.excludeWorkOrderRef] });
+  }
+  return [
+    {
+      $match: {
+        deletedAt: null,
+        renewalInvoiceRef: null,
+        $or: ascWorkOrderMatchClauses(input.ascProductIds),
+      },
+    },
+    { $match: { $expr: { $and: and } } },
+  ];
+}
+
+export async function findCoveringAscVisit(
+  invoice: Pick<
+    IInvoice,
+    "customerRef" | "contractRef" | "issuedAt" | "paidAt" | "createdAt"
+  >,
+  options?: { excludeWorkOrderRef?: Types.ObjectId | string | null },
+): Promise<{ _id: Types.ObjectId; number?: string } | null> {
+  const since = coveringVisitSince(invoice);
+  if (!invoice.customerRef || !since) return null;
+  const ascProductIds = await findAscProductIds(Product);
+  const [visit] = await WorkOrder.aggregate<{ _id: Types.ObjectId; number?: string }>([
+    { $match: { customerRef: new Types.ObjectId(String(invoice.customerRef)) } },
+    ...coveringVisitStages({
+      ascProductIds,
+      since,
+      contractRef: invoice.contractRef
+        ? new Types.ObjectId(String(invoice.contractRef))
+        : null,
+      excludeWorkOrderRef: options?.excludeWorkOrderRef
+        ? new Types.ObjectId(String(options.excludeWorkOrderRef))
+        : null,
+    }),
+    { $addFields: { visitAt: visitAtExpr } },
+    { $sort: { visitAt: 1, _id: 1 } },
+    { $limit: 1 },
+    { $project: { _id: 1, number: 1 } },
+  ]);
+  return visit ?? null;
+}
 
 /** Paid invoices of these kinds get a service visit work order. */
 export const CONTRACT_SERVICE_SOURCE_TYPES = [
@@ -131,6 +220,14 @@ export type RenewalWorkOrderGateway = {
   readLinkedRef(invoiceId: string): Promise<string | null>;
   discardWorkOrder(id: string): Promise<void>;
   afterLink?(workOrderId: string, invoiceId: string): Promise<void>;
+  /** An existing ASC visit that already covers this invoice. */
+  findCoveringWorkOrder?(
+    invoiceId: string,
+  ): Promise<{ id: string; number: string } | null>;
+  /** Marks the visit as this invoice's; false when another renewal took it first. */
+  claimWorkOrder?(workOrderId: string, invoiceId: string): Promise<boolean>;
+  releaseWorkOrder?(workOrderId: string, invoiceId: string): Promise<void>;
+  afterLinkExisting?(workOrderId: string, invoiceId: string): Promise<void>;
 };
 
 /**
@@ -209,6 +306,22 @@ export async function performRenewalWorkOrderEnsure(
     }
   }
 
+  const covering = await gateway.findCoveringWorkOrder?.(invoiceId);
+  if (covering && (await gateway.claimWorkOrder?.(covering.id, invoiceId))) {
+    if (await gateway.linkIfUnset(invoiceId, covering.id)) {
+      await gateway.afterLinkExisting?.(covering.id, invoiceId);
+      return {
+        workOrderId: covering.id,
+        number: covering.number,
+        created: false,
+      };
+    }
+    if ((await gateway.readLinkedRef(invoiceId)) !== covering.id) {
+      await gateway.releaseWorkOrder?.(covering.id, invoiceId);
+    }
+    return linkedWinner(invoiceId, gateway);
+  }
+
   const created = await gateway.createWorkOrder(invoiceId);
   const linked = await gateway.linkIfUnset(invoiceId, created.id);
   if (linked) {
@@ -221,6 +334,13 @@ export async function performRenewalWorkOrderEnsure(
   }
 
   await gateway.discardWorkOrder(created.id);
+  return linkedWinner(invoiceId, gateway);
+}
+
+async function linkedWinner(
+  invoiceId: string,
+  gateway: RenewalWorkOrderGateway,
+): Promise<RenewalWorkOrderResult | null> {
   const winner = await gateway.readLinkedRef(invoiceId);
   if (!winner) return null;
   const existing = await gateway.loadExistingWorkOrder(winner);
@@ -353,6 +473,78 @@ async function rememberWorkOrderOnContract(
   );
 }
 
+async function attachVisitToInvoice(
+  workOrder: IWorkOrder,
+  invoice: IInvoice,
+): Promise<void> {
+  if (!workOrder.renewalInvoiceRef) workOrder.renewalInvoiceRef = invoice._id as Types.ObjectId;
+  if (!workOrder.contractRef && invoice.contractRef) {
+    workOrder.contractRef = invoice.contractRef;
+  }
+  if (!workOrder.paid) workOrder.paid = true;
+  await workOrder.save();
+  await rememberWorkOrderOnContract(invoice, workOrder._id as Types.ObjectId);
+}
+
+/**
+ * The work order a paid renewal created for itself that nobody has touched:
+ * no date, dispatch time, technician, or parts, and not completed. Staff can
+ * swap it for the customer's real visit.
+ */
+export function isBlankRenewalWorkOrder(
+  workOrder: {
+    renewalInvoiceRef?: Types.ObjectId | string | null;
+    date?: Date | null;
+    scheduledStart?: Date | null;
+    completed?: boolean | null;
+    deletedAt?: Date | null;
+    parts?: unknown[] | null;
+    assignedUserRef?: Types.ObjectId | string | null;
+    assignedUserRefs?: unknown[] | null;
+  },
+  invoiceId: Types.ObjectId | string,
+): boolean {
+  if (workOrder.deletedAt) return false;
+  if (!workOrder.renewalInvoiceRef) return false;
+  if (String(workOrder.renewalInvoiceRef) !== String(invoiceId)) return false;
+  if (workOrder.completed) return false;
+  if (isRenewalVisitScheduled(workOrder)) return false;
+  if (workOrder.assignedUserRef) return false;
+  if ((workOrder.assignedUserRefs?.length ?? 0) > 0) return false;
+  return (workOrder.parts?.length ?? 0) === 0;
+}
+
+async function discardBlankRenewalWorkOrder(
+  workOrderRef: Types.ObjectId,
+  invoice: IInvoice,
+  replacement: IWorkOrder,
+  actor?: RenewalWorkOrderActor,
+): Promise<void> {
+  const discarded = await WorkOrder.findOneAndUpdate(
+    {
+      _id: workOrderRef,
+      renewalInvoiceRef: invoice._id,
+      deletedAt: null,
+      completed: { $ne: true },
+      date: null,
+      scheduledStart: null,
+    },
+    { $set: { deletedAt: new Date() } },
+  );
+  if (!discarded) return;
+  await recordWorkOrderActivity({
+    workOrderRef,
+    action: "deleted",
+    actor: {
+      actorKind: actor?.actorUserId ? "staff" : "system",
+      actorUserId: actor?.actorUserId ?? null,
+      actorName: actor?.actorName ?? null,
+    },
+    summary: `Replaced by ${replacement.number || "an existing visit"} for paid renewal ${invoice.number}`,
+    source: actor?.actorUserId ? "crm" : "job",
+  });
+}
+
 function mongooseGateway(
   actor?: RenewalWorkOrderActor,
 ): RenewalWorkOrderGateway {
@@ -410,6 +602,49 @@ function mongooseGateway(
         { _id: id },
         { $set: { deletedAt: new Date() } },
       );
+    },
+    async findCoveringWorkOrder(invoiceId) {
+      const invoice = await Invoice.findById(invoiceId)
+        .select("customerRef contractRef issuedAt paidAt createdAt")
+        .lean();
+      if (!invoice) return null;
+      const visit = await findCoveringAscVisit(invoice);
+      return visit ? { id: String(visit._id), number: visit.number ?? "" } : null;
+    },
+    async claimWorkOrder(workOrderId, invoiceId) {
+      const invoiceRef = new Types.ObjectId(invoiceId);
+      const claimed = await WorkOrder.findOneAndUpdate(
+        {
+          _id: workOrderId,
+          deletedAt: null,
+          $or: [{ renewalInvoiceRef: null }, { renewalInvoiceRef: invoiceRef }],
+        },
+        { $set: { renewalInvoiceRef: invoiceRef } },
+      );
+      return Boolean(claimed);
+    },
+    async releaseWorkOrder(workOrderId, invoiceId) {
+      await WorkOrder.updateOne(
+        { _id: workOrderId, renewalInvoiceRef: new Types.ObjectId(invoiceId) },
+        { $set: { renewalInvoiceRef: null } },
+      );
+    },
+    async afterLinkExisting(workOrderId, invoiceId) {
+      const invoice = await Invoice.findById(invoiceId);
+      const workOrder = await WorkOrder.findById(workOrderId);
+      if (!invoice || !workOrder) return;
+      await attachVisitToInvoice(workOrder, invoice);
+      await recordWorkOrderActivity({
+        workOrderRef: workOrder._id,
+        action: "updated",
+        actor: {
+          actorKind: actor?.actorUserId ? "staff" : "system",
+          actorUserId: actor?.actorUserId ?? null,
+          actorName: actor?.actorName ?? null,
+        },
+        summary: `Linked to paid renewal ${invoice.number}`,
+        source: actor?.actorUserId ? "crm" : "job",
+      });
     },
     async afterLink(workOrderId, invoiceId) {
       const invoice = await Invoice.findById(invoiceId);
@@ -534,7 +769,37 @@ export async function findPaidRenewalsWithoutWorkOrder(input?: {
         },
       },
       {
+        $lookup: {
+          from: WorkOrder.collection.name,
+          localField: "customerRef",
+          foreignField: "customerRef",
+          let: {
+            contractRef: { $ifNull: ["$contractRef", null] },
+            linkedRef: { $ifNull: ["$serviceWorkOrderRef", null] },
+            since: {
+              $subtract: [
+                { $ifNull: ["$issuedAt", { $ifNull: ["$paidAt", "$createdAt"] }] },
+                COVERING_VISIT_LOOKBACK_MS,
+              ],
+            },
+          },
+          pipeline: [
+            { $match: { customerRef: { $ne: null } } },
+            ...coveringVisitStages({
+              ascProductIds: await findAscProductIds(Product),
+              since: "$$since",
+              contractRef: "$$contractRef",
+              excludeWorkOrderRef: "$$linkedRef",
+            }),
+            { $limit: 1 },
+            { $project: { _id: 1 } },
+          ],
+          as: "coveringVisits",
+        },
+      },
+      {
         $match: {
+          coveringVisits: { $size: 0 },
           $or: [
             { serviceWorkOrderRef: null, laterWorkOrders: { $size: 0 } },
             { "linkedWorkOrders.0": { $exists: true } },
@@ -557,7 +822,7 @@ export async function findPaidRenewalsWithoutWorkOrder(input?: {
           },
         },
       },
-      { $project: { laterWorkOrders: 0, linkedWorkOrders: 0 } },
+      { $project: { laterWorkOrders: 0, linkedWorkOrders: 0, coveringVisits: 0 } },
     );
   } else {
     pipeline.push(
@@ -607,8 +872,16 @@ export async function linkRenewalWorkOrder(input: {
   actor?: RenewalWorkOrderActor;
 }): Promise<RenewalWorkOrderResult> {
   const invoice = await paidRenewalInvoice(input.invoiceId);
-  if (invoice.serviceWorkOrderRef) {
-    throw new RenewalWorkOrderError("This invoice already has a work order");
+  const replacedRef = invoice.serviceWorkOrderRef ?? null;
+  if (replacedRef) {
+    const current = await WorkOrder.findById(replacedRef)
+      .select(
+        "renewalInvoiceRef date scheduledStart completed deletedAt parts assignedUserRef assignedUserRefs",
+      )
+      .lean();
+    if (current && !current.deletedAt && !isBlankRenewalWorkOrder(current, invoice._id)) {
+      throw new RenewalWorkOrderError("This invoice already has a work order");
+    }
   }
   const rawId = input.workOrderId?.trim() ?? "";
   const rawNumber = input.workOrderNumber?.trim() ?? "";
@@ -634,9 +907,23 @@ export async function linkRenewalWorkOrder(input: {
       "That work order belongs to a different customer",
     );
   }
+  if (workOrder.deletedAt) {
+    throw new RenewalWorkOrderError("That work order was deleted");
+  }
+  if (replacedRef && String(replacedRef) === String(workOrder._id)) {
+    throw new RenewalWorkOrderError("That work order is already linked to this invoice");
+  }
+  if (
+    workOrder.renewalInvoiceRef &&
+    String(workOrder.renewalInvoiceRef) !== String(invoice._id)
+  ) {
+    throw new RenewalWorkOrderError(
+      "That work order is already linked to another paid renewal",
+    );
+  }
 
   const linked = await Invoice.findOneAndUpdate(
-    { _id: invoice._id, serviceWorkOrderRef: null },
+    { _id: invoice._id, serviceWorkOrderRef: replacedRef },
     {
       $set: {
         serviceWorkOrderRef: workOrder._id,
@@ -649,23 +936,20 @@ export async function linkRenewalWorkOrder(input: {
     throw new RenewalWorkOrderError("This invoice already has a work order");
   }
 
-  if (!workOrder.renewalInvoiceRef) workOrder.renewalInvoiceRef = invoice._id;
-  if (!workOrder.contractRef && invoice.contractRef) {
-    workOrder.contractRef = invoice.contractRef;
+  await attachVisitToInvoice(workOrder, invoice);
+  if (replacedRef) {
+    await discardBlankRenewalWorkOrder(replacedRef, invoice, workOrder, input.actor);
   }
-  if (!workOrder.paid) workOrder.paid = true;
-  await workOrder.save();
-  await rememberWorkOrderOnContract(invoice, workOrder._id as Types.ObjectId);
   await recordWorkOrderActivity({
     workOrderRef: workOrder._id,
     action: "updated",
     actor: {
-      actorKind: "staff",
+      actorKind: input.actor?.actorUserId ? "staff" : "system",
       actorUserId: input.actor?.actorUserId ?? null,
       actorName: input.actor?.actorName ?? null,
     },
     summary: `Linked to paid renewal ${invoice.number}`,
-    source: "crm",
+    source: input.actor?.actorUserId ? "crm" : "job",
   });
   return {
     workOrderId: String(workOrder._id),

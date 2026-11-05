@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import { CustomerContact } from "../models/mongo/CustomerContact";
 import { Customer } from "../models/mongo/Customer";
+import { User } from "../models/mongo/User";
 import { normalizePhoneDigits } from "./customerSites";
 import {
   contactHasValidEmail,
@@ -48,6 +49,12 @@ export interface HubContactItem {
     zip: string;
     phone: string;
   };
+  owner: {
+    _id: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+  } | null;
   renewalDueDate: string | null;
   lastRenewalDate: string | null;
   renewalStatus: "due" | "overdue" | "renewed" | null;
@@ -265,7 +272,7 @@ export async function searchHubContacts(options: {
     deletedAt: null,
     $or: [{ mergedIntoRef: null }, { mergedIntoRef: { $exists: false } }],
   })
-    .select("_id first last address city state zip phone accountName")
+    .select("_id first last address city state zip phone accountName ownerUserRef")
     .lean();
 
   const customerById = new Map(customers.map((c) => [String(c._id), c]));
@@ -292,6 +299,18 @@ export async function searchHubContacts(options: {
     .map((c) => c.customerRef)
     .filter((id): id is Types.ObjectId => Boolean(id));
   const renewalIdStrings = renewalIds.map((id) => String(id));
+  const ownerIds = [
+    ...new Set(
+      pageRows
+        .map((c) => {
+          const customer = c.customerRef
+            ? customerById.get(String(c.customerRef))
+            : undefined;
+          return customer?.ownerUserRef ? String(customer.ownerUserRef) : "";
+        })
+        .filter((id) => Types.ObjectId.isValid(id)),
+    ),
+  ];
   const [
     renewalMap,
     lastContactMap,
@@ -299,6 +318,7 @@ export async function searchHubContacts(options: {
     unpaidAscTickets,
     offerCheckoutAmountCents,
     savedOffers,
+    ownerDocs,
   ] = await Promise.all([
     resolveRenewalsForCustomers(
       renewalIds,
@@ -310,7 +330,23 @@ export async function searchHubContacts(options: {
     loadUnpaidAscWorkOrders(renewalIdStrings),
     offerCatalogCheckoutAmounts(),
     savedOfferInvoiceAmounts(renewalIdStrings),
+    ownerIds.length > 0
+      ? User.find({ _id: { $in: ownerIds } })
+          .select("_id first_name last_name email")
+          .lean()
+      : Promise.resolve([]),
   ]);
+  const ownerById = new Map(
+    ownerDocs.map((owner) => [
+      String(owner._id),
+      {
+        _id: String(owner._id),
+        first_name: owner.first_name ?? "",
+        last_name: owner.last_name ?? "",
+        email: owner.email ?? "",
+      },
+    ]),
+  );
 
   const contacts = pageRows.map((c) => {
     const customer = c.customerRef
@@ -345,6 +381,7 @@ export async function searchHubContacts(options: {
       invoice ? Math.round(Number(invoice.amountCents) || 0) : null,
       prior,
     );
+    const ownerId = customer?.ownerUserRef ? String(customer.ownerUserRef) : "";
 
     return {
       _id: String(c._id),
@@ -368,6 +405,7 @@ export async function searchHubContacts(options: {
             phone: customer.phone ?? "",
           }
         : emptyCustomer,
+      owner: ownerId ? (ownerById.get(ownerId) ?? null) : null,
       renewalDueDate: renewalInfo.renewalDueDate
         ? renewalInfo.renewalDueDate.toISOString()
         : null,

@@ -76,6 +76,11 @@ function formatPhone(phone: string | undefined | null): string {
   return phone;
 }
 
+function formatOwnerName(owner: MessagingContactItem["owner"]): string {
+  if (!owner) return "—";
+  return formatCustomerName(owner.first_name, owner.last_name) || "—";
+}
+
 function offerForContact(
   contactId: string,
   fallback: string | null,
@@ -690,6 +695,10 @@ export default function CreatePanel({
                             }
                           />
                           <DataField
+                            label="Owner"
+                            value={formatOwnerName(c.owner)}
+                          />
+                          <DataField
                             label="Renewal"
                             value={
                               <span className="inline-flex flex-col items-start gap-1">
@@ -754,6 +763,7 @@ export default function CreatePanel({
                         <th className="px-2 py-2 font-medium">Contact</th>
                         <th className="px-2 py-2 font-medium">Phone</th>
                         <th className="px-2 py-2 font-medium">Customer</th>
+                        <th className="px-2 py-2 font-medium">Owner</th>
                         <th className="px-2 py-2 font-medium">Renewal</th>
                         <th className="px-2 py-2 font-medium">Last contact</th>
                         {showPaymentLinkColumn ? (
@@ -807,6 +817,9 @@ export default function CreatePanel({
                             </td>
                             <td className="px-2 py-2 text-neutral-600">
                               {formatCustomerRecordName(c.customer) || "—"}
+                            </td>
+                            <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
+                              {formatOwnerName(c.owner)}
                             </td>
                             <td className="px-2 py-2 text-neutral-600">
                               <span className="inline-flex flex-col items-start gap-1">
@@ -899,7 +912,8 @@ export default function CreatePanel({
       ) : null}
 
       {step === "message" ? (
-        <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
           <label className="mb-3 block text-sm">
             <span className="mb-1 block text-xs font-medium text-neutral-500">
               Template
@@ -1023,6 +1037,23 @@ export default function CreatePanel({
               className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-brand-orange"
             />
           </label>
+          </div>
+
+          <section className="h-fit rounded-xl border border-neutral-200 bg-white p-4 shadow-sm lg:sticky lg:top-4 lg:self-start">
+            <h2 className="mb-3 text-sm font-semibold text-brand-dark">
+              Phone preview
+            </h2>
+            <p className="mb-4 text-xs text-neutral-500">
+              {selectedIds.size === 1
+                ? "Preview uses the selected contact’s data."
+                : "Select a single contact for a live merge preview, or view sample data."}
+            </p>
+            <PhonePreview
+              message={previewText}
+              contactLabel={previewContactLabel}
+              isSample={previewSample}
+            />
+          </section>
         </div>
       ) : null}
 

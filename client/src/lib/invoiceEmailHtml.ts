@@ -115,6 +115,7 @@ export function messagingContactFromInvoice(
       zip: customer?.zip ?? "",
       phone: customer?.phone ?? "",
     },
+    owner: null,
     renewalDueDate: null,
     lastRenewalDate: null,
     renewalStatus: null,

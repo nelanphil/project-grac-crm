@@ -257,31 +257,34 @@ export default function PaidRenewalsPanel() {
             Schedule WO
           </Link>
         ) : (
-          <>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void scheduleOne(invoice._id)}
-              className="rounded-md bg-brand-dark px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
-            >
-              {busyId === invoice._id ? "Opening…" : "Schedule WO"}
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setLinkingId((current) =>
-                  current === invoice._id ? null : invoice._id,
-                );
-                setLinkNumber("");
-                setDismissId(null);
-              }}
-              className="rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
-            >
-              Link existing
-            </button>
-          </>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void scheduleOne(invoice._id)}
+            className="rounded-md bg-brand-dark px-2.5 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-60"
+          >
+            {busyId === invoice._id ? "Opening…" : "Schedule WO"}
+          </button>
         )}
+        <button
+          type="button"
+          disabled={busy}
+          title={
+            visit
+              ? `Use the customer's existing visit instead of ${visit.number || "the blank work order"}`
+              : undefined
+          }
+          onClick={() => {
+            setLinkingId((current) =>
+              current === invoice._id ? null : invoice._id,
+            );
+            setLinkNumber("");
+            setDismissId(null);
+          }}
+          className="rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
+        >
+          Link existing
+        </button>
         <button
           type="button"
           disabled={busy}

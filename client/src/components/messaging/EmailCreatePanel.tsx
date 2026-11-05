@@ -77,6 +77,11 @@ function formatRenewalDate(iso: string | null): string {
   });
 }
 
+function formatOwnerName(owner: MessagingContactItem["owner"]): string {
+  if (!owner) return "—";
+  return formatCustomerName(owner.first_name, owner.last_name) || "—";
+}
+
 type EmailCreatePanelProps = {
   search: string;
   onSearchChange: (value: string) => void;
@@ -655,6 +660,10 @@ export default function EmailCreatePanel({
                             value={formatCustomerRecordName(c.customer) || "—"}
                           />
                           <DataField
+                            label="Owner"
+                            value={formatOwnerName(c.owner)}
+                          />
+                          <DataField
                             label="Renewal"
                             value={
                               <span className="inline-flex flex-col items-start gap-1">
@@ -719,6 +728,7 @@ export default function EmailCreatePanel({
                         <th className="px-2 py-2 font-medium">Contact</th>
                         <th className="px-2 py-2 font-medium">Email</th>
                         <th className="px-2 py-2 font-medium">Customer</th>
+                        <th className="px-2 py-2 font-medium">Owner</th>
                         <th className="px-2 py-2 font-medium">Renewal</th>
                         <th className="px-2 py-2 font-medium">Last contact</th>
                         {showPaymentLinkColumn ? (
@@ -772,6 +782,9 @@ export default function EmailCreatePanel({
                             </td>
                             <td className="px-2 py-2 text-neutral-600">
                               {formatCustomerRecordName(c.customer) || "—"}
+                            </td>
+                            <td className="px-2 py-2 whitespace-nowrap text-neutral-600">
+                              {formatOwnerName(c.owner)}
                             </td>
                             <td className="px-2 py-2 text-neutral-600">
                               <span className="inline-flex flex-col items-start gap-1">

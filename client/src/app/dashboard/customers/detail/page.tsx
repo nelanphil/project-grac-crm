@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -19,7 +19,10 @@ import AuthGuard from "@/components/auth/AuthGuard";
 import DashboardBackLink from "@/components/dashboard/DashboardBackLink";
 import { formatAddressLabel } from "@/components/customers/CustomerAddressesPanel";
 import PastDueBadge from "@/components/billing/PastDueBadge";
-import CustomerInvoicesTab from "@/components/customers/CustomerInvoicesTab";
+import CustomerInvoicesTab, {
+  invoicesForWorkOrder,
+  WorkOrderInvoiceList,
+} from "@/components/customers/CustomerInvoicesTab";
 import CustomerRecordCard from "@/components/customers/CustomerRecordCard";
 import CustomerReputationControl from "@/components/customers/CustomerReputationControl";
 import MergeCustomersDialog from "@/components/customers/MergeCustomersDialog";
@@ -47,6 +50,7 @@ import {
   WorkOrderListItem,
   ContractListItem,
   TerritoryOwner,
+  InvoiceItem,
   ApiError,
 } from "@/lib/api";
 import { formatCustomerRecordName } from "@/lib/formatName";
@@ -175,6 +179,16 @@ function CustomerDetailContent() {
     "work-orders",
   );
   const [invoiceCount, setInvoiceCount] = useState(0);
+  const [customerInvoices, setCustomerInvoices] = useState<{
+    customerId: string;
+    invoices: InvoiceItem[];
+  } | null>(null);
+  const handleInvoicesLoaded = useCallback(
+    (rows: InvoiceItem[], loadedCustomerId: string) => {
+      setCustomerInvoices({ customerId: loadedCustomerId, invoices: rows });
+    },
+    [],
+  );
   const [workOrderListView, setWorkOrderListView] = useState<
     "all" | "active" | "deleted"
   >("all");
@@ -247,6 +261,20 @@ function CustomerDetailContent() {
       cancelled = true;
     };
   }, [token, customerLegacyId, canViewDeletedWorkOrders, workOrderListView]);
+
+  const loadedCustomerInvoices =
+    customerInvoices && customer?._id === customerInvoices.customerId
+      ? customerInvoices.invoices
+      : null;
+
+  const invoicesByWorkOrderId = useMemo(() => {
+    const grouped = new Map<string, InvoiceItem[]>();
+    if (!loadedCustomerInvoices) return grouped;
+    for (const order of workOrders) {
+      grouped.set(order._id, invoicesForWorkOrder(order, loadedCustomerInvoices));
+    }
+    return grouped;
+  }, [loadedCustomerInvoices, workOrders]);
 
   const filteredWorkOrders = useMemo(() => {
     if (addressFilter === "all") return workOrders;
@@ -526,6 +554,9 @@ function CustomerDetailContent() {
   }
 
   const addresses = customer.addresses ?? [];
+  const workOrderColumnCount =
+    5 + (addresses.length > 0 ? 1 : 0) + (showWorkOrderActions ? 1 : 0);
+  const invoicesLoading = loadedCustomerInvoices === null;
   const sectionLinks = [
     { id: "customer-record", label: "Details" },
     { id: "customer-work-orders", label: "Work orders" },
@@ -1009,6 +1040,7 @@ function CustomerDetailContent() {
             customerRef={customer._id}
             customerId={customer.legacyId}
             onCountChange={setInvoiceCount}
+            onLoaded={handleInvoicesLoaded}
           />
         </div>
         {recordsTab === "work-orders" ? (
@@ -1114,6 +1146,12 @@ function CustomerDetailContent() {
                     />
                   </div>
                 ) : null}
+                <div className="mt-3 border-t border-neutral-100 pt-3">
+                  <WorkOrderInvoiceList
+                    invoices={invoicesByWorkOrderId.get(order._id) ?? []}
+                    loading={invoicesLoading}
+                  />
+                </div>
               </MobileDataCard>
             ))}
             desktop={
@@ -1217,14 +1255,21 @@ function CustomerDetailContent() {
                             </td>
                           ) : null}
                         </tr>
+                        <tr className="bg-neutral-50/80">
+                          <td
+                            colSpan={workOrderColumnCount}
+                            className="px-6 pb-4 pt-1"
+                          >
+                            <WorkOrderInvoiceList
+                              invoices={invoicesByWorkOrderId.get(order._id) ?? []}
+                              loading={invoicesLoading}
+                            />
+                          </td>
+                        </tr>
                         {confirmingDeleteId === order._id ? (
                           <tr>
                             <td
-                              colSpan={
-                                5 +
-                                (addresses.length > 0 ? 1 : 0) +
-                                (showWorkOrderActions ? 1 : 0)
-                              }
+                              colSpan={workOrderColumnCount}
                               className="px-6 py-3"
                             >
                               <SoftDeleteWarning
