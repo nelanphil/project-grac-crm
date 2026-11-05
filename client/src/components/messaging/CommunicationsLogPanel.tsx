@@ -3,8 +3,13 @@
 import { Fragment, useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import PastDueBadge from "@/components/billing/PastDueBadge";
 import { useCommunicationsLog } from "@/hooks/useCommunicationsLog";
-import type { CommunicationLogChannel } from "@/lib/api";
+import type {
+  CommunicationLogChannel,
+  CommunicationLogThread,
+} from "@/lib/api";
+import { formatDateOnly } from "@/lib/contractDates";
 import {
   CHANNEL_LABEL,
   CommunicationThreadEntries,
@@ -26,6 +31,29 @@ function shortWhen(iso: string | null): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function RenewalStatusPill({
+  status,
+}: {
+  status: CommunicationLogThread["renewalStatus"];
+}) {
+  if (!status) return <span className="text-neutral-400">—</span>;
+  const label =
+    status === "overdue" ? "Overdue" : status === "renewed" ? "Renewed" : "Due";
+  const tone =
+    status === "overdue"
+      ? "bg-red-50 text-red-700"
+      : status === "renewed"
+        ? "bg-emerald-50 text-emerald-700"
+        : "bg-amber-50 text-amber-800";
+  return (
+    <span
+      className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tone}`}
+    >
+      {label}
+    </span>
+  );
 }
 
 function SummaryCard({ label, value }: { label: string; value: string }) {
@@ -55,7 +83,7 @@ export default function CommunicationsLogPanel({ token }: { token: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="grid grid-cols-1 items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
         <div>
           <h2 className="text-sm font-semibold text-brand-dark">
             Communications Log
@@ -65,16 +93,19 @@ export default function CommunicationsLogPanel({ token }: { token: string }) {
             {log.monthLabel}. Replies stay with the message they answer.
           </p>
         </div>
-        <MonthYearSwitcher
-          label={log.monthLabel}
-          onShiftMonth={shiftMonth}
-          onShiftYear={shiftYear}
-          onThisMonth={() => {
-            setExpandedId(null);
-            log.goToCurrentMonth();
-          }}
-          showThisMonth={!log.isCurrentMonth}
-        />
+        <div className="flex justify-center">
+          <MonthYearSwitcher
+            label={log.monthLabel}
+            onShiftMonth={shiftMonth}
+            onShiftYear={shiftYear}
+            onThisMonth={() => {
+              setExpandedId(null);
+              log.goToCurrentMonth();
+            }}
+            showThisMonth={!log.isCurrentMonth}
+          />
+        </div>
+        <div className="hidden sm:block" aria-hidden />
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -176,6 +207,8 @@ export default function CommunicationsLogPanel({ token }: { token: string }) {
             <thead className="border-b border-neutral-200 bg-neutral-50 text-xs font-medium text-neutral-500">
               <tr>
                 <th className="px-3 py-2 font-medium">Customer</th>
+                <th className="px-3 py-2 font-medium">Renewal</th>
+                <th className="px-3 py-2 font-medium">Renewal date</th>
                 <th className="px-3 py-2 font-medium">Channel</th>
                 <th className="px-3 py-2 font-medium">First outbound</th>
                 <th className="px-3 py-2 font-medium">Last activity</th>
@@ -208,19 +241,22 @@ export default function CommunicationsLogPanel({ token }: { token: string }) {
                             <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-neutral-400" />
                           )}
                           <span>
-                            {thread.customerRef ? (
-                              <Link
-                                href={customerHistoryHref(thread.customerRef)}
-                                onClick={(event) => event.stopPropagation()}
-                                className="font-medium text-brand-orange hover:underline"
-                              >
-                                {thread.customerName}
-                              </Link>
-                            ) : (
-                              <span className="font-medium text-brand-dark">
-                                {thread.customerName}
-                              </span>
-                            )}
+                            <span className="inline-flex flex-wrap items-center gap-1.5">
+                              {thread.customerRef ? (
+                                <Link
+                                  href={customerHistoryHref(thread.customerRef)}
+                                  onClick={(event) => event.stopPropagation()}
+                                  className="font-medium text-brand-orange hover:underline"
+                                >
+                                  {thread.customerName}
+                                </Link>
+                              ) : (
+                                <span className="font-medium text-brand-dark">
+                                  {thread.customerName}
+                                </span>
+                              )}
+                              <PastDueBadge pastDue={thread.pastDue} compact />
+                            </span>
                             {thread.handle &&
                             thread.handle !== thread.customerName ? (
                               <span className="mt-0.5 block text-xs text-neutral-500">
@@ -229,6 +265,12 @@ export default function CommunicationsLogPanel({ token }: { token: string }) {
                             ) : null}
                           </span>
                         </button>
+                      </td>
+                      <td className="px-3 py-3 align-top">
+                        <RenewalStatusPill status={thread.renewalStatus} />
+                      </td>
+                      <td className="px-3 py-3 align-top text-neutral-600">
+                        {formatDateOnly(thread.renewalDueDate)}
                       </td>
                       <td className="px-3 py-3 align-top">
                         <span className="flex flex-wrap gap-1">
@@ -278,7 +320,7 @@ export default function CommunicationsLogPanel({ token }: { token: string }) {
                     </tr>
                     {open ? (
                       <tr className={fresh ? "bg-orange-50" : "bg-neutral-50"}>
-                        <td colSpan={7} className="px-4 py-3">
+                        <td colSpan={9} className="px-4 py-3">
                           <CommunicationThreadEntries entries={thread.entries} />
                         </td>
                       </tr>

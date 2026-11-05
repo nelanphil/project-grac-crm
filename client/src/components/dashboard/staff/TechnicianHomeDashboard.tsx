@@ -157,6 +157,7 @@ function AppointmentCard({
 }) {
   const service = serviceLabel(job);
   const note = noteLabel(job, service);
+  const done = job.completed && !job.completionPending;
   const address = jobAddress(job);
   const number = workOrderNumber(job);
   const phone = contactPhone(job.primaryContactPhone);
@@ -219,12 +220,12 @@ function AppointmentCard({
         >
           {selected ? "Close" : "Open"}
         </button>
-        {job.completed ? (
+        {done ? (
           <span className={`${SWATCH} bg-emerald-50 text-emerald-800 ring-emerald-200`}>
             Complete
           </span>
         ) : null}
-        {canWrite && job.completed ? (
+        {canWrite && done ? (
           <button
             type="button"
             onClick={onResend}
@@ -238,7 +239,7 @@ function AppointmentCard({
             Paid
           </span>
         ) : null}
-        {canWrite && !job.completed ? (
+        {canWrite && !done ? (
           <button
             type="button"
             onClick={onMarkComplete}
@@ -606,6 +607,7 @@ export default function TechnicianHomeDashboard() {
               ...job,
               paid: updated.paid,
               completed: updated.completed,
+              completionPending: updated.completionPending,
               customerName: updated.customerName,
               descPerform: updated.descPerform,
               scheduledStart: updated.scheduledStart,
@@ -622,6 +624,21 @@ export default function TechnicianHomeDashboard() {
 
   const split = layout === "desktop" && Boolean(selectedId);
   const showMap = !selectedId && layout !== null;
+  const scheduledJob = jobs.find((row) => row._id === selectedId) ?? null;
+  const panelOrder =
+    order &&
+    scheduledJob &&
+    order._id === scheduledJob._id &&
+    scheduledJob.completed &&
+    !scheduledJob.completionPending &&
+    !(order.completed && !order.completionPending)
+      ? {
+          ...order,
+          completed: true,
+          completionPending: false,
+          paid: scheduledJob.paid || order.paid,
+        }
+      : order;
 
   function cardProps(job: WorkOrderListItem) {
     const selected = selectedId === job._id;
@@ -635,7 +652,7 @@ export default function TechnicianHomeDashboard() {
       mobilePanel:
         selected && layout === "mobile" ? (
           <MobileWorkOrderPanel
-            order={order}
+            order={panelOrder}
             loading={orderLoading}
             error={orderError}
             token={token}
@@ -834,7 +851,7 @@ export default function TechnicianHomeDashboard() {
     {split ? (
       <div className="min-w-0 flex-1 lg:min-h-0 lg:overflow-y-auto">
         <DesktopWorkOrderPanel
-          order={order}
+          order={panelOrder}
           loading={orderLoading}
           error={orderError}
           token={token}

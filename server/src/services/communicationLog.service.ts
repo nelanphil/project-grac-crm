@@ -5,6 +5,15 @@ import { EmailCommunication } from "../models/mongo/EmailCommunication";
 import { TwilioCommunication } from "../models/mongo/TwilioCommunication";
 import { assignThreadKeys } from "../utils/mailboxThread";
 import { normalizeMessageId } from "../utils/mailboxReply";
+import {
+  resolveRenewalsForCustomers,
+  type ContactRenewalInfo,
+} from "../utils/messagingContext";
+import {
+  loadPastDueByCustomer,
+  pastDueForCustomer,
+  type CustomerPastDue,
+} from "./customerPastDue.service";
 
 export const LOG_CHANNELS = [
   "sms",
@@ -78,6 +87,8 @@ export type CommunicationLogEntry = {
   actor: LogActor;
 };
 
+export type CommunicationLogRenewalStatus = "due" | "overdue" | "renewed";
+
 export type CommunicationLogThread = {
   id: string;
   customerRef: string | null;
@@ -90,6 +101,9 @@ export type CommunicationLogThread = {
   messageCount: number;
   replyCount: number;
   status: LogThreadStatus;
+  renewalStatus: CommunicationLogRenewalStatus | null;
+  renewalDueDate: string | null;
+  pastDue: CustomerPastDue | null;
   entries: CommunicationLogEntry[];
 };
 
@@ -406,8 +420,52 @@ function buildThread(
     messageCount: entries.length,
     replyCount,
     status,
+    renewalStatus: null,
+    renewalDueDate: null,
+    pastDue: null,
     entries: entries.map(toEntry),
   };
+}
+
+function renewalDueIso(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+/** Fill renewal and past-due fields for threads already on the current page. */
+export function applyCustomerStanding(
+  threads: CommunicationLogThread[],
+  renewals: Map<
+    string,
+    Pick<ContactRenewalInfo, "renewalStatus" | "renewalDueDate">
+  >,
+  pastDueMap: Map<string, CustomerPastDue>,
+  legacyByRef: Map<string, number> = new Map(),
+): CommunicationLogThread[] {
+  return threads.map((thread) => {
+    const customerRef = thread.customerRef;
+    if (!customerRef) {
+      return {
+        ...thread,
+        renewalStatus: null,
+        renewalDueDate: null,
+        pastDue: null,
+      };
+    }
+    const renewal = renewals.get(customerRef);
+    const legacyId = legacyByRef.get(customerRef);
+    return {
+      ...thread,
+      renewalStatus: renewal?.renewalStatus ?? null,
+      renewalDueDate: renewalDueIso(renewal?.renewalDueDate),
+      pastDue: pastDueForCustomer(
+        pastDueMap,
+        customerRef,
+        typeof legacyId === "number" ? legacyId : null,
+      ),
+    };
+  });
 }
 
 function matchesSearch(thread: CommunicationLogThread, search: string): boolean {
@@ -801,7 +859,7 @@ export async function loadCommunicationLog(input: {
       .filter((id): id is string => Boolean(id)),
   );
 
-  return groupCommunicationLog(items, {
+  const grouped = groupCommunicationLog(items, {
     channel: input.channel,
     direction: input.direction,
     repliedOnly: input.repliedOnly,
@@ -810,4 +868,48 @@ export async function loadCommunicationLog(input: {
     pageSize: input.pageSize,
     customerNames: names,
   });
+  return attachPageStanding(grouped);
+}
+
+async function attachPageStanding(
+  result: CommunicationLogResult,
+): Promise<CommunicationLogResult> {
+  const refs = [
+    ...new Set(
+      result.threads
+        .map((thread) => thread.customerRef)
+        .filter((id): id is string => Boolean(id && Types.ObjectId.isValid(id))),
+    ),
+  ];
+  if (refs.length === 0) return result;
+
+  const customers = await Customer.find({ _id: { $in: refs } })
+    .select("legacyId")
+    .lean<Array<{ _id: Types.ObjectId; legacyId?: number }>>();
+  const legacyByRef = new Map<string, number>();
+  const legacyIds: number[] = [];
+  for (const customer of customers) {
+    if (typeof customer.legacyId !== "number") continue;
+    legacyByRef.set(String(customer._id), customer.legacyId);
+    legacyIds.push(customer.legacyId);
+  }
+
+  const [renewals, pastDueMap] = await Promise.all([
+    resolveRenewalsForCustomers(refs, undefined, { listDisplay: true }),
+    loadPastDueByCustomer({
+      customerRefs: refs,
+      legacyIds,
+      legacyByRef,
+    }),
+  ]);
+
+  return {
+    ...result,
+    threads: applyCustomerStanding(
+      result.threads,
+      renewals,
+      pastDueMap,
+      legacyByRef,
+    ),
+  };
 }

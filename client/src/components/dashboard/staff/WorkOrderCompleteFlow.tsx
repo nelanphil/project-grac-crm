@@ -562,7 +562,9 @@ export default function WorkOrderCompleteFlow({
               ? `This renewal visit is complete. Invoice ${result.invoice.number} was already paid, so no new bill was sent.`
             : result.offlinePayment
               ? `This work order is complete. Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} was marked paid by ${offlinePaymentLabel(result.offlinePayment)}.`
-              : `This work order is complete. Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} is ready${result.payUrl ? " to pay" : ""}.`}
+              : result.payUrl
+                ? `Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} is ready to pay. The job is marked complete once payment goes through.`
+                : `This work order is complete. Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} is ready.`}
         </p>
         {result.offlinePayment?.proofUrl ? (
           <a

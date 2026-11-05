@@ -104,6 +104,8 @@ export interface IWorkOrder extends Document {
   signedByName: string;
   certify: boolean;
   completed: boolean;
+  /** True after "take payment on this device" until the invoice is actually paid. */
+  completionPending: boolean;
   deletedAt: Date | null;
   deletedBy?: Types.ObjectId | null;
   createdAt: Date;
@@ -259,6 +261,7 @@ const workOrderSchema = new Schema<IWorkOrder>(
     signedByName: { type: String, default: "" },
     certify: { type: Boolean, default: false },
     completed: { type: Boolean, default: false },
+    completionPending: { type: Boolean, default: false },
     deletedAt: { type: Date, default: null, index: true },
     deletedBy: {
       type: Schema.Types.ObjectId,

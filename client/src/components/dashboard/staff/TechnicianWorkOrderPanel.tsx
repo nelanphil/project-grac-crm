@@ -12,6 +12,7 @@ import ServiceTicketDocument, {
 } from "@/components/billing/ServiceTicketDocument";
 import ServiceTicketForm from "@/components/billing/ServiceTicketForm";
 import TicketLineItemsEditor from "@/components/billing/TicketLineItemsEditor";
+import TicketTotalsBox from "@/components/billing/TicketTotalsBox";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 import WorkOrderCompleteFlow from "@/components/dashboard/staff/WorkOrderCompleteFlow";
 import WorkOrderInvoiceSend from "@/components/dashboard/staff/WorkOrderInvoiceSend";
@@ -22,6 +23,7 @@ import {
   type WorkOrderTypeItem,
 } from "@/lib/api";
 import { isDispatcherRole, type RoleLike } from "@/lib/dashboard-role";
+import { formatDiscountSummary } from "@/lib/productDiscounts";
 import {
   applyEnrolledRefs,
   emptyTicketForm,
@@ -30,6 +32,7 @@ import {
   nextTicketWorkOrderType,
   ticketFromRecord,
   ticketToPayload,
+  ticketTotals,
   workOrderTypeSaveIssue,
   workOrderUpdateBody,
   type TicketFormState,
@@ -54,27 +57,45 @@ type ProductsDraft = Pick<
   | "runHours"
   | "exerciseDay"
   | "exerciseTime"
+  | "laborHours"
+  | "contractDiscount"
+  | "miscExp"
+  | "shipping"
+  | "taxRate"
+  | "tax"
+  | "taxOverridden"
 >;
 
 function serializeProductsDraft(draft: ProductsDraft): string {
-  const { parts, serialNumber, generatorModel, runHours, exerciseDay, exerciseTime } =
-    ticketToPayload({
-      ...emptyTicketForm(),
-      parts: draft.parts,
-      serialNumber: draft.serialNumber,
-      generatorModel: draft.generatorModel,
-      runHours: draft.runHours,
-      exerciseDay: draft.exerciseDay,
-      exerciseTime: draft.exerciseTime,
-    });
+  const payload = ticketToPayload({
+    ...emptyTicketForm(),
+    parts: draft.parts,
+    serialNumber: draft.serialNumber,
+    generatorModel: draft.generatorModel,
+    runHours: draft.runHours,
+    exerciseDay: draft.exerciseDay,
+    exerciseTime: draft.exerciseTime,
+    laborHours: draft.laborHours,
+    contractDiscount: draft.contractDiscount,
+    miscExp: draft.miscExp,
+    shipping: draft.shipping,
+    taxRate: draft.taxRate,
+    tax: draft.tax,
+    taxOverridden: draft.taxOverridden,
+  });
   return JSON.stringify({
-    parts,
+    parts: payload.parts,
     workOrderTypeRef: draft.workOrderTypeRef,
-    serialNumber,
-    generatorModel,
-    runHours,
-    exerciseDay,
-    exerciseTime,
+    serialNumber: payload.serialNumber,
+    generatorModel: payload.generatorModel,
+    runHours: payload.runHours,
+    exerciseDay: payload.exerciseDay,
+    exerciseTime: payload.exerciseTime,
+    miscExp: payload.miscExp,
+    shipping: payload.shipping,
+    taxRate: payload.taxRate,
+    tax: payload.tax,
+    taxOverridden: payload.taxOverridden,
   });
 }
 
@@ -181,7 +202,7 @@ function CompletionControl({
         key={`${order._id}:${autoResend ? `resend-${startToken}` : autoStart ? startToken : "manual"}`}
         orderId={order._id}
         token={token}
-        completed={Boolean(order.completed)}
+        completed={Boolean(order.completed && !order.completionPending)}
         paid={Boolean(order.paid)}
         offlinePaid={Boolean(order.offlinePayment)}
         prepaidRenewal={Boolean(order.renewalInvoiceRef)}
@@ -191,7 +212,9 @@ function CompletionControl({
       />
     );
   }
-  if (order.completed) return <span className={completeBadge}>Complete</span>;
+  if (order.completed && !order.completionPending) {
+    return <span className={completeBadge}>Complete</span>;
+  }
   return null;
 }
 
@@ -359,6 +382,14 @@ export function MobileWorkOrderPanel({
   const [runHours, setRunHours] = useState("");
   const [exerciseDay, setExerciseDay] = useState("");
   const [exerciseTime, setExerciseTime] = useState("");
+  const [laborHours, setLaborHours] = useState("");
+  const [contractDiscount, setContractDiscount] =
+    useState<TicketFormState["contractDiscount"]>(null);
+  const [miscExp, setMiscExp] = useState("");
+  const [shipping, setShipping] = useState("");
+  const [taxRate, setTaxRate] = useState("");
+  const [tax, setTax] = useState("");
+  const [taxOverridden, setTaxOverridden] = useState(false);
   const [workOrderTypes, setWorkOrderTypes] = useState<WorkOrderTypeItem[]>([]);
   const [workOrderTypesLoaded, setWorkOrderTypesLoaded] = useState(false);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -376,6 +407,13 @@ export function MobileWorkOrderPanel({
     setRunHours(form.runHours);
     setExerciseDay(form.exerciseDay);
     setExerciseTime(form.exerciseTime);
+    setLaborHours(form.laborHours);
+    setContractDiscount(form.contractDiscount);
+    setMiscExp(form.miscExp);
+    setShipping(form.shipping);
+    setTaxRate(form.taxRate);
+    setTax(form.tax);
+    setTaxOverridden(form.taxOverridden);
   }
 
   useEffect(() => {
@@ -436,6 +474,13 @@ export function MobileWorkOrderPanel({
       runHours,
       exerciseDay,
       exerciseTime,
+      laborHours,
+      contractDiscount,
+      miscExp,
+      shipping,
+      taxRate,
+      tax,
+      taxOverridden,
     }),
     [
       parts,
@@ -447,8 +492,25 @@ export function MobileWorkOrderPanel({
       runHours,
       exerciseDay,
       exerciseTime,
+      laborHours,
+      contractDiscount,
+      miscExp,
+      shipping,
+      taxRate,
+      tax,
+      taxOverridden,
     ],
   );
+  const totals = useMemo(() => {
+    if (!order) return null;
+    const base = ticketFromRecord(order);
+    // The draft is seeded after this render when the work order just changed.
+    if (order._id !== loadedFor) return ticketTotals(base);
+    return ticketTotals({ ...base, ...draft });
+  }, [order, draft, loadedFor]);
+  const discountBanner = contractDiscount
+    ? formatDiscountSummary(contractDiscount, contractDiscount.label)
+    : null;
   const saveProducts = useCallback(
     async (sent: ProductsDraft) => {
       if (!order || !token) throw new Error("Work order is not loaded.");
@@ -564,6 +626,24 @@ export function MobileWorkOrderPanel({
                 ) : typeSaveIssue.message ? (
                   <p className="text-sm text-red-700">{typeSaveIssue.message}</p>
                 ) : null}
+                {totals ? (
+                  <TicketTotalsBox
+                    totals={totals}
+                    miscExp={miscExp}
+                    shipping={shipping}
+                    tax={tax}
+                    taxOverridden={taxOverridden}
+                    discountBanner={discountBanner}
+                    onPatch={(patch) => {
+                      if (patch.miscExp !== undefined) setMiscExp(patch.miscExp);
+                      if (patch.shipping !== undefined) setShipping(patch.shipping);
+                      if (patch.tax !== undefined) setTax(patch.tax);
+                      if (patch.taxOverridden !== undefined) {
+                        setTaxOverridden(patch.taxOverridden);
+                      }
+                    }}
+                  />
+                ) : null}
               </div>
               <AutosaveStatus
                 status={autosave.status}
@@ -604,6 +684,17 @@ export function MobileWorkOrderPanel({
                   Products
                 </h3>
                 <ProductLines order={order} />
+                {totals ? (
+                  <TicketTotalsBox
+                    totals={totals}
+                    miscExp={miscExp}
+                    shipping={shipping}
+                    tax={tax}
+                    taxOverridden={taxOverridden}
+                    discountBanner={discountBanner}
+                    disabled
+                  />
+                ) : null}
               </div>
             </>
           )}

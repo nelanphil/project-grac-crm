@@ -19,6 +19,7 @@ import { logNotificationAsync } from "./notification.service";
 import { recordCustomerActivityAsync } from "./customerActivity.service";
 import { voidSiblingContractInvoices } from "./contractInvoiceSiblings";
 import { foldOfferIntoExistingContract } from "./offerRenewalFold";
+import { publishDashboardChanged } from "./dashboardLive";
 import { recordWorkOrderActivity } from "./workOrderActivity.service";
 import {
   ensureRenewalWorkOrder,
@@ -417,10 +418,28 @@ export async function markInvoicePaid(params: {
 
   if (invoice.sourceType === "work_order" && invoice.workOrderRef) {
     const updated = await WorkOrder.findOneAndUpdate(
-      { _id: invoice.workOrderRef, paid: { $ne: true } },
-      { $set: { paid: true } },
+      { _id: invoice.workOrderRef },
+      { $set: { paid: true, completionPending: false } },
     );
-    if (updated && (paidByCustomer || actor?.actorUserId)) {
+    if (updated?.completionPending) {
+      await recordWorkOrderActivity({
+        workOrderRef: invoice.workOrderRef,
+        action: "completed",
+        actor: {
+          actorKind: paidByCustomer
+            ? "customer"
+            : actor?.actorUserId
+              ? "staff"
+              : "system",
+          actorUserId: paidByCustomer ? null : actor?.actorUserId ?? null,
+          actorName: paidByCustomer ? "Customer" : actor?.actorName ?? null,
+        },
+        summary: "Marked complete",
+        source: paidByCustomer ? "job" : actor?.actorUserId ? "crm" : "job",
+      });
+      publishDashboardChanged();
+    }
+    if (updated && updated.paid !== true && (paidByCustomer || actor?.actorUserId)) {
       await recordWorkOrderActivity({
         workOrderRef: invoice.workOrderRef,
         action: "paid",

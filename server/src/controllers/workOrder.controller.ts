@@ -69,6 +69,7 @@ import {
 import {
   checkWorkOrderCompletion,
   completeWorkOrder,
+  isEffectivelyComplete,
   resendWorkOrderInvoice,
   WorkOrderCompletionError,
 } from "../services/workOrderCompletion.service";
@@ -1753,7 +1754,7 @@ export async function postWorkOrderComplete(
 
     const workOrder = await loadAssignableWorkOrder(req, res);
     if (!workOrder) return;
-    const wasComplete = Boolean(workOrder.completed);
+    const wasEffectivelyComplete = isEffectivelyComplete(workOrder);
     const actorName = await staffDisplayName(req.user?.id, req.user?.email);
     const actor = { ...actorFromRequest(req.user), actorName };
 
@@ -1798,27 +1799,35 @@ export async function postWorkOrderComplete(
               apiBase: requestApiBase(req),
             });
 
+    const pendingPayment =
+      parsed.data.mode === "pay_now" && Boolean(workOrder.completionPending);
     const detail =
       parsed.data.mode === "resend"
         ? workOrder.number
           ? `Invoice for work order ${workOrder.number} resent`
           : "Work order invoice resent"
         : parsed.data.mode === "paid_offline"
-          ? wasComplete
+          ? wasEffectivelyComplete
             ? workOrder.number
               ? `Invoice for work order ${workOrder.number} marked paid by check/cash`
               : "Invoice marked paid by check/cash"
             : workOrder.number
               ? `Work order ${workOrder.number} marked complete (paid by check/cash)`
               : "Work order marked complete (paid by check/cash)"
-          : wasComplete
+          : pendingPayment
             ? workOrder.number
-              ? `Payment link reopened for work order ${workOrder.number}`
-              : "Payment link reopened"
-            : workOrder.number
-              ? `Work order ${workOrder.number} marked complete`
-              : "Work order marked complete";
-    if (!wasComplete && parsed.data.mode !== "resend" && !result.reverted) {
+              ? `Payment link opened for work order ${workOrder.number}`
+              : "Payment link opened"
+            : wasEffectivelyComplete
+              ? workOrder.number
+                ? `Payment link reopened for work order ${workOrder.number}`
+                : "Payment link reopened"
+              : workOrder.number
+                ? `Work order ${workOrder.number} marked complete`
+                : "Work order marked complete";
+    const becameComplete =
+      isEffectivelyComplete(workOrder) && !wasEffectivelyComplete;
+    if (becameComplete && parsed.data.mode !== "resend" && !result.reverted) {
       await recordWorkOrderActivity({
         workOrderRef: workOrder._id,
         action: "completed",
@@ -1847,6 +1856,7 @@ export async function postWorkOrderComplete(
       ...actorFromRequest(req.user),
     });
     if (
+      isEffectivelyComplete(workOrder) &&
       (parsed.data.mode !== "resend" || result.reverted) &&
       workOrder.scheduledStart
     ) {

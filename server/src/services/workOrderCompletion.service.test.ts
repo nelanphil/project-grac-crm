@@ -7,6 +7,7 @@ import {
   NO_CUSTOMER_REASON,
   ZERO_TOTAL_REASON,
   completionBlockedReason,
+  isEffectivelyComplete,
   sendBlockedReason,
   settleCompletedBlockedReason,
   validateCompletionSend,
@@ -170,6 +171,38 @@ describe("validateCompletionSend", () => {
     });
     assert.equal(result.ok, false);
     if (!result.ok) assert.match(result.message, /phone number or email/);
+  });
+});
+
+describe("isEffectivelyComplete", () => {
+  it("treats a pay-on-device link as not complete", () => {
+    assert.equal(
+      isEffectivelyComplete({ completed: true, completionPending: true }),
+      false,
+    );
+  });
+
+  it("treats a finished payment option as complete", () => {
+    assert.equal(isEffectivelyComplete({ completed: true }), true);
+    assert.equal(
+      isEffectivelyComplete({ completed: true, completionPending: false }),
+      true,
+    );
+  });
+
+  it("lets a pending order pick another option, including send", () => {
+    assert.deepEqual(
+      settleCompletedBlockedReason({
+        completed: isEffectivelyComplete({
+          completed: true,
+          completionPending: true,
+        }),
+        mode: "send",
+        blockedReason: null,
+        invoiceOpen: true,
+      }),
+      { action: "fresh" },
+    );
   });
 });
 

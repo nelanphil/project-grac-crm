@@ -2599,6 +2599,8 @@ export interface WorkOrderListItem {
   taxOverridden?: boolean;
   paid: boolean;
   completed: boolean;
+  /** Set while "take payment on this device" is waiting on a real payment. */
+  completionPending?: boolean;
   laborHours?: number;
   runHours?: number;
   parts?: WorkOrderPart[];
@@ -8623,6 +8625,9 @@ export type CommunicationLogThread = {
   messageCount: number;
   replyCount: number;
   status: CommunicationLogThreadStatus;
+  renewalStatus: "due" | "overdue" | "renewed" | null;
+  renewalDueDate: string | null;
+  pastDue: CustomerPastDue | null;
   entries: CommunicationLogEntry[];
 };
 

@@ -77,6 +77,7 @@ import {
   ExerciseTimeInput,
 } from "@/components/billing/ExerciseScheduleFields";
 import TicketLineItemsEditor from "@/components/billing/TicketLineItemsEditor";
+import TicketTotalsBox from "@/components/billing/TicketTotalsBox";
 import WorkOrderNotesPanel from "@/components/billing/WorkOrderNotesPanel";
 
 function Field({
@@ -100,23 +101,6 @@ function Field({
 
 const inputClass =
   "w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue";
-
-function formatMoney(amount: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(amount || 0);
-}
-
-function formatTaxRate(rate: number): string {
-  const rounded = Math.round(rate * 10000) / 10000;
-  return `${rounded}%`;
-}
-
-function taxInputValue(amount: number): string {
-  if (!amount) return "";
-  return String(amount);
-}
 
 function serializeTicket(form: TicketFormState): string {
   return JSON.stringify(ticketToPayload(form));
@@ -2178,65 +2162,20 @@ export default function ServiceTicketForm({
             ) : null}
           </div>
 
-          <div className="w-full shrink-0 space-y-2 rounded border border-neutral-200 p-3 text-sm lg:w-72">
-            {discountBanner ? (
-              <p className="rounded bg-sky-50 px-2 py-1.5 text-xs text-sky-800">
-                {discountBanner}
-              </p>
-            ) : null}
-            <div className="flex justify-between">
-              <span>Total parts</span>
-              <span>{formatMoney(totals.totalParts)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Total labor</span>
-              <span>{formatMoney(totals.totalLabor)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Total agreements</span>
-              <span>{formatMoney(totals.totalAgreements)}</span>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <span>Misc exp.</span>
-              <input
-                value={form.miscExp}
-                onChange={(e) => patch({ miscExp: e.target.value })}
-                className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
-              />
-            </div>
-            <div className="flex justify-between border-t border-neutral-200 pt-2">
-              <span>Sub total</span>
-              <span>{formatMoney(totals.subtotal)}</span>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <span>Shipping</span>
-              <input
-                value={form.shipping}
-                onChange={(e) => patch({ shipping: e.target.value })}
-                className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
-              />
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <span>
-                Tax
-                {totals.taxRate > 0 ? ` (${formatTaxRate(totals.taxRate)})` : ""}
-              </span>
-              <input
-                value={form.taxOverridden ? form.tax : taxInputValue(totals.tax)}
-                onChange={(e) =>
-                  patch({ tax: e.target.value, taxOverridden: true })
-                }
-                className="w-28 rounded border border-neutral-300 px-2 py-1 text-right text-sm"
-              />
-            </div>
-            <div className="flex justify-between border-t border-neutral-200 pt-2 font-semibold">
-              <span>Total</span>
-              <span>{formatMoney(totals.total)}</span>
-            </div>
-            {variant === "work-order" && invoiceAction ? (
-              <div className="pt-2">{withInvoiceTotal(invoiceAction, totals.total)}</div>
-            ) : null}
-          </div>
+          <TicketTotalsBox
+            totals={totals}
+            miscExp={form.miscExp}
+            shipping={form.shipping}
+            tax={form.tax}
+            taxOverridden={form.taxOverridden}
+            discountBanner={discountBanner}
+            onPatch={patch}
+            footer={
+              variant === "work-order" && invoiceAction
+                ? withInvoiceTotal(invoiceAction, totals.total)
+                : null
+            }
+          />
         </div>
 
         {variant === "estimate" ? (

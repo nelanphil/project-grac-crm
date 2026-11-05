@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  applyCustomerStanding,
   type CommunicationLogItem,
+  type CommunicationLogThread,
   emailLogMeta,
   groupCommunicationLog,
   phoneGroupKey,
@@ -344,5 +346,77 @@ describe("groupCommunicationLog", () => {
     });
     assert.equal(searched.total, 1);
     assert.equal(searched.threads[0].customerName, "Grace Hopper");
+  });
+});
+
+function standingThread(
+  overrides: Partial<CommunicationLogThread> & Pick<CommunicationLogThread, "id">,
+): CommunicationLogThread {
+  return {
+    customerRef: null,
+    customerName: "Unknown",
+    handle: "",
+    channels: ["email"],
+    firstOutboundAt: null,
+    firstReplyAt: null,
+    lastActivityAt: "2026-06-01T00:00:00.000Z",
+    messageCount: 1,
+    replyCount: 0,
+    status: "inbound-only",
+    renewalStatus: null,
+    renewalDueDate: null,
+    pastDue: null,
+    entries: [],
+    ...overrides,
+  };
+}
+
+describe("applyCustomerStanding", () => {
+  it("fills overdue, renewed, a missing contract, and a past-due balance", () => {
+    const overdueDate = new Date("2026-03-01T00:00:00.000Z");
+    const renewedDate = new Date("2027-03-01T00:00:00.000Z");
+    const renewals = new Map([
+      [
+        "overdue",
+        { renewalStatus: "overdue" as const, renewalDueDate: overdueDate },
+      ],
+      [
+        "renewed",
+        { renewalStatus: "renewed" as const, renewalDueDate: renewedDate },
+      ],
+      ["none", { renewalStatus: null, renewalDueDate: null }],
+    ]);
+    const pastDue = new Map([
+      ["ref:overdue", { count: 2, totalCents: 15000 }],
+      ["legacy:44", { count: 1, totalCents: 500 }],
+    ]);
+    const result = applyCustomerStanding(
+      [
+        standingThread({ id: "a", customerRef: "overdue", customerName: "Ada" }),
+        standingThread({
+          id: "b",
+          customerRef: "renewed",
+          customerName: "Grace",
+        }),
+        standingThread({ id: "c", customerRef: "none", customerName: "Lin" }),
+        standingThread({ id: "d" }),
+      ],
+      renewals,
+      pastDue,
+      new Map([["renewed", 44]]),
+    );
+
+    assert.equal(result[0].renewalStatus, "overdue");
+    assert.equal(result[0].renewalDueDate, overdueDate.toISOString());
+    assert.deepEqual(result[0].pastDue, { count: 2, totalCents: 15000 });
+    assert.equal(result[1].renewalStatus, "renewed");
+    assert.equal(result[1].renewalDueDate, renewedDate.toISOString());
+    assert.deepEqual(result[1].pastDue, { count: 1, totalCents: 500 });
+    assert.equal(result[2].renewalStatus, null);
+    assert.equal(result[2].renewalDueDate, null);
+    assert.equal(result[2].pastDue, null);
+    assert.equal(result[3].renewalStatus, null);
+    assert.equal(result[3].renewalDueDate, null);
+    assert.equal(result[3].pastDue, null);
   });
 });

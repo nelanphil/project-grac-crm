@@ -111,6 +111,14 @@ export function isTenDigitUsPhone(phone: string): boolean {
   return phone.replace(/\D/g, "").length === 10;
 }
 
+/** Complete only after a payment option finishes. A pay-on-device link is still pending. */
+export function isEffectivelyComplete(input: {
+  completed?: boolean;
+  completionPending?: boolean;
+}): boolean {
+  return Boolean(input.completed) && !input.completionPending;
+}
+
 export function completionBlockedReason(input: {
   completed: boolean;
   totalCents: number;
@@ -373,7 +381,7 @@ export async function checkWorkOrderCompletion(
   return {
     totalCents,
     blockedReason: completionBlockedReason({
-      completed: Boolean(workOrder.completed),
+      completed: isEffectivelyComplete(workOrder),
       totalCents,
       hasCustomer: Boolean(customerRef),
       allowZeroTotal: prepaidRenewal,
@@ -412,6 +420,7 @@ async function invoiceMessageCopy(invoice: IInvoice): Promise<{
 
 async function rollbackCompletion(workOrder: IWorkOrder): Promise<void> {
   workOrder.completed = false;
+  workOrder.completionPending = false;
   await workOrder.save();
   try {
     await syncWorkOrderInvoice(workOrder);
@@ -568,7 +577,7 @@ export async function completeWorkOrder(input: {
   }
 
   const check = await checkWorkOrderCompletion(input.workOrder);
-  const alreadyComplete = Boolean(input.workOrder.completed);
+  const alreadyComplete = isEffectivelyComplete(input.workOrder);
   const decision = settleCompletedBlockedReason({
     completed: alreadyComplete,
     mode: input.mode,
@@ -626,6 +635,10 @@ export async function completeWorkOrder(input: {
   };
 
   if (input.mode === "pay_now") {
+    if (!alreadyComplete) {
+      input.workOrder.completionPending = true;
+      await input.workOrder.save();
+    }
     try {
       if (!invoice.customerRef || !Types.ObjectId.isValid(String(invoice.customerRef))) {
         throw new WorkOrderCompletionError("Invoice has no customer");
@@ -672,6 +685,10 @@ export async function completeWorkOrder(input: {
         recordedAt: new Date(),
       };
       invoice.markModified("offlinePayment");
+      if (input.workOrder.completionPending) {
+        input.workOrder.completionPending = false;
+        await input.workOrder.save();
+      }
       const paid = await markInvoicePaid({
         invoice,
         actor: {
@@ -750,6 +767,20 @@ export async function completeWorkOrder(input: {
       userId: input.userId,
     }),
   ]);
+  if (sms.status !== "sent" && email.status !== "sent") {
+    const detail =
+      sms.status === "failed"
+        ? sms.error
+        : email.status === "failed"
+          ? email.error
+          : "The invoice was not sent.";
+    if (!alreadyComplete) await rollbackCompletion(input.workOrder);
+    throw new WorkOrderCompletionError(detail);
+  }
+  if (input.workOrder.completionPending) {
+    input.workOrder.completionPending = false;
+    await input.workOrder.save();
+  }
   return withReverted({ invoice: summary, delivery: { sms, email } }, reverted);
 }
 
@@ -769,7 +800,7 @@ export async function resendWorkOrderInvoice(input: {
   actor?: CompletionActor;
   apiBase: string;
 }): Promise<WorkOrderCompletionResult> {
-  if (!input.workOrder.completed) {
+  if (!isEffectivelyComplete(input.workOrder)) {
     throw new WorkOrderCompletionError(
       "Mark this work order complete before resending its invoice.",
     );
