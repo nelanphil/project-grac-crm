@@ -161,6 +161,7 @@ export default function WorkOrderCompleteFlow({
   autoStart,
   autoResend,
   prepaidRenewal = false,
+  zeroBilled = false,
   onCompleted,
 }: {
   orderId: string;
@@ -171,6 +172,8 @@ export default function WorkOrderCompleteFlow({
   autoStart: boolean;
   autoResend: boolean;
   prepaidRenewal?: boolean;
+  /** Saved $0 ticket with real lines. Resend stays; payment changes do not. */
+  zeroBilled?: boolean;
   onCompleted: (order: WorkOrderListItem) => void;
 }) {
   const [phase, setPhase] = useState<Phase>(
@@ -438,7 +441,11 @@ export default function WorkOrderCompleteFlow({
       setEmailDismissed(false);
       setEmailSentTo(receipt?.email.status === "sent" ? receipt.email.to : null);
       setReceiptError(null);
-      setTextSentTo(null);
+      setTextSentTo(
+        next.zeroBilled && next.delivery?.sms.status === "sent"
+          ? next.receipt?.phone || "the customer"
+          : null,
+      );
       setTextError(null);
       setChangingPayment(false);
       setPhase("done");
@@ -517,7 +524,7 @@ export default function WorkOrderCompleteFlow({
           Resend
         </button>
         )}
-        {paid && !offlinePaid ? null : (
+        {zeroBilled || (paid && !offlinePaid) ? null : (
           <button
             type="button"
             onClick={() => void beginChangePayment()}
@@ -543,7 +550,7 @@ export default function WorkOrderCompleteFlow({
             >
               Resend
             </button>
-            {(paid && !offlinePaid) || result.offlinePayment || result.prepaidRenewal ? null : (
+            {(paid && !offlinePaid) || result.offlinePayment || result.prepaidRenewal || result.zeroBilled || zeroBilled ? null : (
               <button
                 type="button"
                 onClick={() => void beginChangePayment()}
@@ -560,6 +567,8 @@ export default function WorkOrderCompleteFlow({
             ? `Invoice ${result.invoice.number} was resent.`
             : result.prepaidRenewal
               ? `This renewal visit is complete. Invoice ${result.invoice.number} was already paid, so no new bill was sent.`
+            : result.zeroBilled
+              ? `This work order is complete. Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} was sent and does not need a payment.`
             : result.offlinePayment
               ? `This work order is complete. Invoice ${result.invoice.number} for ${formatCents(result.invoice.amountCents)} was marked paid by ${offlinePaymentLabel(result.offlinePayment)}.`
               : result.payUrl
@@ -612,7 +621,7 @@ export default function WorkOrderCompleteFlow({
           </ul>
         ) : null}
       </div>
-      {result.offlinePayment && result.receipt ? (
+      {(result.offlinePayment || result.zeroBilled) && result.receipt ? (
         <div className="complete-notice space-y-3 rounded-md border px-3 py-3 text-sm">
           {emailSentTo ? (
             <p>Invoice emailed to {emailSentTo}.</p>
@@ -753,6 +762,8 @@ export default function WorkOrderCompleteFlow({
         <p>
           {check?.prepaidRenewal
             ? "This ASC renewal is already paid. Marking the visit complete will not create or send another invoice."
+            : check?.zeroBilled
+            ? "Completing this work order creates a $0 invoice and sends it to the customer. No payment is collected."
             : completed
             ? check?.offlinePayment
               ? `Invoice for ${amount} is marked paid. Choose how the customer will pay.`
@@ -770,7 +781,21 @@ export default function WorkOrderCompleteFlow({
         ) : null}
         {error ? <p className="complete-notice-error mt-2 text-sm">{error}</p> : null}
         <div className="mt-3 flex flex-wrap gap-2">
-          {check?.prepaidRenewal ? (
+          {check?.zeroBilled ? (
+            <button
+              type="button"
+              disabled={busy || contactSendBlocked}
+              onClick={() => {
+                const next = contacts.find((row) => row.isPrimary) ?? contacts[0];
+                if (next) applyContact(next);
+                setError(null);
+                setPhase("send");
+              }}
+              className={primaryButton}
+            >
+              Send to customer
+            </button>
+          ) : check?.prepaidRenewal ? (
             <button
               type="button"
               disabled={busy}
@@ -798,7 +823,7 @@ export default function WorkOrderCompleteFlow({
             {busy ? "Saving…" : "Take payment on this device"}
           </button>
           )}
-          {check?.prepaidRenewal ? null : (
+          {check?.prepaidRenewal || check?.zeroBilled ? null : (
           <button
             type="button"
             disabled={busy || contactSendBlocked}
@@ -813,7 +838,7 @@ export default function WorkOrderCompleteFlow({
             Send to customer
           </button>
           )}
-          {check?.prepaidRenewal ? null : (
+          {check?.prepaidRenewal || check?.zeroBilled ? null : (
           <button
             type="button"
             disabled={busy}
@@ -979,7 +1004,10 @@ export default function WorkOrderCompleteFlow({
   const emailError = contact ? emailFieldError(contact, email) : null;
   const via = channelLine(text, mail);
   const invoiceClosed =
-    completed && check?.invoiceOpen === false && !check?.offlinePayment;
+    completed &&
+    check?.invoiceOpen === false &&
+    !check?.offlinePayment &&
+    !check?.zeroBilled;
   const sendBlocked =
     !contact || Boolean(phoneError) || Boolean(emailError) || !via || invoiceClosed;
 

@@ -9,7 +9,9 @@ import {
 } from "../models/mongo/Invoice";
 import {
   emailInvoiceReceipt,
+  textInvoiceReceipt,
   type InvoiceEmailReceiptResult,
+  type InvoiceTextReceiptResult,
 } from "./invoiceReceipt.service";
 import {
   buildInvoiceViewUrl,
@@ -27,13 +29,18 @@ import { createScopedPaymentLink } from "./checkoutLink.service";
 import { dispatchStaffEmailBatch } from "./emailMessage.service";
 import {
   dollarsToCents,
+  ensurePaidZeroBillInvoice,
   findOpenInvoiceForWorkOrder,
+  findPaidZeroBillInvoice,
+  isZeroBilledWorkOrder,
   markInvoicePaid,
   reopenInvoice,
   resolveCustomerRefForWorkOrder,
   syncWorkOrderInvoice,
   type WorkOrderInvoiceSource,
 } from "./invoice.service";
+
+export { isZeroBilledWorkOrder };
 import { dispatchMessagingBatch } from "../controllers/messaging.controller";
 import {
   contactHasValidEmail,
@@ -57,6 +64,8 @@ export const INVOICE_NOT_OPEN_REASON =
   "This invoice is no longer open, so it cannot be resent.";
 export const ZERO_TOTAL_REASON =
   "Add line items or a total before completing this work order.";
+export const ZERO_BILL_NO_PAYMENT_REASON =
+  "This invoice does not need a payment.";
 export const NO_CUSTOMER_REASON =
   "This work order has no customer, so it cannot be invoiced.";
 export const NO_CONTACT_REASON =
@@ -82,6 +91,8 @@ export interface WorkOrderCompletionCheck {
   offlinePayment: PublicOfflinePayment | null;
   /** Paid renewal visit. Completing it must not create or send another invoice. */
   prepaidRenewal: boolean;
+  /** $0 ticket with real lines. Completion creates a paid invoice and sends it. */
+  zeroBilled: boolean;
   contacts: CompletionContact[];
 }
 
@@ -105,6 +116,8 @@ export interface WorkOrderCompletionResult {
   };
   /** The renewal invoice was already paid. No new bill was created. */
   prepaidRenewal?: boolean;
+  /** A $0 invoice was created or resent. No payment is collected. */
+  zeroBilled?: boolean;
 }
 
 export function isTenDigitUsPhone(phone: string): boolean {
@@ -374,6 +387,7 @@ export async function checkWorkOrderCompletion(
   ).length;
   const prepaidRenewal =
     Boolean(workOrder.renewalInvoiceRef) && totalCents <= 0;
+  const zeroBilled = !prepaidRenewal && isZeroBilledWorkOrder(workOrder);
   const openInvoice = await findOpenInvoiceForWorkOrder(workOrder._id);
   const offlineInvoice = openInvoice
     ? null
@@ -384,12 +398,13 @@ export async function checkWorkOrderCompletion(
       completed: isEffectivelyComplete(workOrder),
       totalCents,
       hasCustomer: Boolean(customerRef),
-      allowZeroTotal: prepaidRenewal,
+      allowZeroTotal: prepaidRenewal || zeroBilled,
     }),
     sendBlockedReason: sendBlockedReason(reachableContacts),
     invoiceOpen: Boolean(openInvoice),
     offlinePayment: toPublicOfflinePayment(offlineInvoice?.offlinePayment),
     prepaidRenewal,
+    zeroBilled,
     contacts,
   };
 }
@@ -540,6 +555,188 @@ async function sendEmail(input: {
   }
 }
 
+function emailReceiptError(result: InvoiceEmailReceiptResult): string {
+  if (result.status === "failed" || result.status === "skipped") return result.error;
+  if (result.status === "invalid") return "Enter a valid email address.";
+  if (result.status === "missing") return "The contact has no email on file.";
+  return "The email was not sent.";
+}
+
+function textReceiptError(result: InvoiceTextReceiptResult): string {
+  if (result.status === "failed") return result.error;
+  return "Enter a 10-digit phone number.";
+}
+
+async function deliverZeroBillInvoice(input: {
+  invoice: IInvoice;
+  plan: CompletionSendPlan;
+  contacts: CompletionContact[];
+  userId?: string | null;
+  apiBase: string;
+}): Promise<{
+  sms: ChannelDelivery;
+  email: ChannelDelivery;
+  receiptEmail: InvoiceEmailReceiptResult;
+  phone: string;
+  phoneValid: boolean;
+  viewUrl: string;
+}> {
+  const contact = input.contacts.find((row) => row._id === input.plan.contactId);
+  const emailTo =
+    input.plan.email.status === "send"
+      ? input.plan.email.toOverride ?? contact?.email ?? ""
+      : "";
+  const phoneTo =
+    input.plan.sms.status === "send"
+      ? input.plan.sms.toOverride ?? contact?.phone ?? ""
+      : "";
+  const [emailResult, smsResult] = await Promise.all([
+    input.plan.email.status === "send"
+      ? emailInvoiceReceipt({ invoice: input.invoice, to: emailTo })
+      : Promise.resolve<InvoiceEmailReceiptResult>({
+          status: "skipped",
+          error: "Email was not sent.",
+        }),
+    input.plan.sms.status === "send"
+      ? textInvoiceReceipt({
+          invoice: input.invoice,
+          phone: phoneTo,
+          contactId: input.plan.contactId,
+          userId: input.userId,
+          apiBase: input.apiBase,
+        })
+      : Promise.resolve<InvoiceTextReceiptResult>({ status: "invalid" }),
+  ]);
+  const email: ChannelDelivery =
+    input.plan.email.status !== "send"
+      ? { status: "skipped" }
+      : emailResult.status === "sent"
+        ? { status: "sent" }
+        : { status: "failed", error: emailReceiptError(emailResult) };
+  const sms: ChannelDelivery =
+    input.plan.sms.status !== "send"
+      ? { status: "skipped" }
+      : smsResult.status === "sent"
+        ? { status: "sent" }
+        : { status: "failed", error: textReceiptError(smsResult) };
+  let viewUrl = "";
+  try {
+    viewUrl = buildInvoiceViewUrl(await ensureInvoiceViewToken(input.invoice));
+  } catch (err) {
+    console.error("invoice view link failed:", err);
+  }
+  return {
+    sms,
+    email,
+    receiptEmail: emailResult,
+    phone: phoneTo || contact?.phone || "",
+    phoneValid: Boolean(
+      phoneTo ? isTenDigitUsPhone(phoneTo) : contact?.phoneValid,
+    ),
+    viewUrl,
+  };
+}
+
+async function undoZeroBillSend(
+  workOrder: IWorkOrder,
+  invoice: IInvoice | null,
+  created: boolean,
+): Promise<void> {
+  workOrder.completed = false;
+  workOrder.completionPending = false;
+  if (created) workOrder.paid = false;
+  await workOrder.save();
+  if (!created || !invoice || invoice.status === "void") return;
+  invoice.status = "void";
+  const metadata =
+    invoice.metadata && typeof invoice.metadata === "object"
+      ? { ...invoice.metadata }
+      : {};
+  metadata.voidReason = "zero_bill_send_failed";
+  invoice.metadata = metadata;
+  invoice.markModified("metadata");
+  await invoice.save();
+}
+
+function zeroBillSummary(invoice: IInvoice): {
+  _id: string;
+  number: string;
+  amountCents: number;
+} {
+  return {
+    _id: String(invoice._id),
+    number: invoice.number,
+    amountCents: invoice.amountCents,
+  };
+}
+
+async function sendZeroBillInvoice(input: {
+  workOrder: IWorkOrder;
+  plan: CompletionSendPlan;
+  contacts: CompletionContact[];
+  userId?: string | null;
+  actor?: CompletionActor;
+  apiBase: string;
+  /** When set, the work order was just marked complete and a failed send rolls it back. */
+  rollbackOnFailure: boolean;
+}): Promise<WorkOrderCompletionResult> {
+  let created = false;
+  let invoice: IInvoice | null = null;
+  try {
+    if (input.rollbackOnFailure) {
+      input.workOrder.completed = true;
+      input.workOrder.completionPending = false;
+      await input.workOrder.save();
+    }
+    const ensured = await ensurePaidZeroBillInvoice(input.workOrder, input.actor);
+    invoice = ensured.invoice;
+    created = ensured.created && input.rollbackOnFailure;
+    const delivered = await deliverZeroBillInvoice({
+      invoice,
+      plan: input.plan,
+      contacts: input.contacts,
+      userId: input.userId,
+      apiBase: input.apiBase,
+    });
+    if (delivered.sms.status !== "sent" && delivered.email.status !== "sent") {
+      const detail =
+        delivered.sms.status === "failed"
+          ? delivered.sms.error
+          : delivered.email.status === "failed"
+            ? delivered.email.error
+            : "The invoice was not sent.";
+      if (input.rollbackOnFailure) {
+        await undoZeroBillSend(input.workOrder, invoice, created);
+      }
+      throw new WorkOrderCompletionError(detail);
+    }
+    input.workOrder.paid = true;
+    input.workOrder.completionPending = false;
+    if (input.workOrder.isModified()) await input.workOrder.save();
+    return {
+      invoice: zeroBillSummary(invoice),
+      delivery: { sms: delivered.sms, email: delivered.email },
+      zeroBilled: true,
+      receipt: {
+        email: delivered.receiptEmail,
+        phone: delivered.phone,
+        phoneValid: delivered.phoneValid,
+        viewUrl: delivered.viewUrl,
+      },
+    };
+  } catch (err) {
+    if (input.rollbackOnFailure && !(err instanceof WorkOrderCompletionError)) {
+      await undoZeroBillSend(input.workOrder, invoice, created);
+    }
+    if (err instanceof WorkOrderCompletionError) throw err;
+    throw new WorkOrderCompletionError(
+      err instanceof Error
+        ? err.message
+        : "This work order could not be invoiced. Check the total and customer, then try again.",
+    );
+  }
+}
+
 export async function completeWorkOrder(input: {
   workOrder: IWorkOrder;
   mode: "pay_now" | "send" | "paid_offline";
@@ -574,6 +771,43 @@ export async function completeWorkOrder(input: {
       },
       prepaidRenewal: true,
     };
+  }
+
+  if (isZeroBilledWorkOrder(input.workOrder)) {
+    if (input.mode !== "send") {
+      throw new WorkOrderCompletionError(ZERO_BILL_NO_PAYMENT_REASON);
+    }
+    if (isEffectivelyComplete(input.workOrder)) {
+      throw new WorkOrderCompletionError(ALREADY_COMPLETE_REASON);
+    }
+    const check = await checkWorkOrderCompletion(input.workOrder);
+    if (check.blockedReason) {
+      throw new WorkOrderCompletionError(check.blockedReason);
+    }
+    if (check.sendBlockedReason) {
+      throw new WorkOrderCompletionError(check.sendBlockedReason);
+    }
+    const validated = validateCompletionSend({
+      contacts: check.contacts,
+      contactId: input.contactId ?? "",
+      phoneOverride: input.phoneOverride,
+      emailOverride: input.emailOverride,
+    });
+    if (!validated.ok) throw new WorkOrderCompletionError(validated.message);
+    const actor = input.actor ?? {
+      actorType: input.userId ? "user" : "system",
+      actorUserId: input.userId ?? null,
+      actorName: input.actorName ?? null,
+    };
+    return sendZeroBillInvoice({
+      workOrder: input.workOrder,
+      plan: validated.plan,
+      contacts: check.contacts,
+      userId: input.userId,
+      actor,
+      apiBase: input.apiBase,
+      rollbackOnFailure: true,
+    });
   }
 
   const check = await checkWorkOrderCompletion(input.workOrder);
@@ -812,6 +1046,34 @@ export async function resendWorkOrderInvoice(input: {
     throw new WorkOrderCompletionError(
       "This renewal visit was already paid, so there is no invoice to resend.",
     );
+  }
+  if (isZeroBilledWorkOrder(input.workOrder)) {
+    const invoice = await findPaidZeroBillInvoice(input.workOrder._id);
+    if (!invoice) {
+      throw new WorkOrderCompletionError(
+        "This work order has no invoice to resend.",
+      );
+    }
+    const check = await checkWorkOrderCompletion(input.workOrder);
+    if (check.sendBlockedReason) {
+      throw new WorkOrderCompletionError(check.sendBlockedReason);
+    }
+    const validated = validateCompletionSend({
+      contacts: check.contacts,
+      contactId: input.contactId,
+      phoneOverride: input.phoneOverride,
+      emailOverride: input.emailOverride,
+    });
+    if (!validated.ok) throw new WorkOrderCompletionError(validated.message);
+    return sendZeroBillInvoice({
+      workOrder: input.workOrder,
+      plan: validated.plan,
+      contacts: check.contacts,
+      userId: input.userId,
+      actor: input.actor,
+      apiBase: input.apiBase,
+      rollbackOnFailure: false,
+    });
   }
   let invoice = await findOpenInvoiceForWorkOrder(input.workOrder._id);
   let restore: (() => Promise<void>) | null = null;

@@ -8,6 +8,7 @@ import {
   ZERO_TOTAL_REASON,
   completionBlockedReason,
   isEffectivelyComplete,
+  isZeroBilledWorkOrder,
   sendBlockedReason,
   settleCompletedBlockedReason,
   validateCompletionSend,
@@ -74,6 +75,64 @@ describe("completionBlockedReason", () => {
 
   it("allows a billable work order even when no contact can be reached", () => {
     assert.equal(completionBlockedReason(open), null);
+  });
+});
+
+describe("isZeroBilledWorkOrder", () => {
+  it("treats a $0 order with a product or agreement line as zero billed", () => {
+    assert.equal(
+      isZeroBilledWorkOrder({
+        total: 0,
+        parts: [{ lineType: "product" }, { lineType: "note" }],
+      }),
+      true,
+    );
+    assert.equal(
+      isZeroBilledWorkOrder({
+        total: 0,
+        parts: [{ lineType: "agreement" }],
+      }),
+      true,
+    );
+  });
+
+  it("keeps a blank order and a positive total off the zero-bill path", () => {
+    assert.equal(
+      isZeroBilledWorkOrder({
+        total: 0,
+        parts: [{ lineType: "note" }],
+      }),
+      false,
+    );
+    assert.equal(
+      isZeroBilledWorkOrder({ total: 0, parts: [] }),
+      false,
+    );
+    assert.equal(
+      isZeroBilledWorkOrder({
+        total: 15,
+        parts: [{ lineType: "product" }],
+      }),
+      false,
+    );
+  });
+
+  it("keeps a negative total blocked", () => {
+    assert.equal(
+      isZeroBilledWorkOrder({
+        total: -10,
+        parts: [{ lineType: "product" }],
+      }),
+      false,
+    );
+    assert.equal(
+      completionBlockedReason({
+        completed: false,
+        totalCents: -100,
+        hasCustomer: true,
+      }),
+      ZERO_TOTAL_REASON,
+    );
   });
 });
 

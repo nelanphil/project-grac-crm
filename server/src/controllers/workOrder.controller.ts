@@ -58,7 +58,11 @@ import { parseNoteTimeTags } from "../utils/noteTimeTags";
 import { saveWorkOrderAgreements } from "../services/enrollTicketAgreements";
 import { nextPrefixedNumber } from "../services/serviceTicket";
 import { resolveTicketWorkOrderType } from "../services/ticketWorkOrderType";
-import { syncWorkOrderInvoice } from "../services/invoice.service";
+import {
+  findPaidZeroBillInvoice,
+  isZeroBilledWorkOrder,
+  syncWorkOrderInvoice,
+} from "../services/invoice.service";
 import {
   actorFromAuthUser,
   buildWorkOrderActivityLog,
@@ -1536,14 +1540,18 @@ export async function postWorkOrderSendReceipt(
     const workOrder = await loadAssignableWorkOrder(req, res);
     if (!workOrder) return;
 
-    const invoice = await Invoice.findOne({
-      workOrderRef: workOrder._id,
-      status: "paid",
-      "offlinePayment.method": { $in: ["check", "cash"] },
-    }).sort({ paidAt: -1 });
+    const invoice =
+      (await Invoice.findOne({
+        workOrderRef: workOrder._id,
+        status: "paid",
+        "offlinePayment.method": { $in: ["check", "cash"] },
+      }).sort({ paidAt: -1 })) ??
+      (await findPaidZeroBillInvoice(workOrder._id));
     if (!invoice) {
       res.status(409).json({
-        message: "This work order has no check or cash payment to send.",
+        message: isZeroBilledWorkOrder(workOrder)
+          ? "This work order has no invoice to send."
+          : "This work order has no check or cash payment to send.",
       });
       return;
     }
@@ -1879,6 +1887,7 @@ export async function postWorkOrderComplete(
         : {}),
       ...(result.receipt ? { receipt: result.receipt } : {}),
       ...(result.prepaidRenewal ? { prepaidRenewal: true } : {}),
+      ...(result.zeroBilled ? { zeroBilled: true } : {}),
     });
   } catch (err) {
     if (err instanceof WorkOrderCompletionError) {

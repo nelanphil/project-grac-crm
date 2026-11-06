@@ -2891,6 +2891,7 @@ export interface WorkOrderCompletionCheck {
   invoiceOpen: boolean;
   offlinePayment?: OfflinePayment | null;
   prepaidRenewal?: boolean;
+  zeroBilled?: boolean;
   contacts: WorkOrderCompletionContact[];
 }
 
@@ -2929,6 +2930,7 @@ export interface WorkOrderCompletionResult {
   offlinePayment?: OfflinePayment;
   receipt?: WorkOrderReceiptDelivery;
   prepaidRenewal?: boolean;
+  zeroBilled?: boolean;
 }
 
 export async function getWorkOrderCompletionCheck(

@@ -167,6 +167,22 @@ describe("agreement line totals", () => {
     assert.equal(items[0]?.description, "Filter (FLT)");
     assert.equal(items[0]?.amountCents, 1500);
 
+    const zeroItems = workOrderInvoiceLineItems(
+      {
+        parts: parts.filter((part) => part.zeroBill),
+        totalLabor: 0,
+        total: 0,
+      },
+      { includeZeroLines: true },
+    );
+    assert.equal(zeroItems.length, 3);
+    assert.equal(zeroItems[0]?.description, "2 × Battery (BAT)");
+    assert.equal(zeroItems[0]?.amountCents, 0);
+    assert.equal(zeroItems[1]?.description, "Labor (LAB)");
+    assert.equal(zeroItems[1]?.amountCents, 0);
+    assert.equal(zeroItems[2]?.description, "Service Contract");
+    assert.equal(zeroItems[2]?.amountCents, 0);
+
     const restored = normalizeParts([
       {
         lineType: "product",

@@ -179,6 +179,12 @@ function ticketView(order: WorkOrderListItem): ServiceTicketView {
 const completeBadge =
   "inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200";
 
+function isZeroBilledOrder(order: WorkOrderListItem): boolean {
+  if (order.renewalInvoiceRef) return false;
+  if (Math.round((Number(order.total) || 0) * 100) !== 0) return false;
+  return (order.parts ?? []).some((part) => part.lineType !== "note");
+}
+
 function CompletionControl({
   order,
   token,
@@ -206,6 +212,7 @@ function CompletionControl({
         paid={Boolean(order.paid)}
         offlinePaid={Boolean(order.offlinePayment)}
         prepaidRenewal={Boolean(order.renewalInvoiceRef)}
+        zeroBilled={isZeroBilledOrder(order)}
         autoStart={autoStart}
         autoResend={autoResend}
         onCompleted={onCompleted}

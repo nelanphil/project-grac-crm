@@ -694,17 +694,31 @@ async function invoiceLineItemsForWorkOrder(
   wo: WorkOrderInvoiceSource,
   amountCents: number,
   description?: string,
+  options?: { includeZeroLines?: boolean },
 ): Promise<{ description: string; amountCents: number; detail?: string }[]> {
   const parts = await hydrateCatalogDescriptions(wo.parts ?? []);
-  const builtItems = workOrderInvoiceLineItems({
-    parts,
-    totalLabor: wo.totalLabor,
-    miscExp: wo.miscExp,
-    shipping: wo.shipping,
-    total: wo.total,
-    descPerform: wo.descPerform,
-    number: wo.number,
-  });
+  const builtItems = workOrderInvoiceLineItems(
+    {
+      parts,
+      totalLabor: wo.totalLabor,
+      miscExp: wo.miscExp,
+      shipping: wo.shipping,
+      total: wo.total,
+      descPerform: wo.descPerform,
+      number: wo.number,
+    },
+    { includeZeroLines: options?.includeZeroLines },
+  );
+  if (options?.includeZeroLines) {
+    if (builtItems.length > 0) return builtItems;
+    return [
+      {
+        description:
+          `Work order${wo.number ? ` ${wo.number}` : ""}${wo.descPerform ? `: ${wo.descPerform}` : ""}`.trim(),
+        amountCents: 0,
+      },
+    ];
+  }
   const lineItems =
     builtItems.length > 0
       ? builtItems
@@ -739,24 +753,36 @@ function lineItemsChanged(
   );
 }
 
-export function workOrderInvoiceLineItems(wo: {
-  parts?: Array<{
-    partNumber?: string;
-    description?: string;
-    catalogDescription?: string | null;
-    quantity?: number;
-    amount?: number;
-    lineType?: string;
-    kind?: string;
-    zeroBill?: boolean;
-  }>;
-  totalLabor?: number;
-  miscExp?: number;
-  shipping?: number;
-  total?: number;
-  descPerform?: string;
-  number?: string;
-}): { description: string; amountCents: number; detail?: string }[] {
+export function isZeroBilledWorkOrder(input: {
+  total?: number | null;
+  parts?: Array<{ lineType?: string | null }> | null;
+}): boolean {
+  if (dollarsToCents(input.total || 0) !== 0) return false;
+  return (input.parts ?? []).some((part) => part.lineType !== "note");
+}
+
+export function workOrderInvoiceLineItems(
+  wo: {
+    parts?: Array<{
+      partNumber?: string;
+      description?: string;
+      catalogDescription?: string | null;
+      quantity?: number;
+      amount?: number;
+      lineType?: string;
+      kind?: string;
+      zeroBill?: boolean;
+    }>;
+    totalLabor?: number;
+    miscExp?: number;
+    shipping?: number;
+    total?: number;
+    descPerform?: string;
+    number?: string;
+  },
+  options?: { includeZeroLines?: boolean },
+): { description: string; amountCents: number; detail?: string }[] {
+  const includeZeroLines = Boolean(options?.includeZeroLines);
   const items: { description: string; amountCents: number; detail?: string }[] = [];
   const parts = wo.parts ?? [];
   let hasLaborProductLines = false;
@@ -765,9 +791,11 @@ export function workOrderInvoiceLineItems(wo: {
     if (part.lineType !== "agreement" && part.kind === "labor") {
       hasLaborProductLines = true;
     }
-    if (part.zeroBill) continue;
-    const cents = dollarsToCents(part.amount || 0);
-    if (cents <= 0) continue;
+    const cents = Math.max(dollarsToCents(part.amount || 0), 0);
+    if (!includeZeroLines) {
+      if (part.zeroBill) continue;
+      if (cents <= 0) continue;
+    }
     const qty = part.quantity && part.quantity !== 1 ? `${part.quantity} × ` : "";
     const label =
       part.description?.trim() ||
@@ -1132,6 +1160,89 @@ export type SyncWorkOrderInvoiceResult = {
   invoice?: IInvoice;
 };
 
+export async function findPaidZeroBillInvoice(
+  workOrderId: Types.ObjectId | string,
+): Promise<IInvoice | null> {
+  return Invoice.findOne({
+    workOrderRef: workOrderId,
+    status: "paid",
+    amountCents: 0,
+  }).sort({ paidAt: -1, createdAt: -1 });
+}
+
+/** Create or reuse the settled $0 invoice for a completed zero-billed work order. */
+export async function ensurePaidZeroBillInvoice(
+  wo: WorkOrderInvoiceSource,
+  actor?: InvoiceActor,
+): Promise<{ invoice: IInvoice; created: boolean }> {
+  if (!wo.completed) throw new WorkOrderNotReadyError();
+  if (!isZeroBilledWorkOrder(wo)) {
+    throw new InvoiceAmountError(
+      "Work order total must be greater than zero to invoice",
+    );
+  }
+  const customerRef = await resolveCustomerRefForWorkOrder(wo);
+  if (customerRef) await persistResolvedCustomerRef(wo, customerRef);
+  if (!customerRef) {
+    throw new Error("Work order has no resolvable customer for invoicing");
+  }
+
+  const existing = await findPaidZeroBillInvoice(wo._id);
+  if (existing) {
+    wo.paid = true;
+    return { invoice: existing, created: false };
+  }
+
+  const open = await findOpenInvoiceForWorkOrder(wo._id);
+  if (open) {
+    open.customerRef = customerRef;
+    open.lineItems = await invoiceLineItemsForWorkOrder(wo, 0, undefined, {
+      includeZeroLines: true,
+    });
+    open.amountCents = 0;
+    open.taxCents = 0;
+    open.taxOverridden = false;
+    await open.save();
+    const paid = await markInvoicePaid({ invoice: open, actor });
+    wo.paid = true;
+    return { invoice: paid, created: false };
+  }
+
+  const issuedAt = new Date();
+  const invoice = await Invoice.create({
+    number: await nextInvoiceNumber(issuedAt),
+    customerId: wo.customerId,
+    customerRef,
+    sourceType: "work_order",
+    workOrderRef: wo._id,
+    lineItems: await invoiceLineItemsForWorkOrder(wo, 0, undefined, {
+      includeZeroLines: true,
+    }),
+    amountCents: 0,
+    currency: "USD",
+    status: "open",
+    dueDate: null,
+    issuedAt,
+    metadata: { zeroBill: true },
+    taxRatePercent: 0,
+    taxCents: 0,
+    taxOverridden: false,
+  });
+  logNotificationAsync({
+    entityType: "invoice",
+    action: "created",
+    entityId: String(invoice._id),
+    customerRef,
+    summary: `Invoice ${invoice.number} created`,
+    actorType: actor?.actorType ?? "system",
+    actorUserId: actor?.actorUserId ?? null,
+    actorName: actor?.actorName,
+  });
+  const paid = await markInvoicePaid({ invoice, actor });
+  wo.paid = true;
+  return { invoice: paid, created: true };
+}
+
 export async function syncWorkOrderInvoice(
   wo: WorkOrderInvoiceSource,
   options?: { backfilled?: boolean },
@@ -1143,6 +1254,12 @@ export async function syncWorkOrderInvoice(
   // must not open another invoice or send another bill.
   if (wo.renewalInvoiceRef && amountCents <= 0) {
     return { action: "skipped" };
+  }
+
+  // A zero-billed visit still gets one settled invoice. Later $0 saves reuse it.
+  if (wo.completed && isZeroBilledWorkOrder(wo)) {
+    const { invoice, created } = await ensurePaidZeroBillInvoice(wo);
+    return { action: created ? "created" : "skipped", invoice };
   }
 
   if (wo.paid) {
