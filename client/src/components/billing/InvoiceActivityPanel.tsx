@@ -593,7 +593,7 @@ function timelineItems(activity: InvoiceActivity): TimelineItem[] {
       contact,
     })),
     ...(activity.visits ?? []).map((visit) => ({
-      at: visit.lastEventAt || visit.startedAt,
+      at: visit.startedAt || visit.lastEventAt,
       key: `visit:${visit.sessionId}`,
       visit,
     })),
