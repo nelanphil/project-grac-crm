@@ -7,21 +7,23 @@ describe("syncLegacyBoundInvoiceStatus", () => {
   it("creates one invoice when a line-item rebuild already stored one and the snapshot is empty", async () => {
     const workOrderId = new Types.ObjectId();
     const customerRef = new Types.ObjectId();
-    let stored: {
-      _id: Types.ObjectId;
-      status: string;
-      amountCents: number;
-      customerRef: Types.ObjectId;
-    } | null = null;
-    let creates = 0;
-    let updates = 0;
+    const state: {
+      stored: {
+        _id: Types.ObjectId;
+        status: string;
+        amountCents: number;
+        customerRef: Types.ObjectId;
+      } | null;
+      creates: number;
+      updates: number;
+    } = { stored: null, creates: 0, updates: 0 };
 
     const models = {
       Invoice: {
         findOne() {
           return {
             select() {
-              return { lean: async () => stored };
+              return { lean: async () => state.stored };
             },
           };
         },
@@ -33,17 +35,18 @@ describe("syncLegacyBoundInvoiceStatus", () => {
           amountCents: number;
           customerRef: Types.ObjectId;
         }) {
-          creates += 1;
-          stored = {
+          state.creates += 1;
+          const created = {
             _id: new Types.ObjectId(),
             status: doc.status,
             amountCents: doc.amountCents,
             customerRef: doc.customerRef,
           };
-          return stored;
+          state.stored = created;
+          return created;
         },
         async updateOne() {
-          updates += 1;
+          state.updates += 1;
         },
       },
     };
@@ -94,9 +97,9 @@ describe("syncLegacyBoundInvoiceStatus", () => {
       null,
     );
 
-    assert.equal(creates, 1);
-    assert.equal(updates, 0);
-    assert.equal(stored?.amountCents, 30000);
-    assert.equal(stored?.status, "paid");
+    assert.equal(state.creates, 1);
+    assert.equal(state.updates, 0);
+    assert.equal(state.stored?.amountCents, 30000);
+    assert.equal(state.stored?.status, "paid");
   });
 });

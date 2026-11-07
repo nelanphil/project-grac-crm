@@ -39,7 +39,7 @@ describe("syncWorkOrderInvoice", () => {
     WorkOrder.updateOne = (async () => {
       updates += 1;
       throw new Error("rewrote the work order");
-    }) as typeof WorkOrder.updateOne;
+    }) as unknown as typeof WorkOrder.updateOne;
 
     const wo: WorkOrderInvoiceSource = {
       _id: new Types.ObjectId(),
