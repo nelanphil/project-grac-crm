@@ -1003,7 +1003,7 @@ export default function PaymentLayersReportSection({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-xl font-bold text-brand-dark">
-            Payment Layer P&amp;L &amp; Charges
+            Payment Ledger
           </h2>
           <p className="mt-0.5 text-xs text-neutral-500">
             Active payment layers loaded for{" "}

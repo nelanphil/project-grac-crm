@@ -1247,6 +1247,18 @@ export async function syncWorkOrderInvoice(
   wo: WorkOrderInvoiceSource,
   options?: { backfilled?: boolean },
 ): Promise<SyncWorkOrderInvoiceResult> {
+  // An unpaid save must not invent another invoice, or rewrite tax, while a
+  // paid invoice is already attached to this work order.
+  if (!wo.paid) {
+    const paidInvoice = await Invoice.findOne({
+      workOrderRef: wo._id,
+      status: "paid",
+    });
+    if (paidInvoice) {
+      return { action: "skipped", invoice: paidInvoice };
+    }
+  }
+
   await alignUnpaidWorkOrderToCompanyTax(wo);
   const amountCents = dollarsToCents(wo.total || 0);
 

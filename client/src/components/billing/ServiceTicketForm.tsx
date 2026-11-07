@@ -210,6 +210,7 @@ export default function ServiceTicketForm({
   invoiceAction,
   autoSave,
   hideStatusFields,
+  paidInvoiceNumber,
   onNotesChanged,
 }: {
   variant: TicketVariant;
@@ -239,6 +240,11 @@ export default function ServiceTicketForm({
   autoSave?: (payload: ReturnType<typeof ticketToPayload>) => Promise<TicketFormState>;
   /** Hides the paid and completed controls. The schedule work order uses its own completion flow. */
   hideStatusFields?: boolean;
+  /**
+   * Number of a paid invoice already attached to this work order. While set,
+   * Paid cannot be switched to No; the invoice has to be reopened instead.
+   */
+  paidInvoiceNumber?: string | null;
   onNotesChanged?: () => void;
 }) {
   const token = useAuthStore((s) => s.token);
@@ -2204,15 +2210,26 @@ export default function ServiceTicketForm({
                     />
                     Yes
                   </label>
-                  <label className="inline-flex items-center gap-1.5">
+                  <label
+                    className={`inline-flex items-center gap-1.5 ${
+                      paidInvoiceNumber ? "cursor-not-allowed text-neutral-400" : ""
+                    }`}
+                  >
                     <input
                       type="radio"
                       checked={!form.paid}
+                      disabled={Boolean(paidInvoiceNumber)}
                       onChange={() => patch({ paid: false })}
                     />
                     No
                   </label>
                 </div>
+                {paidInvoiceNumber ? (
+                  <span className="mt-1 block max-w-xs text-xs font-normal normal-case tracking-normal text-neutral-500">
+                    Invoice {paidInvoiceNumber} is paid. Reopen it from the
+                    invoice screen to mark this work order unpaid.
+                  </span>
+                ) : null}
               </Field>
               <Field label="Completed">
                 <label className="inline-flex h-9 items-center gap-2 text-sm text-neutral-700">

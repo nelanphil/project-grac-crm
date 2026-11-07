@@ -36,6 +36,18 @@ function invoiceSourceLabel(sourceType: InvoiceSourceType | string): string {
   return sourceType.replace(/_/g, " ");
 }
 
+function isImportedInvoice(invoice: InvoiceItem): boolean {
+  return invoice.metadata?.backfilled === true;
+}
+
+function ImportedBadge() {
+  return (
+    <span className="inline-flex items-center rounded-full bg-neutral-100 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-neutral-500 ring-1 ring-inset ring-neutral-200">
+      Imported
+    </span>
+  );
+}
+
 function isOpenInvoicePastDue(invoice: InvoiceItem): boolean {
   if (invoice.status !== "open" && invoice.status !== "failed") return false;
   if (!invoice.dueDate) return false;
@@ -107,6 +119,7 @@ export function WorkOrderInvoiceList({
                   </span>
                   <span className="inline-flex flex-wrap items-center gap-1.5">
                     <InvoiceStatusPill invoice={invoice} />
+                    {isImportedInvoice(invoice) ? <ImportedBadge /> : null}
                     {pastDue ? (
                       <PastDueBadge
                         pastDue={{
@@ -211,6 +224,7 @@ export default function CustomerInvoicesTab({
             badges={
               <>
                 <InvoiceStatusPill invoice={invoice} />
+                {isImportedInvoice(invoice) ? <ImportedBadge /> : null}
                 {pastDue ? (
                   <PastDueBadge
                     pastDue={{
@@ -293,6 +307,7 @@ export default function CustomerInvoicesTab({
                       <td className="whitespace-nowrap px-6 py-4">
                         <span className="inline-flex flex-wrap items-center gap-1.5">
                           <InvoiceStatusPill invoice={invoice} />
+                          {isImportedInvoice(invoice) ? <ImportedBadge /> : null}
                           {pastDue ? (
                             <PastDueBadge
                               pastDue={{

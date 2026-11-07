@@ -17,7 +17,6 @@ import {
 import TablePagination from "@/components/ui/TablePagination";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
-import PaymentLayersReportSection from "@/components/financials/PaymentLayersReportSection";
 import {
   DEFAULT_PAGE_SIZE,
   paginationRange,
@@ -220,19 +219,17 @@ function KpiCard({
     <button
       type="button"
       onClick={onClick}
-      className={`group relative block w-full text-left rounded-2xl border px-4 py-4 shadow-sm transition-all duration-150 cursor-pointer ${
-        isSelected
+      className={`group relative block w-full text-left rounded-2xl border px-4 py-4 shadow-sm transition-all duration-150 cursor-pointer ${isSelected
           ? "border-brand-orange bg-[var(--staff-surface)] ring-2 ring-brand-orange/40 shadow-md"
           : "border-[var(--staff-border)] bg-[var(--staff-surface)] hover:-translate-y-0.5 hover:shadow-md hover:border-neutral-400"
-      }`}
+        }`}
     >
       <div className="flex items-center justify-between">
         <p
-          className={`text-xs font-semibold uppercase tracking-wide transition-colors ${
-            isSelected
+          className={`text-xs font-semibold uppercase tracking-wide transition-colors ${isSelected
               ? "text-brand-orange"
               : "text-neutral-500 group-hover:text-neutral-700 dark:group-hover:text-neutral-300"
-          }`}
+            }`}
         >
           {label}
         </p>
@@ -292,11 +289,10 @@ function SortHeader({
       >
         <span>{label}</span>
         <Icon
-          className={`h-3.5 w-3.5 transition-colors ${
-            active
+          className={`h-3.5 w-3.5 transition-colors ${active
               ? "text-brand-orange"
               : "text-neutral-400 group-hover:text-neutral-600 dark:text-neutral-500 dark:group-hover:text-neutral-300"
-          }`}
+            }`}
         />
       </button>
     </th>
@@ -345,7 +341,6 @@ function FinancialsContent() {
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [reloadTick, setReloadTick] = useState(0);
 
   const bounds = useMemo(() => periodBounds(period), [period]);
   const websitePaid = Boolean(summary?.ownerScoped);
@@ -353,15 +348,15 @@ function FinancialsContent() {
   const meta =
     activeFilter === "paid" && websitePaid
       ? {
-          ...FILTER_META.paid,
-          description:
-            "Completed and paid work orders for this owner, by service date",
-        }
+        ...FILTER_META.paid,
+        description:
+          "Completed and paid work orders for this owner, by service date",
+      }
       : FILTER_META[activeFilter];
   const reportTimeZone =
     activeFilter === "completed_paid" ||
-    activeFilter === "pending_payment" ||
-    (activeFilter === "paid" && websitePaid)
+      activeFilter === "pending_payment" ||
+      (activeFilter === "paid" && websitePaid)
       ? "UTC"
       : undefined;
 
@@ -431,7 +426,7 @@ function FinancialsContent() {
     return () => {
       cancelled = true;
     };
-  }, [token, canRead, bounds, ownersReady, ownerId, reloadTick]);
+  }, [token, canRead, bounds, ownersReady, ownerId]);
 
   // Load records for active filter
   useEffect(() => {
@@ -482,7 +477,6 @@ function FinancialsContent() {
     pageSize,
     sortKey,
     sortDir,
-    reloadTick,
   ]);
 
   // Handle clicking a KPI card
@@ -633,11 +627,10 @@ function FinancialsContent() {
                 setRecordsLoading(true);
                 setPage(1);
               }}
-              className={`rounded-full px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
-                period === id
+              className={`rounded-full px-3 py-1.5 text-xs font-medium transition cursor-pointer ${period === id
                   ? "bg-brand-dark text-white shadow-sm"
                   : "border border-neutral-200 text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
-              }`}
+                }`}
             >
               {label}
             </button>
@@ -863,8 +856,8 @@ function FinancialsContent() {
                               />
                             ) : null}
                             {workOrderColumns &&
-                            r.laborHours != null &&
-                            r.laborHours > 0 ? (
+                              r.laborHours != null &&
+                              r.laborHours > 0 ? (
                               <DataField
                                 label="Labor"
                                 value={`${r.laborHours.toFixed(1)} hrs`}
@@ -876,7 +869,7 @@ function FinancialsContent() {
                                 <span className="font-semibold">
                                   {formatMoney(
                                     r.amountCents ??
-                                      Math.round((r.total || 0) * 100),
+                                    Math.round((r.total || 0) * 100),
                                   )}
                                 </span>
                               }
@@ -945,8 +938,8 @@ function FinancialsContent() {
                             </>
                           ) : null}
                           {activeFilter === "past_due" ||
-                          activeFilter === "outstanding" ||
-                          activeFilter === "invoiced" ? (
+                            activeFilter === "outstanding" ||
+                            activeFilter === "invoiced" ? (
                             <SortHeader
                               label="Due Date"
                               column="dueDate"
@@ -1013,7 +1006,7 @@ function FinancialsContent() {
                                 <>
                                   <td className="px-6 py-4">
                                     {r.laborHours != null &&
-                                    r.laborHours > 0 ? (
+                                      r.laborHours > 0 ? (
                                       <span className="inline-flex items-center gap-1 font-medium text-brand-dark">
                                         <Clock className="h-3.5 w-3.5 text-neutral-400" />
                                         {r.laborHours.toFixed(1)} hrs
@@ -1038,8 +1031,8 @@ function FinancialsContent() {
                                 </>
                               ) : null}
                               {activeFilter === "past_due" ||
-                              activeFilter === "outstanding" ||
-                              activeFilter === "invoiced" ? (
+                                activeFilter === "outstanding" ||
+                                activeFilter === "invoiced" ? (
                                 <td className="px-6 py-4 text-neutral-500">
                                   {r.dueDate ? (
                                     <span
@@ -1059,7 +1052,7 @@ function FinancialsContent() {
                               <td className="px-6 py-4 font-semibold text-brand-dark">
                                 {formatMoney(
                                   r.amountCents ??
-                                    Math.round((r.total || 0) * 100),
+                                  Math.round((r.total || 0) * 100),
                                 )}
                               </td>
                               <td className="px-6 py-4">
@@ -1093,17 +1086,6 @@ function FinancialsContent() {
           </div>
         </>
       )}
-
-      {/* Payment Layer P&L & Charges Breakdown (Square, Stripe, PayPal) */}
-      <PaymentLayersReportSection
-        token={token}
-        from={bounds.from}
-        to={bounds.to}
-        ownerId={ownerId}
-        ownersReady={ownersReady}
-        canChooseOwner={canChooseOwner}
-        onTransactionLinked={() => setReloadTick((t) => t + 1)}
-      />
     </div>
   );
 }

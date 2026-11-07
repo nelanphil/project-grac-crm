@@ -1468,7 +1468,27 @@ async function loadBoundInvoiceSnapshots(
   return cache;
 }
 
-async function syncLegacyBoundInvoiceStatus(
+/** Current non-void invoice for one work order, or null when it has none. */
+export async function readBoundInvoiceSnapshot(
+  models: BoundModels,
+  workOrderId: Types.ObjectId,
+): Promise<BoundInvoiceSnapshot | null> {
+  const doc = await models.Invoice.findOne({
+    workOrderRef: workOrderId,
+    status: { $ne: "void" },
+  })
+    .select("_id status amountCents customerRef")
+    .lean();
+  if (!doc) return null;
+  return {
+    _id: doc._id as Types.ObjectId,
+    status: String(doc.status),
+    amountCents: doc.amountCents ?? 0,
+    customerRef: (doc.customerRef as Types.ObjectId | null | undefined) ?? null,
+  };
+}
+
+export async function syncLegacyBoundInvoiceStatus(
   models: BoundModels,
   wo: {
     _id: Types.ObjectId;
@@ -1485,7 +1505,9 @@ async function syncLegacyBoundInvoiceStatus(
   row: WorkOrderRow,
   known: BoundInvoiceSnapshot | null,
 ): Promise<void> {
-  const existing = known;
+  // The caller may be holding a snapshot taken before a line-item rebuild
+  // created the invoice. Re-read when that snapshot is empty.
+  const existing = known ?? (await readBoundInvoiceSnapshot(models, wo._id));
   const issuedAt = row.date instanceof Date ? row.date : new Date();
   const amountCents = dollarsToCents(row.total);
   const nextStatus = row.paid ? ("paid" as const) : ("open" as const);
@@ -2516,6 +2538,12 @@ export async function runLegacyDumpSync(options: {
           taxRate,
         );
         if (mappedItems) backfilledWoLineItems += 1;
+        if (mappedItems && !dryRun) {
+          invoiceByWorkOrder.set(
+            String(existing._id),
+            await readBoundInvoiceSnapshot(models, existing._id),
+          );
+        }
 
         const beforePaid = Boolean(existing.paid);
         const beforeCompleted = Boolean(existing.completed);

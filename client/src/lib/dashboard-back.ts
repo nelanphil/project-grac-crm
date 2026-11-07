@@ -42,6 +42,10 @@ const PATH_LABELS: { prefix: string; label: string }[] = [
   { prefix: "/dashboard/control-panel", label: "Back to control panel" },
   { prefix: "/dashboard/settings", label: "Back to settings" },
   { prefix: "/dashboard/admin", label: "Back to admin" },
+  {
+    prefix: "/dashboard/financials/payment-layer-ledger",
+    label: "Back to payment ledger",
+  },
   { prefix: "/dashboard/financials", label: "Back to financials" },
   { prefix: "/dashboard/products", label: "Back to products" },
   { prefix: "/dashboard/services", label: "Back to services" },

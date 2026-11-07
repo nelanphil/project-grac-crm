@@ -817,6 +817,23 @@ export async function updateWorkOrder(
       }
     }
 
+    // A paid invoice is the record of payment. Unchecking Paid here used to
+    // open a second invoice and add tax. Staff reopen the invoice instead.
+    if (parsed.data.paid === false && workOrder.paid) {
+      const paidInvoice = await Invoice.findOne({
+        workOrderRef: workOrder._id,
+        status: "paid",
+      })
+        .select("number")
+        .lean();
+      if (paidInvoice) {
+        res.status(409).json({
+          message: `This work order has a paid invoice (${paidInvoice.number}). Reopen the invoice from the invoice screen to mark it unpaid.`,
+        });
+        return;
+      }
+    }
+
     const activityBefore = snapshotWorkOrderFields(workOrder);
     const prevCrew = currentCrew;
     const prevStartTime = workOrder.startTime ?? "";

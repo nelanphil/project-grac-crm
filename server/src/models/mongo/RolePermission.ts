@@ -323,7 +323,9 @@ export async function ensureJobRolePermissions(): Promise<void> {
 
 /**
  * Sidebar links each role could see before nav permissions existed.
- * New links are not added here; they stay hidden until a super-admin grants them.
+ * New links stay hidden until a super-admin grants them. Payment Ledger is
+ * granted with Financials because that report moved off a page those roles
+ * already use.
  * Inserts only, so a later removal is kept.
  */
 const NAV_GRANT_RULES: {
@@ -351,6 +353,11 @@ const NAV_GRANT_RULES: {
   { href: "/dashboard/checkout", includeRoles: ["customer"] },
   {
     href: "/dashboard/financials",
+    excludeRoles: ["customer"],
+    includeRoles: ["admin", "super-admin", "manager"],
+  },
+  {
+    href: "/dashboard/financials/payment-layer-ledger",
     excludeRoles: ["customer"],
     includeRoles: ["admin", "super-admin", "manager"],
   },

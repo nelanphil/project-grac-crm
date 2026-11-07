@@ -34,6 +34,7 @@ import {
   getWorkOrder,
   restoreWorkOrder,
   updateWorkOrder,
+  type InvoiceItem,
   type WorkOrderListItem,
 } from "@/lib/api";
 import { isDispatcherRole, type RoleLike } from "@/lib/dashboard-role";
@@ -150,6 +151,7 @@ export default function WorkOrderModal({
   const [loading, setLoading] = useState(!initialOrder);
   const [error, setError] = useState<string | null>(null);
   const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
+  const [linkedInvoices, setLinkedInvoices] = useState<InvoiceItem[]>([]);
   const [invoiceListVersion, setInvoiceListVersion] = useState(0);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -203,10 +205,14 @@ export default function WorkOrderModal({
         if (cancelled) return;
         const viewable = invoices.filter((inv) => inv.status !== "void");
         const open = viewable.find((inv) => inv.status === "open");
+        setLinkedInvoices(viewable);
         setViewInvoiceId((open ?? viewable[0])?._id ?? null);
       })
       .catch(() => {
-        if (!cancelled) setViewInvoiceId(null);
+        if (!cancelled) {
+          setLinkedInvoices([]);
+          setViewInvoiceId(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -677,6 +683,10 @@ export default function WorkOrderModal({
                     submitLabel="Save work order"
                     onSubmit={handleSubmit}
                     autoSave={handleAutoSave}
+                    paidInvoiceNumber={
+                      linkedInvoices.find((invoice) => invoice.status === "paid")
+                        ?.number ?? null
+                    }
                     invoiceAction={
                       <InvoiceWorkOrderButton
                         token={token}

@@ -22,6 +22,7 @@ import {
   FileSpreadsheet,
   Copy,
   CreditCard,
+  Layers,
   LayoutDashboard,
   LucideIcon,
 } from "lucide-react";
@@ -199,6 +200,13 @@ export const NAV_SECTIONS: NavSection[] = [
                 excludeRoles: ["customer", "agent"],
               },
             ],
+          },
+          {
+            href: "/dashboard/financials/payment-layer-ledger",
+            label: "Payment Ledger",
+            icon: Layers,
+            excludeRoles: ["customer"],
+            includeRoles: ["admin", "super-admin", "manager"],
           },
         ],
       },
@@ -409,7 +417,9 @@ function flattenCatalog(sections: NavSection[]): {
  * the user's custom nest/order. Section labels are dropped since items may move between them.
  *
  * A missing `children[parentHref]` key means "use defaults." An empty array means the user
- * un-nested everything under that parent.
+ * un-nested everything under that parent. A default child the user has not placed yet
+ * (absent from the saved order, every saved children list, and hidden) is appended to
+ * its default parent.
  */
 export function applyNavOrder(
   sections: NavSection[],
@@ -418,12 +428,30 @@ export function applyNavOrder(
   const { catalog, defaultChildren, defaultOrder } = flattenCatalog(sections);
   const savedChildren = navOrder?.children ?? {};
   const childrenMap: Record<string, string[]> = {};
+  const placed = new Set<string>([
+    ...(navOrder?.order ?? []),
+    ...(navOrder?.hidden ?? []),
+    ...Object.values(savedChildren).flat(),
+  ]);
 
   for (const href of catalog.keys()) {
     if (Object.prototype.hasOwnProperty.call(savedChildren, href)) {
-      childrenMap[href] = savedChildren[href].filter(
+      const saved = savedChildren[href].filter(
         (childHref) => catalog.has(childHref) && childHref !== href,
       );
+      for (const childHref of defaultChildren[href] ?? []) {
+        if (
+          placed.has(childHref) ||
+          !catalog.has(childHref) ||
+          childHref === href ||
+          saved.includes(childHref)
+        ) {
+          continue;
+        }
+        saved.push(childHref);
+        placed.add(childHref);
+      }
+      childrenMap[href] = saved;
     } else if (defaultChildren[href]) {
       childrenMap[href] = defaultChildren[href].filter(
         (childHref) => catalog.has(childHref) && childHref !== href,
