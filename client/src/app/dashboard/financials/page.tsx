@@ -17,6 +17,7 @@ import {
 import TablePagination from "@/components/ui/TablePagination";
 import ResponsiveDataView from "@/components/ui/ResponsiveDataView";
 import MobileDataCard, { DataField } from "@/components/ui/MobileDataCard";
+import PaymentLayersReportSection from "@/components/financials/PaymentLayersReportSection";
 import {
   DEFAULT_PAGE_SIZE,
   paginationRange,
@@ -344,6 +345,7 @@ function FinancialsContent() {
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [reloadTick, setReloadTick] = useState(0);
 
   const bounds = useMemo(() => periodBounds(period), [period]);
   const websitePaid = Boolean(summary?.ownerScoped);
@@ -429,7 +431,7 @@ function FinancialsContent() {
     return () => {
       cancelled = true;
     };
-  }, [token, canRead, bounds, ownersReady, ownerId]);
+  }, [token, canRead, bounds, ownersReady, ownerId, reloadTick]);
 
   // Load records for active filter
   useEffect(() => {
@@ -480,6 +482,7 @@ function FinancialsContent() {
     pageSize,
     sortKey,
     sortDir,
+    reloadTick,
   ]);
 
   // Handle clicking a KPI card
@@ -1090,6 +1093,17 @@ function FinancialsContent() {
           </div>
         </>
       )}
+
+      {/* Payment Layer P&L & Charges Breakdown (Square, Stripe, PayPal) */}
+      <PaymentLayersReportSection
+        token={token}
+        from={bounds.from}
+        to={bounds.to}
+        ownerId={ownerId}
+        ownersReady={ownersReady}
+        canChooseOwner={canChooseOwner}
+        onTransactionLinked={() => setReloadTick((t) => t + 1)}
+      />
     </div>
   );
 }

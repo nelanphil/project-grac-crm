@@ -6,7 +6,6 @@ import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useAuthStore } from "@/store/useAuthStore";
 import {
-  isOrgAdminRole,
   userHasCapability,
   isSuperAdminRole,
 } from "@/lib/dashboard-role";
@@ -85,10 +84,10 @@ export default function PaymentProvidersCard() {
   const token = useAuthStore((s) => s.token);
   const user = useAuthStore((s) => s.user);
   const searchParams = useSearchParams();
-  const isOrgAdmin = isOrgAdminRole(user);
-  const isOwner =
-    !isOrgAdmin && userHasCapability(user, "territoryOwner");
   const isSuperAdmin = isSuperAdminRole(user);
+  const isOrgAdmin = isSuperAdmin;
+  const isOwner =
+    !isSuperAdmin && userHasCapability(user, "territoryOwner");
 
   const [accounts, setAccounts] = useState<PaymentProviderAccountItem[]>([]);
   const [webhooks, setWebhooks] = useState<Record<string, string> | null>(null);

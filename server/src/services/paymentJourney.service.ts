@@ -3,6 +3,7 @@ import { CheckoutLink } from "../models/mongo/CheckoutLink";
 import { Invoice } from "../models/mongo/Invoice";
 import {
   IJourneyEvent,
+  JOURNEY_ENTRIES,
   JOURNEY_MAX_EVENTS,
   JourneyEntry,
   JourneyOutcome,
@@ -29,6 +30,10 @@ const UNSCOPED_INVOICE_LIMIT = 20;
 const CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
 /** A visit with no terminal step and no events for this long counts as abandoned. */
 export const JOURNEY_IDLE_MS = 30 * 60 * 1000;
+/** A quiet stretch this long is a separate visit, not one long stay on the page. */
+export const JOURNEY_SEGMENT_GAP_MS = 10 * 60 * 1000;
+
+const ENTRY_NAMES = new Set<string>(JOURNEY_ENTRIES);
 
 const OPEN_STATUSES = ["open", "draft", "failed"];
 
@@ -375,6 +380,8 @@ export type JourneyVisitOutcome = JourneyOutcome | "abandoned" | "active";
 
 export interface JourneyVisitSummary {
   sessionId: string;
+  /** Which stretch of a session this is, after a long gap splits it. */
+  segment: number;
   entry: JourneyEntry;
   pages: JourneyEntry[];
   device: string;
@@ -410,12 +417,45 @@ type SessionRow = {
   events?: IJourneyEvent[];
 };
 
+/** Groups steps into stretches. A gap of 10 minutes or more starts a new stretch. */
+export function splitJourneySegments(events: IJourneyEvent[]): IJourneyEvent[][] {
+  if (events.length === 0) return [];
+  const ordered = [...events].sort(
+    (a, b) => new Date(a.t).getTime() - new Date(b.t).getTime(),
+  );
+  const segments: IJourneyEvent[][] = [[ordered[0]]];
+  for (let i = 1; i < ordered.length; i++) {
+    const prev = new Date(ordered[i - 1].t).getTime();
+    const at = new Date(ordered[i].t).getTime();
+    if (at - prev >= JOURNEY_SEGMENT_GAP_MS) segments.push([ordered[i]]);
+    else segments[segments.length - 1].push(ordered[i]);
+  }
+  return segments;
+}
+
+function pageOpened(event: IJourneyEvent): JourneyEntry | null {
+  if (event.type !== "step") return null;
+  const match = /^page_opened:\s*([a-z_]+)/.exec(event.detail);
+  const name = match?.[1];
+  return name && ENTRY_NAMES.has(name) ? (name as JourneyEntry) : null;
+}
+
+function pagesInSegment(events: IJourneyEvent[], entry: JourneyEntry): JourneyEntry[] {
+  const pages: JourneyEntry[] = [];
+  for (const event of events) {
+    const page = pageOpened(event);
+    if (page && !pages.includes(page)) pages.push(page);
+  }
+  return pages.length > 0 ? pages : [entry];
+}
+
 export function summarizeJourney(row: SessionRow, now: Date = new Date()): JourneyVisitSummary {
   const started = new Date(row.startedAt);
   const last = new Date(row.lastEventAt);
   const idle = now.getTime() - last.getTime() > JOURNEY_IDLE_MS;
   return {
     sessionId: row.sessionId,
+    segment: 0,
     entry: row.entry,
     pages: row.pages ?? [row.entry],
     device: row.device ?? "",
@@ -428,6 +468,40 @@ export function summarizeJourney(row: SessionRow, now: Date = new Date()): Journ
   };
 }
 
+/** One summary per stretch. A session with no long gap stays a single visit. */
+export function summarizeJourneySegments(
+  row: SessionRow,
+  now: Date = new Date(),
+): JourneyVisitSummary[] {
+  const segments = splitJourneySegments(row.events ?? []);
+  if (segments.length === 0) return [summarizeJourney(row, now)];
+  return segments.map((segmentEvents, index) => {
+    const started = new Date(segmentEvents[0].t);
+    const last = new Date(segmentEvents[segmentEvents.length - 1].t);
+    const derived = deriveJourneyOutcome({}, segmentEvents);
+    const isLast = index === segments.length - 1;
+    const idle = now.getTime() - last.getTime() > JOURNEY_IDLE_MS;
+    const outcome: JourneyVisitOutcome = derived.outcome
+      ? derived.outcome
+      : !isLast || idle
+        ? "abandoned"
+        : "active";
+    return {
+      sessionId: row.sessionId,
+      segment: index,
+      entry: row.entry,
+      pages: pagesInSegment(segmentEvents, row.entry),
+      device: row.device ?? "",
+      startedAt: started.toISOString(),
+      lastEventAt: last.toISOString(),
+      durationMs: Math.max(0, last.getTime() - started.getTime()),
+      outcome,
+      lastError: derived.lastError,
+      eventCount: segmentEvents.length,
+    };
+  });
+}
+
 const VISIT_LIMIT = 50;
 
 export async function listJourneyVisitsForInvoice(
@@ -438,10 +512,10 @@ export async function listJourneyVisitsForInvoice(
   })
     .sort({ startedAt: -1 })
     .limit(VISIT_LIMIT)
-    .select("-events -ip")
+    .select("-ip")
     .lean<SessionRow[]>();
   const now = new Date();
-  return rows.map((row) => summarizeJourney(row, now));
+  return rows.flatMap((row) => summarizeJourneySegments(row, now));
 }
 
 export async function getJourneyVisitForInvoice(

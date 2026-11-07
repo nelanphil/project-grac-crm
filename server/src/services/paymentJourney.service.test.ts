@@ -6,7 +6,9 @@ import {
   deriveJourneyOutcome,
   describeDevice,
   sanitizeJourneyEvents,
+  splitJourneySegments,
   summarizeJourney,
+  summarizeJourneySegments,
 } from "./paymentJourney.service";
 import { foldOpensIntoVisits, type InvoiceContactEntry } from "./invoiceActivity.service";
 
@@ -155,5 +157,64 @@ describe("foldOpensIntoVisits", () => {
       kept.map((entry) => entry.kind),
       ["email", "viewed"],
     );
+  });
+});
+
+function at(iso: string, type: IJourneyEvent["type"], detail: string): IJourneyEvent {
+  return { t: new Date(iso), type, detail, meta: null };
+}
+
+describe("splitJourneySegments", () => {
+  it("keeps steps a few minutes apart in one segment", () => {
+    const segments = splitJourneySegments([
+      at("2026-11-05T21:21:29.529Z", "step", "page_opened: checkout"),
+      at("2026-11-05T21:25:00.000Z", "click", "button: Accept"),
+    ]);
+    assert.equal(segments.length, 1);
+    assert.equal(segments[0].length, 2);
+  });
+
+  it("splits a 42-minute hidden gap into two segments", () => {
+    const segments = splitJourneySegments([
+      at("2026-11-05T21:21:29.529Z", "step", "page_opened: checkout"),
+      at("2026-11-05T21:21:45.518Z", "lifecycle", "tab hidden"),
+      at("2026-11-05T22:04:02.426Z", "lifecycle", "tab visible"),
+      at("2026-11-05T22:04:50.958Z", "step", "payment_confirmed: after 1 check"),
+    ]);
+    assert.equal(segments.length, 2);
+    assert.equal(segments[0].length, 2);
+    assert.equal(segments[1].length, 2);
+  });
+});
+
+describe("summarizeJourneySegments", () => {
+  it("marks the earlier stretch abandoned and the return paid", () => {
+    const summaries = summarizeJourneySegments(
+      {
+        sessionId: "abcdefghijklmnop1234",
+        entry: "checkout",
+        device: "Phone · iOS · Safari",
+        startedAt: new Date("2026-11-05T21:21:29.529Z"),
+        lastEventAt: new Date("2026-11-05T22:06:02.185Z"),
+        events: [
+          at("2026-11-05T21:21:29.529Z", "step", "page_opened: checkout · 402x640 · online"),
+          at("2026-11-05T21:21:45.518Z", "lifecycle", "tab hidden"),
+          at("2026-11-05T22:04:02.426Z", "lifecycle", "tab visible"),
+          at("2026-11-05T22:04:47.457Z", "step", "page_opened: checkout · 402x651 · online"),
+          at("2026-11-05T22:04:47.500Z", "step", "page_opened: complete · 402x651 · online"),
+          at("2026-11-05T22:04:50.958Z", "step", "payment_confirmed: after 1 check"),
+          at("2026-11-05T22:06:02.185Z", "lifecycle", "page closed or navigated away"),
+        ],
+      },
+      new Date("2026-11-06T12:00:00Z"),
+    );
+    assert.equal(summaries.length, 2);
+    assert.equal(summaries[0].segment, 0);
+    assert.equal(summaries[0].outcome, "abandoned");
+    assert.deepEqual(summaries[0].pages, ["checkout"]);
+    assert.equal(summaries[1].segment, 1);
+    assert.equal(summaries[1].outcome, "paid");
+    assert.deepEqual(summaries[1].pages, ["checkout", "complete"]);
+    assert.equal(summaries[1].eventCount, 5);
   });
 });

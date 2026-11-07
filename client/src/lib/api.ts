@@ -4253,6 +4253,7 @@ export type JourneyVisitOutcome =
 
 export interface JourneyVisitSummary {
   sessionId: string;
+  segment: number;
   entry: JourneyEntry;
   pages: JourneyEntry[];
   device: string;
@@ -5543,6 +5544,176 @@ export async function getFinancialsRecords(
     {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export type LayerMatchStatus = "matched" | "possible_match" | "unmatched";
+export type LayerTransactionStatus = "paid" | "failed" | "pending" | "refunded";
+
+export interface LayerMatchedRecord {
+  recordType: "invoice" | "work_order";
+  invoiceId: string | null;
+  workOrderId: string | null;
+  number: string;
+  workOrderNumber?: string | null;
+  customerName: string;
+  amountCents: number;
+  status: string;
+  date: string | null;
+  detailUrl: string;
+  workOrderDetailUrl?: string | null;
+}
+
+export interface LayerMatchCandidate {
+  recordType: "invoice" | "work_order";
+  invoiceId: string | null;
+  workOrderId: string | null;
+  number: string;
+  customerName: string;
+  amountCents: number;
+  status: string;
+  date: string | null;
+  reason: string;
+  detailUrl: string;
+}
+
+export interface PaymentLayerTransactionRow {
+  provider: PaymentProviderName;
+  accountId: string;
+  providerPaymentId: string;
+  providerOrderId: string | null;
+  createdAt: string;
+  status: LayerTransactionStatus;
+  providerStatus: string;
+  grossCents: number;
+  amountCents: number;
+  tipCents: number;
+  taxCents: number;
+  feeCents: number;
+  refundedCents: number;
+  netCents: number;
+  currency: string;
+  methodLabel: string;
+  channel: "in_person" | "online" | null;
+  cardBrand: string | null;
+  last4: string | null;
+  receiptUrl: string | null;
+  payerName: string | null;
+  payerEmail: string | null;
+  payerPhone: string | null;
+  customerName: string | null;
+  note: string | null;
+  matchStatus: LayerMatchStatus;
+  matchReason: string | null;
+  matchedRecord: LayerMatchedRecord | null;
+  candidates: LayerMatchCandidate[];
+}
+
+export interface PaymentLayerPnLSummary {
+  totalCount: number;
+  paidCount: number;
+  failedCount: number;
+  refundedCount: number;
+  grossCents: number;
+  amountCents: number;
+  tipCents: number;
+  taxCents: number;
+  feeCents: number;
+  refundedCents: number;
+  netCents: number;
+  matchedCount: number;
+  matchedCents: number;
+  matchedNetCents: number;
+  possibleMatchCount: number;
+  possibleMatchCents: number;
+  unmatchedCount: number;
+  unmatchedCents: number;
+  unmatchedNetCents: number;
+}
+
+export interface PaymentLayerReportItem {
+  accountId: string;
+  provider: PaymentProviderName;
+  layerTitle: string;
+  friendlyName: string;
+  environment: "sandbox" | "production";
+  isDefault: boolean;
+  owner: {
+    id: string;
+    name: string;
+  } | null;
+  syncError: string | null;
+  pnl: PaymentLayerPnLSummary;
+  transactions: PaymentLayerTransactionRow[];
+}
+
+export interface FinancialsPaymentLayersResponse {
+  from: string | null;
+  to: string | null;
+  canChooseOwner: boolean;
+  ownerId: string | null;
+  layers: PaymentLayerReportItem[];
+}
+
+export async function getFinancialsPaymentLayers(
+  token: string,
+  opts?: { from?: string; to?: string; owner?: string },
+): Promise<FinancialsPaymentLayersResponse> {
+  const params = new URLSearchParams();
+  if (opts?.from) params.set("from", opts.from);
+  if (opts?.to) params.set("to", opts.to);
+  if (opts?.owner) params.set("owner", opts.owner);
+  const qs = params.toString();
+  return authRequest<FinancialsPaymentLayersResponse>(
+    `/financials/payment-layers${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function getFinancialsPaymentLayerCandidates(
+  token: string,
+  opts?: { owner?: string; search?: string; amountCents?: number },
+): Promise<{ candidates: LayerMatchCandidate[] }> {
+  const params = new URLSearchParams();
+  if (opts?.owner) params.set("owner", opts.owner);
+  if (opts?.search) params.set("search", opts.search);
+  if (opts?.amountCents != null) {
+    params.set("amountCents", String(opts.amountCents));
+  }
+  const qs = params.toString();
+  return authRequest<{ candidates: LayerMatchCandidate[] }>(
+    `/financials/payment-layers/candidates${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+}
+
+export async function linkFinancialsPaymentLayerTransaction(
+  token: string,
+  payload: {
+    accountId: string;
+    providerPaymentId: string;
+    providerOrderId?: string | null;
+    invoiceId?: string | null;
+    workOrderId?: string | null;
+    owner?: string;
+  },
+): Promise<{ linked: { invoiceId: string; invoiceNumber: string } }> {
+  const qs = payload.owner
+    ? `?owner=${encodeURIComponent(payload.owner)}`
+    : "";
+  return authRequest<{ linked: { invoiceId: string; invoiceNumber: string } }>(
+    `/financials/payment-layers/link${qs}`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
     },
   );
 }

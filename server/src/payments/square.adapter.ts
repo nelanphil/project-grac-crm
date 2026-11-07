@@ -5,7 +5,9 @@ import { Request } from "express";
 import {
   CreateCheckoutInput,
   CreateCheckoutResult,
+  LayerTransactionStatus,
   PaymentProviderAdapter,
+  ProviderLayerTransaction,
   ProviderPaymentDetail,
   RetrievedProviderPayment,
   VerifiedWebhookPayment,
@@ -511,5 +513,127 @@ export const squareAdapter: PaymentProviderAdapter = {
       }
     }
     return payments;
+  },
+
+  async listLayerTransactions(
+    account,
+    window,
+  ): Promise<ProviderLayerTransaction[]> {
+    const client = squareClientForToken(account);
+    const defaultLocationId = account.account.locationId?.trim() || undefined;
+    const page = await client.payments.list({
+      beginTime: window.beginTime ? window.beginTime.toISOString() : undefined,
+      endTime: window.endTime ? window.endTime.toISOString() : undefined,
+      locationId: defaultLocationId,
+      sortOrder: "DESC",
+      limit: 100,
+    });
+
+    const rows: ProviderLayerTransaction[] = [];
+    for await (const payment of page) {
+      if (!payment.id) continue;
+      const rawStatus = String(payment.status || "PENDING").toUpperCase();
+      const baseStatus = mapSquarePaymentStatus(rawStatus);
+      const totalCents =
+        centsFromMoney(payment.totalMoney) ??
+        centsFromMoney(payment.amountMoney) ??
+        0;
+      const tipCents = centsFromMoney(payment.tipMoney) ?? 0;
+      const amountCents =
+        centsFromMoney(payment.amountMoney) ??
+        Math.max(0, totalCents - tipCents);
+      const grossCents = totalCents || amountCents + tipCents;
+      const refundedCents = centsFromMoney(payment.refundedMoney) ?? 0;
+      const feeCents = (payment.processingFee ?? []).reduce(
+        (sum, fee) => sum + (centsFromMoney(fee.amountMoney) ?? 0),
+        0,
+      );
+
+      let status: LayerTransactionStatus = baseStatus;
+      if (baseStatus === "paid" && refundedCents > 0 && refundedCents >= grossCents) {
+        status = "refunded";
+      }
+
+      const netCents =
+        status === "failed" || status === "pending"
+          ? 0
+          : grossCents - refundedCents - feeCents;
+
+      const note = text(payment.note) ?? null;
+      const currency =
+        text(payment.totalMoney?.currency) ??
+        text(payment.amountMoney?.currency) ??
+        "USD";
+
+      rows.push({
+        provider: "square",
+        providerPaymentId: payment.id,
+        providerOrderId: payment.orderId || null,
+        createdAt: payment.createdAt || new Date().toISOString(),
+        status,
+        providerStatus: rawStatus,
+        grossCents,
+        amountCents,
+        tipCents,
+        taxCents: 0,
+        feeCents,
+        refundedCents,
+        netCents,
+        currency,
+        payerName: text(payment.cardDetails?.card?.cardholderName) ?? null,
+        payerEmail: text(payment.buyerEmailAddress) ?? null,
+        payerPhone: null,
+        note,
+        invoiceIds: parseInvoiceIdsFromPaymentNote(note ?? ""),
+        locationId: payment.locationId || defaultLocationId || null,
+        detail: squarePaymentDetail(payment),
+      });
+      if (rows.length >= 500) break;
+    }
+
+    // Batch-fetch Square orders by location to populate line-item notes, tax, and invoice:<id> tags
+    const ordersByLocation = new Map<string, string[]>();
+    for (const row of rows) {
+      if (!row.providerOrderId || !row.locationId) continue;
+      const list = ordersByLocation.get(row.locationId) ?? [];
+      if (!list.includes(row.providerOrderId)) {
+        list.push(row.providerOrderId);
+      }
+      ordersByLocation.set(row.locationId, list);
+    }
+
+    for (const [locId, orderIds] of ordersByLocation.entries()) {
+      for (let i = 0; i < orderIds.length; i += 100) {
+        try {
+          const response = await client.orders.batchGet({
+            locationId: locId,
+            orderIds: orderIds.slice(i, i + 100),
+          });
+          for (const order of response.orders ?? []) {
+            if (!order.id) continue;
+            const notes = orderNotes(order);
+            const ids = notes.flatMap((n) => parseInvoiceIdsFromPaymentNote(n));
+            const itemSummary = (order.lineItems ?? [])
+              .map((li) => text(li.name))
+              .filter((v): v is string => Boolean(v))
+              .join(", ");
+            const taxCents = centsFromMoney(order.totalTaxMoney) ?? 0;
+
+            for (const row of rows) {
+              if (row.providerOrderId !== order.id) continue;
+              row.invoiceIds = [...new Set([...row.invoiceIds, ...ids])];
+              row.taxCents = taxCents;
+              if (!row.note) {
+                row.note = notes[0] || itemSummary || null;
+              }
+            }
+          }
+        } catch {
+          // Order batch lookup is best-effort enrichment
+        }
+      }
+    }
+
+    return rows;
   },
 };

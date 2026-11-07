@@ -114,3 +114,18 @@ export function describeSquarePayment(detail: ProviderPaymentDetail): DescribedP
   );
   return { channel, method, label: parts.join(" · ") };
 }
+
+export function describeProviderPayment(
+  provider: "square" | "stripe" | "paypal",
+  detail?: ProviderPaymentDetail,
+): DescribedPayment {
+  if (provider === "paypal") {
+    const card = detail ? cardText(detail) : null;
+    return {
+      channel: "online",
+      method: "wallet",
+      label: card ? `PayPal · ${card}` : "PayPal",
+    };
+  }
+  return describeSquarePayment(detail ?? {});
+}

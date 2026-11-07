@@ -72,6 +72,37 @@ export type RetrievedProviderPayment = {
   taxCents?: number;
 };
 
+export type LayerTransactionStatus = "paid" | "failed" | "pending" | "refunded";
+
+export type ProviderLayerTransaction = {
+  provider: PaymentProviderName;
+  providerPaymentId: string;
+  providerOrderId?: string | null;
+  createdAt: string;
+  status: LayerTransactionStatus;
+  providerStatus: string;
+  /** Total charged including tip and tax, in cents. */
+  grossCents: number;
+  /** Charged amount before tip, in cents. */
+  amountCents: number;
+  tipCents: number;
+  taxCents: number;
+  /** Payment processor fee deducted by the provider, in cents. */
+  feeCents: number;
+  /** Amount refunded to the customer, in cents. */
+  refundedCents: number;
+  /** Net revenue after refunds and processor fees (grossCents - refundedCents - feeCents). */
+  netCents: number;
+  currency: string;
+  payerName?: string | null;
+  payerEmail?: string | null;
+  payerPhone?: string | null;
+  note?: string | null;
+  invoiceIds: string[];
+  locationId?: string | null;
+  detail?: ProviderPaymentDetail;
+};
+
 export interface PaymentProviderAdapter {
   readonly name: PaymentProviderName;
   createCheckout(input: CreateCheckoutInput): Promise<CreateCheckoutResult>;
@@ -91,4 +122,8 @@ export interface PaymentProviderAdapter {
     account: PaymentAccountWithSecrets,
     window: { beginTime: Date; endTime: Date; locationId: string },
   ): Promise<RetrievedProviderPayment[]>;
+  listLayerTransactions?(
+    account: PaymentAccountWithSecrets,
+    window: { beginTime?: Date | null; endTime?: Date | null },
+  ): Promise<ProviderLayerTransaction[]>;
 }

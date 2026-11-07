@@ -5,8 +5,11 @@ import {
 } from "../middleware/auth.middleware";
 import {
   getFinancialsOwners,
+  getFinancialsPaymentLayerCandidates,
+  getFinancialsPaymentLayers,
   getFinancialsRecords,
   getFinancialsSummary,
+  linkFinancialsPaymentLayerTransaction,
 } from "../controllers/financials.controller";
 
 const router = Router();
@@ -15,5 +18,20 @@ router.use(authenticate);
 router.get("/owners", requirePermission("reports:read"), getFinancialsOwners);
 router.get("/summary", requirePermission("reports:read"), getFinancialsSummary);
 router.get("/records", requirePermission("reports:read"), getFinancialsRecords);
+router.get(
+  "/payment-layers",
+  requirePermission("reports:read"),
+  getFinancialsPaymentLayers,
+);
+router.get(
+  "/payment-layers/candidates",
+  requirePermission("reports:read"),
+  getFinancialsPaymentLayerCandidates,
+);
+router.post(
+  "/payment-layers/link",
+  requirePermission("reports:read"),
+  linkFinancialsPaymentLayerTransaction,
+);
 
 export default router;

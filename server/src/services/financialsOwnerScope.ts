@@ -1,10 +1,6 @@
-import { isOrgAdminRole } from "../utils/roles";
+import { isSuperAdminRole } from "../utils/roles";
 
-const ADMIN_JOB_ROLE_NAMES = new Set([
-  "super admin",
-  "admin",
-  "administrator",
-]);
+const SUPER_ADMIN_JOB_ROLE_NAMES = new Set(["super admin"]);
 
 function roleName(value: string): string {
   return value.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
@@ -15,9 +11,9 @@ export function isFinancialsAdmin(input: {
   jobRoleSlugs?: string[] | null;
   jobRoleLabels?: string[] | null;
 }): boolean {
-  if (isOrgAdminRole({ roles: input.roles ?? [] })) return true;
+  if (isSuperAdminRole({ roles: input.roles ?? [] })) return true;
   const names = [...(input.jobRoleSlugs ?? []), ...(input.jobRoleLabels ?? [])];
-  return names.some((name) => ADMIN_JOB_ROLE_NAMES.has(roleName(name)));
+  return names.some((name) => SUPER_ADMIN_JOB_ROLE_NAMES.has(roleName(name)));
 }
 
 export type FinancialsOwnerDecision = {
@@ -27,8 +23,9 @@ export type FinancialsOwnerDecision = {
 };
 
 /**
- * Admins may request all or one owner. A territory owner who is not an admin
- * is forced to their own id. Everyone else stays on the company-wide report.
+ * Only a super-admin may request all or one owner. A territory owner who is not
+ * a super-admin is forced to their own id (even if they also hold the "admin" role).
+ * Everyone else stays on the company-wide report.
  */
 export function resolveFinancialsOwnerRequest(input: {
   roles?: string[] | null;

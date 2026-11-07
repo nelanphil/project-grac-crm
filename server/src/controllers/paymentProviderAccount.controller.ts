@@ -45,12 +45,12 @@ function emptyToUndefined(value: string | undefined | null): string | undefined 
 }
 
 async function requesterLockedToOwnAccount(req: AuthRequest): Promise<boolean> {
-  if (!req.user || isOrgAdmin(req.user)) return false;
+  if (!req.user || isSuperAdminRole(req.user)) return false;
   return userHasCapability(req.user, "territoryOwner");
 }
 
 function isOrgAdmin(user: Parameters<typeof isOrgAdminRole>[0]): boolean {
-  return isOrgAdminRole(user);
+  return isSuperAdminRole(user);
 }
 
 function ownerScopeFilter(ownerUserId: string | null) {
@@ -198,8 +198,12 @@ export async function getPaymentProviderAccounts(
   res: Response,
 ): Promise<void> {
   const filter: Record<string, unknown> = {};
-  if (await requesterLockedToOwnAccount(req)) {
-    filter.ownerUserRef = new Types.ObjectId(req.user!.id);
+  if (!isOrgAdmin(req.user)) {
+    if (await requesterLockedToOwnAccount(req)) {
+      filter.ownerUserRef = new Types.ObjectId(req.user!.id);
+    } else {
+      filter._id = { $exists: false };
+    }
   }
 
   const accounts = await PaymentProviderAccount.find(filter)

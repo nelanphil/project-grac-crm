@@ -262,10 +262,10 @@ describe("owner financials scope", () => {
     assert.deepEqual(both.$or[0], { userId: 2 });
   });
 
-  it("lets admin roles and admin job roles choose an owner", () => {
+  it("lets only super-admin roles and super-admin job roles choose an owner", () => {
     assert.deepEqual(
       resolveFinancialsOwnerRequest({
-        roles: ["admin"],
+        roles: ["super-admin"],
         territoryOwner: true,
         selfId: christopher,
         requestedOwnerId: dustin,
@@ -282,19 +282,19 @@ describe("owner financials scope", () => {
       }),
       { canChoose: true, ownerId: null },
     );
-    assert.deepEqual(
-      resolveFinancialsOwnerRequest({
-        roles: ["manager"],
-        jobRoleSlugs: ["administrator"],
-        territoryOwner: false,
-        selfId: dustin,
-        requestedOwnerId: christopher,
-      }),
-      { canChoose: true, ownerId: christopher },
-    );
   });
 
-  it("forces a territory owner who is not an admin onto their own book", () => {
+  it("forces a territory owner who is not a super-admin onto their own book", () => {
+    assert.deepEqual(
+      resolveFinancialsOwnerRequest({
+        roles: ["admin"],
+        jobRoleSlugs: ["territory-owner"],
+        territoryOwner: true,
+        selfId: christopher,
+        requestedOwnerId: dustin,
+      }),
+      { canChoose: false, ownerId: christopher },
+    );
     assert.deepEqual(
       resolveFinancialsOwnerRequest({
         roles: ["agent"],

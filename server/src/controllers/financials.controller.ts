@@ -23,6 +23,14 @@ import {
 } from "../services/financialsOwnerScope";
 import { legacyUserIdForOwnerName } from "../services/legacyLoginOwners";
 import { territoryOwnerUserFilter, userHasCapability } from "../utils/jobRoles";
+import {
+  buildPaymentLayersReport,
+  findLinkCandidatesForOwner,
+  linkLayerTransactionToCrm,
+} from "../services/paymentLayerReport.service";
+import { PaymentProviderAccount } from "../models/mongo/PaymentProviderAccount";
+import { actorFromRequest } from "../services/notification.service";
+import { resolvePublicApiBase } from "../utils/publicUrl";
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -817,6 +825,159 @@ export async function getFinancialsRecords(
   } catch (err) {
     console.error("GET /financials/records error:", err);
     res.status(500).json({ message: "Failed to load financials records" });
+  }
+}
+
+export async function getFinancialsPaymentLayers(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const from = parseBound(req.query.from);
+    const to = parseBound(req.query.to);
+    const applied = await resolveAppliedOwner(req);
+    if (applied.error) {
+      res.status(applied.error === "Unauthorized" ? 401 : 400).json({
+        message: applied.error,
+      });
+      return;
+    }
+
+    const layers = await buildPaymentLayersReport({
+      ownerId: applied.scope?.ownerId ?? null,
+      canViewAllOwners: applied.canChoose,
+      from,
+      to,
+    });
+
+    res.json({
+      from: from?.toISOString() ?? null,
+      to: to?.toISOString() ?? null,
+      canChooseOwner: applied.canChoose,
+      ownerId: applied.scope?.ownerId ?? null,
+      layers,
+    });
+  } catch (err) {
+    console.error("GET /financials/payment-layers error:", err);
+    res.status(500).json({ message: "Failed to load payment layer report" });
+  }
+}
+
+export async function getFinancialsPaymentLayerCandidates(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const applied = await resolveAppliedOwner(req);
+    if (applied.error) {
+      res.status(applied.error === "Unauthorized" ? 401 : 400).json({
+        message: applied.error,
+      });
+      return;
+    }
+
+    const search =
+      typeof req.query.search === "string" ? req.query.search.trim() : "";
+    const rawAmount = req.query.amountCents
+      ? Number(req.query.amountCents)
+      : undefined;
+    const amountCents =
+      rawAmount != null && Number.isFinite(rawAmount) ? rawAmount : undefined;
+
+    const candidates = await findLinkCandidatesForOwner({
+      ownerId: applied.scope?.ownerId ?? null,
+      canViewAllOwners: applied.canChoose,
+      search,
+      amountCents,
+    });
+
+    res.json({ candidates });
+  } catch (err) {
+    console.error("GET /financials/payment-layers/candidates error:", err);
+    res.status(500).json({ message: "Failed to load link candidates" });
+  }
+}
+
+export async function linkFinancialsPaymentLayerTransaction(
+  req: AuthRequest,
+  res: Response,
+): Promise<void> {
+  try {
+    const applied = await resolveAppliedOwner(req);
+    if (applied.error) {
+      res.status(applied.error === "Unauthorized" ? 401 : 400).json({
+        message: applied.error,
+      });
+      return;
+    }
+
+    const {
+      accountId,
+      providerPaymentId,
+      providerOrderId,
+      invoiceId,
+      workOrderId,
+    } = (req.body ?? {}) as {
+      accountId?: string;
+      providerPaymentId?: string;
+      providerOrderId?: string | null;
+      invoiceId?: string | null;
+      workOrderId?: string | null;
+    };
+
+    if (!accountId || !Types.ObjectId.isValid(accountId)) {
+      res.status(400).json({ message: "Valid accountId is required" });
+      return;
+    }
+    if (!providerPaymentId || typeof providerPaymentId !== "string") {
+      res.status(400).json({ message: "providerPaymentId is required" });
+      return;
+    }
+    if (!invoiceId && !workOrderId) {
+      res
+        .status(400)
+        .json({ message: "Either invoiceId or workOrderId is required" });
+      return;
+    }
+
+    const account = await PaymentProviderAccount.findById(accountId)
+      .select("ownerUserRef")
+      .lean();
+    if (!account) {
+      res.status(404).json({ message: "Payment layer account not found" });
+      return;
+    }
+
+    const accountOwnerId = account.ownerUserRef
+      ? String(account.ownerUserRef)
+      : null;
+    if (
+      !applied.canChoose &&
+      (!applied.scope?.ownerId || accountOwnerId !== applied.scope.ownerId)
+    ) {
+      res.status(403).json({
+        message: "You can only link transactions on your own payment layer",
+      });
+      return;
+    }
+
+    const linked = await linkLayerTransactionToCrm({
+      accountId,
+      providerPaymentId: providerPaymentId.trim(),
+      providerOrderId: providerOrderId?.trim() || null,
+      invoiceId: invoiceId?.trim() || null,
+      workOrderId: workOrderId?.trim() || null,
+      actor: actorFromRequest(req.user),
+      apiBase: resolvePublicApiBase(req),
+    });
+
+    res.json({ linked });
+  } catch (err) {
+    console.error("POST /financials/payment-layers/link error:", err);
+    res.status(400).json({
+      message:
+        err instanceof Error ? err.message : "Failed to link transaction",
+    });
   }
 }
 

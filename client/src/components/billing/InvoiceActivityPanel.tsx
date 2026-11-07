@@ -407,18 +407,27 @@ function VisitTimeline({
   token,
   invoiceId,
   visit,
+  from,
+  to,
   showAll,
 }: {
   token: string;
   invoiceId: string;
   visit: JourneyVisitDetail;
+  from: string;
+  to: string;
   showAll: boolean;
 }) {
-  const start = new Date(visit.startedAt).getTime();
+  const start = new Date(from).getTime();
+  const end = new Date(to).getTime();
+  const windowed = visit.events.filter((event) => {
+    const at = new Date(event.t).getTime();
+    return at >= start && at <= end;
+  });
   const filtered = (
     showAll
-      ? visit.events
-      : visit.events.filter((event) => {
+      ? windowed
+      : windowed.filter((event) => {
           if (event.type === "step" || event.type === "error" || event.type === "click") return true;
           return describeEvent(event).bad;
         })
@@ -557,6 +566,8 @@ function VisitRow({
                   token={token}
                   invoiceId={invoiceId}
                   visit={detail}
+                  from={visit.startedAt}
+                  to={visit.lastEventAt || visit.startedAt}
                   showAll={showAll}
                 />
                 <label className="flex items-center gap-1.5 text-[11px] text-neutral-500">
@@ -593,8 +604,8 @@ function timelineItems(activity: InvoiceActivity): TimelineItem[] {
       contact,
     })),
     ...(activity.visits ?? []).map((visit) => ({
-      at: visit.startedAt || visit.lastEventAt,
-      key: `visit:${visit.sessionId}`,
+      at: visit.lastEventAt || visit.startedAt,
+      key: `visit:${visit.sessionId}:${visit.segment}`,
       visit,
     })),
     ...activity.payments.map((payment) => ({
